@@ -69,8 +69,8 @@ fn default_base_url() -> JsString {
 const WEBSOCKET_ERROR: &str = "Error: websocket error";
 
 /// The socket-mode session a live `this.app` holds: the WS send half, used
-/// only by `stop()`'s `close(1000)`, plus the reader task's cancellation handle so a
-/// failed start can retire the whole session (#2312). `None` until the socket
+/// only by `stop()`'s `close(1000)`. The start future retains the matching
+/// reader's cancellation handle until auth completes (#2312). `None` until the socket
 /// opens — a failed `connections.open` or handshake leaves `app` empty here,
 /// where the TS instance keeps `this.app` set after `new BoltApp(...)` threw;
 /// the divergence is unobservable without a socket (no inbound frames reach
@@ -85,9 +85,6 @@ struct LiveApp {
     sink: Option<
         futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     >,
-    /// #2312: the reader task's cancellation handle; the shared registry owns
-    /// its join handle, while this handle aborts a failed-start session.
-    reader: Option<tokio::task::AbortHandle>,
 }
 
 struct SlackRuntime {
@@ -430,23 +427,12 @@ async fn start_session(shared: &Arc<SlackShared>, generation: u64) -> Result<(),
         if !is_current_transport(shared, generation) {
             return Err("Slack transport stopped".into());
         }
-        runtime.app = Some(LiveApp {
-            sink: Some(sink),
-            reader: None,
-        });
+        runtime.app = Some(LiveApp { sink: Some(sink) });
     }
     let (ready, ready_rx) = tokio::sync::watch::channel(false);
     let reader = spawn_reader(shared.clone(), stream, generation, ready_rx);
-    {
-        let mut runtime = shared.runtime.lock().await;
-        if !is_current_transport(shared, generation) {
-            reader.abort();
-            return Err("Slack transport stopped".into());
-        }
-        if let Some(app) = runtime.app.as_mut() {
-            app.reader = Some(reader);
-        }
-    }
+    // Keep this exact reader handle in the start future. Registering it by
+    // re-locking runtime could queue behind an ACK already awaiting its sink.
     // `app.client.auth.test({token})`: POST `/api/auth.test`. #2312: a
     // failure here must not leak the session the socket already opened —
     // the TS catch keeps `this.app` (the registered R2 divergence) and hands
@@ -458,12 +444,12 @@ async fn start_session(shared: &Arc<SlackShared>, generation: u64) -> Result<(),
     let auth = match post_json(shared, "/api/auth.test", &JsValue::Object(auth_body)).await {
         Ok(auth) => auth,
         Err(error) => {
-            abandon_session(shared, generation).await;
+            abandon_session(shared, generation, &reader).await;
             return Err(error);
         }
     };
     if !super::sms::truthy(&auth.get("ok").cloned().unwrap_or(JsValue::Undefined)) {
-        abandon_session(shared, generation).await;
+        abandon_session(shared, generation, &reader).await;
         return Err(format!(
             "Error: {}",
             String::from_utf16_lossy(
@@ -497,13 +483,21 @@ async fn start_session(shared: &Arc<SlackShared>, generation: u64) -> Result<(),
 }
 
 /// #2312: retire a session whose start failed after the socket opened:
-/// take the app out, drop the sink and abort the reader task. The teardown is
+/// abort the matching reader, then take the app out and drop the sink. The teardown is
 /// wire-invisible — the sink's drop sends a bare TCP FIN and the mock's
 /// recorder only logs close *frames*, so the failed-start cell keeps its TS
 /// shape (`ws == [open]`) — while the real handle's `stop()` sends the
 /// recorded `close(1000)`. `NoopHandle::stop` stays empty because by the
 /// time the failure handle is returned there is nothing left to stop.
-async fn abandon_session(shared: &Arc<SlackShared>, generation: u64) {
+async fn abandon_session(
+    shared: &Arc<SlackShared>,
+    generation: u64,
+    reader: &tokio::task::AbortHandle,
+) {
+    // The handle belongs to this start attempt, even if a newer generation
+    // has started. Abort before taking runtime: the reader may own that lock
+    // while an envelope ACK is awaiting a parked sink.
+    reader.abort();
     let app = {
         let mut runtime = shared.runtime.lock().await;
         if !is_current_transport(shared, generation) {
@@ -511,18 +505,9 @@ async fn abandon_session(shared: &Arc<SlackShared>, generation: u64) {
         }
         runtime.app.take()
     };
-    let Some(app) = app else {
-        return;
-    };
-    let LiveApp { sink, reader } = app;
-    // Order matters for the Arc release, not the wire: the reader's clone of
-    // `Arc<SlackShared>` only goes away with the task, so abort it after the
-    // sink (a reader mid-frame would otherwise re-take `app` and find it
-    // gone — same observable, extra work).
-    drop(sink);
-    if let Some(reader) = reader {
-        reader.abort();
-    }
+    // A failed auth retires its sink without writing a close frame. The
+    // registry retains the reader join handle for the normal stop/drain.
+    drop(app);
 }
 
 /// The WS read loop: the TS stub (`bolt-stub.mjs`) invokes the message

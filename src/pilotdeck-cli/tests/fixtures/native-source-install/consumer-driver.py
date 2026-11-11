@@ -22,7 +22,7 @@ def main():
     x.out.mkdir(mode=0o700); out=x.out.resolve(); root=x.install.resolve(strict=True)
     os.umask(0o077)
     for d in ['home','project','tmp']: (out/d).mkdir()
-    records=[]; catalog=[]; errors=[]; child=None; known={}; servers=[]
+    records=[]; catalog=[]; errors=[]; child=None; known={}; sidecar_proofs={}; servers=[]
     result={'defaultSidecar':'NOT_RUN','skills':'NOT_RUN','pass':False}
     class Guard(http.server.BaseHTTPRequestHandler):
         def log_message(self,*args): pass
@@ -47,6 +47,8 @@ def main():
                 b=payload.encode(); self.send_response(200); self.send_header('Content-Type',mime); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
             except Exception as e:
                 errors.append(str(e)); self.send_error(500)
+    expected_sidecar=(root/'current/bin/pilotdeck-agent-loop-sidecar').resolve(strict=True)
+    sidecar_sha=json.loads((root/'current/manifest.json').read_text())['binHashes']['pilotdeck-agent-loop-sidecar']
     def sample():
         t=table(); active={pid for pid,v in known.items() if pid in t and t[pid][1]==v[1]}
         while True:
@@ -55,6 +57,25 @@ def main():
             if not fresh: break
             for pid in fresh: known[pid]=t[pid]
             active.update(fresh)
+        # Linux comm is truncated to 15 bytes. Prove the actual owned executable
+        # instead of accepting that truncated label as an executable identity.
+        if P('/proc/self/stat').exists():
+            for pid,identity in known.items():
+                if pid not in t or t[pid][1]!=identity[1]: continue
+                proc=P('/proc')/str(pid)
+                try:
+                    before=(proc/'stat').read_text().rpartition(') ')[2].split()
+                    exe=(proc/'exe').resolve(strict=True)
+                    if exe!=expected_sidecar: continue
+                    digest=hashlib.sha256(exe.read_bytes()).hexdigest()
+                    argv=(proc/'cmdline').read_bytes().split(b'\0')
+                    after=(proc/'stat').read_text().rpartition(') ')[2].split()
+                    if before[19]!=after[19] or int(before[1])!=t[pid][0]: continue
+                    if digest!=sidecar_sha: raise AssertionError('default sidecar executable SHA mismatch')
+                    if not argv or P(os.fsdecode(argv[0])).name!='pilotdeck-agent-loop-sidecar': continue
+                    sidecar_proofs[pid]={'pid':pid,'identity':identity,'startTicks':before[19],'exe':str(exe),'sha256':digest,'argv':[os.fsdecode(x) for x in argv if x]}
+                except (OSError,ProcessLookupError):
+                    continue
         return t
     try:
         # Own the legacy discovery endpoint before launch; never contact an existing service.
@@ -96,7 +117,7 @@ def main():
                 assert p.is_relative_to((root/'current/source/skills').resolve())
             assert str(path) in str(answers[f'skill-{i}']), f'missing returned skill path: {name}'
             assert str(answers[f'skill-{i}']).startswith('<skill>\n<name>'), f'missing successful skill envelope: {name}'
-        sidecars=[{'pid':pid,'identity':v} for pid,v in known.items() if 'pilotdeck-agent-loop-sidecar' in v[2]]
+        sidecars=list(sidecar_proofs.values()) if P('/proc/self/stat').exists() else [{'pid':pid,'identity':v} for pid,v in known.items() if 'pilotdeck-agent-loop-sidecar' in v[2]]
         assert sidecars, 'no actual default sidecar process observed'
         result.update(defaultSidecar='PASS',skills='PASS',pass_=True,skillCount=x.expected_skills,sidecars=sidecars); result['pass']=True
     except Exception as e:
@@ -114,6 +135,7 @@ def main():
                 except subprocess.TimeoutExpired: pass
                 time.sleep(.1)
         final = sample()
+        write(out/'sidecar-proofs.json',list(sidecar_proofs.values()))
         remaining = [pid for pid,v in known.items() if pid in final and final[pid][1] == v[1]]
         result['remainingOwnedProcesses'] = remaining
         if remaining:

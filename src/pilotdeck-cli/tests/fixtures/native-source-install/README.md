@@ -7,8 +7,21 @@ actually run on the prior installed 2b9 generation with --expected-skills 32:
 PASS, including owned process cleanup. Default 33 on a new installation remains
 NOT_RUN. No release build was repeated.
 
-Use an isolated POSIX build host with /bin/ps supporting lstart, hold the common
-parity lock, and reserve Cargo capacity using the existing approved shim.
+Use an isolated native POSIX build host with /bin/ps supporting lstart. The
+actual installed updater intentionally refuses container deployments, so do not
+run install-update inside Docker or mask container markers. Reserve Cargo
+capacity using the existing approved shim; ordinary source builds do not need
+the parity lease, while the real consumer phase holds the common parity lock.
+The shared Cargo gate defaults to two slots. On cb8, pass `--cargo-slots 4`
+after capacity coordination to use its existing four-slot host pool; accepted
+values are 1 through 4. This selects the shared gate capacity, not additional
+Cargo processes or a separate lock directory.
+If the isolated host's libclang cannot find compiler resource headers, pass
+`--clang-system-include /usr/lib/gcc/aarch64-linux-gnu/13/include` on cb8, matching
+its approved build environment. The optional directory must contain stddef.h;
+its canonical path and header SHA are recorded. No ambient bindgen flags or
+user configuration are inherited.
+
 Supply:
 python3 install-driver.py --control /frozen/pilotdeck-control --source /clean/repo --old-ref FULL_OLD_SHA --new-ref FULL_NEW_SHA --cargo-shim /approved/shim/cargo --regress-db /public/regress-object-store --registry-cache /public/cargo/registry --rustup-home /existing/rustup --out /exclusive/new/install
 Then (default current contract is 33; use --expected-skills 32 only for old 2b9):

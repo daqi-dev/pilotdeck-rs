@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import time
 import uuid
 
 ENTRY = Path(__file__).resolve().with_name('run-host.py')
@@ -22,6 +23,7 @@ IMAGE = 'sha256:eb58eb269804b8a9b2bb9ceeb9a175cac9b79612d4c8dafe0a987b277bd55683
 UV = Path('/home/clawbox-08/opt/libuv-1.52.1')
 ROLES = tuple((host, sidecar) for host in ('ts', 'rust') for sidecar in ('ts', 'rust'))
 K = 5
+MAX_ATTEMPTS = 3
 PROGRAMS = {'pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway', 'pilotdeck-agent-loop-sidecar'}
 
 
@@ -188,7 +190,8 @@ def capture_ref(plan, job, attempt):
     assert launch['job'] == job and launch['planSha256'] == sha(attempt.parents[2] / 'plan.json')
     assert launch['runtimeLibraries'] == plan['runtimeLibraries']
     assert launch['baselineDependencies'] == plan['baselineDependencies']
-    assert cleanup['exitCode'] == 0 and cleanup['containerRemaining'] == '' and not cleanup['pendingOwners']
+    assert cleanup['exitCode'] == 0 and cleanup['containerRemaining'] is None and not cleanup['pendingOwners']
+    assert cleanup['containerAbsentVerified'] is True and cleanup['clientGroupState'] == 'ESRCH'
     out = attempt / 'inside'
     if job['host'] == 'ts':
         reference = read(out / 'host-capture.json')
@@ -224,39 +227,129 @@ def selected_attempt(cohort, plan, job):
     return None, len(attempts)
 
 
-def start(cohort, plan, job, attempt, common, scoring, wait):
+class CleanupIncomplete(RuntimeError):
+    pass
+
+
+def skip_reason(accepted, count, retry_failed):
+    if accepted:
+        return 'ALREADY_CAPTURED'
+    if count >= MAX_ATTEMPTS:
+        return 'ATTEMPTS_EXHAUSTED'
+    if count and not retry_failed:
+        return 'RETRY_NOT_REQUESTED'
+    return None
+
+
+def container_identity(name, cidfile):
+    # Docker's complete inventory is authoritative for Docker-owned containers.
+    # A filtered process/name scan is not an emptiness proof for a process group.
+    listing = subprocess.check_output(
+        ['docker', 'container', 'ls', '--all', '--no-trunc', '--format', '{{json .}}'],
+        text=True, timeout=5)
+    rows = [json.loads(line) for line in listing.splitlines() if line.strip()]
+    cid = cidfile.read_text().strip() if cidfile.exists() else None
+    if cid is not None:
+        assert len(cid) == 64 and all(c in '0123456789abcdef' for c in cid), 'invalid owned container id'
+    matches = [row for row in rows if row['Names'] == name or (cid and row['ID'] == cid)]
+    assert len(matches) <= 1, 'owned container identity is ambiguous'
+    if not matches:
+        return None
+    row = matches[0]
+    assert row['Names'] == name and (cid is None or row['ID'] == cid), 'owned container identity changed'
+    return row['ID']
+
+
+def cleanup_owned_container(child, name, cidfile, common):
+    diagnostics = []
+    remaining = None
+    verified = False
+    group_state = 'NOT_STARTED' if child is None else 'UNKNOWN'
+    try:
+        cid = container_identity(name, cidfile)
+        if cid is not None:
+            # The attach client may already have exited while the container lives.
+            try:
+                stopped = subprocess.run(['docker', 'stop', '--time', '5', cid],
+                                         capture_output=True, text=True, timeout=12)
+                if stopped.returncode:
+                    diagnostics.append({'operation': 'docker stop', 'code': stopped.returncode,
+                                        'detail': stopped.stderr})
+            except (OSError, subprocess.SubprocessError) as error:
+                diagnostics.append({'operation': 'docker stop', 'detail': str(error)})
+        if child is not None:
+            child.wait(timeout=10)
+            # Query only: never signal a potentially reused process group.
+            try:
+                os.killpg(child.pid, 0)
+                group_state = 'PRESENT'
+            except ProcessLookupError:
+                group_state = 'ESRCH'
+        # Recheck after client reap: no delayed create can follow a clean result.
+        for index in range(4):
+            remaining = container_identity(name, cidfile)
+            if remaining is None:
+                break
+            if index < 3:
+                time.sleep(0.1)
+        verified = remaining is None and group_state in ('NOT_STARTED', 'ESRCH')
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, AssertionError) as error:
+        diagnostics.append({'operation': 'cleanup proof', 'detail': str(error)})
+    if verified and child is not None:
+        common.LIVE_GROUPS.discard(child.pid)
+    return {'exitCode': None if child is None else child.returncode,
+            'containerRemaining': remaining, 'containerAbsentVerified': verified,
+            'clientGroupState': group_state, 'cleanupDiagnostics': diagnostics,
+            'pendingOwners': sorted(common.LIVE_GROUPS)}
+
+
+def start(cohort, plan, job, common, scoring, wait, *, retry_failed=False):
     root, baseline = identity(plan, full=False)
-    node = Path(plan['node']['path'])
-    binary_dir = Path(plan['binaryManifest']['path']).parent
-    name = 'pdrs-host-full-' + uuid.uuid4().hex[:16]
-    command = ['docker', 'run', '--rm', '--pull', 'never', '--name', name, '--network', 'none', '--read-only',
-               '--user', f'{os.getuid()}:{os.getgid()}', '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777,size=256m',
-               '--workdir', str(root)]
-    for path in (Path('/usr'), Path('/lib'), root, baseline, node.parent.parent, UV):
-        command.extend(['--mount', f'type=bind,src={path},dst={path},readonly'])
-    command.extend(['--mount', f'type=bind,src={cohort},dst={cohort}', IMAGE, '/usr/libexec/docker/docker-init', '--', '/usr/bin/python3', '-I'])
-    inside = attempt / 'inside'
-    if job['host'] == 'ts':
-        command.extend([str(root / 'scripts/a5-19/run-host.py'), '--baseline', str(baseline), '--node', str(node),
-                        '--source-manifest', plan['sourceManifest']['path'], '--binary-manifest', plan['binaryManifest']['path'],
-                        '--out', str(inside), '--case', job['cases'][0], '--sidecar', job['sidecar'], '--lease-wait', '1'])
-        timeout = 90
-    else:
-        sidecar = node if job['sidecar'] == 'ts' else binary_dir / 'pilotdeck-agent-loop-sidecar'
-        command.extend([str(root / 'scripts/native-witness/collect.py'), '--gateway', str(binary_dir / 'pilotdeck-gateway'),
-                        '--sidecar', str(sidecar), '--output', str(inside), '--session-domain', '--registry', job['registry']])
-        for case in job['cases']:
-            command.extend(['--session-case', case])
-        if job['sidecar'] == 'ts':
-            command.extend(['--ts-sidecar-baseline', str(baseline)])
-        timeout = 930
-    child = None
-    timed_out = False
     with common.verified_parity_lock(timeout=wait):
+        # Another launcher may have finished while this one waited for the lease.
+        accepted, count = selected_attempt(cohort, plan, job)
+        reason = skip_reason(accepted, count, retry_failed)
+        if reason:
+            print(json.dumps({'job': job['id'], 'status': 'SKIPPED', 'reason': reason}), flush=True)
+            return None
+        attempt = cohort / 'jobs' / job['id'] / f'attempt-{count + 1:02d}'
+        node = Path(plan['node']['path'])
+        binary_dir = Path(plan['binaryManifest']['path']).parent
+        name = 'pdrs-host-full-' + uuid.uuid4().hex[:16]
+        cidfile = attempt / 'container.cid'
+        command = ['docker', 'run', '--rm', '--pull', 'never', '--name', name, '--cidfile', str(cidfile), '--network', 'none', '--read-only',
+                   '--user', f'{os.getuid()}:{os.getgid()}', '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777,size=256m',
+                   '--workdir', str(root)]
+        for path in (Path('/usr'), Path('/lib'), root, baseline, node.parent.parent, UV):
+            command.extend(['--mount', f'type=bind,src={path},dst={path},readonly'])
+        command.extend(['--mount', f'type=bind,src={cohort},dst={cohort}', IMAGE, '/usr/libexec/docker/docker-init', '--', '/usr/bin/python3', '-I'])
+        inside = attempt / 'inside'
+        if job['host'] == 'ts':
+            command.extend([str(root / 'scripts/a5-19/run-host.py'), '--baseline', str(baseline), '--node', str(node),
+                            '--source-manifest', plan['sourceManifest']['path'], '--binary-manifest', plan['binaryManifest']['path'],
+                            '--out', str(inside), '--case', job['cases'][0], '--sidecar', job['sidecar'], '--lease-wait', '1'])
+            timeout = 90
+        else:
+            sidecar = node if job['sidecar'] == 'ts' else binary_dir / 'pilotdeck-agent-loop-sidecar'
+            command.extend([str(root / 'scripts/native-witness/collect.py'), '--gateway', str(binary_dir / 'pilotdeck-gateway'),
+                            '--sidecar', str(sidecar), '--output', str(inside), '--session-domain', '--registry', job['registry']])
+            for case in job['cases']:
+                command.extend(['--session-case', case])
+            if job['sidecar'] == 'ts':
+                command.extend(['--ts-sidecar-baseline', str(baseline)])
+            timeout = 930
+        child = None
+        timed_out = False
         clean_head(root, plan['head'])
         clean_head(baseline, BASELINE)
         level = disk_level(root)
-        attempt.mkdir(exist_ok=False, parents=True)
+        try:
+            attempt.mkdir(exist_ok=False, parents=True)
+        except FileExistsError:
+            # Never write a failure marker into an attempt this process did not create.
+            print(json.dumps({'status': 'INCOMPLETE', 'job': job['id'],
+                              'rule': 'ATTEMPT_COLLISION', 'attempt': str(attempt)}), flush=True)
+            return False
         save(attempt / 'launch.json', {'job': job, 'planSha256': sha(cohort / 'plan.json'), 'container': name,
                                        'command': command, 'hostNamespace': os.readlink('/proc/self/ns/net'), 'diskBudget': level,
                                        'runtimeLibraries': plan['runtimeLibraries'],
@@ -264,34 +357,40 @@ def start(cohort, plan, job, attempt, common, scoring, wait):
         try:
             with (attempt / 'stdout').open('x') as stdout, (attempt / 'stderr').open('x') as stderr:
                 with common.deferred_signals():
-                    child = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True)
+                    child = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True,
+                                             preexec_fn=common.unblock_child_signals)
                     common.LIVE_GROUPS.add(child.pid)
                 try:
                     child.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     timed_out = True
+                    save(attempt / 'incomplete.json', {'status': 'CAPTURE_TIMEOUT', 'timeoutSeconds': timeout})
+        except BaseException as error:
+            save(attempt / 'incomplete.json', {'status': 'CAPTURE_INTERRUPTED',
+                                              'type': type(error).__name__, 'detail': str(error)})
+            raise
         finally:
             with common.deferred_signals():
-                if child is not None and child.poll() is None:
-                    subprocess.run(['docker', 'stop', '--time', '5', name], capture_output=True, timeout=12)
-                    child.wait(timeout=10)
-                remaining = subprocess.check_output(['docker', 'ps', '-aq', '--filter', 'name=^/' + name + '$'],
-                                                    text=True, timeout=5).strip()
-                if child is not None and child.poll() is not None and not remaining:
-                    common.LIVE_GROUPS.discard(child.pid)
-                save(attempt / 'cleanup.json', {'exitCode': None if child is None else child.returncode,
-                                               'containerRemaining': remaining, 'pendingOwners': sorted(common.LIVE_GROUPS)})
-                assert not remaining and not common.LIVE_GROUPS, 'owned cleanup incomplete; retain the lease'
+                cleanup = cleanup_owned_container(child, name, cidfile, common)
+                save(attempt / 'cleanup.json', cleanup)
+                if not cleanup['containerAbsentVerified'] or common.LIVE_GROUPS:
+                    raise CleanupIncomplete('owned cleanup incomplete; retain the lease')
         if timed_out:
-            save(attempt / 'incomplete.json', {'status': 'CAPTURE_TIMEOUT', 'timeoutSeconds': timeout})
             return False
         if child.returncode == 0:
-            if 'ts' in (job['host'], job['sidecar']):
-                native, suite = scoring
-                raw = native.read_trace(inside / 'capture/trace.log')
-                proof = suite.baseline_runtime_proof(native, raw, baseline, plan['baselineDependencies'])
-                save(attempt / 'baseline-runtime-proof.json', proof)
-            save(attempt / 'accepted-capture.json', capture_ref(plan, job, attempt))
+            native, suite = scoring
+            try:
+                if 'ts' in (job['host'], job['sidecar']):
+                    raw = native.read_trace(inside / 'capture/trace.log')
+                    proof = suite.baseline_runtime_proof(native, raw, baseline, plan['baselineDependencies'])
+                    save(attempt / 'baseline-runtime-proof.json', proof)
+                save(attempt / 'accepted-capture.json', capture_ref(plan, job, attempt))
+            except (suite.HostError, native.Incomplete,
+                    OSError, AssertionError, ValueError, KeyError, TypeError) as error:
+                save(attempt / 'incomplete.json', {'status': 'INCOMPLETE',
+                                                  'rule': getattr(error, 'rule', type(error).__name__),
+                                                  'detail': str(error)})
+                return False
             return True
         return False
 
@@ -319,19 +418,28 @@ def run(args):
         if args.job and job['id'] not in args.job:
             continue
         accepted, count = selected_attempt(cohort, plan, job)
-        if accepted or count >= 3 or (count and not args.retry_failed):
+        reason = skip_reason(accepted, count, args.retry_failed)
+        if reason:
+            print(json.dumps({'job': job['id'], 'status': 'SKIPPED', 'reason': reason}), flush=True)
             continue
         try:
-            ok = start(cohort, plan, job, cohort / 'jobs' / job['id'] / f'attempt-{count + 1:02d}', common, scoring, args.lease_wait)
+            ok = start(cohort, plan, job, common, scoring, args.lease_wait, retry_failed=args.retry_failed)
+        except CleanupIncomplete as error:
+            print(json.dumps({'status': 'BLOCKED', 'job': job['id'], 'reason': str(error)}), flush=True)
+            return 2
         except TimeoutError:
             print(json.dumps({'status': 'BLOCKED', 'job': job['id'], 'reason': 'shared host parity lease unavailable'}))
             return 2
+        if ok is None:
+            continue
         attempted += 1
         failures += not ok
         print(json.dumps({'job': job['id'], 'captureStatus': 'CAPTURED' if ok else 'INCOMPLETE'}), flush=True)
         if args.max_captures and attempted >= args.max_captures:
             break
-    return 1 if failures else 0
+    print(json.dumps({'attempted': attempted, 'incomplete': failures,
+                      'scope': 'CAPTURES_ONLY_NO_HOST_VERDICT'}), flush=True)
+    return 3 if not attempted else (1 if failures else 0)
 
 
 def manifest(args):

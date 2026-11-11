@@ -599,10 +599,9 @@ impl CronStopHandle {
         handle
     }
 
-    /// Stop once. A second call observes the earlier stop instead of
-    /// repeating it — as does any later `CronManager::stop` through the
-    /// shared latch (#2494), the path the host teardown's provider stop
-    /// takes.
+    /// Stop once. Legacy handles and direct legacy manager stops share the
+    /// #2494 latch. Native S1 and provider teardown share this handle instead,
+    /// retaining the first drain result, including failure, across both calls.
     pub fn stop_once(&self) -> Result<(), CronError> {
         let _serial = self.stop_serial.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.swap(true, Ordering::SeqCst) {

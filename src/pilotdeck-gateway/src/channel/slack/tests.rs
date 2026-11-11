@@ -1646,6 +1646,72 @@ async fn auth_test_failure_releases_the_session() {
     .await;
     stop_mock(&mock);
 }
+#[tokio::test]
+async fn auth_test_invalid_json_releases_the_session() {
+    let _port_segment = lock_port_segment().await;
+    let port = 18185;
+    ensure_replay_port_free(port).await;
+    let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
+    let scripted = VecDeque::from([
+        (
+            200,
+            json!({"ok": true, "url": format!("ws://127.0.0.1:{port}/link")}).to_string(),
+        ),
+        (200, "{".to_owned()),
+    ]);
+    let gates: Gates = Arc::new(SyncMutex::new(HashMap::new()));
+    let gateway: GatewayRef = Arc::new(MockGateway {
+        turns: vec![],
+        next: SyncMutex::new(0),
+        record: record.clone(),
+        gates,
+    });
+    let mock = start_mock(port, &record, scripted).await;
+    let channel = load_channel(port, &[], gateway);
+    let weak = Arc::downgrade(&channel.shared);
+    let handle = bounded(
+        "#2312 a malformed auth.test response releases the session",
+        channel.start(case_deps(&record)),
+    )
+    .await
+    .expect("#2312 start returns the silent handle");
+    let waited = record.clone();
+    until(
+        "#2312 a malformed auth.test response releases the session",
+        "case auth-test-invalid-json start failed log",
+        move || {
+            waited
+                .lock()
+                .expect("#1344 record mutex")
+                .logs
+                .iter()
+                .any(|(level, message)| {
+                    level == "error"
+                        && message == "slack: start failed: SyntaxError: JSON parse failure"
+                })
+        },
+    )
+    .await;
+    // Wire-invisible teardown: the connections.open + auth.test requests, one
+    // socket open, and no close frame or stop traffic after the failure.
+    crate::negative_assert_eq!(
+        snapshot(&record)["ws"],
+        json!([{"event": "open"}]),
+        "#2312 a malformed auth.test response releases the session"
+    );
+    // The channel is now the last owner of the shared state: the reader is
+    // aborted and the failure handle is the silent one, so dropping the
+    // channel releases the `Arc`.
+    drop(channel);
+    drop(handle);
+    until(
+        "#2312 a malformed auth.test response releases the session",
+        "case auth-test-invalid-json the shared state is released",
+        || weak.upgrade().is_none(),
+    )
+    .await;
+    stop_mock(&mock);
+}
 
 // ---------------------------------------------------------------------------
 // component pins: the mapper, the render fragments, mrkdwn and chunking

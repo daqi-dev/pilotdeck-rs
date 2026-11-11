@@ -1,0 +1,1519 @@
+{
+  "scope": "Fixed-TS source applicability for existing 19 channel IDs. Required behavior remains the approved implementation plan. Source applicability does not establish behavioral coverage.",
+  "channels": [
+    {
+      "channel": "apiServer",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/api-server/ApiServerChannel.ts",
+        "sha256": "b24f2fcdab8c34c5d3382f72df3842f4eb4b55f26600c73c691e39d2bb0231a0"
+      },
+      "channelInteraction": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/api-server/ApiServerChannel.ts:6",
+            "text": "import { renderApiServerEvent } from \"./api-server-render.js\";"
+          },
+          {
+            "source": "src/adapters/channel/api-server/ApiServerChannel.ts:317",
+            "text": "for await (const event of this.gateway.submitTurn({"
+          },
+          {
+            "source": "src/adapters/channel/api-server/ApiServerChannel.ts:328",
+            "text": "const fragment = renderApiServerEvent(event);"
+          },
+          {
+            "source": "src/adapters/channel/api-server/ApiServerChannel.ts:374",
+            "text": "for await (const event of this.gateway.submitTurn({"
+          },
+          {
+            "source": "src/adapters/channel/api-server/ApiServerChannel.ts:385",
+            "text": "const fragment = renderApiServerEvent(event);"
+          }
+        ],
+        "rationale": "HTTP adapter forwards/extracts text and renders events, no channel-level IM pending-answer interface"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "bluebubbles",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts",
+        "sha256": "76e105b52482e450089ecb2b28c7cc8b57883111173650b40b3a94c01cfa2106"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:144",
+            "text": "if (this.elicitation.hasPending(chatGuid) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:154",
+            "text": "if (this.permissions.hasPending(chatGuid) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:211",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:216",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:147",
+            "text": "if (confirmation) await this.sendReply(chatGuid, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:160",
+            "text": "const confirmationDelivered = await this.sendReply(chatGuid, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:170",
+            "text": "const delivered = await this.sendReply(chatGuid, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:188",
+            "text": "await this.sendReply(chatGuid, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:201",
+            "text": "private async processMessage(chatGuid: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:213",
+            "text": "await this.sendReply(chatGuid, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:218",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatGuid, await this.sendReply(chatGuid, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:234",
+            "text": "await this.sendReply(chatGuid, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/bluebubbles/BlueBubblesChannel.ts:238",
+            "text": "private async sendReply(chatGuid: string, text: string): Promise<boolean> {"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "dingtalk",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/dingtalk/DingTalkChannel.ts",
+        "sha256": "eb097473811bee84cc78abd10e009368398aa0ed110dacde229b7325652f6e34"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:135",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:145",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:228",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:233",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:100",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:122",
+            "text": "const text = this.extractText(data);"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:138",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:151",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:161",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:179",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:192",
+            "text": "private extractText(data: Record<string, unknown>): string {"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:218",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:230",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/dingtalk/DingTalkChannel.ts:235",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "discord",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/discord/DiscordChannel.ts",
+        "sha256": "b556f9ea35db4489c087bed79844bcd01798a21d665ee02fe86eccc87fda25b1"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:118",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:128",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:187",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:192",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:104",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:121",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:134",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:144",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:162",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:175",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:189",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:194",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:209",
+            "text": "await this.sendReply(chatId, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/discord/DiscordChannel.ts:213",
+            "text": "private async sendReply(chatId: string, text: string): Promise<boolean> {"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "email",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/email/EmailChannel.ts",
+        "sha256": "8727f986c7d479e1f6150f2972508174575a59963d686a184b6c9ea735a63feb"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:219",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:229",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:286",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:291",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:144",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:189",
+            "text": "void this.handleIncoming(replyAddr, text);"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:216",
+            "text": "private async handleIncoming(chatId: string, text: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:222",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:235",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:245",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:263",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:276",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:288",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/email/EmailChannel.ts:293",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "feishu",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/feishu/FeishuChannel.ts",
+        "sha256": "20e0ea6e2d2ed8b10a3effdd8352283cbf0ad25e0d126fa617e6c40e93babddf"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:353",
+            "text": "if (this.elicitation.hasPending(input.chatId)) {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:359",
+            "text": "if (this.permissions.hasPending(input.chatId) || this.permissionAnsweringChats.has(input.chatId)) {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:448",
+            "text": "if (this.elicitation.hasPending(chatId)) {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:457",
+            "text": "if (this.permissions.hasPending(chatId)) {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:599",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:605",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": true,
+        "kinds": [
+          "inbound image/file",
+          "assistant attachment image/file upload/send"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:10",
+            "text": "import { guessMimeTypeFromName, ImAttachmentDelivery, type PreparedImAttachment } from \"../protocol/ImAttachmentDelivery.js\";"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:11",
+            "text": "import { ImAttachmentStore } from \"../protocol/ImAttachmentStore.js\";"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:166",
+            "text": "private readonly attachmentStore = new ImAttachmentStore({"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:619",
+            "text": "if (event.type === \"assistant_attachment\") {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:697",
+            "text": "private async sendAttachment(chatId: string, attachment: Parameters<ImAttachmentDelivery[\"send\"]>[0]): Promise<boolean> {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:698",
+            "text": "return new ImAttachmentDelivery({"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:706",
+            "text": "private async uploadAndSendFeishuAttachment(chatId: string, prepared: PreparedImAttachment): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:717",
+            "text": "private async uploadFeishuImage(prepared: PreparedImAttachment): Promise<string> {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:735",
+            "text": "private async uploadFeishuFile(prepared: PreparedImAttachment): Promise<string> {"
+          },
+          {
+            "source": "src/adapters/channel/feishu/FeishuChannel.ts:774",
+            "text": "if (messageType === \"image\") {"
+          }
+        ],
+        "rationale": "explicit fixed-TS attachment and upload/download branches"
+      }
+    },
+    {
+      "channel": "homeassistant",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts",
+        "sha256": "b5e15279004849843c04637cbe10a0350a1b9d270ffcfb2c07b4e63ad51d67ff"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:288",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:298",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:355",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:360",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:161",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:284",
+            "text": "void this.handleIncoming(entityId, text);"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:287",
+            "text": "private async handleIncoming(chatId: string, text: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:291",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:304",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:314",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:332",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:345",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:357",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/homeassistant/HomeAssistantChannel.ts:362",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "matrix",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/matrix/MatrixChannel.ts",
+        "sha256": "2ac3716d32d1ff9b0dc113ff61d524b3999f3986ca67634cb505bc4d637c5359"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:139",
+            "text": "if (this.elicitation.hasPending(roomId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:149",
+            "text": "if (this.permissions.hasPending(roomId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:206",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:211",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:120",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:142",
+            "text": "if (confirmation) await this.sendReply(roomId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:155",
+            "text": "const confirmationDelivered = await this.sendReply(roomId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:165",
+            "text": "const delivered = await this.sendReply(roomId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:183",
+            "text": "await this.sendReply(roomId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:196",
+            "text": "private async processMessage(roomId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:208",
+            "text": "await this.sendReply(roomId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:213",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(roomId, await this.sendReply(roomId, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:229",
+            "text": "await this.sendReply(roomId, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/matrix/MatrixChannel.ts:233",
+            "text": "private async sendReply(roomId: string, text: string): Promise<boolean> {"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "mattermost",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/mattermost/MattermostChannel.ts",
+        "sha256": "b1bf10820d6a0179c9eca41b549880d2693f082e3e1e5bcaad4e0a9df133ca21"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:165",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:175",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:238",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:244",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:168",
+            "text": "if (confirmation) await this.sendReply({ channelId, rootId }, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:181",
+            "text": "const confirmationDelivered = await this.sendReply({ channelId, rootId }, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:191",
+            "text": "const delivered = await this.sendReply({ channelId, rootId }, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:211",
+            "text": "await this.sendReply(sendCtx, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:224",
+            "text": "private async processMessage("
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:241",
+            "text": "await this.sendReply(ctx, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:247",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(ctx, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:264",
+            "text": "await this.sendReply(ctx, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/mattermost/MattermostChannel.ts:268",
+            "text": "private async sendReply("
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "qq",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/qq/QQChannel.ts",
+        "sha256": "6b085b0b1404ac31c65077ebac759a57627e80062acb5fe8269b4fd438bad0d7"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:131",
+            "text": "if (this.elicitation.hasPending(chatKey) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:141",
+            "text": "if (this.permissions.hasPending(chatKey) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:201",
+            "text": "if (this.elicitation.hasPending(chatKey) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:211",
+            "text": "if (this.permissions.hasPending(chatKey) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:267",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:272",
+            "text": "if (event.type === \"permission_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:342",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:347",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:126",
+            "text": "const text = this.extractText(rawText);"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:134",
+            "text": "if (confirmation) await this.sendReply(groupOpenId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:147",
+            "text": "const confirmationDelivered = await this.sendReply(groupOpenId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:156",
+            "text": "const delivered = await this.sendReply(groupOpenId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:178",
+            "text": "await this.sendReply(groupOpenId, \"已创建新会话。\", event.id);"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:315",
+            "text": "private extractText(raw: string): string | null {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:326",
+            "text": "private async processMessage("
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:368",
+            "text": "private async sendReply(groupOpenId: string, text: string, msgId?: string, msgSeq?: number): Promise<boolean> {"
+          },
+          {
+            "source": "src/adapters/channel/qq/QQChannel.ts:382",
+            "text": "if (!await this.sendReply(groupOpenId, chunks[i], msgId, i + 1)) return false;"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "signal",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/signal/SignalChannel.ts",
+        "sha256": "09c38ef6cc01253f7d8ae149332fa0c5e58b7a03dc5103ed3d6907de52a0f5a6"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:187",
+            "text": "if (this.elicitation.hasPending(sessionChatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:197",
+            "text": "if (this.permissions.hasPending(sessionChatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:254",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:259",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:31",
+            "text": "function extractTextFromEnvelope(raw: Record<string, unknown>): EnvelopeExtract {"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:120",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:180",
+            "text": "const { text, sourceNumber, chatId } = extractTextFromEnvelope(data);"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:190",
+            "text": "if (confirmation) await this.sendReply(sessionChatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:203",
+            "text": "const confirmationDelivered = await this.sendReply(sessionChatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:213",
+            "text": "const delivered = await this.sendReply(sessionChatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:231",
+            "text": "await this.sendReply(sessionChatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:244",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:256",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/signal/SignalChannel.ts:261",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "slack",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/slack/SlackChannel.ts",
+        "sha256": "4894d9567cae3a35b2f2a0eca9629e2747092c16bcc0f3b33485916d3b793416"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:123",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:133",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:197",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:202",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:126",
+            "text": "if (confirmation) await this.sendReply({ channelId, threadTs }, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:139",
+            "text": "const confirmationDelivered = await this.sendReply({ channelId, threadTs }, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:149",
+            "text": "const delivered = await this.sendReply({ channelId, threadTs }, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:169",
+            "text": "await this.sendReply(sendCtx, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:182",
+            "text": "private async processMessage("
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:199",
+            "text": "await this.sendReply(ctx, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:204",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(ctx, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:219",
+            "text": "await this.sendReply(ctx, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/slack/SlackChannel.ts:223",
+            "text": "private async sendReply("
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "sms",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/sms/SmsChannel.ts",
+        "sha256": "2d49f86c8ea86a61db0d24d4d33e7190b48184754bf02db5a551f8d37d7210e0"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:207",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:217",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:274",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:279",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:124",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:181",
+            "text": "void this.handleIncoming(from, body).catch((e) =>"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:182",
+            "text": "this.logger?.error?.(`sms: handleIncoming error: ${e}`),"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:206",
+            "text": "private async handleIncoming(chatId: string, text: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:210",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:223",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:233",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:251",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:264",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/sms/SmsChannel.ts:276",
+            "text": "await this.sendReply(chatId, questionText);"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "telegram",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/telegram/TelegramChannel.ts",
+        "sha256": "d5a57c2b05a45dfba24fcbf0522d34bd31839211d43ca7b5be29f2ff0e488f66"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:102",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:112",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:171",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:176",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:61",
+            "text": "this.bot.on(\"message:text\", (ctx: any) => this.handleTextMessage(ctx));"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:94",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:97",
+            "text": "private async handleTextMessage(ctx: any): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:105",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:118",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:128",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:146",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:159",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:173",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/telegram/TelegramChannel.ts:178",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "webhook",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/webhook/WebhookChannel.ts",
+        "sha256": "4fcfea01f431ecb5bc7a10580630f4871894cf4f81ab6ef33198d809dfc1e1e8"
+      },
+      "channelInteraction": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:8",
+            "text": "import { renderWebhookEvent } from \"./webhook-render.js\";"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:213",
+            "text": "const text = this.extractText(body);"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:271",
+            "text": "for await (const event of this.gateway.submitTurn({"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:282",
+            "text": "const fragment = renderWebhookEvent(event);"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:294",
+            "text": "replyText = renderWebhookEvent(statusEvent) ?? \"Failed to process this message. Please retry.\";"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:314",
+            "text": "const text = renderWebhookEvent(statusEvent)?.trim() || input.message;"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:342",
+            "text": "private extractText(body: Record<string, unknown>): string | null {"
+          }
+        ],
+        "rationale": "HTTP adapter forwards/extracts text and renders events, no channel-level IM pending-answer interface"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:213",
+            "text": "const text = this.extractText(body);"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:230",
+            "text": "void this.handleIncoming(chatId, text).catch((e) =>"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:231",
+            "text": "this.logger?.error?.(`webhook: handleIncoming error: ${e}`),"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:235",
+            "text": "private async handleIncoming(chatId: string, text: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:256",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/webhook/WebhookChannel.ts:342",
+            "text": "private extractText(body: Record<string, unknown>): string | null {"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "wecom",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/wecom/WeComChannel.ts",
+        "sha256": "516a04715f9872f44f5d823a5deb254d1b9e025d63e03c681c4b64717e5ac1f1"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:601",
+            "text": "if (this.elicitation.hasPending(interactionKey) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:611",
+            "text": "if (this.permissions.hasPending(interactionKey) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:927",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:935",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": true,
+        "kinds": [
+          "inbound image/file/voice/video incl mixed/quote",
+          "outbound media init/chunk/finish and send"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:24",
+            "text": "const APP_CMD_UPLOAD_MEDIA_INIT = \"aibot_upload_media_init\";"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:25",
+            "text": "const APP_CMD_UPLOAD_MEDIA_CHUNK = \"aibot_upload_media_chunk\";"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:26",
+            "text": "const APP_CMD_UPLOAD_MEDIA_FINISH = \"aibot_upload_media_finish\";"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:771",
+            "text": "if (msgtype === \"mixed\") {"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:787",
+            "text": "if (msgtype === \"voice\") {"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:827",
+            "text": "if (msgtype === \"mixed\") {"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:838",
+            "text": "if (msgtype === \"file\") addMedia(\"file\", body.file);"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:839",
+            "text": "if (msgtype === \"voice\") addMedia(\"voice\", body.voice);"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:840",
+            "text": "if (msgtype === \"video\") addMedia(\"video\", body.video);"
+          },
+          {
+            "source": "src/adapters/channel/wecom/WeComChannel.ts:1190",
+            "text": "const initResponse = await this.sendRequest(APP_CMD_UPLOAD_MEDIA_INIT, {"
+          }
+        ],
+        "rationale": "explicit fixed-TS attachment and upload/download branches"
+      }
+    },
+    {
+      "channel": "wecomCallback",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts",
+        "sha256": "cdecd2574212afa6caf9f9c5d31058ae0c3318b637eef0c79888d8d92dec5ca0"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:216",
+            "text": "if (this.elicitation.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:226",
+            "text": "if (this.permissions.hasPending(chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:283",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:288",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:148",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:219",
+            "text": "if (confirmation) await this.sendReply(chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:232",
+            "text": "const confirmationDelivered = await this.sendReply(chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:242",
+            "text": "const delivered = await this.sendReply(chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:260",
+            "text": "await this.sendReply(chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:273",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:285",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:290",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:306",
+            "text": "await this.sendReply(chatId, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/wecom-callback/WeComCallbackChannel.ts:310",
+            "text": "private async sendReply(chatId: string, text: string): Promise<boolean> {"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    },
+    {
+      "channel": "weixin",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/weixin/WeixinChannel.ts",
+        "sha256": "10e487dc1a69cae0238015e6f473b7b16375a9055ed5d007c7f558973c36f160"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:436",
+            "text": "if (this.elicitation.hasPending(fromUser) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:446",
+            "text": "if ((this.permissions.hasPending(fromUser) || this.permissions.isAnswering(fromUser)) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:469",
+            "text": "&& !this.permissions.hasPending(fromUser)"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:722",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:728",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": true,
+        "kinds": [
+          "inbound encrypted image/file",
+          "voice transcript",
+          "outbound image/file CDN"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:14",
+            "text": "formatImAttachmentFallback,"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:16",
+            "text": "ImAttachmentDelivery,"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:17",
+            "text": "type PreparedImAttachment,"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:18",
+            "text": "} from \"../protocol/ImAttachmentDelivery.js\";"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:19",
+            "text": "import { ImAttachmentStore } from \"../protocol/ImAttachmentStore.js\";"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:136",
+            "text": "private attachmentStore: ImAttachmentStore;"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:148",
+            "text": "this.attachmentStore = new ImAttachmentStore({"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:566",
+            "text": "if (item.type === MessageItemType.IMAGE) {"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:590",
+            "text": "if (item.type === MessageItemType.FILE) {"
+          },
+          {
+            "source": "src/adapters/channel/weixin/WeixinChannel.ts:613",
+            "text": "if (item.type === MessageItemType.VOICE && item.voice_item?.text) {"
+          }
+        ],
+        "rationale": "explicit fixed-TS attachment and upload/download branches"
+      }
+    },
+    {
+      "channel": "whatsapp",
+      "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "sourceFile": {
+        "path": "src/adapters/channel/whatsapp/WhatsAppChannel.ts",
+        "sha256": "c955137bff5f241d288de1a9d040c5bd57e0ca0a38af172cbbf426ce8d126452"
+      },
+      "channelInteraction": {
+        "applicable": true,
+        "kinds": [
+          "permission",
+          "elicitation"
+        ],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:201",
+            "text": "if (this.elicitation.hasPending(msg.chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:211",
+            "text": "if (this.permissions.hasPending(msg.chatId) && this.gateway) {"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:268",
+            "text": "if (event.type === \"elicitation_request\") {"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:273",
+            "text": "if (event.type === \"permission_request\") {"
+          }
+        ],
+        "rationale": "adapter has IM pending-answer and request-event branches"
+      },
+      "attachment": {
+        "applicable": false,
+        "kinds": [],
+        "sourceAnchors": [
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:136",
+            "text": "return deliverChatCronResult(delivery, this.channelKey, (chatId, text) => this.sendReply(chatId, text));"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:204",
+            "text": "if (confirmation) await this.sendReply(msg.chatId, confirmation);"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:217",
+            "text": "const confirmationDelivered = await this.sendReply(msg.chatId, answer.text);"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:227",
+            "text": "const delivered = await this.sendReply(msg.chatId, nextPrompt);"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:245",
+            "text": "await this.sendReply(msg.chatId, \"已创建新会话。\");"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:258",
+            "text": "private async processMessage(chatId: string, sessionKey: string, message: string): Promise<void> {"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:270",
+            "text": "await this.sendReply(chatId, questionText);"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:275",
+            "text": "if (questionText) this.permissions.confirmInitialPrompt(chatId, await this.sendReply(chatId, questionText), event.requestId);"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:290",
+            "text": "await this.sendReply(chatId, finalText);"
+          },
+          {
+            "source": "src/adapters/channel/whatsapp/WhatsAppChannel.ts:294",
+            "text": "private async sendReply(chatId: string, text: string): Promise<boolean> {"
+          }
+        ],
+        "rationale": "fixed-TS adapter input/output is text; complete source hash and text handler/send anchors supplied, not inferred from native producer claims"
+      }
+    }
+  ]
+}

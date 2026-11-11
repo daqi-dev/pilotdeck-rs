@@ -653,23 +653,17 @@ async fn cron_stop_face_surfaces_manager_rejection() {
     handle
         .stop_once()
         .expect("#1353 the failed stop is still observed as done");
-    // #2494: the flag on the *handle* only governs this handle. The host
-    // teardown stops the same manager through the automation bundle's
-    // provider — a direct `CronManager::stop` — and that path must observe
-    // the failed stop the same way: the shared latch was taken on entry,
-    // so the teardown neither retries the failing stop nor reports it as a
-    // teardown failure.
+    // #2494 preserves the legacy mixed-handle/direct-call contract. Native
+    // assembly uses one shared native handle and retains failure instead;
+    // the native behavior has its own test below.
     manager
         .stop()
         .expect("#2494 the direct stop observes the failed face stop");
 }
 
-/// #2494: the once-semantics span both stop paths, not just the handle.
-/// Since #2294 the host teardown stops the cron manager through the
-/// automation bundle's provider (`NativeCronProvider::stop` → a direct
-/// `CronManager::stop`), so the shared latch lives in the manager: after
-/// the S1 face's stop, the teardown's direct stop observes the earlier
-/// stop — no second abort round, `Ok` across, runtimes still cleared.
+/// #2494: legacy handle and direct stop share the manager latch. Native
+/// assembly does not use this direct-call route: both of its faces use the
+/// one native handle so a failed drain remains an error.
 #[tokio::test]
 async fn a_face_stop_then_the_teardowns_direct_stop_observes_it() {
     let scratch = Scratch::new("switch-cron-s1-direct");
@@ -704,8 +698,7 @@ async fn a_face_stop_then_the_teardowns_direct_stop_observes_it() {
         1,
         "#2494 the face's stop aborted the in-flight run once"
     );
-    // The teardown's path: the bundle's provider calls `manager.stop()`
-    // directly — no handle flag is consulted.
+    // A legacy direct caller has no handle flag; the manager owns its latch.
     manager
         .stop()
         .expect("#2494 the direct stop observes the face's earlier stop");
@@ -1055,4 +1048,41 @@ fn closed_cron_gate_does_not_retain_manager_or_close_another_manager() {
         "closed gate must not keep the gateway alive"
     );
     assert!(!crate::switch::cron_management_closed(Some(&other)));
+}
+
+/// The shipped native assembly gives the S1 face and provider teardown the
+/// same handle. A failed drain stays failed and invokes cancellation once.
+#[tokio::test]
+async fn native_cron_stop_retains_failure_across_face_and_provider_teardown() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let scratch = Scratch::new("native-cron-stop-repeat");
+    let paths = seed_cron_project(&scratch);
+    let manager = cron_manager(&scratch);
+    load_cron_runtime(&manager);
+    std::fs::remove_file(&paths.tasks_file).unwrap();
+    std::fs::create_dir(&paths.tasks_file).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let stopping = calls.clone();
+    let handle = Arc::new(crate::switch::CronStopHandle::new_native(
+        manager,
+        crate::switch::AbortRecord::default(),
+        Duration::from_secs(1),
+        Arc::new(move || {
+            stopping.fetch_add(1, Ordering::SeqCst);
+        }),
+    ));
+    assert!(handle.stop_face().await.is_err());
+    let first = handle
+        .stop_once()
+        .expect_err("failed native drain remains failed");
+    let second = handle
+        .stop_async()
+        .await
+        .expect_err("provider teardown sees the same failure");
+    assert_eq!(first.to_string(), second.to_string());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "native cancellation runs once"
+    );
 }

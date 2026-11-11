@@ -199,8 +199,326 @@ def raw_background(d, folder, mode, result):
             and background['runHistory'] == history[0].read_text() and background['events'] == events[0].read_text())
 
 
+# The first implemented channel profile replays the existing eight-channel
+# producer's business assertions. Other profiles retain their own raw evidence
+# and stay BLOCKED until their corresponding contract adapter is connected.
+EIGHT_CHANNELS = {'telegram', 'discord', 'slack', 'dingtalk', 'feishu', 'weixin', 'qq', 'wecom'}
+
+
+def channel_basic_observation(raw, channel):
+    """Actual inbound -> last user model input -> recipient-bound outbound."""
+    def check(condition, rule):
+        if not condition:
+            raise ValueError(rule)
+
+    check(raw.get('channel') == channel and raw.get('failure') is None, 'CHANNEL_EXECUTION')
+    check(raw.get('exit') == {'code': 0, 'signal': None}, 'CHANNEL_EXIT')
+    inbound = raw.get('inbound', [])
+    check([row.get('generation') for row in inbound] == [0, 1], 'CHANNEL_INBOUND')
+    check([row.get('text') for row in inbound] == ['CHANNEL_INPUT_0', 'CHANNEL_INPUT_1'], 'CHANNEL_INBOUND')
+    streams = [row for row in raw.get('models', []) if row.get('stream') is True]
+    for generation in (0, 1):
+        incoming, outgoing = f'CHANNEL_INPUT_{generation}', f'CHANNEL_OUTPUT_{generation}'
+        matching = [row for row in streams if
+                    [m.get('content') for m in row.get('messages', []) if m.get('role') == 'user'][-1:] == [incoming]]
+        check(len(matching) == 1, 'CHANNEL_MODEL_INPUT')
+        found = False
+        for row in raw.get('http', []):
+            if row.get('method') != 'POST' or row.get('path', '').startswith('/v1/'):
+                continue
+            body, path = row.get('body', {}), row['path']
+            if channel == 'telegram':
+                found |= path.endswith('/sendMessage') and body.get('chat_id') == '42' and body.get('text') == outgoing
+            elif channel == 'discord':
+                found |= path == '/channels/42/messages' and body.get('content') == outgoing
+            elif channel == 'slack':
+                found |= path == '/api/chat.postMessage' and body.get('channel') == 'Droom' and body.get('text') == outgoing
+            elif channel == 'dingtalk':
+                found |= path == '/dingtalk/send' and body.get('markdown', {}).get('text') == outgoing
+            elif channel == 'feishu' and path == '/open-apis/im/v1/messages' and body.get('receive_id') == 'room':
+                content = json.loads(body.get('content', '{}'))
+                found |= content == {'zh_cn': {'content': [[{'tag': 'text', 'text': outgoing}]]}}
+            elif channel == 'weixin' and path == '/ilink/bot/sendmessage':
+                message = body.get('msg', {})
+                found |= (message.get('to_user_id') == 'chat' and message.get('context_token') == 'ctx' and
+                          any(item.get('text_item', {}).get('text') == outgoing for item in message.get('item_list', [])))
+            elif channel == 'qq':
+                found |= (path == '/v2/groups/group/messages' and body.get('content') == outgoing
+                          and body.get('msg_id') == f'event-{generation + 1}')
+        if channel == 'wecom':
+            found = any(row.get('cmd') == 'aibot_respond_msg'
+                        and row.get('headers', {}).get('req_id') == f'in-{generation + 1}'
+                        and row.get('body', {}).get('markdown', {}).get('content') == outgoing
+                        for row in raw.get('wire', []))
+        check(found, 'CHANNEL_OUTBOUND_RECIPIENT')
+    frames = raw.get('controlFrames', [])
+    for action in ('disable', 'enable'):
+        replies = [row for row in frames if row.get('type') == 'response' and row.get('id') == action]
+        check(len(replies) == 1 and replies[0].get('ok') is True
+              and replies[0].get('result') == {'reloaded': True, 'changedPaths': [f'adapters.{channel}.enabled']},
+              'CHANNEL_RELOAD')
+    steps = raw.get('steps', [])
+    check(any(row.get('event') == 'actual-process-stop' and row.get('exit') == {'code': 0, 'signal': None}
+              for row in steps), 'CHANNEL_STOP')
+    return {'inboundGenerations': [0, 1], 'actualModelRequests': 2,
+            'recipientBoundOutbound': 2, 'publicReload': ['disable', 'enable'], 'processExit': 0}
+
+
+
+def channel_applicability(d, baseline, channel):
+    """Read the independently reviewed fixed-TS source map, never a producer N/A."""
+    registry = d.read(d.SCRIPT / 'fixtures/channel-applicability.json')
+    rows = registry['channels']
+    expected = {row['id'].partition(':')[2] for row in
+                d.read(d.SCRIPT / 'fixtures/retirement-entry-inventory.json')['entries']
+                if row['id'].startswith('gateway.channel:')}
+    d.require(len(rows) == len(expected) and {row['channel'] for row in rows} == expected,
+              'ENTRY_CHANNEL_APPLICABILITY', 'source applicability must retain all original 19 channels')
+    found = next(row for row in rows if row['channel'] == channel)
+    source = found['sourceFile']
+    path = baseline / source['path']
+    d.require(found['fixedTS'] == d.RETIREMENT_BASELINE_REVISION and path.resolve().is_relative_to(baseline)
+              and sha(path) == source['sha256'], 'ENTRY_CHANNEL_APPLICABILITY', 'fixed-TS source identity changed')
+    lines = path.read_text().splitlines()
+    for face in ('attachment', 'channelInteraction'):
+        info = found[face]
+        d.require(type(info['applicable']) is bool and isinstance(info['kinds'], list)
+                  and bool(info['kinds']) == info['applicable'],
+                  'ENTRY_CHANNEL_APPLICABILITY', 'incomplete applicability source map')
+        for anchor in info['sourceAnchors']:
+            name, number = anchor['source'].rsplit(':', 1)
+            d.require(name == source['path'] and 0 < int(number) <= len(lines)
+                      and lines[int(number) - 1].strip() == anchor['text'].strip(),
+                      'ENTRY_CHANNEL_APPLICABILITY', 'source anchor changed')
+    return {key: found[key] for key in ('fixedTS', 'sourceFile', 'attachment', 'channelInteraction')}
+
+
+def channel_transport_observation(raw, channel, records):
+    """Reconstruct basic observations from full actual transport bytes."""
+    def body(row, key='body'):
+        value = row[key]
+        payload = bytes.fromhex(value['rawBytesHex'])
+        if value.get('truncated') is not False or len(payload) != value['bytes']:
+            raise ValueError('CHANNEL_TRANSPORT_TRUNCATED')
+        return payload
+
+    sequences = [row['sequence'] for row in records]
+    if len(sequences) != len(set(sequences)) or sequences != sorted(sequences):
+        raise ValueError('CHANNEL_TRANSPORT_SEQUENCE')
+    requests, responses = {}, {}
+    sent, received, inbound_bytes = [], [], []
+    for row in records:
+        kind = row['kind']
+        if kind == 'mock-http-request':
+            if row['id'] in requests:
+                raise ValueError('CHANNEL_TRANSPORT_DUPLICATE')
+            requests[row['id']] = row
+        elif kind == 'mock-http-response':
+            if row['id'] in responses or row.get('finished') is not True:
+                raise ValueError('CHANNEL_TRANSPORT_RESPONSE')
+            responses[row['id']] = row
+            inbound_bytes.append(body(row))
+        elif kind in ('fixture-ws-send', 'fixture-ws-receive'):
+            payload = body(row, 'payload')
+            if kind == 'fixture-ws-send':
+                inbound_bytes.append(payload)
+            try:
+                decoded = json.loads(payload)
+            except (UnicodeDecodeError, ValueError):
+                continue
+            (sent if kind == 'fixture-ws-send' else received).append(decoded)
+    actual_http, models = [], []
+    for identity, row in requests.items():
+        payload = body(row)
+        try:
+            decoded = json.loads(payload)
+        except (UnicodeDecodeError, ValueError):
+            continue
+        path = urlsplit(row['url']).path
+        if path.startswith('/v1/'):
+            models.append(decoded)
+        else:
+            response = responses.get(identity)
+            if response is None or not 200 <= response['status'] < 300:
+                raise ValueError('CHANNEL_TRANSPORT_RESPONSE')
+            body(response)
+            actual_http.append({'method': row['method'], 'path': path, 'body': decoded})
+    for generation in (0, 1):
+        marker = f'CHANNEL_INPUT_{generation}'.encode()
+        if not any(marker in payload for payload in inbound_bytes):
+            raise ValueError('CHANNEL_TRANSPORT_INBOUND')
+    # Replay the same basic contract over the actual model and protocol bytes.
+    actual = dict(raw, models=models, http=actual_http, wire=received)
+    result = channel_basic_observation(actual, channel)
+    if channel == 'wecom':
+        for generation in (0, 1):
+            request_id = f'in-{generation + 1}'
+            if not any(isinstance(row, dict) and row.get('headers', {}).get('req_id') == request_id
+                       and row.get('body', {}).get('errcode') == 0 for row in sent):
+                raise ValueError('CHANNEL_TRANSPORT_ACK')
+    return dict(result, actualTransportRecords=len(records), actualHttpPairs=len(responses))
+
+def channel_results(d, native, entry_root, baseline=None):
+    """Consume the 19 + 13 original IDs; incomplete production faces stay explicit."""
+    baseline = baseline or d.BASELINE
+    expected = [row['id'] for row in d.read(d.SCRIPT / 'fixtures/retirement-entry-inventory.json')['entries']
+                if row['id'].startswith(('gateway.channel:', 'gateway.channel-http:'))]
+    d.require(len(expected) == len(set(expected)) == 32, 'ENTRY_CHANNEL_INVENTORY', 'original 19 + 13 IDs required')
+    result = {key: {'status': 'BLOCKED', 'covered': [], 'missing': ['same-head-production-capture'],
+                    'originals': []} for key in expected}
+    if entry_root is None or not (entry_root / 'channels.json').is_file():
+        return result
+    index = d.read(entry_root / 'channels.json')
+    rows = index['entries']
+    ids = [row['id'] for row in rows]
+    d.require(index.get('schemaVersion') == 1 and len(ids) == len(set(ids)) and set(ids) <= result.keys(),
+              'ENTRY_CHANNEL_INVENTORY', 'duplicate, unknown, or unversioned channel evidence')
+    fixed_bins = {row['path']: row['sha256'] for row in d.read(native.manifest)}
+    tracked = {str(d.ROOT / row['path']): row['sha256'] for row in native.source['files']}
+
+    def artifact(ref):
+        path = Path(ref['path'])
+        d.require(path.is_absolute() and path.is_file() and not path.is_symlink() and path.resolve() == path
+                  and path.is_relative_to(d.ROOT / '_tmp') and sha(path) == ref['sha256'],
+                  'ENTRY_CHANNEL_RAW', 'missing, aliased, or changed channel raw artifact')
+        return path
+
+    for row in rows:
+        key = row['id']
+        cell = {'status': 'BLOCKED', 'covered': [], 'missing': [], 'originals': [], 'observations': None}
+        result[key] = cell
+        try:
+            raw_path = artifact(row['rawEvidence'])
+            raw = d.read(raw_path)
+            cell['originals'].append({'path': str(raw_path), 'sha256': sha(raw_path)})
+            source_ok = (raw.get('sourceManifestSha256') == native.source_sha
+                         and raw.get('gatewaySha256') == fixed_bins['pilotdeck-gateway']
+                         and raw.get('sidecarSha256') == fixed_bins['pilotdeck-agent-loop-sidecar']
+                         and raw.get('fixedTS') == d.RETIREMENT_BASELINE_REVISION)
+            if not source_ok:
+                cell['missing'].append('matching-source-binary-baseline-generation')
+            else:
+                cell['covered'].append('same-build-raw-header')
+            if key.startswith('gateway.channel:') and row.get('profile') == 'native-eight-v1':
+                channel = key.partition(':')[2]
+                d.require(channel in EIGHT_CHANNELS, 'ENTRY_CHANNEL_PROFILE', 'eight-channel profile assigned outside its domain')
+                try:
+                    cell['observations'] = channel_basic_observation(raw, channel)
+                    cell['covered'].extend(['basic-text-model-outbound', 'public-reload', 'reported-process-stop'])
+                except (ValueError, KeyError, TypeError, IndexError) as error:
+                    cell.update(status='FAIL', rule=str(error))
+            elif key.startswith('gateway.channel-http:'):
+                probes = raw.get('http', [])
+                retained = [probe for probe in probes if 'requestHex' in probe and 'responseHex' in probe]
+                cell['observations'] = {'wireRequests': [http_frame(probe)[:3] for probe in retained]}
+                cell['missing'].append('registered-route-contract-and-all-applicable-configurations')
+            else:
+                cell['missing'].append('registered-producer-profile-business-adapter')
+            if 'processReceipt' not in row:
+                cell['missing'].append('owned-process-and-listener-reap-receipt')
+            else:
+                receipt_path = artifact(row['processReceipt'])
+                receipt = d.read(receipt_path)
+                cell['originals'].append({'path': str(receipt_path), 'sha256': sha(receipt_path)})
+                identity = key.partition(':')[2]
+                adapter = identity if key.startswith('gateway.channel:') else identity.partition(':')[0]
+                adapter = {'api-server': 'apiServer', 'wecom-callback': 'wecomCallback'}.get(adapter, adapter)
+                d.require(receipt.get('schemaVersion') == 1 and receipt.get('channel') == adapter
+                          and receipt.get('rawEvidence') == row['rawEvidence']
+                          and receipt.get('sourceManifest') == {'path': str(native.source_manifest), 'sha256': native.source_sha}
+                          and receipt.get('candidateManifest') == {'path': str(native.manifest), 'sha256': native.manifest_sha}
+                          and receipt.get('runtimeLibraries') == native.source.get('runtimeLibraries'),
+                          'ENTRY_CHANNEL_SOURCE', 'process receipt is not bound to the same raw/source/bin/runtime')
+                producer = receipt['producer']
+                d.require(tracked.get(producer['path']) == producer['sha256']
+                          and sha(Path(producer['path'])) == producer['sha256'],
+                          'ENTRY_CHANNEL_PRODUCER', 'producer is not an authenticated source input')
+                d.require(receipt.get('bindingErrors') == [], 'ENTRY_CHANNEL_PROCESS', 'observer reported binding errors')
+                observer_path = artifact(receipt['observer'])
+                observer = d.read(observer_path)
+                d.require(tracked.get(observer['path']) == observer['sha256']
+                          and sha(Path(observer['path'])) == observer['sha256'],
+                          'ENTRY_CHANNEL_PRODUCER', 'observer is not an authenticated source input')
+                if 'finalizer' in receipt:
+                    finalizer = receipt['finalizer']
+                    d.require(tracked.get(finalizer['path']) == finalizer['sha256']
+                              and sha(Path(finalizer['path'])) == finalizer['sha256'],
+                              'ENTRY_CHANNEL_PRODUCER', 'finalizer is not an authenticated source input')
+                else:
+                    cell['missing'].append('source-bound-process-finalizer')
+                observation_path = artifact(receipt['observationTrace'])
+                observations = d.read(observation_path)
+                d.require(len(observations) == 1 and observations[0].get('errors') == [],
+                          'ENTRY_CHANNEL_PROCESS', 'missing or erroneous actual process observations')
+                process = receipt['process']
+                observed_process = observations[0]
+                actual_listeners = {json.dumps(listener, sort_keys=True) for observation in
+                                    observed_process.get('observations', [])
+                                    for listener in observation.get('readyListeners', [])}
+                d.require({json.dumps(listener, sort_keys=True) for listener in process['readyListeners']}
+                          == actual_listeners, 'ENTRY_CHANNEL_PROCESS', 'ready listener receipt diverges from observations')
+                d.require(all(process.get(field) == observed_process.get(field) for field in
+                              ('pid', 'argv', 'executable', 'birth', 'cwd', 'exit', 'remainingOwnedIdentities'))
+                          and observed_process.get('closeObservedAt') is not None
+                          and observed_process.get('identityStillPresent') is False
+                          and observed_process.get('portsStillListening') == [],
+                          'ENTRY_CHANNEL_PROCESS', 'process receipt diverges from actual observation trace')
+                executable = process['executable']
+                d.require(type(process['pid']) is int and process['pid'] > 0
+                          and executable['path'] == str(native.manifest.parent / 'pilotdeck-gateway')
+                          and executable['sha256'] == fixed_bins['pilotdeck-gateway']
+                          and process['argv'][0] == executable['path'] and '--native' in process['argv']
+                          and isinstance(process['birth']['bootId'], str) and bool(process['birth']['bootId'])
+                          and str(process['birth']['startTimeTicks']).isdigit()
+                          and process['readyListeners'] and all(listener['host'] == '127.0.0.1'
+                             and listener['ownerPid'] == process['pid'] and type(listener['port']) is int
+                             and 0 < listener['port'] < 65536 for listener in process['readyListeners'])
+                          and process['exit'] == {'code': 0, 'signal': None}
+                          and process['reaped'] is True and process['portsClosed'] is True
+                          and process['remainingOwnedIdentities'] == [],
+                          'ENTRY_CHANNEL_PROCESS', 'owned production lifecycle is incomplete')
+                preflight = d.read(artifact(receipt['networkPreflight']))
+                cleanup = d.read(artifact(receipt['containerCleanup']))
+                tests = preflight['negativeControls']
+                d.require(preflight['interfaces'] == [[1, 'lo']] and preflight['loopbackConnect'] == 'PASS'
+                          and len(tests) == 4 and all(test['blocked'] is True for test in tests)
+                          and {(test['family'], test['kind']) for test in tests} == {(2, 1), (2, 2), (10, 1), (10, 2)}
+                          and cleanup['ownedContainerStillRunning'] == '',
+                          'ENTRY_CHANNEL_ISOLATION', 'network blocking or owned container cleanup is unproven')
+                files = receipt['afterReapFiles']
+                d.require(files and all(artifact(ref).stat().st_size == ref['bytes'] for ref in files),
+                          'ENTRY_CHANNEL_DURABLE', 'post-reap business bytes are missing')
+                cell['covered'].append('source-bound-owned-process-network-and-after-reap-files')
+            identity = key.partition(':')[2]
+            channel = identity if key.startswith('gateway.channel:') else identity.partition(':')[0]
+            channel = {'api-server': 'apiServer', 'wecom-callback': 'wecomCallback'}.get(channel, channel)
+            cell['applicability'] = channel_applicability(d, baseline, channel)
+            cell['covered'].append('fixed-ts-source-applicability')
+            for face in ('attachment', 'channelInteraction'):
+                info = cell['applicability'][face]
+                cell['missing'].extend(f'{face}:{kind}:production-scenario' for kind in info['kinds'])
+            if 'processReceipt' in row and 'transportTrace' in receipt:
+                trace_path = artifact(receipt['transportTrace'])
+                records = [json.loads(line) for line in trace_path.read_text().splitlines()]
+                cell['originals'].append({'path': str(trace_path), 'sha256': sha(trace_path)})
+                if row.get('profile') == 'native-eight-v1':
+                    cell['transportObservations'] = channel_transport_observation(raw, channel, records)
+                    cell['covered'].append('actual-basic-inbound-model-outbound-response-bytes')
+                else:
+                    cell['missing'].append('registered-profile-transport-contract-adapter')
+            else:
+                cell['missing'].append('production-inbound-and-outbound-response-originals')
+            cell['missing'].append('fixed-ts-business-contract-comparison')
+        except (d.EvidenceError, OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
+            cell.update(status='FAIL', rule=getattr(error, 'rule', 'ENTRY_CHANNEL_EVIDENCE'), detail=str(error))
+    return result
+
+
 def production_results(d, native, baseline, entry_root):
     """Require a single source/candidate identity and actual isolated product exits."""
+    if not any((entry_root / f'{mode}-{engine}').is_dir()
+               for mode in ('http', 'cron', 'alwayson') for engine in ('ts', 'native')):
+        return {}
     preflight = d.read(entry_root / 'inside/network-isolation.json')
     cleanup = d.read(entry_root / 'container-cleanup.json')
     tests = preflight['negativeControls']
@@ -243,6 +561,7 @@ def production_results(d, native, baseline, entry_root):
 def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, product_capture=None):
     inventory, manifest_sha = expected_rows(d, baseline, methods)
     observed = production_results(d, native, baseline, product_capture.resolve(strict=True)) if product_capture else {}
+    channels = channel_results(d, native, product_capture, baseline)
     result = []
     for expected in inventory:
         key = expected['id']
@@ -303,7 +622,10 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
                       'missing': ('configured success/admission or Feishu callback' if mode == 'http' else
                                   'same-head positive timer and persistence on both sides') if state == 'BLOCKED' else None}
         else:
-            detail = {'missing': 'same-head production scoped channel mock evidence; old/cfg(test) evidence is not substituted'}
+            cell = channels[key]
+            state = cell['status']
+            detail = {name: value for name, value in cell.items() if name not in ('status', 'originals')}
+            pointers = cell['originals']
         result.append({**expected, 'status': state, 'detail': detail, 'originals': pointers})
     status = d.common.aggregate_status(*(row['status'] for row in result))[0]
     return {'status': status, 'expectedCount': 150, 'inventorySha256': manifest_sha,

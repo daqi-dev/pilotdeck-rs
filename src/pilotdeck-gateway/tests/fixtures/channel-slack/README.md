@@ -113,3 +113,19 @@ start-fresh（mapper 重置）、postMessage `ok:false`、mrkdwn/链接转换、
 差异编号见 `specs/gateway-parity/diffs/A8.3-CH-SLACK-001.md` 及其 R1（生产装配
 接线更正）/ R2（#2312 auth.test 失败路径 wire-invisible 回收）（正反向行为差异
 只在差异文档登记，本金样两侧同库同规则，不承担差异检测）。
+
+
+## auth 失败回收与停车读任务
+
+`auth_test_failure_releases_the_session` 保持 `ok:false` 的真实Mock路径；
+`auth_test_invalid_json_releases_the_session` 独立覆盖 `post_json` 返回 Err 的
+JSON解析失败路径。两者均要求失败句柄无驻留reader/Arc，并保留线上记录
+`ws == [open]`。`native_tests`另以受控pending future持有runtime锁，验证
+cleanup先abort本次reader再等锁，并验证旧generation失败不影响新reader/app；
+不依赖真实socket缓冲写满。
+
+例行负控表现在是14行编译期开关＋5行source-patch（之前14＋4）；原
+`slack-auth-failure-abandon-off`只删除ok:false分支的三参cleanup调用，新增
+`slack-auth-error-abandon-off`只删除Err分支的三参调用，分别绑定上述
+独立Mock测试；两锚在当前源码各精确出现1次。36格TS oracle及其输入不变。
+实现与登记形状补正见`A8.3-CH-SLACK-001-R3.md`；原R2字节保留。

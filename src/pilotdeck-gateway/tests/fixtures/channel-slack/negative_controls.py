@@ -145,10 +145,19 @@ MUTATIONS = [
     # fails on its anchor.
     ('slack-auth-failure-abandon-off', SLACK / 'mod.rs',
      '    if !super::sms::truthy(&auth.get("ok").cloned().unwrap_or(JsValue::Undefined)) {\n'
-     '        abandon_session(shared).await;\n',
+     '        abandon_session(shared, generation, &reader).await;\n',
      '    if !super::sms::truthy(&auth.get("ok").cloned().unwrap_or(JsValue::Undefined)) {\n',
      'slack::tests::auth_test_failure_releases_the_session',
      '#2312 a failed auth.test releases the session'),
+    # Independently remove the Err path after auth.test returned malformed JSON.
+    ('slack-auth-error-abandon-off', SLACK / 'mod.rs',
+     '        Err(error) => {\n'
+     '            abandon_session(shared, generation, &reader).await;\n'
+     '            return Err(error);\n',
+     '        Err(error) => {\n'
+     '            return Err(error);\n',
+     'slack::tests::auth_test_invalid_json_releases_the_session',
+     '#2312 a malformed auth.test response releases the session'),
 ]
 GUARDED = [SLACK / name for name in ('mod.rs', 'mapper.rs', 'render.rs', 'tests.rs')] + [
     ROOT / 'src/pilotdeck-gateway/src/channel/mod.rs',

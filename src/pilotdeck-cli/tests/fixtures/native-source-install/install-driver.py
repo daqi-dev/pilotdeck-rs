@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import stat
 from pathlib import Path
 import shutil
@@ -109,6 +110,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("control", "source", "out", "cargo-shim", "regress-db", "registry-cache", "rustup-home"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--cargo-slots", type=int, choices=range(1, 5), default=2)
+    parser.add_argument("--clang-system-include", type=Path)
     parser.add_argument("--old-ref", required=True)
     parser.add_argument("--new-ref")
     parser.add_argument("--mode", choices=("install-update", "legacy-install"), default="install-update")
@@ -151,7 +154,7 @@ def main():
         "CARGO_INCREMENTAL": "0",
         "CARGO_BUILD_JOBS": "5",
         "CARGO_TERM_COLOR": "never",
-        "PDRS_CARGO_SLOT_N": "2",
+        "PDRS_CARGO_SLOT_N": str(args.cargo_slots),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_TERMINAL_PROMPT": "0",
@@ -159,10 +162,18 @@ def main():
         "GIT_ALLOW_PROTOCOL": "file",
         "LANG": "en_US.UTF-8",
     }
+    clang_include = None
+    if args.clang_system_include is not None:
+        require(args.clang_system_include.is_absolute(), "Clang system include must be absolute")
+        include = args.clang_system_include.resolve(strict=True)
+        require(include.is_dir() and (include / "stddef.h").is_file(), "Invalid Clang system include")
+        env["BINDGEN_EXTRA_CLANG_ARGS"] = shlex.join(["-isystem", str(include)])
+        clang_include = {"path": str(include), "stddefSha256": digest(include / "stddef.h")}
     write_json(out / "executables.json", {
         "control": str(control), "controlSha256": digest(control),
         "cargo": shutil.which("cargo", path=env["PATH"]),
         "git": shutil.which("git", path=env["PATH"]),
+        "clangSystemInclude": clang_include,
         "scope": "install/update only; skills and default sidecar NOT_RUN",
     })
     counter = 0

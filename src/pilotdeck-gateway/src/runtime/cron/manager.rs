@@ -2147,16 +2147,13 @@ pub struct CronManager {
     zone_cache: Arc<CronZoneResolverCache>,
     gateway: Mutex<Option<Arc<dyn CronAgentGateway>>>,
     state: Mutex<ManagerState>,
-    /// #2494: the one shared stop gate. TS has a single stopper (the
-    /// teardown); this embedding adds the switch machine's S1 face, and
-    /// both paths land here — the face through `CronStopHandle::stop_once`
-    /// (its own once-flag only governs that handle), the teardown through
-    /// the automation bundle's provider stop. Whichever runs first owns
-    /// the stop; the later one is a no-op `Ok`, including after a *failed*
-    /// first attempt (the "flag set even by failed stop" intent the face
-    /// pins, lifted onto the shared object so the teardown cannot retry a
-    /// stop the face already attempted). A later `start` re-arms it, the
-    /// same lifecycle the `started` flag keeps.
+    /// #2494: shared latch for the synchronous legacy `stop` contract.
+    /// Plain CronStopHandle instances and direct legacy callers observe one
+    /// attempt, including a failed attempt; `start` re-arms this latch.
+    /// Native finalization instead uses one shared native CronStopHandle for
+    /// S1 and provider teardown. That handle serializes `stop_and_drain` and
+    /// retains its failure, so a second native stop cannot hide a failed drain.
+    /// The legacy no-op-after-failure rule must not suppress native draining.
     stop_attempted: AtomicBool,
     /// The weak self the runtimes' `sharedActiveRunCount` closures sum
     /// through (CronManager.ts:188's `activeRunCount: () =>
@@ -2354,6 +2351,9 @@ impl CronManager {
     }
 
     /// Native opt-in finalization; legacy stop retains its original TS contract.
+    /// Call through the shared native CronStopHandle: it serializes both entry
+    /// points and caches the drain result. Do not mix native and legacy stop
+    /// adapters for the same manager generation.
     pub fn stop_and_drain(
         &self,
         budget: Duration,

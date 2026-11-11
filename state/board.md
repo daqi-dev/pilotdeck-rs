@@ -5889,3 +5889,8 @@ a7d22018a 同头 fmt/严格clippy/四bin通过；6508 Gateway库项全覆盖分�
 
 
 12:3x增记：96ea同头fmt/严格clippy/四bin与定向检查全通过，CLI58PASS/2ignored、guard53、transport41/1、Notebook公开3及helper3、媒体alias8均有原件。8渠道生产入站→模型→出站→reload→停机全PASS；普通历史导出恢复双侧10真实请求与重启文件审计通过，仍是诊断不是正式session门。5补充HTTP入口实测合同MATCH，裸debug缺默认技能原FAIL保留，独立安装形状包general10/builtin32通过但真实源码安装另验。四host短采集均CAPTURED，正式224 jobs尚缺220，未假报全量。图片15格两编码FAIL定位MuPDF/libvips JPEG ABI污染，已收链接候选；主线固定接收fe497的57路径，真三方保全双方增量与R13编号冲突证据。下一步新头cb8编译→真实媒体/source-install→同头完整渠道/host/retirement/cold，持续独立双谱系增量收敛。旧FAIL和此前自动安全审查拒绝的未运行项保留，本机无构建。
+
+
+### 2026-11-11 13:15 CST · 真实安装与媒体通过，继续共同头验收
+
+5ab669add严格检查/四bin完成；完整Gateway库分片6531项为6271PASS/1FAIL/259ignored，唯一FAIL是三方接main后的AO负控fixture摘要漏同步，已接精确摘要修复并保留原FAIL。CLI58PASS/2ignored、transport41PASS/1ignored、builtin8PASS、FunASR1PASS；guard直接跑遗漏CARGO的旧51/2失败保留，通过正式cargo入口同头53PASS（今后guard只用cargo test入口）。真实媒体15格全PASS且JPEG符号不外泄；旧1c→5ab两代公开update真实编译原子切换通过，native安装消费者33skills/109资产/实际默认sidecar与退出清理全通过，Docker更新拒绝和Linuxcomm截断误判旧失败均保留。收Slack失败auth清理、Cron原生粘性失败测试、安装观察修复和19+13正式消费者第一批；宿主清理修复7负例及2真实Docker情况通过，尚待新头正式采集与两家复核。150/四host/session/冷切与冻结登记未闭合，不标完整替换。所有测试仅cb8，原正本/前端/快照不动；下一步新共同头编译、渠道与HTTP正式生产器、同头正式全域验收。
