@@ -2041,8 +2041,18 @@ class ApparatusInputs(unittest.TestCase):
             library = root / profile / 'libvips.so.42'
             library.parent.mkdir()
             library.write_bytes(b'original native library')
-            for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
-                (root / program).write_bytes(b'executable runtime path: ' + profile.encode())
+            native = Path(sys.executable).resolve().read_bytes()
+            programs = ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway', 'pilotdeck-agent-loop-sidecar')
+            def executable(program, contents):
+                (root / program).write_bytes(contents)
+                (root / program).chmod(0o700)
+            def binary_receipt():
+                common.save(root / 'manifest.json', [
+                    {'path': name, 'sha256': common.digest(root / name),
+                     'bytes': (root / name).stat().st_size} for name in programs])
+            for program in programs:
+                executable(program, native + (profile.encode() if program != programs[-1] else b''))
+            binary_receipt()
             rows = [{'path': str(library.relative_to(root)), 'sha256': common.digest(library),
                      'bytes': library.stat().st_size}]
             manifest = root / 'libraries.json'
@@ -2061,10 +2071,12 @@ class ApparatusInputs(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unregistered runtime files'):
                 check()
             extra.unlink()
-            (root / 'pilotdeck').write_bytes(b'wrong profile pilotdeck-libs-' + b'b' * 64)
+            executable('pilotdeck', native + b'wrong profile pilotdeck-libs-' + b'b' * 64)
+            binary_receipt()
             with self.assertRaisesRegex(ValueError, 'binary runtime profile'):
                 check()
-            (root / 'pilotdeck').write_bytes(profile.encode())
+            executable('pilotdeck', native + profile.encode())
+            binary_receipt()
             outside = root / 'replacement'
             outside.write_bytes(original)
             library.unlink()
@@ -2086,8 +2098,25 @@ class ApparatusInputs(unittest.TestCase):
             source['files'] = []
             with self.assertRaisesRegex(ValueError, 'missing manifest binding'):
                 check()
-            for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
-                (root / program).write_bytes(b'legacy binary without native images')
+            for program in programs:
+                executable(program, native)
+            binary_receipt()
+            self.assertEqual(check(), [])
+            executable('pilotdeck-control', b'')
+            binary_receipt()
+            with self.assertRaisesRegex(ValueError, 'invalid native executable'):
+                check()
+            executable('pilotdeck-control', b'legacy binary without native images')
+            binary_receipt()
+            with self.assertRaisesRegex(ValueError, 'native executable format'):
+                check()
+            executable('pilotdeck-control', native)
+            binary_receipt()
+            executable('pilotdeck-control', native + b'modified after receipt')
+            with self.assertRaisesRegex(ValueError, 'binary hash or size'):
+                check()
+            executable('pilotdeck-control', native)
+            binary_receipt()
             self.assertEqual(check(), [])
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
@@ -4363,6 +4392,126 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(ungated['gated'], [])
             self.assertIn('/feishu/webhook', ungated['unhit'])
             self.assertEqual(ungated['status'], 'BLOCKED')
+
+
+class RetirementLiveFaces(unittest.TestCase):
+    """Behavior controls for the new, independently failing evidence faces."""
+
+    def setUp(self):
+        self.d = _load('review_live_session_domain', common.SCRIPT / 'session_domain.py')
+        self.native = _load('review_live_retirement_native', common.SCRIPT / 'retirement_native.py')
+        self.entries = _load('review_live_retirement_entries', common.SCRIPT / 'retirement_entries.py')
+        self.cold = _load('review_live_retirement_cold', common.SCRIPT / 'retirement_cold.py')
+
+    def test_source_inventory_cannot_hide_tracked_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', tmp, *args], stderr=subprocess.DEVNULL)
+            git('init', '-q')
+            item = root / 'input'; item.write_bytes(b'ordinary source\n')
+            (root / 'link').symlink_to('input')
+            git('add', '--', 'input', 'link')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+            rows = [{'path': 'input', 'sha256': common.digest(item), 'bytes': item.stat().st_size}]
+            source = {'head': git('rev-parse', 'HEAD').decode().strip(), 'files': rows}
+            self.native.verify_build_tree(self.d, root, source)
+            with self.assertRaisesRegex(self.d.EvidenceError, 'omitted or added'):
+                self.native.verify_build_tree(self.d, root, {**source, 'files': []})
+            with self.assertRaisesRegex(self.d.EvidenceError, 'tracked file bytes'):
+                self.native.verify_build_tree(self.d, root, {**source, 'files': [{**rows[0], 'sha256': '0'*64}]})
+            for setting, reset in [('--skip-worktree', '--no-skip-worktree'),
+                                   ('--assume-unchanged', '--no-assume-unchanged')]:
+                git('update-index', setting, 'input')
+                item.write_bytes(b'changed source\n')
+                self.assertFalse(git('status', '--porcelain', '--untracked-files=no'))
+                with self.assertRaisesRegex(self.d.EvidenceError, 'hides or overrides'):
+                    self.native.verify_build_tree(self.d, root, source)
+                item.write_bytes(b'ordinary source\n')
+                git('update-index', reset, 'input')
+
+    def test_ts_scenario_failure_and_missing_bytes_are_not_covered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = {}
+            for side in ('ts', 'native'):
+                row = {'label':'round-01','folder':str(root/side),'scenarios':[]}
+                for scene in self.native.SESSION_SCENARIOS:
+                    folder = root/side/'scenarios'/scene;folder.mkdir(parents=True)
+                    files = {}
+                    for name in ('frames.jsonl','result.json'):
+                        file = folder/name;file.write_text('{}\n');files[name]=common.digest(file)
+                    row['scenarios'].append({'case':scene,'folder':str(folder),'files':files,'driverExitCode':0})
+                rows[side] = row
+            with patch.object(self.native,'raw_session_input',return_value={}), \
+                    patch.object(self.native,'session_observations',return_value={'observed':True}):
+                _,_,executed,problems=self.native.session_faces(self.d,[rows['ts']],[rows['native']])
+                self.assertFalse(problems)
+                self.assertEqual(executed['ts']['permission'],['round-01'])
+                rows['ts']['scenarios'][0]['driverExitCode']=1
+                (root/'ts/scenarios/reconnect/frames.jsonl').unlink()
+                _,_,executed,problems=self.native.session_faces(self.d,[rows['ts']],[rows['native']])
+                self.assertEqual(executed['ts']['permission'],[])
+                self.assertEqual(executed['ts']['reconnect'],[])
+                self.assertEqual(executed['native']['permission'],['round-01'])
+                self.assertEqual({(p['side'],p['case'],p['rule']) for p in problems},
+                                 {('ts','permission','SESSION_SCENARIO_EVIDENCE'),('ts','reconnect','SESSION_SCENARIO_EVIDENCE')})
+
+    def test_every_entry_needs_a_source_even_if_the_union_is_complete(self):
+        path=common.SCRIPT/'fixtures/retirement-entry-inventory.json'
+        inventory=self.d.read(path)
+        methods=[r['id'].partition(':')[2] for r in inventory['entries'] if r['id'].startswith('gateway.method:')]
+        with patch.object(self.entries,'sha',side_effect=lambda p: inventory['sources'].get(str(p),'fixture')):
+            rows,_=self.entries.expected_rows(self.d,Path('.'),methods)
+            self.assertEqual(len(rows),150)
+            row=next(r for r in inventory['entries'] if r['id'].startswith('gateway.method:'))
+            row['sources']=[]
+            with patch.object(self.d,'read',return_value=inventory), \
+                 self.assertRaisesRegex(self.d.EvidenceError,'every entry requires'):
+                self.entries.expected_rows(self.d,Path('.'),methods)
+
+    def test_always_on_needs_final_reaped_bytes_not_a_live_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);folder=root/'home/always-on/projects/project';folder.mkdir(parents=True)
+            hist=folder/'run-history.jsonl';events=folder/'events.jsonl'
+            hist.write_text('{"result":"no_plan"}\n');events.write_text('{"event":"discovery_started"}\n')
+            raw={'providerRequests':[{'path':'/v1/chat/completions','body':{'stream':True}}],
+                 'background':{'snapshotAfterReap':True,'runHistory':hist.read_text(),'events':events.read_text(),
+                               'sha256':{'runHistory':common.digest(hist),'events':common.digest(events)}}}
+            self.assertTrue(self.entries.raw_background(self.d,root,'alwayson',raw))
+            with events.open('a') as stream:stream.write('{"event":"no_plan"}\n')
+            self.assertFalse(self.entries.raw_background(self.d,root,'alwayson',raw))
+            raw['background']['events']=events.read_text();raw['background']['sha256']['events']=common.digest(events)
+            self.assertTrue(self.entries.raw_background(self.d,root,'alwayson',raw))
+            raw['background']['snapshotAfterReap']=False
+            self.assertFalse(self.entries.raw_background(self.d,root,'alwayson',raw))
+
+    def test_outcome_nonzero_and_unreadable_report_are_distinct(self):
+        report = {'command':'check','status':'PASS','violations':[],'violationsCount':0}
+        self.assertEqual(self.native.classify_outcome(0,report),('PASS',None))
+        self.assertEqual(self.native.classify_outcome(0,{}),('FAIL','OUTCOME_EXECUTION_OR_UNREADABLE_REPORT'))
+        self.assertEqual(self.native.classify_outcome(1,None),('FAIL','OUTCOME_RULE_VIOLATION'))
+        self.assertEqual(self.native.classify_outcome(2,None),('BLOCKED','OUTCOME_INPUT_REJECTED'))
+        for code,report in ((0,None),(-15,{}),(False,{}),(74,{})):
+            self.assertEqual(self.native.classify_outcome(code,report),('FAIL','OUTCOME_EXECUTION_OR_UNREADABLE_REPORT'))
+
+    def test_cold_cron_never_normalizes_a_changed_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);prior,after,project=(root/name for name in ('prior','after','project'))
+            task='home/cron/projects/key/tasks.json'; marker='home/cron/store-migration-v1.json'
+            for location in (prior,after):
+                path=location/task;path.parent.mkdir(parents=True)
+                path.with_name('.cwd').write_text(str(project)+'\n')
+            before=b'{"tasks":[{"taskId":"same","message":"preserve"}]}'
+            (prior/task).write_bytes(before);(after/task).write_bytes(before+b'\n')
+            marker_body={'version':1,'completedAt':'2026-11-10T23:02:17.100Z'}
+            (after/marker).write_text(json.dumps(marker_body,indent=2)+'\n')
+            kwargs=([task,marker],{task:{}},{marker:{'jsonValue':marker_body}},prior,after,project,lambda p:p)
+            self.assertEqual(self.cold.exact_cron_startup_delta(self.d,*kwargs)['trailingLfOnly'],[task])
+            (after/task).write_bytes(before.replace(b'preserve',b'mutated')+b'\n')
+            with self.assertRaisesRegex(self.d.EvidenceError,'more than a single trailing LF'):
+                self.cold.exact_cron_startup_delta(self.d,*kwargs)
 
 
 if __name__ == '__main__':

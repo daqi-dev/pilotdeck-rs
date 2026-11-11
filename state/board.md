@@ -5876,3 +5876,8 @@ cb8 clean d9bddc855 完成 fmt/严格 clippy/四 bin/库与 builtin 编译；模
 ### 2026-11-11 07:49 CST · 两小时交接后继续，cb8 同头收口
 
 共同固定1c5302b05已在cb8通过fmt/严格clippy/四bin及全部指定测试编译，源码保护实跑53PASS；整Gateway/CLI/transport/builtin/FunASR回归正在隔离容器运行。1c四host原known-final-first/model诊断12轮原三表与真实provider通过（5+5+1+1），非全72×5；SMS/WeCom实际两轮收发/禁启reload/停机通过，原默认browser MCP失败exec残留使无TS见证不能计通过，三builtin禁用profile复跑中。八组DeepSeek/GLM独立评审按同1c输入并行，已发现source-install probe依赖漏登、图片无界读取、TS参考侧漏判、alwayson快照竞态、完整源码见证不足及宿主负控字段漂移，分给原三持有人准备私有候选；主树产品文件保持1c冻结直到审阅完。runtimeLibraries helper的NameError和349负控锚点重复已定位，旧FAIL保留，下一稳定批修复。root持共享入口/安装兼容；core持host/probe/依赖见证；acceptance持session/retirement/cold/Linux；channels持图片/渠道。所有编译测试仅cb8，cargo每机≤4，未动用户服务/原统一前端树/快照；Draft2786远端仍59e，main固定330542e0。完整150/四host/会话全域/冷切/冻结重登记与最终两家评审仍未闭合，不宣称完整替换。证据主仓_tmp/20261111-gateway-closeout及三个finish包；下一步接收本轮实测修复、同头复验、双谱系增量收敛后正式采集，交接后持续推进。
+
+
+### 2026-11-11 10:15 CST · 共同修复批次交接后继续
+
+Draft2786已推d1eddc025；cb8 clean1c真实全回归Gateway6240PASS/9FAIL/258ignored、CLI56PASS/2ignored、transport41PASS/1ignored、builtin5PASS、FunASR1PASS，原件保留，不能合并计新头成绩。三渠道同exe单测通过；localhost.解析失败用容器回环hosts同exe通过；四信号失败实证来自Docker/glibc继承SIG32，固定TS同样保留，已收只修合同断言的候选；modulehost并发普查失败单跑通过。root接收模型多模态装配、截断GIF严格加载、媒体源文件读取边界、安装代完整性、host/retirement源码与运行库绑定及Linux清理判据修复，待共同头编译/两家复核/冻结登记。core持host全四格，channels持真实图片消费者与19渠道，acceptance此前一轮被自动安全审查阻止，已停止该动作且不重试/改写绕过，先核影响并继续独立普通业务测试。所有编译测试仅cb8；共享源root独占，原统一前端树和快照未动。下一步固定本批→cb8同头严格检查/完整回归→正式host/session/150入口/冷切；完整替换仍未通过。

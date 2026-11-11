@@ -6796,22 +6796,39 @@ class MissingKernelBranchEvidence(ValueError):
     """A requested kernel branch was not actually exercised."""
 
 
-def kernel_lease_branch_accepted(rows,branch):
+def kernel_lease_evidence(rows,label):
     matches=[row for row in rows if row.get('mode')=='kernel-lease']
     if len(matches)!=1:
-        raise MissingKernelBranchEvidence(f'{branch}: missing or duplicate lease control result')
+        raise MissingKernelBranchEvidence(f'{label}: missing or duplicate lease control result')
     row=matches[0]
-    observed=row.get('branches',{}).get(branch)
-    if (row.get('positiveRestored') is not True or row.get('branchControls') not in ('PASS','FAIL')
-            or not isinstance(observed,dict) or type(observed.get('accepted')) is not bool
-            or 'reason' not in observed):
+    proof=row.get('parentProof')
+    if (not isinstance(proof,dict) or any(type(proof.get(k)) is not int or proof[k]<=0
+                                          for k in ('parentPid','treeLockInode'))
+            or row.get('positiveRestored') is not True or row.get('branchControls') not in ('PASS','FAIL')
+            or type(row.get('passed')) is not bool):
+        raise MissingKernelBranchEvidence(f'{label}: no valid real parent source lease')
+    return row
+
+
+def kernel_lease_branch_accepted(rows,branch):
+    row=kernel_lease_evidence(rows,branch)
+    branches=row.get('branches')
+    observed=branches.get(branch) if isinstance(branches,dict) else None
+    if not isinstance(observed,dict) or type(observed.get('accepted')) is not bool or 'reason' not in observed:
         raise MissingKernelBranchEvidence(f'{branch}: no valid real parent-lease injection result')
     accepted=(observed['accepted'] is True and observed['reason'] is None and row.get('passed') is False)
     return accepted, f'{branch}: accepted={observed["accepted"]!r}; reason={observed["reason"]!r}'
 
 
+def kernel_lease_gate_removed(rows):
+    row=kernel_lease_evidence(rows,'gate')
+    if any(type(row.get(key)) is not bool for key in ('unownedPassed','foreignPassed')):
+        raise MissingKernelBranchEvidence('gate: both unowned and wrong-owner controls must execute')
+    return match(rows,'kernel-lease',{'unownedPassed':True,'foreignPassed':True})
+
+
 JUDGES = {
-    'kernel-source-lease-gate-removed':('kernel-lease',lambda rows:match(rows,'kernel-lease',{'unownedPassed':True,'foreignPassed':True}),False,()),
+    'kernel-source-lease-gate-removed':('kernel-lease',kernel_lease_gate_removed,False,()),
     'kernel-source-lease-cleanup-pending-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'cleanupPending'),False,()),
     'kernel-source-lease-token-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'token'),False,()),
     'kernel-source-lease-timestamp-guard-removed':('kernel-lease',lambda rows:kernel_lease_branch_accepted(rows,'timestamp'),False,()),

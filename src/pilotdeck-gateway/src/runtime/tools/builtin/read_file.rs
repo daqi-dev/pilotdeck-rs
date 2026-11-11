@@ -3,7 +3,7 @@
 //! classification, dedup state and write snapshots. PDF page rendering uses
 //! the same MuPDF JPEG settings as the fixed TS implementation.
 use super::{
-    ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join,
+    ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join, js_path,
     js_value_string, lower, normalize, number, object, os_path, read_file_bytes,
     record_write_snapshot, resolve_workspace_path, schema, stat, string, text, tool_error, truthy,
 };
@@ -19,6 +19,8 @@ const MAX_PDF_PAGES_PER_REQUEST: u64 = 20;
 // The fixed TS read_file uses a separate automatic-read threshold.
 const AUTO_PDF_MAX_PAGES: i32 = 10;
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+// Input cap is independent of the model's output-image byte budget.
+const MAX_MEDIA_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 const PDF_EXTRACT_SIZE_THRESHOLD: u64 = 3 * 1024 * 1024;
 /// Node's `createReadStream` hands readline chunks; the exact size is not part
 /// of the observable result. Keep the retained buffer bounded and well below
@@ -465,6 +467,78 @@ fn read_state_set(context: &ToolRunContext, key: JsString, value: JsValue) {
         .insert(key, value);
 }
 
+// Media decoding is synchronous. Check the opened file type and cap the
+// actual bytes read so oversized, changing, FIFO, and device paths cannot hang
+// the executor or allocate without bound. Valid in-workspace symlinks are
+// resolved and re-authorized; O_NOFOLLOW closes the final-path swap window.
+#[cfg(unix)]
+fn read_media_bounded(
+    context: &ToolRunContext,
+    resolved: &ResolvedPath,
+) -> Result<Vec<u8>, ToolError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let real = std::fs::canonicalize(os_path(&resolved.absolute))
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let allow_outside = context
+        .fields
+        .get("currentPermissionDecision")
+        .and_then(|decision| decision.get("type"))
+        .and_then(JsValue::as_string)
+        .is_some_and(|kind| kind.equals_str("allow"));
+    resolve_workspace_path(&js_path(&real), context, true, allow_outside)?;
+    let metadata = std::fs::symlink_metadata(&real)
+        .map_err(|error| failed(error, "stat", &resolved.absolute))?;
+    if !metadata.file_type().is_file() {
+        return Err(tool_error(
+            "invalid_tool_input",
+            "Image or PDF input must be a regular file.",
+        ));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+        .open(&real)
+        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| failed(error, "stat", &resolved.absolute))?;
+    if !opened.is_file() {
+        return Err(tool_error(
+            "invalid_tool_input",
+            "Image or PDF input must be a regular file.",
+        ));
+    }
+    if opened.len() > MAX_MEDIA_SOURCE_BYTES {
+        return Err(tool_error(
+            "result_too_large",
+            format!("Image or PDF input exceeds the {MAX_MEDIA_SOURCE_BYTES} byte source limit."),
+        ));
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take(MAX_MEDIA_SOURCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| failed(error, "read", &resolved.absolute))?;
+    if bytes.len() as u64 > MAX_MEDIA_SOURCE_BYTES {
+        return Err(tool_error(
+            "result_too_large",
+            format!("Image or PDF input exceeds the {MAX_MEDIA_SOURCE_BYTES} byte source limit."),
+        ));
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(unix))]
+fn read_media_bounded(
+    _context: &ToolRunContext,
+    _resolved: &ResolvedPath,
+) -> Result<Vec<u8>, ToolError> {
+    Err(tool_error(
+        "invalid_tool_input",
+        "Image or PDF input is not supported on this platform.",
+    ))
+}
+
 fn image(
     input: &JsValue,
     context: &ToolRunContext,
@@ -519,8 +593,7 @@ fn image(
         .and_then(|value| value.get("imageDetail"))
         .and_then(JsValue::as_string)
         .cloned();
-    let bytes = std::fs::read(os_path(&resolved.absolute))
-        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let bytes = read_media_bounded(context, resolved)?;
     match pilotdeck_image::prepare(&bytes, mime_type, max_image_bytes) {
         Ok((image, output_mime)) => {
             read_state_set(
@@ -670,8 +743,7 @@ fn pdf(
     }
     // TS reads and counts before modality checks, including requests for a
     // range that the current model cannot render.
-    let bytes = std::fs::read(os_path(&resolved.absolute))
-        .map_err(|error| failed(error, "open", &resolved.absolute))?;
+    let bytes = read_media_bounded(context, resolved)?;
     let page_count = pdf_page_count(&bytes);
     let page_value = page_count.map_or(JsValue::Undefined, |count| JsValue::Number(count as f64));
     let page_suffix = page_count.map_or_else(String::new, |count| format!(", {count} pages"));

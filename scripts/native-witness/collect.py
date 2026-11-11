@@ -632,6 +632,10 @@ def wait_ready(tracer, folder, port, deadline):
         time.sleep(0.01)
 
 
+def prepare_session_control(control, provider_required, case, index, plan, run_id):
+    control.prepare(case, index, plan, run_id, require_provider=case in provider_required)
+
+
 def fixture_provider_handler(requests):
     """The original isolated model endpoint shared by the host profiles."""
     class Provider(http.server.BaseHTTPRequestHandler):
@@ -722,8 +726,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                                              registry_on=(registry == 'on')) \
         if session_domain else None
     if control is not None:
-        control.prepare(cases[0], 1, stimuli.plan(cases[0]), 'run-01',
-                        require_provider=cases[0] in provider_required)
+        prepare_session_control(control, provider_required, cases[0], 1, stimuli.plan(cases[0]), 'run-01')
 
     Provider = fixture_provider_handler(requests)
 
@@ -809,8 +812,7 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                             # Relay the frozen sidecar plan between cases:
                             # sidecar N spawns during submit N, so it freezes
                             # case N's plan at its own startup (plan.md §1).
-                            control.prepare(case, index, plan['stimulus'], run_id,
-                                            require_provider=case in provider_required)
+                            prepare_session_control(control, provider_required, case, index, plan['stimulus'], run_id)
                         client.send({'type': 'request', 'id': request_id, 'method': 'submit_turn', 'params': {
                             'projectKey': str(project), 'sessionKey': key, 'runId': run_id,
                             'channelKey': 'session-domain', 'message': f'[native-witness:{case}] controlled wait',

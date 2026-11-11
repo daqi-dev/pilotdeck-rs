@@ -949,6 +949,7 @@ async fn start_assembly(
                         }
                     }
                 }
+                sdk_model::apply_model_multimodal(&mut config, model.providers.as_ref());
                 let automation = session_overrides.automation(&context.session_key);
                 if let Some(automation) = &automation {
                     config.insert("cwd".into(), automation.cwd.to_string_lossy().as_ref().into());

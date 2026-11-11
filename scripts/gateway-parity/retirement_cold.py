@@ -70,11 +70,20 @@ import atexit
 import shutil
 
 atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+from datetime import datetime
 import hashlib
+import json
+import re
 
 
 PHASES = ('ts-seed', 'rust-write', 'ts-readback', 'rust-again', 'rust-final-read')
 ENGINES = ('ts', 'rust', 'ts', 'rust', 'rust')
+CRON_ROLLBACK_DIFF = ('A8.6-COLD-TS-CRON-MIGRATION-001.md', 'd0cb15cd2e9b82721837c0555eb1194191371935291e285ab05fefdd3a27bf93')
+CRON_TS_SOURCES = {
+    'src/cron/runtime/CronManager.ts': 'c7c4fe74b4a916f5cc159ad5f1119482055d3a3d9355e773a409c71a8c93089b',
+    'src/cron/runtime/CronProjectStorageProvider.ts': '380e121ec3c393848e375be23faf2ab0d9d6a08550535c31bec34c6a4e6dade0',
+    'src/cron/storage/CronStoreMigration.ts': 'a6c8923632f392e69a0b7fa32cbbcabe134feccb0d50ee576ac8e2108f7757d2',
+}
 
 
 def sha(path):
@@ -82,9 +91,38 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def verify_cold(d, native, folder):
-    same_json = d._load("native_evidence", d.SCRIPT / "native_evidence.py").same_json
+def exact_cron_startup_delta(d, changes, before, after, original, readback, project, bind):
+    """Narrowly classify the two known TS startup effects using original bytes."""
+    marker = 'home/cron/store-migration-v1.json'
+    d.require(marker in changes and marker not in before and len(changes) <= 2,
+              'COLD_DURABILITY', 'expected a new Cron v1 marker and at most one task serialization change')
+    data = after[marker].get('jsonValue')
+    stamp = data.get('completedAt') if isinstance(data, dict) else None
+    d.require(isinstance(data, dict) and list(data) == ['version', 'completedAt']
+              and type(data['version']) is int and data['version'] == 1 and isinstance(stamp, str)
+              and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z', stamp),
+              'COLD_DURABILITY', 'invalid TS Cron startup migration marker')
+    datetime.fromisoformat(stamp)
+    d.require(bind(readback / marker).read_bytes() == (json.dumps(data, indent=2) + '\n').encode(),
+              'COLD_DURABILITY', 'migration marker differs from canonical TS serialization')
+    paths = [key for key in changes if key != marker]
+    for path in paths:
+        parts = Path(path).parts
+        d.require(len(parts) == 5 and parts[:3] == ('home', 'cron', 'projects') and parts[-1] == 'tasks.json'
+                  and path in before,
+                  'COLD_DURABILITY', 'only the existing project Cron task store may be normalized')
+        cwd = Path(path).with_name('.cwd')
+        d.require(bind(original / cwd).read_bytes() == bind(readback / cwd).read_bytes()
+                  == (str(project) + '\n').encode(),
+                  'COLD_DURABILITY', 'task store does not belong to the same staged project')
+        old = bind(original / path).read_bytes()
+        new = bind(readback / path).read_bytes()
+        d.require(bool(old) and not old.endswith(b'\n') and new == old + b'\n',
+                  'COLD_DURABILITY', 'task store changed by more than a single trailing LF')
+    return {'marker': marker, 'trailingLfOnly': paths, 'allPriorDataRetained': True}
 
+
+def verify_cold(d, native, folder, baseline):
     require = d.require
     evidence = {}
 
@@ -107,6 +145,9 @@ def verify_cold(d, native, folder):
             'COLD_SOURCE', 'cold-cut output belongs to a different source/binary build')
     paths = {row['path']: row['sha256'] for row in d.read(native.manifest)}
     require(build['binaries'] == paths, 'COLD_SOURCE', 'cold-cut binary ledger differs from the fixed build')
+    libraries = d.common.verify_native_runtime_libraries(native.source, native.manifest)
+    require(build.get('runtimeLibraries') == native.source.get('runtimeLibraries'), 'COLD_SOURCE',
+            'cold-cut runtime library manifest differs from the fixed build')
     probe = d.ROOT / 'src/pilotdeck-gateway/tests/fixtures/native-cold-switch/probe.py'
     driver = probe.with_name('driver.mts')
     shared = probe.parent.parent / 'native-business-loop/probe.py'
@@ -121,6 +162,9 @@ def verify_cold(d, native, folder):
     require(run['exitCodes'] == {'positive': 0, 'real-drain-failure': 2},
             'COLD_EXECUTION', 'normal and real drain-failure exits are not the registered pair')
     build_receipt_sha = evidence[str(folder / 'measure/build-receipt.json')]
+    d._retirement_baseline_revision(baseline)
+    ts_dist = sha(baseline / 'dist/src/cli/pilotdeck.js')
+    ts_gateway_source = sha(baseline / 'src/gateway/server/GatewayServer.ts')
     for label, flags in [('positive', (True, False, False)), ('real-drain-failure', (False, True, True))]:
         result = read(f'measure/{label}/result.json')
         provenance = read(f'measure/{label}/provenance.json')
@@ -130,13 +174,24 @@ def verify_cold(d, native, folder):
                 and result['binariesUnchanged'] is True and result['noSnapshotRestorePerformed'] is True
                 and result['sourceReceiptSha256'] == build_receipt_sha
                 and provenance['sourceReceipt']['sha256'] == build_receipt_sha
-                and provenance['driverSha256'] == sources[str(driver)],
+                and provenance['driverSha256'] == sources[str(driver)]
+                and provenance['tsDistSha256'] == ts_dist and provenance['tsGatewaySourceSha256'] == ts_gateway_source
+                and [provenance['nodeEnvironment']['versions'].get(key) for key in ('node', 'icu', 'uv')]
+                == ['22.22.0', '78.2', '1.52.1'],
                 'COLD_EXECUTION', f'{label} results do not establish their owned execution')
         for name in ('gateway', 'sidecar'):
             expected = paths['pilotdeck-gateway' if name == 'gateway' else 'pilotdeck-agent-loop-sidecar']
             snapshot = folder / 'measure' / label / 'binaries' / name
             require(provenance['binaries'][name]['sha256'] == expected and (bind(snapshot) and evidence[str(snapshot)] == expected),
                     'COLD_SOURCE', f'{label} {name} snapshot differs from fixed binary')
+        snapshots = provenance.get('runtimeLibraries', [])
+        require(len(snapshots) == len(libraries), 'COLD_SOURCE', f'{label} runtime snapshots incomplete')
+        for copied, library in zip(snapshots, libraries):
+            expected_path = folder / 'measure' / label / 'binaries' / library['path']
+            require(copied == {**library, 'source': str(native.manifest.parent / library['path']),
+                               'snapshot': str(expected_path)} and bind(expected_path).stat().st_size == library['bytes']
+                    and evidence[str(expected_path)] == library['sha256'],
+                    'COLD_SOURCE', f'{label} runtime snapshot differs: {library["path"]}')
 
     def snapshot(relative, path_prefix):
         document = read(relative)
@@ -171,20 +226,22 @@ def verify_cold(d, native, folder):
     # a write made during readback. The original fixture tests full JSON value
     # preservation and supplies the retained bytes; this report stays BLOCKED.
     readback = read('measure/positive/ts-readback/readback-effects.json')
-    marker = 'home/cron/store-migration-v1.json'
     require(readback['allPriorValuesPreserved'] is True and readback['noPathsDeleted'] is True
             and sorted(change['path'] for change in readback['changes']) == mutations,
             'COLD_DURABILITY', 'TS readback effect ledger does not match archived bytes')
-    for path in mutations:
-        new = after[path].get('jsonValue')
-        if path == marker:
-            require(path not in before and isinstance(new, dict) and type(new.get('version')) is int
-                    and new['version'] == 1 and isinstance(new.get('completedAt'), str),
-                    'COLD_DURABILITY', 'invalid TS Cron startup migration marker')
-        else:
-            require(path.startswith('home/cron/') and path.endswith('/tasks.json') and path in before
-                    and new is not None and same_json(before[path].get('jsonValue'), new),
-                    'COLD_DURABILITY', f'rollback changed a durable value: {path}')
+    registered = False
+    startup = None
+    if mutations:
+        require(all(sha(baseline / name) == digest for name, digest in CRON_TS_SOURCES.items()),
+                'COLD_SOURCE', 'fixed TS Cron source differs from the recorded policy')
+        original = folder / 'measure/positive/rust-write/durable-files'
+        consumed = folder / 'measure/positive/ts-readback/durable-files'
+        startup = exact_cron_startup_delta(d, mutations, before, after, original, consumed,
+                                           folder / 'measure/positive/project', bind)
+        name, digest = CRON_ROLLBACK_DIFF
+        registered_diff = d.ROOT / 'specs/gateway-parity/diffs' / name
+        registered = (registered_diff.is_file() and not registered_diff.is_symlink()
+                      and sha(registered_diff) == digest and d.frozen_check()['exitCode'] == 0)
     fault_prefix = 'measure/real-drain-failure'
     blocked = read(fault_prefix + '/blocked-next-writer.json')
     upgrade = read(fault_prefix + '/rust-write/survivor-upgrade.json')
@@ -199,7 +256,9 @@ def verify_cold(d, native, folder):
     snapshot(fault_prefix + '/rust-write/before-failed-drain.json', fault_prefix)
     require(all(sha(Path(path)) == digest for path, digest in evidence.items()), 'COLD_EVIDENCE',
             'cold-cut originals changed during verification')
-    status, _ = d.common.aggregate_status('BLOCKED' if mutations else 'PASS')
-    return {'status': status, 'rule': 'COLD_TS_STARTUP_WRITE_UNAPPROVED' if mutations else None,
+    status, _ = d.common.aggregate_status('BLOCKED' if mutations and not registered else 'PASS')
+    return {'status': status, 'rule': ('COLD_TS_STARTUP_WRITE_UNAPPROVED' if not registered else
+                                      'COLD_TS_CRON_MIGRATION_REGISTERED') if mutations else None,
+            'exactStartupEffects': startup, 'registeredDifference': registered,
             'phases': list(PHASES), 'realDrainControl': 'PASS', 'durableReadbackChanges': mutations,
             'inputFilesSha256': evidence, 'sourceHead': run['head']}

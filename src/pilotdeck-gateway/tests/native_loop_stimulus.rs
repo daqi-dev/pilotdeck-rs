@@ -223,6 +223,10 @@ fn executable_native_loop_stimulus() {
             "#1371 bound never fabricates a completion",
             "#1371 executable bound no completion",
         ),
+        (
+            "#1371 provider-armed loop reaches real model",
+            "#1371 executable provider arm invokes real model",
+        ),
     ] {
         negative_assert!(assertion != Some(message), "{}", label);
     }

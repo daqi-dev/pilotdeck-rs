@@ -98,10 +98,6 @@ class NativeRetirement:
         self.source = domain.read(self.source_manifest)
         require(isinstance(self.source.get('files'), list) and self.source['files'], 'NATIVE_BIN_CONFIG',
                 'missing tracked source inventory in build source manifest')
-        self.registered_inputs = ('scripts/native-witness/witness.py',
-                                  'scripts/retirement-outcome-parity/check_outcome_parity.py',
-                                  'scripts/retirement-outcome-parity/ts-oracle.json',
-                                  'src/pilotdeck-gateway/tests/fixtures/native-history/subagent-bundle.json')
         self.validate_source()
         domain.common.verify_native_runtime_libraries(self.source, self.manifest)
         rows = domain.read(self.manifest)
@@ -126,22 +122,16 @@ class NativeRetirement:
 
     def validate_source(self):
         d = self.domain
-        git = ['git', '-C', str(d.ROOT)]
-        revision = subprocess.check_output([*git, 'rev-parse', 'HEAD'], text=True, timeout=15).strip()
-        tracked = subprocess.check_output([*git, 'status', '--porcelain', '--untracked-files=no'],
-                                          text=True, timeout=30)
-        d.require(revision == self.source['head'] and not tracked and sha256(self.source_manifest) == self.source_sha,
-                  'NATIVE_BIN_CONFIG', 'tracked source checkout differs from registered build source')
-        files = {row['path']: row['sha256'] for row in self.source['files']}
-        d.require(len(files) == len(self.source['files']), 'NATIVE_BIN_CONFIG', 'duplicate path in source manifest')
-        d.require(all(files.get(name) == sha256(d.ROOT / name) for name in self.registered_inputs),
-                  'NATIVE_BIN_CONFIG', 'witness, history input or outcome oracle differs from the build source')
+        d.require(sha256(self.source_manifest) == self.source_sha, 'NATIVE_BIN_CONFIG',
+                  'build source manifest changed during the suite')
+        verify_build_tree(d, d.ROOT, self.source)
 
     def validate_immutable(self):
         d = self.domain
         d.require(d.common.digest(self.manifest) == self.manifest_sha, 'NATIVE_BIN_CONFIG',
                   'candidate manifest changed during live retirement')
         self.validate_source()
+        d.common.verify_native_runtime_libraries(self.source, self.manifest)
         self.witness.native.verify_binaries({'binaries': self.identities})
 
     def exercise(self, folder, row, baseline, env, deadline, launch, scenarios, history_script):
@@ -261,6 +251,59 @@ class NativeRetirement:
                                 'receiptSha256': d.common.digest(folder / 'native-witness/receipt.json')}
         d.require(d.common.digest(config_path) == row['nativeConfig']['sha256'], 'NATIVE_BIN_CONFIG',
                   'live production config changed during round')
+
+
+def verify_build_tree(d, root, source):
+    """Bind every tracked object, including paths Git status can suppress."""
+    def git(*argv):
+        env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+        env['GIT_NO_REPLACE_OBJECTS'] = '1'
+        return subprocess.check_output(['git', '-C', str(root), *argv], env=env, timeout=30)
+
+    d.require(git('rev-parse', 'HEAD').decode().strip() == source['head']
+              and not git('status', '--porcelain', '--untracked-files=no'),
+              'NATIVE_BIN_CONFIG', 'tracked source checkout is dirty or changed HEAD')
+    idx = [part for part in git('ls-files', '-v', '-z').split(b'\0') if part]
+    d.require(all(part.startswith(b'H ') for part in idx), 'NATIVE_BIN_CONFIG',
+              'tracked index hides or overrides a worktree path')
+    tree = {}
+    for line in git('ls-tree', '-r', '-z', '--full-tree', 'HEAD').split(b'\0'):
+        if not line:
+            continue
+        metadata, name = line.split(b'\t', 1)
+        mode, kind, oid = metadata.split(b' ')
+        d.require(kind == b'blob' and mode in (b'100644', b'100755', b'120000'),
+                  'NATIVE_BIN_CONFIG', 'unknown tracked source mode')
+        tree[os.fsdecode(name)] = (mode, oid.decode())
+    d.require(len(idx) == len(tree) and {os.fsdecode(part[2:]) for part in idx} == tree.keys(),
+              'NATIVE_BIN_CONFIG', 'worktree index does not match committed HEAD')
+    files = {row['path']: row for row in source['files']}
+    regular = {name for name, (mode, _) in tree.items() if mode != b'120000'}
+    d.require(len(files) == len(source['files']) and files.keys() == regular,
+              'NATIVE_BIN_CONFIG', 'build manifest omitted or added a committed regular file')
+    git_hash = git('rev-parse', '--show-object-format').decode().strip()
+    d.require(git_hash in ('sha1', 'sha256'), 'NATIVE_BIN_CONFIG', 'unknown Git object format')
+    for name, (mode, oid) in tree.items():
+        path = root / name
+        if mode == b'120000':
+            link = os.fsencode(os.readlink(path))
+            object_hash = hashlib.new(git_hash, b'blob ' + str(len(link)).encode() + b'\0' + link,
+                                      usedforsecurity=False).hexdigest()
+            d.require(object_hash == oid, 'NATIVE_BIN_CONFIG', f'tracked symlink target changed: {name}')
+            continue
+        row = files[name]
+        info = path.stat()
+        d.require(path.is_file() and path.resolve() == path and type(row['bytes']) is int
+                  and info.st_size == row['bytes'] and bool(info.st_mode & 0o111) == (mode == b'100755'),
+                  'NATIVE_BIN_CONFIG', f'tracked file mode/size drift: {name}')
+        product_hash = hashlib.sha256()
+        object_hash = hashlib.new(git_hash, b'blob ' + str(info.st_size).encode() + b'\0', usedforsecurity=False)
+        with path.open('rb') as file:
+            while data := file.read(1024 * 1024):
+                product_hash.update(data)
+                object_hash.update(data)
+        d.require(product_hash.hexdigest() == row['sha256'] and object_hash.hexdigest() == oid,
+                  'NATIVE_BIN_CONFIG', f'tracked file bytes differ from the build manifest or HEAD: {name}')
 
 
 def sha256(path):
@@ -402,8 +445,17 @@ def existing_outcomes(d, output, rounds):
     (output / 'outcome.stderr').write_text(result.stderr)
     d.require(hashes == {str(p): sha256(p) for p in (checker, oracle)}, 'APPARATUS_CHANGED',
               'registered #1477 scorer or oracle changed during replay')
-    return {'exitCode': result.returncode, 'sha256': hashes,
-            'report': json.loads(result.stdout) if result.stdout.strip() else None}
+    try:
+        observed = json.loads(result.stdout) if result.stdout.strip() else None
+    except ValueError:
+        observed = None
+    classification, reason = classify_outcome(result.returncode, observed)
+    if classification == 'PASS' and len(rounds) == d.RETIREMENT_ROUNDS and (
+            observed.get('p7Evaluated') is not True or type(observed.get('p7Rounds')) is not int
+            or observed['p7Rounds'] != d.RETIREMENT_ROUNDS):
+        classification, reason = 'FAIL', 'OUTCOME_K5_NOT_EVALUATED'
+    return {'exitCode': result.returncode, 'sha256': hashes, 'report': observed,
+            'classification': classification, 'reason': reason}
 
 
 def collect_rounds(native, output, original_output, baseline, count, scenarios, *, reference=False):
@@ -469,7 +521,8 @@ def run_suite(d, native, suite, output, baseline, *, diagnostic_rounds=None, col
     if session:
         reference_folder = output / 'ts-reference'
         reference_folder.mkdir()
-        reference, _, ts_attempts = collect_rounds(native, reference_folder, active, baseline, count, scenarios, reference=True)
+        reference, ts_folders, ts_attempts = collect_rounds(native, reference_folder, active, baseline, count, scenarios,
+                                                             reference=True)
     rows, folders, attempts = collect_rounds(native, output, active, baseline, count, scenarios)
     for side, data in [('native', rows), *([('ts', reference)] if session else [])]:
         for name in ('driver/frames.jsonl', 'driver/methods.json'):
@@ -484,8 +537,7 @@ def run_suite(d, native, suite, output, baseline, *, diagnostic_rounds=None, col
     status = d.common.aggregate_status('BLOCKED', *(v['status'] for v in coverage + witnesses + listeners + network),
                                        *control_statuses)[0]
     outcome = existing_outcomes(d, output, folders)
-    if outcome['exitCode'] == 1:
-        status = d.common.aggregate_status(status, 'FAIL')[0]
+    status = d.common.aggregate_status(status, outcome['classification'])[0]
     native.validate_immutable()
     result = {'status': status, 'executionStatus': status, 'acceptanceStatus': 'NOT_RUN', 'k': count,
               'baseline': {'path': str(baseline), 'revision': revision},
@@ -520,7 +572,7 @@ def run_suite(d, native, suite, output, baseline, *, diagnostic_rounds=None, col
         cold = d._load('retirement_cold', d.SCRIPT / 'retirement_cold.py')
         d._verify_cli_imports()
         try:
-            result['coldRestartRollback'] = cold.verify_cold(d, native, cold_capture.resolve(strict=True))
+            result['coldRestartRollback'] = cold.verify_cold(d, native, cold_capture.resolve(strict=True), baseline)
             result['missingFaces'].remove('cold restart and rollback wired to same-head independent comparator')
             result['status'] = result['executionStatus'] = d.common.aggregate_status(
                 result['status'], result['coldRestartRollback']['status'])[0]
@@ -544,25 +596,21 @@ def run_suite(d, native, suite, output, baseline, *, diagnostic_rounds=None, col
                         observations_index.append({'label': row['label'] + '/' + scene['case'],
                                                    'frames': rows_jsonl(file)})
             d.save(output / f'{side}-wire-index.json', wire_index(d, observations_index, methods))
-        observations, raw = {}, {}
-        for side, data in [('ts', reference), ('native', rows)]:
-            observations[side], raw[side] = [], []
-            for row in data:
-                try:
-                    input_rows = raw_session_input(Path(row['folder']))
-                    raw[side].append(input_rows)
-                    observations[side].append({'round': row['label'],
-                                               'evidence': session_observations(d, input_rows)})
-                except (d.EvidenceError, OSError, ValueError, KeyError, TypeError) as error:
-                    observations[side].append({'round': row['label'], 'rule': getattr(error, 'rule', 'SESSION_EVIDENCE'),
-                                               'error': str(error)})
-        if any('error' in row for row in observations['native']):
-            result['status'] = result['executionStatus'] = d.common.aggregate_status(result['status'], 'FAIL')[0]
+        observations, raw, scenario_evidence, scenario_problems = session_faces(d, reference, rows)
+        ts_coverage = [d.score_retirement_round(row, expected) for row in reference]
+        ts_outcome = existing_outcomes(d, reference_folder, ts_folders)
+        session_status, _ = d.common.aggregate_status(
+            result['status'], ts_outcome['classification'], *(row['status'] for row in ts_coverage),
+            'FAIL' if scenario_problems else 'PASS')
+        result['status'] = session_status
+        result['executionStatus'] = session_status
         controls_session = None
-        if raw['ts'] and raw['native']:
+        if len(raw['ts']) == len(raw['native']) == count and not scenario_problems:
             controls_session = session_injections(d, raw['ts'][0], raw['native'][0], rows[0], expected)
             result['status'] = result['executionStatus'] = d.common.aggregate_status(
                 result['status'], controls_session['status'])[0]
+        else:
+            result['status'] = result['executionStatus'] = d.common.aggregate_status(result['status'], 'BLOCKED')[0]
         session_executed = {v['round']: [m for m in methods if m in v['executed']] for v in coverage}
         result['retirementDriverCoverage'] = {'expected': result['expected'], 'executed': result['executed']}
         result['expected'] = {'methods': methods, 'count': len(methods), 'groups': groups,
@@ -570,15 +618,16 @@ def run_suite(d, native, suite, output, baseline, *, diagnostic_rounds=None, col
         result['executed'] = session_executed
         result['session'] = {'expected': groups, 'executed': session_executed,
                              'extensions': {'U9': 'read_session_messages', 'U10': 'read_subagent_messages'},
-                             'registeredA2ScenariosExecuted': list(SESSION_SCENARIOS[:2]),
+                             'registeredA2ScenariosExecuted': [case for case in SESSION_SCENARIOS[:2]
+                                if all(len(scenario_evidence[side][case]) == count for side in ('ts', 'native'))],
+                             'scenarioEvidence': scenario_evidence, 'scenarioProblems': scenario_problems,
                              'observations': observations, 'controls': controls_session,
-                             'tsReference': {'rounds': [round_receipt(row) for row in reference], 'portAudit': ts_attempts},
+                             'tsReference': {'rounds': [round_receipt(row) for row in reference], 'portAudit': ts_attempts,
+                                             'methodCoverage': ts_coverage, 'outcomeParity': ts_outcome},
                              'missingFaces': ['remaining A7 mutation controls (stale binding, double answer, unknown/replay, fake local, hidden host)',
                                               'accepted reconnect answer after replay, lease/expiry and Module identity scenarios',
                                               'non-default configuration and HTTP same owner scenarios',
                                               'host and deadline consumers bound to this invocation']}
-        if any(scene['driverExitCode'] for row in rows for scene in row.get('scenarios', [])):
-            result['status'] = result['executionStatus'] = d.common.aggregate_status(result['status'], 'FAIL')[0]
     if diagnostic_rounds is not None:
         result['diagnosticOnly'] = True
     return result
@@ -594,6 +643,59 @@ def raw_session_input(folder):
             'history': rows_jsonl(folder / 'scenarios/u9-u10-history/frames.jsonl'),
             'transcript': rows_jsonl(transcripts[0]) if len(transcripts) == 1 else [],
             'transcripts': [str(p) for p in transcripts]}
+
+
+def session_faces(d, reference, native):
+    """Authenticate each side's actual scenario evidence before any comparison."""
+    observations, raw, executed, problems = {}, {}, {}, []
+    for side, rounds in (('ts', reference), ('native', native)):
+        observations[side], raw[side] = [], []
+        executed[side] = {scene: [] for scene in SESSION_SCENARIOS}
+        for row in rounds:
+            label = row['label']
+            receipts = row.get('scenarios', [])
+            if [r.get('case') for r in receipts] != list(SESSION_SCENARIOS):
+                problems.append({'side': side, 'round': label, 'rule': 'SESSION_SCENARIO_INVENTORY'})
+            for receipt in receipts:
+                case = receipt.get('case')
+                if case not in executed[side]:
+                    continue
+                folder = Path(row['folder']) / 'scenarios' / case
+                recorded = receipt.get('files', {})
+                valid = (type(receipt.get('driverExitCode')) is int and receipt['driverExitCode'] == 0
+                         and receipt.get('folder') == str(folder)
+                         and all((folder / name).is_file() and recorded.get(name) == sha256(folder / name)
+                                 for name in ('frames.jsonl', 'result.json')))
+                if valid:
+                    executed[side][case].append(label)
+                else:
+                    problems.append({'side': side, 'round': label, 'case': case,
+                                     'rule': 'SESSION_SCENARIO_EVIDENCE', 'driverExitCode': receipt.get('driverExitCode')})
+            try:
+                evidence = raw_session_input(Path(row['folder']))
+                observed = session_observations(d, evidence)
+            except (d.EvidenceError, OSError, ValueError, KeyError, TypeError) as error:
+                problem = {'side': side, 'round': label, 'rule': getattr(error, 'rule', 'SESSION_EVIDENCE'),
+                           'error': str(error)}
+                problems.append(problem)
+                observations[side].append(problem)
+            else:
+                raw[side].append(evidence)
+                observations[side].append({'round': label, 'evidence': observed})
+    return observations, raw, executed, problems
+
+
+def classify_outcome(code, document):
+    if (type(code) is int and code == 0 and isinstance(document, dict)
+            and document.get('status') == 'PASS' and document.get('command') == 'check'
+            and document.get('violations') == [] and type(document.get('violationsCount')) is int
+            and document['violationsCount'] == 0):
+        return 'PASS', None
+    if type(code) is int and code == 1:
+        return 'FAIL', 'OUTCOME_RULE_VIOLATION'
+    if type(code) is int and code == 2:
+        return 'BLOCKED', 'OUTCOME_INPUT_REJECTED'
+    return 'FAIL', 'OUTCOME_EXECUTION_OR_UNREADABLE_REPORT'
 
 
 def session_observations(d, evidence):

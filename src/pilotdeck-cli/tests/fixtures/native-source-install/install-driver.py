@@ -109,9 +109,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("control", "source", "out", "cargo-shim", "regress-db", "registry-cache", "rustup-home"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("old-ref", "new-ref"):
-        parser.add_argument("--" + name, required=True)
+    parser.add_argument("--old-ref", required=True)
+    parser.add_argument("--new-ref")
+    parser.add_argument("--mode", choices=("install-update", "legacy-install"), default="install-update")
     args = parser.parse_args()
+    require((args.mode == "install-update") == (args.new_ref is not None),
+            "install-update requires --new-ref; legacy-install must omit it")
     control = args.control.resolve(strict=True)
     source = args.source.resolve(strict=True)
     out = args.out.absolute()
@@ -146,6 +149,7 @@ def main():
         "RUSTUP_HOME": str(args.rustup_home.resolve(strict=True)),
         "CARGO_NET_OFFLINE": "true",
         "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "5",
         "CARGO_TERM_COLOR": "never",
         "PDRS_CARGO_SLOT_N": "2",
         "GIT_CONFIG_NOSYSTEM": "1",
@@ -322,7 +326,7 @@ def main():
                            "libraries": libraries}
 
     monitor = None
-    result = {"pass": False, "skills": "NOT_RUN", "defaultSidecar": "NOT_RUN"}
+    result = {"pass": False, "mode": args.mode, "skills": "NOT_RUN", "defaultSidecar": "NOT_RUN"}
     try:
         require(shutil.which("cargo", path=env["PATH"]) == str(args.cargo_shim.resolve(strict=True)), "Wrong cargo shim")
         commit = "95c04041cd9b30249961eb80d950102c29c9586c"
@@ -339,9 +343,11 @@ def main():
         require(not git("source-clean", "status", "--porcelain",
                         "--untracked-files=all"), "Source is not clean")
         old = git("resolve-old", "rev-parse", "--verify", args.old_ref + "^{commit}")
-        new = git("resolve-new", "rev-parse", "--verify", args.new_ref + "^{commit}")
-        require(old != new, "Old and new must differ")
-        git("ancestor", "merge-base", "--is-ancestor", old, new)
+        new = None
+        if args.mode == "install-update":
+            new = git("resolve-new", "rev-parse", "--verify", args.new_ref + "^{commit}")
+            require(old != new, "Old and new must differ")
+            git("ancestor", "merge-base", "--is-ancestor", old, new)
         remote, seed = out / "remote.git", out / "seed"
         run("local-remote", ["git", "clone", "--bare", "--no-hardlinks",
                              "--", source, remote], timeout=120)
@@ -353,6 +359,14 @@ def main():
                         "--remote", remote, "--ref", REF])
         old_dir, old_record = generation(old)
         write_json(out / "old.json", old_record)
+        if args.mode == "legacy-install":
+            require(old_record["libraries"] == {}, "Legacy mode must exercise source without image libraries")
+            require(not git("legacy-new-clean", "status", "--porcelain", "--untracked-files=all",
+                            directory=old_dir / "source"), "Installed legacy source is dirty")
+            result.update(pass_=True, old=old, legacySourceInstall=True, update="NOT_RUN")
+            result["pass"] = True
+            return 0
+        require(bool(old_record["libraries"]), "Update mode requires an image-aware old generation")
         policy = (root / "install.json").read_bytes()
         git("remote-new", "update-ref", REF, new, old, directory=remote)
         # Update's fetch necessarily changes old source/.git metadata.
@@ -363,6 +377,7 @@ def main():
         monitor.start()
         run("update", [root / "bin/pilotdeck", "update"])
         new_dir, new_record = generation(new)
+        require(bool(new_record["libraries"]), "Update mode requires native libraries in the new generation")
         stop.set()
         monitor.join(timeout=2)
         require(new_dir != old_dir, "Current did not change generations")

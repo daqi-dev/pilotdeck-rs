@@ -13,6 +13,24 @@ finally:__file__=original_file
 receipt=json.loads(cold.source_receipt.read_text());receipt_sha=hashlib.sha256(cold.source_receipt.read_bytes()).hexdigest()
 for key,canonical in [('gateway','pilotdeck-gateway'),('sidecar','pilotdeck-agent-loop-sidecar')]:assert receipt['binaries'][canonical]==sha(getattr(a,key)),('receipt mismatch',key)
 provenance=json.loads((a.out/'provenance.json').read_text());provenance.update(sharedProbeSha256=sha(shared),probeSha256=sha(COLD_HERE/'probe.py'),driverSha256=sha(COLD_HERE/'driver.mts'),sourceReceipt={'path':str(cold.source_receipt.resolve()),'sha256':receipt_sha},topology='TS + Rust proxy -> native Rust -> TS + Rust proxy -> native Rust -> native Rust restart',formalAcceptance=False)
+runtime_rows=[]
+if 'runtimeLibraries' in receipt:
+ source_ref=receipt['sourceManifest'];manifest_ref=receipt['binaryManifest']
+ source_file=Path(source_ref['path']);manifest_file=Path(manifest_ref['path'])
+ if sha(source_file)!=source_ref['sha256'] or sha(manifest_file)!=manifest_ref['sha256']:
+  raise ValueError('cold switch source/binary manifest bytes changed')
+ source_doc=json.loads(source_file.read_text())
+ if source_doc.get('runtimeLibraries')!=receipt['runtimeLibraries']:
+  raise ValueError('cold switch runtime library receipt differs from source manifest')
+ sources=common.verify_native_runtime_libraries(source_doc,manifest_file)
+ for row in sources:
+  source=manifest_file.parent/row['path'];target=a.out/'binaries'/row['path'];target.parent.mkdir(exist_ok=True)
+  with source.open('rb') as stream,target.open('xb') as output:shutil.copyfileobj(stream,output)
+  target.chmod(0o500)
+  if target.stat().st_size!=row['bytes'] or sha(target)!=row['sha256'] or sha(source)!=row['sha256']:
+   raise ValueError('cold switch runtime snapshot bytes changed')
+  runtime_rows.append({**row,'source':str(source),'snapshot':str(target)})
+provenance['runtimeLibraries']=runtime_rows
 save(a.out/'provenance.json',provenance)
 (a.out/'fixture-source').mkdir()
 for file in COLD_HERE.iterdir():
@@ -140,6 +158,7 @@ finally:
  if provider:provider.shutdown();provider.server_close()
  table=ps();left=[{'pid':pid,'birth':birth}for(pid,birth)in identities if pid in table and table[pid][1]==birth]
  binaries_unchanged=all(sha(Path(path))==before for path,before in binary_before.items())and all(sha(Path(row['snapshot']))==row['sha256']for row in provenance['binaries'].values())
+ binaries_unchanged=binaries_unchanged and all(sha(Path(row['source']))==sha(Path(row['snapshot']))==row['sha256'] for row in runtime_rows)
  save(a.out/'provider.json',wire);save(a.out/'result.json',{'pass':success and not left and not errors and binaries_unchanged,'handoffBlocked':handoff_blocked,'realDrainFailureObserved':real_drain_failed,'injectedMissingReceipt':cold.inject_missing_drain_receipt,'phases':phases,'errors':errors,'remainingOwnedIdentities':left,'cleanupVerified':not left and not errors,'binariesUnchanged':binaries_unchanged,'noSnapshotRestorePerformed':True,'sourceReceiptSha256':receipt_sha,'notFormalRetirement':True,'requests':len(wire),'elapsedSeconds':time.monotonic()-start})
  if acquired:
   if not left and not errors:common.LIVE_GROUPS.discard(os.getpid())

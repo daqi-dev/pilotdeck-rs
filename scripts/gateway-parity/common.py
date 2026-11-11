@@ -90,23 +90,49 @@ def verify_native_runtime_libraries(source, binary_manifest):
     def need(value, message):
         if not value:
             raise ValueError('NATIVE_RUNTIME_LIBRARIES: ' + message)
-    root = Path(binary_manifest).parent
+    binary_manifest = Path(binary_manifest)
+    root = binary_manifest.parent
+    need(binary_manifest.is_file() and binary_manifest.resolve() == binary_manifest and
+         0 < binary_manifest.stat().st_size <= 1024 * 1024, 'binary manifest identity')
+    binaries = json.loads(binary_manifest.read_text())
+    binaries = binaries.get('binaries') if isinstance(binaries, dict) else binaries
+    programs = {'pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway', 'pilotdeck-agent-loop-sidecar'}
+    need(isinstance(binaries, list) and len(binaries) == len(programs) and
+         all(isinstance(row, dict) for row in binaries) and
+         {row.get('path') for row in binaries} == programs, 'four-program inventory')
     binary_profiles = {}
-    for program in ('pilotdeck', 'pilotdeck-control', 'pilotdeck-gateway'):
+    magic = {b'\x7fELF', b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe',
+             b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe',
+             b'\xbe\xba\xfe\xca', b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca'}
+    for row in binaries:
+        program = row['path']
+        path = root / program
+        need(path.is_file() and path.resolve() == path and
+             0 < path.stat().st_size <= 512 * 1024 * 1024 and path.stat().st_mode & 0o111,
+             'invalid native executable: ' + program)
+        need(row.get('sha256') == digest(path) and
+             row.get('bytes', path.stat().st_size) == path.stat().st_size,
+             'binary hash or size: ' + program)
         found, tail = set(), b''
-        with (root / program).open('rb') as stream:
+        with path.open('rb') as stream:
+            need(stream.read(4) in magic, 'native executable format: ' + program)
+            stream.seek(0)
             for block in iter(lambda: stream.read(1024 * 1024), b''):
                 data = tail + block
                 found.update(re.findall(rb'pilotdeck-libs-[0-9a-f]{64}', data))
                 tail = data[-79:]
-        binary_profiles[program] = found
+        if program != 'pilotdeck-agent-loop-sidecar':
+            binary_profiles[program] = found
+        else:
+            need(not found, 'unexpected sidecar image runtime dependency')
     if reference is None and not needed:
         need(not any(binary_profiles.values()), 'missing manifest binding for native binaries')
         return []  # Only actual binaries without a native profile qualify as legacy.
     need(isinstance(reference, dict) and set(reference) == {'path', 'sha256'}, 'missing manifest binding')
     manifest = Path(reference['path'])
     need(manifest == root / 'libraries.json' and manifest.is_file() and
-         manifest.resolve() == manifest and digest(manifest) == reference['sha256'], 'manifest identity')
+         manifest.resolve() == manifest and 0 < manifest.stat().st_size <= 1024 * 1024 and
+         digest(manifest) == reference['sha256'], 'manifest identity')
     rows = json.loads(manifest.read_text())
     need(isinstance(rows, list) and 0 < len(rows) <= 64, 'empty or oversized inventory')
     names, profiles = set(), set()
@@ -121,7 +147,7 @@ def verify_native_runtime_libraries(source, binary_manifest):
         profiles.add(path.parts[0])
         actual = root / path
         need(actual.is_file() and actual.resolve() == actual and type(row['bytes']) is int and
-             row['bytes'] > 0 and actual.stat().st_size == row['bytes'] and
+             0 < row['bytes'] <= 512 * 1024 * 1024 and actual.stat().st_size == row['bytes'] and
              digest(actual) == row['sha256'], 'library bytes: ' + str(path))
     need(len(profiles) == 1, 'mixed runtime profiles')
     profile = next(iter(profiles))

@@ -25,7 +25,7 @@ http.createServer(async (req, res) => {
     const release = process.env.GP_RETIREMENT_MODEL_RELEASE;
     if (ready && release && !existsSync(ready) && JSON.stringify(body.messages).includes('RETIREMENT_CALIB')) {
       writeFileSync(ready, 'live model request\n', { flag: 'wx' });
-      const deadline = Date.now() + 5000;
+      const deadline = Date.now() + 12000; // Parent lsof is bounded at 10s; the release file is the normal path.
       while (!existsSync(release) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
     }
     const text = JSON.stringify(body.messages);

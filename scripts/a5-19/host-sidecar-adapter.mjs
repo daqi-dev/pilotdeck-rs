@@ -18,16 +18,7 @@ export async function wrapLoop({dir,phase,order,journal,outcome,knownReturn,tran
  assert.ok(['ts','rust'].includes(spec.language));assert.ok(typeof spec.command==='string');assert.ok(Array.isArray(spec.args));
  assert.equal(typeof spec.requireProvider,'boolean');
  let router,model;
- if(spec.requireProvider){
-  const endpoint=new URL(spec.providerEndpoint);
-  assert.ok(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.port&&endpoint.pathname==='/v1'&&!endpoint.username&&!endpoint.password);
-  const {createModelRuntime,parseModelConfig}=await upstream('model/index');
-  const {createRouterRuntime}=await upstream('router/RouterRuntime');
-  const {createRouterModelInvokerPort}=await upstream('agent/modules/llm/routerModelInvokerAdapter');
-  const modelRuntime=createModelRuntime(parseModelConfig({providers:{fixture:{protocol:'openai',url:endpoint.href,apiKey:'local-fixture',models:{mock:{}}}}}));
-  router=createRouterRuntime({enabled:false,zeroUsageRetry:{enabled:false,maxAttempts:1},transientRetry:{enabled:false,maxAttempts:1}},{modelRuntime});
-  model=createRouterModelInvokerPort(router);
- }
+
  const control=join(dir,'sidecar-loop');fs.mkdirSync(control,{recursive:true});
  atomic(join(control,'loop.json'),{id,phase,order,boundMs:8000,...(spec.requireProvider?{requireProvider:true}:{})});
  const environment={...process.env,PILOTDECK_NATIVE_LOOP_STIMULUS:control,A19_HOST_BASELINE:baseline,A19_HOST_TIME:time,A52B_CHILD_LOADLOG:join(dir,'child-loaded.ndjson')};
@@ -64,31 +55,48 @@ export async function wrapLoop({dir,phase,order,journal,outcome,knownReturn,tran
   connection.child.on('exit',(code,signal)=>journal.add('sidecar.exit',{pid:connection.child.pid,code,signal}));
   polling??=poll();return connection;
  },uuid:()=>`host-sidecar-${++sequence}`,transportObserver:{observe:observation=>journal.add('sidecar.observation',{observation})}});
+ let cleanupPromise;
+ function cleanup(reason){
+  return cleanupPromise??=(async()=>{
+   const errors=[];
+   stopped=true;
+   for(const connection of connections)try{await connection.close(reason)}catch(error){errors.push(error)}
+   await polling;
+   try{scan()}catch(error){errors.push(error)}
+   outcome.resolve=oldOutcome;knownReturn.resolve=oldReturn;
+   try{await router?.shutdown()}catch(error){errors.push(error)}
+   if(pollFailure)errors.push(pollFailure);
+   if(errors.length)throw new AggregateError(errors,'formal sidecar cleanup/receipts failed');
+  })();
+ }
  // The real AgentSession must own the measured turn, writer and event
  // recorder together. Borrowing its loop into another runner leaves the host
  // model iterator without a started durable turn.
  let owner;
  try{
+  if(spec.requireProvider){
+   const endpoint=new URL(spec.providerEndpoint);
+   assert.ok(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.port&&endpoint.pathname==='/v1'&&!endpoint.username&&!endpoint.password);
+   const {createModelRuntime,parseModelConfig}=await upstream('model/index');
+   const {createRouterRuntime}=await upstream('router/RouterRuntime');
+   const {createRouterModelInvokerPort}=await upstream('agent/modules/llm/routerModelInvokerAdapter');
+   const modelRuntime=createModelRuntime(parseModelConfig({providers:{fixture:{protocol:'openai',url:endpoint.href,apiKey:'local-fixture',models:{mock:{}}}}}));
+   router=createRouterRuntime({enabled:false,zeroUsageRetry:{enabled:false,maxAttempts:1},transientRetry:{enabled:false,maxAttempts:1}},{modelRuntime});
+   model=createRouterModelInvokerPort(router);
+  }
+  // #1314: omit the optional title port; the original measured model stream is the only required provider action.
   owner=await createAgentSessionWithStorageAsync({sessionId:'session',transcript,collectFileArtifacts:false,
    config:{provider:'fixture',model:spec.requireProvider?'mock':'controlled',cwd:dir,permissionMode:'default',permissionContext:createDefaultPermissionContext({cwd:dir,canPrompt:false})},
    dependencies:{router:router??{},now:()=>new Date(time),ports:{model:model??{prepare:async()=>{throw Error('controlled loop must not call model.prepare')},async *stream(){throw Error('controlled loop must not call model.stream')}},tools:{list:()=>[],executeAll:async()=>{throw Error('controlled loop must not execute host tools')}}},tools:{registry:{list:()=>[]},scheduler:{executeAll:async()=>{throw Error('controlled loop must not schedule tools')}}}},
    agentLoopFactory:factory});
  }catch(error){
-  outcome.resolve=oldOutcome;knownReturn.resolve=oldReturn;
-  try{await router?.shutdown()}catch(cleanup){throw new AggregateError([error,cleanup],'sidecar host initialization rollback failed')}
+  try{await cleanup('formal_host_initialization_failed')}catch(failure){throw new AggregateError([error,failure],'sidecar host initialization rollback failed')}
   throw error;
  }
  return {session:owner.session,handle:owner.handle,collect:scan,message:spec.requireProvider?`[native-witness:${id.slice(0,id.lastIndexOf('/'))}] controlled wait`:'controlled wait',async close(){
-  const errors=[];
-  for(const connection of connections)try{await connection.close('formal_host_scene_complete')}catch(error){errors.push(error)}
-  stopped=true;await polling;
-  try{scan()}catch(error){errors.push(error)}
-  outcome.resolve=oldOutcome;knownReturn.resolve=oldReturn;
-  try{await router?.shutdown()}catch(error){errors.push(error)}
-  if(pollFailure)errors.push(pollFailure);
+  await cleanup('formal_host_scene_complete');
   assert.equal(connections.length,1,'each original scene must spawn exactly one real sidecar');
   assert.ok(journal.rows.some(row=>row.kind==='sidecar.observation'&&row.observation.type==='handshake_completed'),'original protocol handshake required');
   if(spec.requireProvider)assert.ok(journal.rows.some(row=>row.kind==='sidecar.receipt'&&row.receipt.site==='model'&&row.receipt.phase==='completed'&&row.receipt.key===id),'case must consume a complete real model stream');
-  if(errors.length)throw new AggregateError(errors,'formal sidecar cleanup/receipts failed');
  }};
 }

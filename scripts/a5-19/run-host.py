@@ -94,6 +94,10 @@ def main():
     native = load('host_fixture_native_collector', root / 'scripts/native-witness/collect.py')
     witness = native.w
     session = witness.frozen_auditor()
+    suite = session._load('host_suite', session.SCRIPT / 'host_suite.py')
+    session._verify_cli_imports()
+    paths = {row['path'] for row in source['files']}
+    assert len(paths) == len(source['files']) and paths == suite.registered_source_paths(root, head)
     expectation = read(root / 'scripts/gateway-parity/fixtures/session-expectations.json')
     require_provider = args.case in witness.native.required_provider_cases(expectation)
     fixture = root / 'scripts/a5-19'
@@ -153,7 +157,8 @@ def main():
                  'sourceFilesVerified': len(source['files']),
                  'originals': {name: pin for name, pin in originals.items() if name != 'run-host.py'},
                  'producer': originals['run-host.py'],
-                 'controlledEnvironment': {'UV_USE_IO_URING': '0', 'kernelProfile': 'existing Docker default seccomp, verified by trace'},
+                 'controlledEnvironment': {'UV_USE_IO_URING': '0',
+                     'seccomp': next(line for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('Seccomp:'))},
                  'case': args.case, 'repeats': REPEATS, 'requireProvider': require_provider,
                  'networkNamespace': os.readlink('/proc/self/ns/net')})
             witness.capture(contract, out / 'capture', env, timeout=60,
@@ -172,11 +177,11 @@ def main():
         host_pid = next(process['pid'] for process in checked['processes'] if process['role'] == 'host')
         calls = checked['networkWitness']['calls']
         if require_provider:
-            assert len(requests) == REPEATS and witness.native.provider_cases(requests, [args.case]) == [args.case] * REPEATS
-            assert all(json.loads(request['raw']).get('stream') is True for request in requests)
+            provider_summary = suite.provider_request_summary(witness.native, requests, args.case, REPEATS)
             assert calls and all(call['target'] == endpoint and call['ownerPid'] == host_pid for call in calls)
         else:
             assert not calls and not requests
+            provider_summary = {'modelStreams': 0, 'titles': 0, 'totalRequests': 0}
         assert all(ref(original['path']) == original for original in originals.values())
         summary = read(raw_folder / 'manifest.json')
         assert summary['executedCases'] == [args.case] and len(summary['expectedCases']) == 72
@@ -196,7 +201,8 @@ def main():
         result = {'status': 'HOST_CAPTURE_PARTITION', 'case': args.case, 'repeats': REPEATS,
                   'host': 'ts', 'sidecar': args.sidecar, 'receipt': ref(out / 'capture/receipt.json'),
                   'rawSha256': {path.name: sha(path) for path in raw_folder.glob('*.json')},
-                  'preflight': ref(out / 'preflight.json'), 'expectedWholeHostCases': 72, 'wholeHost': 'NOT_RUN'}
+                  'preflight': ref(out / 'preflight.json'), 'providerEvidence': provider_summary,
+                  'expectedWholeHostCases': 72, 'wholeHost': 'NOT_RUN'}
         save(out / 'host-capture.json', result)
     print(json.dumps(result, indent=2))
     return 0

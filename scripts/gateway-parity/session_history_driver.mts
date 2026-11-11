@@ -41,8 +41,10 @@ globalThis.WebSocket = class extends Native {
     }) + '\n'));
   }
   record(direction: string, raw: string) {
+    let frame: unknown;
+    try { frame = JSON.parse(raw); } catch { frame = raw; }
     appendFileSync(join(out, 'frames.jsonl'), JSON.stringify({ seq: ++seq, connection: this.id,
-      direction, raw, frame: JSON.parse(raw) }) + '\n');
+      direction, raw, frame }) + '\n');
   }
   send(data: any) { this.record('send', String(data)); super.send(data); }
 };
@@ -72,6 +74,7 @@ try {
   while (sockets.some(socket => socket.readyState !== Native.CLOSED) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 20));
   }
+  await new Promise(resolve => setImmediate(resolve)); // allow CLOSED's queued close record to run
   clearTimeout(timeout);
   result.closed = sockets.length > 0 && sockets.every(socket => socket.readyState === Native.CLOSED);
   save('result.json', result);

@@ -3057,8 +3057,18 @@ def main():
         with parity_lock(timeout=30, takeovers=takeovers):
             if args.suite in ('retirement', 'session'):
                 # Preconditions before any output directory exists (#187).
-                missing = [str(path) for path in (RETIREMENT_METHODS_FIXTURE, RETIREMENT_DRIVER)
-                           if not path.is_file()]
+                prerequisites = [RETIREMENT_METHODS_FIXTURE, RETIREMENT_DRIVER]
+                if all(native_inputs):
+                    prerequisites.extend((SCRIPT / 'retirement_native.py', *native_inputs))
+                if args.suite == 'session':
+                    prerequisites.extend((SCRIPT / 'session_history_driver.mts',
+                        ROOT / 'src/pilotdeck-gateway/tests/fixtures/native-history/subagent-bundle.json'))
+                if args.suite == 'retirement' and all(native_inputs):
+                    prerequisites.extend((SCRIPT / 'retirement_entries.py',
+                                          SCRIPT / 'fixtures/retirement-entry-inventory.json'))
+                    if args.retirement_cold_capture:
+                        prerequisites.append(SCRIPT / 'retirement_cold.py')
+                missing = [str(path) for path in prerequisites if not path.is_file()]
                 if not (args.baseline / 'dist/src/cli/pilotdeck.js').is_file():
                     missing.append(f'{args.baseline.resolve()}/dist/src/cli/pilotdeck.js')
                 if missing:

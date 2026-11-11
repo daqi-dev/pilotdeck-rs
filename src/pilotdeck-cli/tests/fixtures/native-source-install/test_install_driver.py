@@ -38,6 +38,14 @@ class LibraryReceiptTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             driver.generation_libraries(self.root, {})
 
+    def test_legacy_cannot_acquire_an_unrequested_runtime(self):
+        (self.bins / self.profile).mkdir()
+        with self.assertRaises(RuntimeError):
+            driver.generation_libraries(self.root, {})
+        with self.assertRaises(RuntimeError):
+            driver.generation_libraries(self.root, {"libraryProfile": self.profile,
+                                                  "libraryHashes": {"libvips.so": "a" * 64}})
+
     def test_mutated_library_is_rejected(self):
         library, manifest = self.current()
         library.write_bytes(b"tampered library")

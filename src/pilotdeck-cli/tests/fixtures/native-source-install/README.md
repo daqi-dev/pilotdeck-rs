@@ -46,3 +46,15 @@ Sampling may miss fast-fork/reparented children and is not a kernel ownership
 proof. Source and original raw evidence are never modified.
 
 Default --expected-skills 33 additionally requires exactly windows-skills:powershell-safe-invocation at skills/.builtin-plugins/windows-skills/skills/powershell-safe-invocation/SKILL.md, SHA256 6748cbc46061399ad2ce3270cfd7ecd7ac37fc11aef18a38183bd6bdf0eb3d2a. Both loopback listeners explicitly disable address reuse.
+
+The default `--mode install-update` requires both revisions to contain the native
+image runtime, and independently requires both installed library inventories.
+Use an image-aware old updater (1c5302b05 or newer); this mode does not certify
+that experimental pre-image updaters can deploy a new dynamic-library layout.
+
+Separately, `--mode legacy-install --old-ref <pre-image-commit>` (omit --new-ref)
+uses the current control executable to compile/install an older source revision.
+It must produce a legacy generation without a library profile and records
+`update: NOT_RUN`; that result is never an install/update PASS. This exercises
+the newer installer's target-source compatibility directly. Both modes need
+real source builds; the small mirror unit tests certify only receipt rejection.

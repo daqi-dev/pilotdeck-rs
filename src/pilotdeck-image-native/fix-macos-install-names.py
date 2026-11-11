@@ -8,5 +8,8 @@ for lib in sorted(root.glob("*.dylib")):
     subprocess.run(["install_name_tool", "-id", "@rpath/"+lib.name, str(lib)], check=True)
     for line in listed:
         dep=line.strip().split(" (", 1)[0]
-        if dep.startswith(str(root)+"/"):
+        # Mach-O can record the same library prefix through a symlinked
+        # spelling (e.g. /var versus /private/var). Resolve the dependency's
+        # parent before comparing, without changing system library names.
+        if dep.startswith("/") and pathlib.Path(dep).resolve(strict=False).parent == root:
             subprocess.run(["install_name_tool", "-change", dep, "@rpath/"+pathlib.Path(dep).name, str(lib)], check=True)

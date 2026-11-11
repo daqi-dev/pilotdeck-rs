@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {appendFileSync,writeFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
-const [url,token,project,out]=process.argv.slice(2);assert(new URL(url).hostname==='127.0.0.1');
+const [url,token,project,out]=process.argv.slice(2);const endpoint=new URL(url);assert(endpoint.protocol==='ws:'&&endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/ws'&&/^28\d{3}$/.test(endpoint.port));
 const Native=globalThis.WebSocket;let seq=0,bytes=0;
 function record(direction:string,raw:string){bytes+=Buffer.byteLength(raw);assert(bytes<8*1024*1024);appendFileSync(out+'/wire.jsonl',JSON.stringify({seq:++seq,direction,raw})+'\n');}
 globalThis.WebSocket=class extends Native{constructor(url:any,p?:any){super(url,p);this.addEventListener('message',e=>record('receive',String(e.data)));}send(v:any){record('send',String(v));super.send(v);}};

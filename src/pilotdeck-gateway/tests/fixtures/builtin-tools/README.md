@@ -31,16 +31,14 @@ spawn 错误和超时仍抛出，未吞错误。PDF 的 mupdf 解析保持原样
 
 ## 已知边界
 
-- **模型支持图片/PDF 时的附件路径**：TS 用 `sharp`/`mupdf` 解码并压缩成
-  model-visible content；PDF 已接入源码编译的 MuPDF，图片的 sharp/libvips
-  解码与多轮预算压缩仍待补齐。没有
-  multimodal 声明时 TS 本身返回文本提示，夹具覆盖该分支。声明支持时：
-  - 完整 JPEG（EOI 且 >1 KiB、未超字节预算）的 fast path 不需要 sharp，已按 TS
-    原样实现并用真实 TS 夹具覆盖；
-  - 非 JPEG 解码、JPEG 修复/压缩仍需要 sharp，返回同形状的 decode-failure 文本；
-  - PDF 原始字节的 document block 不需要解码器，已实现并覆盖；PDF 页数统计与
-    `pages` 的 MuPDF JPEG 渲染已有真实 PDF 消费者与同引擎编码字节对照，
-    但超图片预算后的 sharp 压缩仍是明确缺口，不能计为完整通过。
+- **模型支持图片/PDF 时的附件路径**：PDF 通过源码构建的 MuPDF 读取和
+  渲染；图片通过源码构建的 libvips 完成有效性检查、修复与多轮预算压缩。
+  PDF 页数及 JPEG 渲染有真实 PDF 对照；图片 JPEG/PNG/WebP/GIF 的固定样本和
+  多轮预算压缩有独立 TS/Rust 字节对照。模型未声明图片输入时返回文本提示；
+  生产 Server 的模型能力传递和同一进程 PDF/图片交替、并发仍需同头实测。
+  普通合法图片/PDF 输入受独立的源文件安全上限保护；这与图片输出预算是
+  不同约束，超过该上限属于有意的安全差异。上述样本并不覆盖所有媒体格式、
+  元数据及损坏文件；截断 GIF 的修正和回归测试需以当前源码及同头证据为准。
 - **PDF 页数**：夹具用非 PDF 字节的 `.pdf`，TS 的 `countPdfPages` 返回
   `undefined`，因此两边都不带 `, N pages` 后缀。新增真实 0/1/2/10/11 页消费者
   对应 `builtin_tools.rs::read_file_real_pdf_page_count_and_range_contract`；

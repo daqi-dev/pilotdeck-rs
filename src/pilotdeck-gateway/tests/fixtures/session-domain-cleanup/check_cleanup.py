@@ -1077,6 +1077,8 @@ AGGREGATION_POINTS = {
      'main'): 'negative-main',
 }
 NON_AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/test_safety.py', 'test_outcome_nonzero_and_unreadable_report_are_distinct'):
+        'test-only construction of the original checker response and process failures; not a batch verdict',
     ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):
         'test-only shared exit mapping and main-body contract, not a batch',
     ('scripts/gateway-parity/common.py', 'aggregate_status'):

@@ -77,7 +77,9 @@ atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 import copy
 import hashlib
 import json
+import re
 import subprocess
+from types import SimpleNamespace
 from typing import NamedTuple
 from collections import Counter
 from pathlib import Path
@@ -132,13 +134,22 @@ def commit_source(baseline, rows):
     return len(hashes)
 
 
+def registered_source_paths(root, head):
+    entries = git(root, 'ls-tree', '-r', '-z', head).split(b'\0')
+    return {entry.split(b'\t', 1)[1].decode() for entry in entries if entry.startswith(b'100')}
+
+
 def source_binding(manifest, root):
     source_file, binary_file = (artifact(manifest[name]) for name in ('sourceManifest', 'binaryManifest'))
     source = read(source_file)
+    retired = _load('retirement_native', Path(__file__).with_name('retirement_native.py'))
+    retired.verify_build_tree(SimpleNamespace(require=need), root, source)
     need(git(root, 'rev-parse', 'HEAD').decode().strip() == source['head'] and
          not git(root, 'status', '--porcelain', '--untracked-files=no').strip(), 'IDENTITY', 'fixed clean source head required')
     files = source['files']
-    need(bool(files) and len({row['path'] for row in files}) == len(files), 'IDENTITY', 'empty/duplicate build source input')
+    paths = {row['path'] for row in files}
+    need(len(paths) == len(files) and paths == registered_source_paths(root, source['head']),
+         'IDENTITY', 'source manifest must bind the complete tracked regular-file tree')
     for row in files:
         path = Path(row['path'])
         need(not path.is_absolute() and '..' not in path.parts and sha(root / path) == row['sha256'], 'IDENTITY', str(path))
@@ -154,6 +165,11 @@ def source_binding(manifest, root):
     baseline = Path(manifest['baseline']).resolve(strict=True)
     need(git(baseline, 'rev-parse', 'HEAD').decode().strip() == BASELINE and
          not git(baseline, 'status', '--porcelain', '--untracked-files=no').strip(), 'IDENTITY', 'fixed clean TS baseline')
+    baseline_deps = manifest['baselineDependencies']
+    modules = (baseline / 'node_modules').resolve(strict=True)
+    need(set(baseline_deps) == {'path', 'sha256'} and modules.is_relative_to(baseline) and
+         baseline_deps['path'] == str(modules) and common.tree_digest(modules) == baseline_deps['sha256'],
+         'TS_RUNTIME_DEPENDENCIES', 'fixed installed dependency tree differs from cohort')
     return source['head'], node, baseline, {row['path']: binary_file.parent / row['path'] for row in binaries}
 
 
@@ -172,6 +188,60 @@ def roles(contract, cell, node, baseline, bins, root):
         need(contract['binaries']['host']['argv'] == [str(node), '--experimental-transform-types', str(harness)], 'HOST_IDENTITY', 'wrong TS host source entry')
     wanted = [str(sidecar_bin), '--import', str(loader), str(cli)] if sidecar == 'ts' else [str(sidecar_bin)]
     need(contract['binaries']['sidecar']['argv'] == wanted, 'SIDECAR_IDENTITY', 'wrong sidecar source/argv')
+
+
+def provider_request_summary(native, requests, case, repeats):
+    """Model coverage excludes real title calls, but all POSTs stay accounted for."""
+    streamed = native.provider_cases(requests, [case])
+    need(streamed == [case] * repeats, 'PROVIDER_WITNESS',
+         'each required repetition must reach the owned case via the real streaming model port')
+    titles = 0
+    for request in requests:
+        body = json.loads(request['raw'])
+        if body.get('stream') is True:
+            continue
+        meta = body.get('metadata')
+        need(body.get('stream') is False and
+             request['path'] == '/v1/chat/completions' and request['case'] == case and body.get('model') == 'mock' and
+             isinstance(meta, dict) and meta.get('purpose') == 'session_title_generation' and
+             all(isinstance(meta.get(key), str) and meta[key] for key in ('sessionId', 'turnId')),
+             'PROVIDER_WITNESS', 'unclassified non-streaming provider POST')
+        titles += 1
+    need(titles <= repeats, 'PROVIDER_WITNESS', 'more than one title provider POST per measured turn')
+    return {'modelStreams': len(streamed), 'titles': titles, 'totalRequests': len(requests)}
+
+
+def baseline_runtime_proof(native, raw, baseline, reference):
+    """Bind actual package-file opens to the same fixed installed tree as the cohort."""
+    modules = (baseline / 'node_modules').resolve(strict=True)
+    need(modules.is_relative_to(baseline) and reference['path'] == str(modules),
+         'TS_RUNTIME_DEPENDENCIES', 'baseline installed modules path differs from cohort')
+    opened = set()
+    for _pid, body in native.records(raw):
+        match = re.fullmatch(r'openat\((?:AT_FDCWD|\d+), ("(?:\\x[0-9a-f]{2})*"), .+\) += (\d+)', body)
+        if not match:
+            continue
+        path = Path(native.text_string(match[1]))
+        if 'node_modules' not in path.parts:
+            continue
+        need(path.is_absolute(), 'TS_RUNTIME_DEPENDENCIES', 'unbound actual dependency open')
+        real = path.resolve(strict=True)
+        need(real.is_relative_to(modules), 'TS_RUNTIME_DEPENDENCIES', 'actual Node package escaped the fixed installation')
+        if not real.is_dir():
+            need(real.is_file(), 'TS_RUNTIME_DEPENDENCIES', 'actual dependency was not a regular file')
+            opened.add(real)
+    need(bool(opened), 'TS_RUNTIME_DEPENDENCIES', 'TS capture lacks actual package reads')
+    return {'tree': reference, 'files': [{'path': str(path.relative_to(modules)), 'sha256': sha(path)} for path in sorted(opened)]}
+
+
+def verify_runtime_proof(session, folder, ref, baseline, reference):
+    path = artifact(ref['baselineRuntimeProof'])
+    need(path == folder.parent / 'baseline-runtime-proof.json',
+         'TS_RUNTIME_DEPENDENCIES', 'runtime package reads must belong to this exact capture')
+    raw = session.native_evidence.read_trace(folder / 'capture/trace.log')
+    actual = baseline_runtime_proof(session.native_evidence, raw, baseline, reference)
+    need(read(path) == actual, 'TS_RUNTIME_DEPENDENCIES', 'loaded package bytes/paths differ from capture proof')
+    return len(actual['files'])
 
 
 class TsPartition(NamedTuple):
@@ -220,12 +290,13 @@ def ts_capture(folder, ref, preflight, session, expected, cell, node, baseline, 
              contract['externalEndpoints'] == [endpoint] and calls and
              all(call['target'] == endpoint and call['ownerPid'] == host for call in calls),
              'NETWORK_WITNESS', 'model traffic must originate from the real host and target its owned loopback')
-        need(len(provider['requests']) == K and all(json.loads(request['raw']).get('stream') is True for request in provider['requests']) and
-             session.native_evidence.provider_cases(provider['requests'], [case]) == [case] * K,
-             'PROVIDER_WITNESS', 'each required repetition must reach the same owned case via the real model port')
+        provider_summary = provider_request_summary(session.native_evidence, provider['requests'], case, K)
+        need(ref['providerEvidence'] == provider_summary, 'PROVIDER_WITNESS', 'provider request classification differs from capture')
     else:
         need(provider['endpoint'] is None and not provider['requests'] and not calls and not contract['externalEndpoints'],
              'NETWORK_WITNESS', 'unrequired model traffic must stay absent')
+        provider_summary = {'modelStreams': 0, 'titles': 0, 'totalRequests': 0}
+        need(ref['providerEvidence'] == provider_summary, 'PROVIDER_WITNESS', 'unexpected provider request classification')
     raw_pins = ref['rawSha256']
     need(raw_pins == {path.name: sha(path) for path in raw_folder.glob('*.json')}, 'IDENTITY', 'TS raw artifacts not bound')
     need(Counter(row['role'] for row in checked['processes']) ==
@@ -268,7 +339,7 @@ def ts_capture(folder, ref, preflight, session, expected, cell, node, baseline, 
     if cell[1] == 'ts':
         commit_source(baseline, child_loads)
     return TsPartition(observations, {'path': str(folder), 'processes': checked['processes'],
-                       'network': checked['networkWitness'], 'cleanup': checked['cleanup']},
+                       'network': checked['networkWitness'], 'cleanup': checked['cleanup'], 'providerEvidence': provider_summary},
                        contract, registration, group)
 
 
@@ -360,6 +431,9 @@ def report(manifest_path, *, session, output):
                     data, witness, contract = rust_capture(folder, ref, session, expected, cell, node, baseline, bins, root)
                     if cell == ('rust', 'rust'):
                         native_seed = contract
+                if 'ts' in cell:
+                    witness['actualBaselineDependencyFiles'] = verify_runtime_proof(
+                        session, folder, ref, baseline, manifest['baselineDependencies'])
                 witnesses.append(witness)
                 for case, repetition, actual, verdict in data:
                     key = case, repetition
@@ -386,7 +460,7 @@ def report(manifest_path, *, session, output):
             measurements = [rows.get((case, k), {'case': case, 'repetition': k, 'status': 'NOT_RUN', 'rule': 'COVERAGE'}) for k in range(1, K+1)]
             case_status, _ = session.common.aggregate_status(*(row['status'] for row in measurements))
             cases.append({'case': case, 'status': case_status, 'measurements': measurements})
-        complete = all(row['status'] != 'NOT_RUN' for row in cases)
+        complete = len(rows) == len(expected) * K
         if not complete:
             errors.append({'rule': 'COVERAGE', 'detail': 'original 72 × k5 is incomplete'})
         cell_status, _ = session.common.aggregate_status(
@@ -417,4 +491,5 @@ def report(manifest_path, *, session, output):
     status, _ = session.common.aggregate_status(
         *(cell['status'] for cell in cells), 'PASS' if controls_pass else 'FAIL')
     return {'suite': 'host', 'sourceHead': head, 'status': status, 'executionStatus': status if all(cell['executionStatus'] != 'NOT_RUN' for cell in cells) else 'NOT_RUN', 'acceptanceStatus': 'NOT_RUN',
+            'baselineDependencies': manifest['baselineDependencies'],
             'cells': cells, 'controls': {'status': controls_status, 'results': controls}}

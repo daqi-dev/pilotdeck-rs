@@ -29,6 +29,7 @@ cases = [
     ('envelope-frame-overflow', fixture, "        if length < 126:\n            header = bytes([129, length])\n        elif length <= 65535:\n            header = b'\\x81\\x7e' + length.to_bytes(2, 'big')\n        else:\n            header = b'\\x81\\x7f' + length.to_bytes(8, 'big')", "        header = bytes([129, length]) if length < 126 else b'\\x81\\x7e' + length.to_bytes(2, 'big')", 'test_large_compatibility_frame'),
     ('envelope-length-code', fixture, "'lengthCode': header[1]", "'lengthCode': min(length, 126)", 'test_large_compatibility_frame'),
     ('connect-is-blocked', collector, '        result = _native_run(gateway, sidecar, output, port, session_domain=session_domain,\n                             registry=registry, ts_sidecar_baseline=ts_sidecar_baseline,\n                             session_cases=session_cases)', '        with fixed_port_bind():\n            result = _native_run(gateway, sidecar, output, port, session_domain=session_domain,\n                                 registry=registry, ts_sidecar_baseline=ts_sidecar_baseline,\n                                 session_cases=session_cases)', 'test_connect_eaddrinuse_not_blocked'),
+    ('drop-required-provider-arm', collector, 'require_provider=case in provider_required)', 'require_provider=False)', 'test_registered_provider_arm_is_written_for_the_same_case'),
     ('provider-bind-unclassified', collector, '        with fixed_port_bind():\n            super().server_bind()', '        super().server_bind()', 'test_provider_bind_conflict'),
     ('utf8-string-escapes', native, "raise Incomplete('#1169 non-UTF-8 trace string') from error", 'raise error', 'test_non_utf8_string_is_incomplete'),
     ('sendmmsg-accepted', native, "need(False, 'sendmmsg batches are unsupported, including connected sockets')", "need(True, 'sendmmsg batches are unsupported, including connected sockets')", 'test_sendmmsg_explicitly_unsupported'),
@@ -97,6 +98,7 @@ cases = [
     ('drop-transcript-witness-shape', native, "    need(isinstance(witness, dict) and witness.get('complete') is True\n         and witness.get('source') == 'strace-openat' and isinstance(witness.get('opens'), list),\n         'session capture must carry the complete transcript-open witness')", "    if not isinstance(witness, dict) or 'opens' not in witness:\n        return", 'test_validate_session_covers_manifest'),
 ]
 messages = {
+    'drop-required-provider-arm': '#1314 registered provider arm reaches the sidecar plan',
     'collect-raises-twice': '#1194 collection preserves first cancellation and cleanup',
     'capture-raises-twice': '#1194 capture preserves first cancellation and cleanup',
     'shutdown-raises-twice': '#1194 shutdown preserves first cancellation and cleanup',

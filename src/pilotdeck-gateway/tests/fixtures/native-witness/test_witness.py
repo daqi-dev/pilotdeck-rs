@@ -1563,6 +1563,24 @@ class WitnessTests(unittest.TestCase):
                         and observation['registry']['record'] == {},
                         '#1140 an unanswered run key stays inapplicable with an empty record')
 
+    def test_registered_provider_arm_is_written_for_the_same_case(self):
+        known = 'no-registry-fast/known-final-first/model'
+        timeout = 'no-registry-fast/fast/model'
+        expectations = c.session_expectations()
+        required = c.w.native.required_provider_cases({'cases': [
+            {'case': case, 'rust': expectation} for case, expectation in expectations.items()]})
+        with tempfile.TemporaryDirectory(prefix='pdrs-provider-arm-') as folder:
+            root = Path(folder)
+            control = c.stimulus_driver.StimulusDriver(root / 'loop', root / 'store', registry_on=False)
+            c.prepare_session_control(control, required, known, 1, c.stimuli.plan(known), 'known')
+            actual = json.loads((root / 'loop/loop.json').read_text())
+            self.assertIs(actual.get('requireProvider'), True, '#1314 registered provider arm reaches the sidecar plan')
+            self.assertEqual(actual['id'], known + '#1')
+            c.prepare_session_control(control, required, timeout, 2, c.stimuli.plan(timeout), 'timeout')
+            actual = json.loads((root / 'loop/loop.json').read_text())
+            self.assertNotIn('requireProvider', actual)
+            self.assertEqual(actual['id'], timeout + '#2')
+
     def test_case_plan_and_ordering_variants(self):
         # #2396: the controlled loop (#1371) owns turn timing, so no case
         # delays the provider any more. The two release-first orders keep the

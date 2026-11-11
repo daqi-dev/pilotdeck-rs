@@ -56,8 +56,13 @@ mutations = [
     # every ordinary turn of that process into a controlled one.
     ('armed-empty-not-inert', LOOP,
      'Ok(None) => State::Inert,',
-     'Ok(None) => State::Planned(Plan { id: "default".into(), phase: Phase::Model, order: Order::TimeoutFirst, bound: DEFAULT_BOUND }),',
+     'Ok(None) => State::Planned(Plan { id: "default".into(), phase: Phase::Model, order: Order::TimeoutFirst, bound: DEFAULT_BOUND, require_provider: false }),',
      'loop_stimulus::tests::missing_plan_is_inert', '#1371 no plan is inert'),
+    ('provider-flag-accepts-string', LOOP,
+     'raw.as_bool().ok_or_else(|| {',
+     'raw.as_bool().or(Some(true)).ok_or_else(|| {',
+     'loop_stimulus::tests::provider_arm_is_strict_and_opt_in',
+     'invalid provider flag must fail closed'),
     # Only the `known` release may complete a turn: treating every release as
     # known fabricates a success for a result-unknown outcome, which the tool
     # cell reports as `#1371 tool phase unknown terminal`.
@@ -65,6 +70,10 @@ mutations = [
      'if release.outcome.as_deref() == Some("known") {',
      'if true {',
      EXECUTABLE, '#1371 executable tool unknown terminal'),
+    ('provider-arm-skips-consumption', CONTROLLED,
+     'if plan.require_provider {',
+     'if false {',
+     EXECUTABLE, '#1371 executable provider arm invokes real model'),
     # The tool phase must publish the controlled_wait prefix; dropping it
     # loses the tool/model distinction the stimulus table depends on
     # (`#1371 tool phase controlled_wait prefix`).

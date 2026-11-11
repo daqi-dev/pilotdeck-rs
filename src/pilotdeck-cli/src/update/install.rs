@@ -400,6 +400,11 @@ impl Installation {
                 return Err(Error::refused("runtimeMismatch"));
             }
         }
+        if source_requires_image_libraries(&manifest.source_checkout)?
+            != manifest.library_profile.is_some()
+        {
+            return Err(Error::refused("runtimeMismatch"));
+        }
         verify_image_libraries(&directory.join("bin"), &manifest)?;
         Ok(manifest)
     }

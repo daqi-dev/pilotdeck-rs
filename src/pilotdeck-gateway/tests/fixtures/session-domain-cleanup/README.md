@@ -10,6 +10,10 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cle
   --output _tmp/20261026-issue-164/negative/behavior --mode all
 ```
 
+On Linux the direct `--mode all` above records an explicit `kernel-lease` skip
+when there is no real parent source-mutation lease. The original negative
+runner supplies that lease for the restored `--mode all` positive.
+
 `clean` is the empty-group positive control; `leak` leaves a bounded `sleep 20`
 grandchild after the launcher exits; `ignore` leaves a grandchild that ignores
 SIGTERM (and writes a ready marker after installing `SIG_IGN`; the launcher
@@ -310,7 +314,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
 `linux-initial-identity-gate-removed`, `linux-pre-reap-identity-gate-removed`,
 `linux-refusal-erases-finding`, `empty-eligible-guard-removed`,
-`kernel-source-lease-gate-removed`, `kernel-result-passed-forced`, `linux-visible-census-trusted`, `linux-eperm-means-empty`, `linux-no-esrch-needed`,
+`kernel-source-lease-gate-removed`, `kernel-source-lease-cleanup-pending-guard-removed`,
+`kernel-source-lease-token-guard-removed`, `kernel-source-lease-timestamp-guard-removed`,
+`kernel-source-lease-flock-guard-removed`, `kernel-result-passed-forced`,
+`linux-visible-census-trusted`, `linux-eperm-means-empty`, `linux-no-esrch-needed`,
 `linux-empty-group-probe-removed`, `linux-sigterm-removed`, `linux-sigkill-escalation-removed`,
 `linux-positive-finding-dropped-on-denial`, `linux-unknown-error-means-empty`,
 `linux-controls-summary-forced-pass`, `batch-status-relaxed`,

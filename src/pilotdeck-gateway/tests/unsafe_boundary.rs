@@ -1208,7 +1208,7 @@ fn registered_build_files(root: &Path) {
         ),
         (
             "src/pilotdeck-image-native/fix-macos-install-names.py",
-            "ab129620d51458b2074c313e2d9af776be983f301baaef1de8d2027071b6d4b6",
+            "d32ddf46ccf55142b5a43b190d95a4d325c2a960b18a496a633e23df6cd30146",
         ),
         (
             "src/pilotdeck-image-native/source-hashes.txt",

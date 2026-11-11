@@ -1,7 +1,7 @@
 """Real public CLI Server HTTP / WS / periodic Always-On / Cron collector, mock only.
 Run only inside the validated network-none namespace. No behavioral scoring replacement.
 """
-import argparse,hashlib,http.client,http.server,io,json,os,re,signal,socket,subprocess,sys,threading,time
+import argparse,hashlib,http.server,importlib.util,io,json,os,signal,socket,subprocess,sys,threading,time
 from pathlib import Path
 from http.client import HTTPResponse
 sys.dont_write_bytecode=True
@@ -9,13 +9,21 @@ p=argparse.ArgumentParser()
 p.add_argument('--engine',choices=('ts','native'),required=True);p.add_argument('--mode',choices=('http','cron','alwayson'),required=True)
 for key in ('baseline','node','cli','sidecar','source-manifest','candidate-manifest','out'):p.add_argument('--'+key,type=Path,required=True)
 a=p.parse_args();a.out=a.out.resolve();a.out.mkdir(parents=True,exist_ok=False);HERE=Path(__file__).resolve().parent
-MAX_REQUESTS=32;MAX_BODY=2*1024*1024;MAX_OUTPUT_TOKENS=256;SECONDS=90
+MAX_REQUESTS=32;MAX_BODY=2*1024*1024;MAX_OUTPUT_TOKENS=256
+root=HERE.parents[4];runner_path=root/'scripts/gateway-parity/run_round.py'
+spec=importlib.util.spec_from_file_location('retirement_product_owned_runner',runner_path)
+runner=importlib.util.module_from_spec(spec);sys.modules[spec.name]=runner
+runner_source=runner_path.read_bytes();exec(compile(runner_source,str(runner_path),'exec'),runner.__dict__)
+runner._apparatus_source=runner_source
+runner._verify_cli_imports()
+common=runner.common;owned=[];lease=common.parity_lock(timeout=1);leased=False;listener=None
+assert socket.if_nameindex()==[(1,'lo')], 'production entry collector requires isolated loopback'
 sha=lambda x:hashlib.sha256(Path(x).read_bytes()).hexdigest()
 manifest=json.loads(a.candidate_manifest.read_text());binaries={r['path']:r['sha256']for r in manifest}
 assert sha(a.cli)==binaries['pilotdeck'];assert sha(a.sidecar)==binaries['pilotdeck-agent-loop-sidecar']
 assert subprocess.check_output(['git','-C',str(a.baseline),'rev-parse','HEAD'],text=True).strip()=='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 versions=json.loads(subprocess.check_output([str(a.node),'-p','JSON.stringify(process.versions)'],text=True));assert versions['node']=='22.22.0' and versions['icu']=='78.2'
-start=time.monotonic();requests=[];errors=[];child=None;pidfd=None;success=False;server=None;http_rows=[];background=None
+start=time.monotonic();requests=[];errors=[];child=None;success=False;server=None;http_rows=[];background=None
 home=a.out/'home';project=a.out/'project';tmp=a.out/'tmp'
 for d in (home,project,tmp):d.mkdir()
 (project/'note.txt').write_text('ENTRY_NOTE_42\n');(project/'ui/dist').mkdir(parents=True);(project/'ui/dist/acceptance.js').write_text('ENTRY_STATIC_42\n');(project/'ui/dist/index.html').write_text('<html>ENTRY_INDEX_42</html>\n')
@@ -36,7 +44,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
     raw=json.dumps({'choices':[{'index':0,'message':{'role':'assistant','content':'{"title":"Entry fixture"}'},'finish_reason':'stop'}]}).encode();self.send_header('content-type','application/json');self.send_header('content-length',str(len(raw)));self.end_headers();self.wfile.write(raw)
    self.wfile.flush()
   except Exception as error:errors.append('provider '+repr(error));self.close_connection=True
-server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Provider);server.daemon_threads=True;threading.Thread(target=server.serve_forever,daemon=True).start()
+server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Provider);server.daemon_threads=False;threading.Thread(target=server.serve_forever,daemon=True).start()
 config={'schemaVersion':1,'agent':{'model':'fixture/mock','maxOutputTokens':MAX_OUTPUT_TOKENS,'maxContextTokens':64000},'model':{'providers':{'fixture':{'protocol':'openai','url':f'http://127.0.0.1:{server.server_port}/v1','apiKey':'mock-only','models':{'mock':{}}}}},'extension':{'builtinPluginsEnabled':{'browser-use':False,'funasr':False,'windows-skills':False}},'telemetry':{'enabled':False},'cron':{'enabled':a.mode=='cron','timezone':'UTC'}}
 if a.mode=='alwayson':config['alwaysOn']={'trigger':{'tickIntervalMinutes':0.01,'cooldownMinutes':1,'dailyBudget':1,'recentUserMsgMinutes':0},'projects':{str(project):{'enabled':True}}}
 (home/'pilotdeck.yaml').write_text(json.dumps(config,indent=2))
@@ -57,16 +65,47 @@ def http(id,method,path,body=None):
    if not part:break
    parts.append(part);size+=len(part);assert size<=4*1024*1024
  response=b''.join(parts);parsed=HTTPResponse(ResponseSocket(response));parsed.begin();decoded=parsed.read();row={'id':id,'method':method,'path':path,'status':parsed.status,'body':decoded.decode('utf-8',errors='strict'),'requestHex':raw.hex(),'responseHex':response.hex()};http_rows.append(row);return row
+def start_owned(name,argv):
+ log=(a.out/f'{name}.stdout').open('xb');argv=[str(item) for item in argv]
+ return runner.start_owned(owned,log,{'name':name,'argv':argv},argv,cwd=project,env=env,
+                           stdout=log,stderr=subprocess.STDOUT)
+
+def always_on_files():
+ root=home/'always-on/projects'
+ histories=sorted(root.glob('*/run-history.jsonl'));events=sorted(root.glob('*/events.jsonl'))
+ if len(histories)!=1 or len(events)!=1 or histories[0].parent!=events[0].parent:return None
+ return histories[0],events[0]
+
+def read_after_reap():
+ files=always_on_files()
+ if files is None:raise ValueError('missing unique post-reap Always On event/history files')
+ history,events=files;history_bytes=history.read_bytes();events_bytes=events.read_bytes()
+ return {'id':'gateway.background:always-on','snapshotAfterReap':True,
+         'runHistory':history_bytes.decode(),'events':events_bytes.decode(),'modelRequests':len(requests),
+         'sha256':{'runHistory':hashlib.sha256(history_bytes).hexdigest(),
+                   'events':hashlib.sha256(events_bytes).hexdigest()}}
+
+common.install_shutdown()
 try:
- with (a.out/'server.stdout').open('xb')as stdout,(a.out/'server.stderr').open('xb')as stderr:child=subprocess.Popen(command,cwd=project,env=env,stdout=stdout,stderr=stderr,start_new_session=True)
- pidfd=os.pidfd_open(child.pid,0)
+ lease.__enter__();leased=True
+ child=start_owned('server',command)
  end=time.monotonic()+20
- while True:
-  assert child.poll()is None,('server exited',child.returncode)
+ while time.monotonic()<end:
+  try:runner.wait_owned(child,0)
+  except subprocess.TimeoutExpired:pass
+  else:raise RuntimeError('owned server exited before listener readiness')
   try:
-   if http('readiness','GET','/health')['status']==200:break
-  except(ConnectionRefusedError,TimeoutError,OSError):pass
-  assert time.monotonic()<end,'ready deadline';time.sleep(.05)
+   with socket.create_connection(('127.0.0.1',port),timeout=.25):pass
+  except OSError:
+   time.sleep(.05);continue
+  witness=subprocess.run(['lsof','-nP','-a','-p',str(child.pid),'-iTCP','-sTCP:LISTEN','-Fn'],
+                         capture_output=True,text=True,timeout=5)
+  addresses=[row[1:] for row in witness.stdout.splitlines() if row.startswith('n')]
+  if witness.returncode!=0 or addresses!=[f'127.0.0.1:{port}']:
+   raise RuntimeError(f'fixed port listener is not exclusively owned by this fixture pid: {addresses!r}')
+  if http('readiness','GET','/health')['status']==200:
+   listener={'ownerPid':child.pid,'addresses':addresses};break
+ else:raise TimeoutError('owned server readiness deadline')
  if a.mode=='http':
   from urllib.parse import quote
   key=quote(str(project),safe='');base='/api/web/projects/'+key
@@ -79,26 +118,46 @@ try:
   assert next(r for r in http_rows if r['id']=='gateway.http:<unmatched-404>')['status']==404
   assert len({r['id']for r in http_rows if r['id']!='readiness'})==14
  elif a.mode=='cron':
-  with (a.out/'driver.stdout').open('xb')as stdout,(a.out/'driver.stderr').open('xb')as stderr:r=subprocess.run([str(a.node),'--import',str(a.baseline/'node_modules/tsx/dist/loader.mjs'),str(HERE/'cron.mts'),f'ws://127.0.0.1:{port}/ws',token,str(project),str(a.out)],env=env,cwd=project,stdout=stdout,stderr=stderr,timeout=100)
-  assert r.returncode==0,('cron driver',r.returncode);assert any('ENTRY_BACKGROUND_CRON'in json.dumps(r['body'])for r in requests);background=json.loads((a.out/'cron.json').read_text())
+  driver=start_owned('driver',[a.node,'--import',a.baseline/'node_modules/tsx/dist/loader.mjs',HERE/'cron.mts',
+                               f'ws://127.0.0.1:{port}/ws',token,project,a.out])
+  code=runner.wait_owned(driver,100)
+  assert code==0,('cron driver',code);assert any('ENTRY_BACKGROUND_CRON' in json.dumps(r['body']) for r in requests)
+  background=json.loads((a.out/'cron.json').read_text())
  else:
   end=time.monotonic()+35
-  while True:
-   paths=list((home/'always-on/projects').glob('*/state.json'));state=json.loads(paths[0].read_text())if paths else{}
-   histories=list((home/'always-on/projects').glob('*/run-history.jsonl'));history=histories[0].read_text()if histories else''
-   events=list((home/'always-on/projects').glob('*/events.jsonl'));event_text=events[0].read_text()if events else''
-   if requests and 'no_plan'in history and 'discovery_started'in event_text:break
-   assert time.monotonic()<end,('alwayson trigger deadline',state,history,requests);time.sleep(.05)
-  background={'id':'gateway.background:always-on','state':state,'runHistory':history,'events':event_text,'modelRequests':len(requests)}
+  while time.monotonic()<end:
+   files=always_on_files()
+   if (requests and files is not None and 'no_plan' in files[0].read_text()
+       and 'discovery_started' in files[1].read_text()):break
+   time.sleep(.05)
+  else:raise TimeoutError('Always On trigger deadline')
  assert not errors,errors;success=True
 except BaseException as error:errors.append(repr(error));raise
 finally:
- if child is not None and child.poll()is None:
-  signal.pidfd_send_signal(pidfd,signal.SIGTERM)
-  try:child.wait(timeout=20)
-  except subprocess.TimeoutExpired:signal.pidfd_send_signal(pidfd,signal.SIGKILL);child.wait(timeout=5);errors.append('server required SIGKILL')
- if pidfd is not None:os.close(pidfd)
- if server:server.shutdown();server.server_close()
- unchanged=sha(a.cli)==binaries['pilotdeck']and sha(a.sidecar)==binaries['pilotdeck-agent-loop-sidecar']
- result={'pass':success and not errors and child is not None and child.returncode==0 and unchanged,'engine':a.engine,'mode':a.mode,'http':http_rows,'background':background,'providerRequests':requests,'errors':errors,'serverExitCode':None if child is None else child.returncode,'binariesUnchanged':unchanged,'formalAcceptance':False,'elapsedSeconds':time.monotonic()-start}
- (a.out/'result.json').write_text(json.dumps(result,indent=2))
+ try:
+  with common.deferred_signals():
+   if child is not None:
+    try:runner.wait_owned(child,0)
+    except subprocess.TimeoutExpired:
+     # The direct child is still held, even if it exits before this signal.
+     # Keep it unreaped; cleanup_owned owns the group escalation/absence proof.
+     try:os.kill(child.pid,signal.SIGTERM)
+     except ProcessLookupError:pass
+     try:runner.wait_owned(child,20)
+     except subprocess.TimeoutExpired:errors.append('server needed group cleanup escalation')
+    except OSError as error:errors.append(f'cannot verify held server identity: {error}')
+   audit=runner.cleanup_owned(owned)
+   if server:server.shutdown();server.server_close()
+   if a.mode=='alwayson' and success and audit['allStopped']:
+    try:background=read_after_reap()
+    except (OSError,ValueError) as error:errors.append(f'Always On post-reap capture: {error}')
+   unchanged=sha(a.cli)==binaries['pilotdeck'] and sha(a.sidecar)==binaries['pilotdeck-agent-loop-sidecar']
+   passed=(success and not errors and child is not None and child.returncode==0 and unchanged and audit['allStopped'])
+   result={'pass':passed,'engine':a.engine,'mode':a.mode,'http':http_rows,'background':background,
+           'providerRequests':requests,'errors':errors,'serverExitCode':None if child is None else child.returncode,
+           'serverPid':None if child is None else child.pid,'listener':listener,'ownedCleanup':audit,
+           'binariesUnchanged':unchanged,'formalAcceptance':False,'elapsedSeconds':time.monotonic()-start}
+   (a.out/'result.json').write_text(json.dumps(result,indent=2))
+ finally:
+  if leased:lease.__exit__(None,None,None)
+ if not passed and sys.exc_info()[0] is None:raise SystemExit(1)

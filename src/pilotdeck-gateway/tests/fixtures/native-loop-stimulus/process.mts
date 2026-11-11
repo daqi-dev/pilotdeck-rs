@@ -36,19 +36,21 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 // must suppress them: the controlled loop emits no assistant text, so a title
 // request would be a non-comparable extra stimulus (RESULT.md TEXT row).
 let titleRequests = 0;
-// The loopback provider only serves the two real-turn scenarios (unset and
-// armed-inert). Controlled scenarios never request a model, and an armed loop
-// suppresses the automatic title request, so no extra stimulus is recorded.
+// The original scenarios keep their existing title policy. The explicit
+// provider-armed scene also witnesses the real model POST before its release.
+const modelRequests: {path: string | undefined; raw: string}[] = [];
 const server = createServer(async (req, res) => {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
-  const body = JSON.parse(Buffer.concat(chunks).toString());
+  const raw = Buffer.concat(chunks).toString();
+  const body = JSON.parse(raw);
   if (!body.stream) {
     titleRequests += 1;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({id: 'native-title', choices: [{message: {role: 'assistant', content: '{"title":"Native loop stimulus probe"}'}, finish_reason: 'stop'}]}));
     return;
   }
+  modelRequests.push({path: req.url, raw});
   res.setHeader('content-type', 'text/event-stream');
   const emit = (delta: any, finish_reason: any = null) =>
     res.write('data: ' + JSON.stringify({id: 'native-probe', model: 'mock', choices: [{index: 0, delta, finish_reason}]}) + '\n\n');
@@ -452,6 +454,34 @@ try {
     rows.push({scenario: 'bound', boundSeq: bound.seq, terminal});
     ws.terminate(); await stop(process, 'bound');
   }
+  // #1314: the typed opt-in must reach the real host model port before the
+  // existing known outcome can be released. A model-free loop can still reach
+  // loop.wait, so the count and consumer receipt are separate requirements.
+  {
+    const name = 'loop-provider-armed';
+    const control = join(out, name, 'control');
+    await mkdir(control, {recursive: true});
+    const plan = {id: 'provider-1', phase: 'model', order: 'known-final-first', requireProvider: true};
+    await arm(control, plan);
+    const before = modelRequests.length;
+    const process = await launch(name, control);
+    const {ws, next} = await client(process.address);
+    const pump = submitUntilFinal(ws, next, name, process);
+    pump.catch(() => {});
+    const waiting = await witness(control, 'loop', 'wait', plan.id);
+    const requests = modelRequests.slice(before);
+    const consumed = await witness(control, 'model', 'completed', plan.id, 200).catch(() => null);
+    await release(control, plan, 'outcome', 'known');
+    const {terminal} = await pump;
+    ws.terminate(); await stop(process, 'provider-armed');
+    assert.ok(requests.length === 1 && requests[0].path === '/v1/chat/completions' &&
+      requests[0].raw.includes(name + ' native loop stimulus turn'),
+    '#1371 provider-armed loop reaches real model');
+    assert.ok(consumed?.pid === waiting.pid && consumed.seq < waiting.seq,
+      '#1371 provider completion precedes the wait');
+    assert.equal(terminal.type, 'turn_completed', '#1371 provider-armed known outcome completes');
+    rows.push({scenario: 'provider-armed', modelRequests: requests.length, completed: consumed, waiting, terminal});
+  }
 } catch (error: any) {
   // Only a named assertion can become a target receipt. A network error,
   // process failure or deadline stays an unclassified INVALID.
@@ -495,6 +525,7 @@ try {
       '#1371 bound timeout still ends red',
       '#1371 bound expires instead of hanging',
       '#1371 bound never fabricates a completion',
+      '#1371 provider-armed loop reaches real model',
     ].includes(first)) assertionFailure = first;
   }
   throw error;

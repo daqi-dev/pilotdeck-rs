@@ -442,3 +442,88 @@ fn read_file_pdf_renders_fixed_ts_jpeg_pages_and_metadata() {
         assert_eq!(field(image, "bytes"), &JsValue::Number(bytes.len() as f64));
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn read_file_media_rejects_special_and_oversized_sources_but_allows_regular_symlink() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let jpeg = [vec![b'A'; 1024], vec![0xff, 0xd9]].concat();
+    fs::write(scratch.root.join("regular.jpg"), &jpeg).unwrap();
+    symlink("regular.jpg", scratch.root.join("alias.jpg")).unwrap();
+    let huge = fs::File::create(scratch.root.join("huge.pdf")).unwrap();
+    huge.set_len(64 * 1024 * 1024 + 1).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(scratch.root.join("pipe.png"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    symlink("pipe.png", scratch.root.join("pipe-alias.png")).unwrap();
+    symlink("/dev/zero", scratch.root.join("device.pdf")).unwrap();
+    let run = |name: &str| {
+        let mut replay = ReplayContext::new(&scratch, &scratch.root);
+        replay
+            .context
+            .fields
+            .insert("modelMultimodal".into(), multimodal(&["image"], None));
+        futures_block(ReadFileTool::new().execute(
+            JsValue::Object(object([("file_path", JsValue::from(name))])),
+            replay.context,
+        ))
+    };
+    let output = run("alias.jpg").expect("in-workspace regular symlink stays supported");
+    assert_eq!(text(field(&output.content[0], "type")), "image");
+    assert_eq!(run("huge.pdf").unwrap_err().code, "result_too_large");
+    assert_eq!(run("pipe.png").unwrap_err().code, "invalid_tool_input");
+    assert_eq!(
+        run("pipe-alias.png").unwrap_err().code,
+        "invalid_tool_input"
+    );
+    assert!(run("device.pdf").is_err());
+}
+
+#[test]
+fn read_file_rejects_truncated_gif_after_header_and_preserves_valid_input() {
+    // The fixed TS sharp metadata oracle accepts the full image and rejects
+    // all three truncations; this is generated fixture data, not user content.
+    let original = include_bytes!("fixtures/builtin-tools/noise.gif");
+    let scratch = Scratch::new();
+    for (name, len) in [
+        ("full.gif", original.len()),
+        ("early.gif", 1001),
+        ("half.gif", original.len() / 2),
+        ("tail.gif", original.len() - 20),
+    ] {
+        fs::write(scratch.root.join(name), &original[..len]).unwrap();
+        let mut replay = ReplayContext::new(&scratch, &scratch.root);
+        replay
+            .context
+            .fields
+            .insert("modelMultimodal".into(), multimodal(&["image"], None));
+        let output = futures_block(ReadFileTool::new().execute(
+            JsValue::Object(object([("file_path", JsValue::from(name))])),
+            replay.context,
+        ))
+        .unwrap();
+        if name == "full.gif" {
+            assert_eq!(text(field(&output.content[0], "type")), "image");
+            assert_eq!(
+                BASE64
+                    .decode(text(field(&output.content[0], "data")))
+                    .unwrap()
+                    .as_slice(),
+                original.as_slice()
+            );
+        } else {
+            assert_eq!(text(field(&output.content[0], "type")), "text");
+            let data = output.data.unwrap();
+            assert_eq!(field(&data, "imageDecodeFailed"), &JsValue::Bool(true));
+            assert_eq!(
+                text(field(&data, "error")),
+                format!("Image file appears truncated or corrupted ({len} bytes). Cannot decode.")
+            );
+        }
+    }
+}

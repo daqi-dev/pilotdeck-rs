@@ -100,8 +100,13 @@ def expected_rows(d, baseline, methods):
     d.require(len(rows) == len(identities) == 150 and Counter(r['id'].partition(':')[0] for r in rows) == COUNTS
               and {key.partition(':')[2] for key in identities if key.startswith('gateway.method:')} == set(methods),
               'ENTRY_INVENTORY', 'the expected 150-entry census is incomplete or duplicated')
+    d.require(all(isinstance(row.get('sources'), list) and row['sources'] and
+                  all(isinstance(pointer, str) and ':' in pointer and pointer.rsplit(':', 1)[-1].isdecimal()
+                      and int(pointer.rsplit(':', 1)[-1]) > 0 for pointer in row['sources'])
+                  for row in rows), 'ENTRY_INVENTORY', 'every entry requires a nonempty concrete source location')
     origins = {pointer.rsplit(':', 1)[0] for row in rows for pointer in row['sources']}
-    d.require(origins == inv['sources'].keys() and all(sha(baseline / p) == digest for p, digest in inv['sources'].items()),
+    d.require(origins == inv['sources'].keys() and all(not Path(p).is_absolute() and '..' not in Path(p).parts
+              and sha(baseline / p) == digest for p, digest in inv['sources'].items()),
               'ENTRY_INVENTORY', 'independent fixed TS source changed')
     return rows, sha(path)
 
@@ -186,9 +191,12 @@ def raw_background(d, folder, mode, result):
                 and any('turn_result' in text and 'ENTRY_RUNTIME_REPLY_cron' in text for text in texts))
     history = list((folder / 'home/always-on/projects').glob('*/run-history.jsonl'))
     events = list((folder / 'home/always-on/projects').glob('*/events.jsonl'))
-    return (len(history) == len(events) == 1 and 'no_plan' in history[0].read_text()
-            and 'discovery_started' in events[0].read_text() and result['background']['runHistory'] == history[0].read_text()
-            and result['background']['events'] == events[0].read_text())
+    background = result.get('background') or {}
+    return (len(history) == len(events) == 1 and history[0].parent == events[0].parent
+            and background.get('snapshotAfterReap') is True
+            and background.get('sha256') == {'runHistory': sha(history[0]), 'events': sha(events[0])}
+            and 'no_plan' in history[0].read_text() and 'discovery_started' in events[0].read_text()
+            and background['runHistory'] == history[0].read_text() and background['events'] == events[0].read_text())
 
 
 def production_results(d, native, baseline, entry_root):
@@ -247,7 +255,7 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
             violations = [row for row in original.get('violations', []) if row.get('method') == identity]
             if violations or any(state_ not in ('ok', 'error') for state_ in records):
                 state = 'FAIL'
-            elif outcome['exitCode'] == 0 and all(r['status'] == 'PASS' for r in coverage):
+            elif outcome['classification'] == 'PASS' and all(r['status'] == 'PASS' for r in coverage):
                 state = 'PASS'
             detail = {'methodOutcomes': records, 'outcomeRules': violations,
                       'scope': 'registered wire and #1477 method-outcome profile'}
@@ -273,7 +281,12 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
                     continue
                 folder, raw, digest = found
                 pointers.append({'path': str(folder / 'result.json'), 'sha256': digest})
-                if raw['serverExitCode'] != 0 or raw['errors'] or raw['binariesUnchanged'] is not True:
+                port = 28478 if engine == 'ts' else 28479
+                owner = raw.get('listener') or {}
+                if (type(raw['serverExitCode']) is not int or raw['serverExitCode'] != 0 or raw['errors']
+                        or raw['binariesUnchanged'] is not True or raw.get('ownedCleanup', {}).get('allStopped') is not True
+                        or type(raw.get('serverPid')) is not int or raw['serverPid'] <= 0
+                        or owner.get('addresses') != [f'127.0.0.1:{port}'] or owner.get('ownerPid') != raw['serverPid']):
                     profiles.append(False)
                 elif mode != 'http':
                     profiles.append(raw_background(d, folder, mode, raw))

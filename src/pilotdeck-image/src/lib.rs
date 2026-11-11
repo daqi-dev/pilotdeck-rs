@@ -25,7 +25,7 @@ fn encode(
     initialize()?;
     // libvips is lazy: `input` remains live until save has completed and all
     // image nodes below are destroyed. Never return a VipsImage from here.
-    let loaded = VipsImage::new_from_buffer(input, "").map_err(|e| e.to_string())?;
+    let loaded = VipsImage::new_from_buffer(input, "[fail_on=warning]").map_err(|e| e.to_string())?;
     let rotated = if rotate {
         Some(ops::autorot(&loaded).map_err(|e| e.to_string())?)
     } else {
@@ -92,7 +92,7 @@ pub fn prepare(input: &[u8], mime: &str, max: f64) -> Result<(Vec<u8>, String), 
     let metadata_ok = if !fast_jpeg && mime != "image/jpeg" && input.len() > 1000 {
         initialize()
             .and_then(|()| {
-                VipsImage::new_from_buffer(input, "")
+                VipsImage::new_from_buffer(input, "[fail_on=warning]")
                     .map(|_| ())
                     .map_err(|e| e.to_string())
             })

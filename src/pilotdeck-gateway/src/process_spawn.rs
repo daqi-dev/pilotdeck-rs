@@ -30,9 +30,20 @@ pub(crate) mod test_support {
             "{report}"
         );
         #[cfg(target_os = "linux")]
-        for key in ["SigIgn:", "SigBlk:"] {
-            let line = report.lines().find(|line| line.starts_with(key)).unwrap();
-            assert_eq!(u64::from_str_radix(line[7..].trim(), 16).unwrap(), 0);
+        {
+            fn status_bits(status: &str, key: &str) -> u64 {
+                let value = status.lines().find_map(|line| line.strip_prefix(key));
+                u64::from_str_radix(value.unwrap().trim(), 16).unwrap()
+            }
+
+            // The launcher's glibc posix_spawn can ignore its internal signals
+            // before the injected worker starts. libuv resets 1..31 and leaves
+            // every realtime disposition alone, even when inherited ignored.
+            let inherited = std::fs::read_to_string("/proc/self/status").unwrap();
+            const LOW_SIGNALS: u64 = (1 << 31) - 1;
+            let expected_ignored = status_bits(&inherited, "SigIgn:") & !LOW_SIGNALS;
+            assert_eq!(status_bits(report, "SigIgn:"), expected_ignored, "{report}");
+            assert_eq!(status_bits(report, "SigBlk:"), 0, "{report}");
         }
     }
 

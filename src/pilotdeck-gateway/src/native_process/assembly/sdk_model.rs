@@ -1,9 +1,22 @@
 //! The model-only part of the committed SDK session config.
 //! Mirrors SessionAgentConfigBundle.resolveFallbackModel; values remain UTF-16.
-use crate::runtime::model::router::{ManagedModelPolicy, RouterModelRef};
-use pilotdeck_protocol::{JsString, JsValue};
+use crate::runtime::model::router::{ManagedModelPolicy, RouterModelInvocation, RouterModelRef};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use crate::runtime::turn::interaction::SdkModelOptions;
+
+/// Read from the actual session/child route in its retained project generation,
+/// matching SessionAgentConfigBundle. Unknown routes stay text-only; they must
+/// never inherit a previous model's image capability or output byte budget.
+pub(crate) fn apply_model_multimodal(config: &mut JsObject, model: &dyn RouterModelInvocation) {
+    let multimodal = config
+        .get("provider")
+        .and_then(JsValue::as_string)
+        .zip(config.get("model").and_then(JsValue::as_string))
+        .and_then(|(provider, name)| model.get_multimodal(provider, name).ok())
+        .unwrap_or(JsValue::Undefined);
+    config.insert("modelMultimodal".into(), multimodal);
+}
 
 pub(crate) fn model_options(
     config: &JsValue,
@@ -57,6 +70,55 @@ pub(crate) fn model_options(
 mod tests {
     use super::*;
     use crate::metadata::object;
+    #[test]
+    fn tool_multimodal_metadata_follows_selected_route_and_clears_stale_parent_values() {
+        struct Metadata;
+        impl RouterModelInvocation for Metadata {
+            fn get_capabilities(
+                &self,
+                _: &JsString,
+                _: &JsString,
+            ) -> Result<JsValue, crate::host::ModuleError> {
+                Ok(JsValue::Undefined)
+            }
+            fn get_multimodal(
+                &self,
+                provider: &JsString,
+                name: &JsString,
+            ) -> Result<JsValue, crate::host::ModuleError> {
+                if provider.equals_str("images") && name.equals_str("vision") {
+                    Ok(object([
+                        ("input", JsValue::Array(vec!["text".into(), "image".into()])),
+                        ("maxImageBytes", JsValue::Number(5000.0)),
+                        ("imageDetail", "high".into()),
+                    ]))
+                } else if provider.equals_str("text") && name.equals_str("child") {
+                    Ok(object([("input", JsValue::Array(vec!["text".into()]))]))
+                } else {
+                    Err(crate::host::ModuleError::new("unknown route"))
+                }
+            }
+        }
+        let mut config = JsObject::new();
+        config.insert("provider".into(), "images".into());
+        config.insert("model".into(), "vision".into());
+        apply_model_multimodal(&mut config, &Metadata);
+        let expected = Metadata
+            .get_multimodal(&"images".into(), &"vision".into())
+            .unwrap();
+        assert_eq!(config.get("modelMultimodal"), Some(&expected));
+        config.insert("provider".into(), "text".into());
+        config.insert("model".into(), "child".into());
+        apply_model_multimodal(&mut config, &Metadata);
+        assert_eq!(
+            config.get("modelMultimodal"),
+            Some(&object([("input", JsValue::Array(vec!["text".into()])),]))
+        );
+        config.insert("provider".into(), "missing".into());
+        apply_model_multimodal(&mut config, &Metadata);
+        assert_eq!(config.get("modelMultimodal"), Some(&JsValue::Undefined));
+    }
+
     #[test]
     fn fallback_precedence_and_utf16_follow_the_session_bundle() {
         let model = RouterModelRef::new("p".into(), "base".into());
