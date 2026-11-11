@@ -10,7 +10,7 @@ coordinator / busy 门预检）按原始值本身索引（`router_key`：字符�
 `RunAcceptInput.session_key_raw` 保持原始值；读取面把请求自己的 `sessionKey` 回显进
 snapshot（miss 也回显）。
 
-## 变异名册（11 行，逐行绑死测试）
+## 变异名册（12 行，逐行绑死测试）
 
 - `submit-owner-uses-template-key` —— owner 各 Map 回退模板拼法，null 回合对
   router 域查找不可见（admit 截止期先死）；
@@ -28,7 +28,10 @@ snapshot（miss 也回显）。
   （round-1 行，重锚后幸存）；
 - `registry-skip-reverted` —— 折叠带跳过被整个去掉，深键记录越过带也跳过，load
   不再像 TS 那样失败；
-- `echo-drops-raw-key` —— 读取面回显固定 null 而不是请求自己的值。
+- `echo-drops-raw-key` —— 读取面回显固定 null 而不是请求自己的值；
+- `session-id-uses-router-key`（fix-r3 条1）—— SessionContext 交接把路径/持久身份域
+  折叠回 router 键，非字符串 sessionKey 回合死在生产工厂的 `create_storage`
+  （`std::fs` 拒绝 raw 值标签里的 NUL 字节，到不了模型解析），null.jsonl 不落盘。
 
 绑定测试：`config::tests::session_model_set_null_key_turn_from_the_submit_chain_answers_the_ts_cells`
 （键域 + 四格 + 记录体）、`config::tests::deep_array_session_key_submit_is_rejected_without_landing_a_record`
@@ -37,7 +40,8 @@ snapshot（miss 也回显）。
 `storage::run_registry_tests::null_session_key_body_keeps_json_null_while_the_key_spells_null`
 （记录体）、`storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
 （折叠带）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
-（回显）。
+（回显）、`native_process::methods::config::tests::real_services_null_session_key_turn_dies_at_model_resolution`
+（SessionContext 双域键，fix-r3 条1）。
 
 ## 启动契约（#2391 迁移）
 
