@@ -226,7 +226,6 @@ PENDING_BARE_ASSERTS = {
         'frozen positive/negative pairing pins the assert text; needs its own round',
     'host-event-pump/negative_controls.py': 'not migrated yet (batch 3)',
     'mcp-gateway/negative_controls.py': 'not migrated yet (batch 3)',
-    'mcp-hooks-spawn/negative_controls.py': 'not migrated yet (batch 3)',
     'pump-order-cases/negative_controls.py': 'not migrated yet (batch 3)',
     'runtime-spawn-panic/negative_controls.py': 'not migrated yet (batch 3)',
     'skills/negative_controls.py': 'not migrated yet (batch 3)',

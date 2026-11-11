@@ -10,7 +10,10 @@ accounting (scripts/fe-parity/coexist-runner.mjs), the shared-key snapshot
 red, and restored byte-for-byte. The runner never stops at the first failure:
 it records KILLED / SURVIVED / INVALID with a reason for every row and exits
 non-zero if any row is not KILLED. The named marker is the dedicated assertion
-message that proves the intended check fired, not an unrelated parse error.
+message that proves the intended check fired, not an unrelated parse error: a
+row is KILLED only when the marker lands inside a failing subtest's own TAP
+diagnostic block (#1087, the node-side form of #818's "stdout is not panic
+evidence" — a marker printed to stdout never counts).
 
 fix-r1 note: the old ``predicate-loose`` / ``switch-ignored`` rows mutated the
 ``isNewShellRequest`` mirror, which was NOT on the real deployment path (the
@@ -38,19 +41,21 @@ No cargo, no listen, no browser: the oracles are the offline node --test set
 coexist-self-check .test.mjs).
 
 Requires an already-committed tree (``mutating_sources`` refuses a dirty
-baseline by design; the target files are #927 additions/edits, so this runner
-is handed to the coordinator to execute on the host after commit, see
-RESULT.md). Run from the worktree root:
+baseline by design; ``NEGATIVE_BASELINE=<commit>`` rehearses against a
+snapshot of the uncommitted tree, the same escape the edgeclaw suites use).
+Run from the worktree root:
 
     python3 src/pilotdeck-gateway/tests/fixtures/fe-coexist/negative_controls.py out/
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned  # noqa: E402
+from negative_selection import verdict_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 BOUNDARY = ROOT / "ui-rs/shared/boundary.js"
@@ -287,6 +292,43 @@ mutations = [
 ]
 
 
+def failing_subtest_blocks(log):
+    """The diagnostic block of every failing ``node --test`` subtest (#1087).
+
+    Node's TAP output puts a failing subtest's assertion message inside the
+    indented ``---``/``...`` block that follows its ``not ok N - <name>`` line,
+    while anything a test prints to stdout lands on unindented top-level
+    ``# comment`` lines. Collecting only the failing blocks therefore keeps a
+    sibling's (or the bound test's own) printed marker from counting as the
+    dedicated assertion firing — the node-side form of #818's "stdout is not
+    a panic payload".
+    """
+    blocks = []
+    state = {"failing": False, "block": None}
+
+    def close():
+        if state["block"] is not None:
+            if state["failing"]:
+                blocks.append("\n".join(state["block"]))
+            state["block"] = None
+
+    for line in log.split("\n"):
+        if line.startswith("not ok ") or line.startswith("ok "):
+            close()
+            state["failing"] = line.startswith("not ok ")
+            state["block"] = []
+        elif line == "  ...":
+            close()
+        elif state["block"] is not None and (not line or line.startswith("  ")):
+            state["block"].append(line)
+        elif line and not line.startswith("  "):
+            # Unindented top-level output (a sibling's stdout, the plan, TAP
+            # comments) ends any open block; a marker there is not evidence.
+            close()
+    close()
+    return blocks
+
+
 def main():
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -303,7 +345,8 @@ def main():
         results.append({"name": name, "status": status, "reason": reason})
         print(f"{name}: {status} {reason}", flush=True)
 
-    with mutating_sources(ROOT, paths) as snapshots:
+    with mutating_sources(ROOT, paths,
+                          baseline=os.environ.get("NEGATIVE_BASELINE") or "HEAD") as snapshots:
         for name, path, before, after, oracle, marker in rows:
             original = snapshots[path]
             before_bytes = hashlib.sha256(original).hexdigest()
@@ -331,7 +374,7 @@ def main():
                 (out / f"{name}.log").write_text(log, encoding="utf-8")
                 if result.returncode == 0:
                     record(name, "SURVIVED", "offline oracle stayed green")
-                elif marker in log:
+                elif any(marker in block for block in failing_subtest_blocks(log)):
                     record(name, "KILLED", "named assertion failed")
                 else:
                     record(name, "INVALID", "oracle failed outside the named assertion")
@@ -355,7 +398,9 @@ def main():
     )
     killed = sum(row["status"] == "KILLED" for row in results)
     print(f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}", flush=True)
-    return 0 if killed == len(results) else 1
+    # #1087: an empty run (a lost mutation table, a misparsed selection) must
+    # never read as success; only a nonempty all-KILLED run exits zero.
+    return verdict_exit(results, key="status")
 
 
 if __name__ == "__main__":

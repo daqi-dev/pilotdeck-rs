@@ -3,7 +3,9 @@
 """#953 mutation controls for the shared Node pin and old-guard migration.
 
 Run from the repository root after the work is committed (`mutating_sources`
-refuses to mutate a product tree that differs from HEAD):
+refuses to mutate a product tree that differs from HEAD;
+``NEGATIVE_BASELINE=<commit>`` rehearses against a snapshot of the
+uncommitted tree, the same escape the edgeclaw suites use):
 
     CARGO_TARGET_DIR=<absolute> PDRS_BASELINE=<fixed checkout> \
         python3 src/pilotdeck-gateway/tests/fixtures/node-provenance/negative.py \
@@ -26,7 +28,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (exclusive_write, mutating_sources,
                               new_output_directory, run_owned, wait_for_slot)
-from negative_suite import invalidate_completed
+from negative_panic import named_test_killed
+from negative_suite import invalidate_completed, passed
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = 'src/pilotdeck-gateway/tests/fixtures'
@@ -78,8 +81,8 @@ ROWS = [
 
 
 # No `--nocapture` in either command: it splices the test's stdout into the
-# `test <name> ... ok/FAILED` status line (#938 r14) that cargo_passed()/
-# classify() match exactly (#1053).
+# `test <name> ... ok/FAILED` status line (#938 r14) that the shared
+# passed()/named_test_killed() judge exactly (#1053, #1087).
 def cargo_command(test):
     return [
         'cargo', 'test', '--offline', '--locked',
@@ -120,33 +123,71 @@ def run(row, env, output, stage):
     return result
 
 
-def cargo_passed(result, test):
-    log = result.stdout + result.stderr
-    return (result.returncode == 0 and f'test {test} ... ok' in log
-            and 'test result: ok. 1 passed;' in log)
+def _tap_test_name(not_ok_line):
+    text = not_ok_line[len('not ok '):]
+    return text.split(' - ', 1)[1] if ' - ' in text else text
+
+
+def failing_subtests(log):
+    """(name, block) for every failing ``node --test`` subtest (#1087).
+
+    Node's TAP output puts a failing subtest's assertion message inside the
+    indented ``---``/``...`` block that follows its ``not ok N - <name>`` line,
+    while anything a test prints to stdout lands on unindented top-level
+    ``# comment`` lines. A marker therefore only counts when it is inside the
+    bound subtest's own failing block — the node-side form of #818's "stdout
+    is not a panic payload".
+    """
+    entries = []
+    state = {'name': None, 'block': None}
+
+    def close():
+        if state['block'] is not None:
+            entries.append((state['name'], '\n'.join(state['block'])))
+            state['block'] = None
+
+    for line in log.split('\n'):
+        if line.startswith('not ok ') or line.startswith('ok '):
+            close()
+            if line.startswith('not ok '):
+                state['name'] = _tap_test_name(line)
+                state['block'] = []
+        elif line == '  ...':
+            close()
+        elif state['block'] is not None and (not line or line.startswith('  ')):
+            state['block'].append(line)
+        elif line and not line.startswith('  '):
+            close()
+    close()
+    return entries
+
+
+def node_test_killed(log, test, anchors):
+    """The bound subtest failed and a marker is inside its own block."""
+    return any(name == test and any(anchor in block for anchor in anchors)
+               for name, block in failing_subtests(log))
 
 
 def classify(row, result):
     log = result.stdout + result.stderr
     if row['runner'] == 'cargo':
-        if cargo_passed(result, row['test']):
+        if passed(result, row['test']):
             return 'SURVIVED', 'bound test still passed'
-        if (result.returncode != 0 and 'test result: FAILED' in log
-                and f"test {row['test']} ... FAILED" in log
-                and any(anchor in log for anchor in row['anchors'])):
+        # #1087: only the named test's own FAILED status line plus a marker in
+        # that test's own panic payload kills (negative_panic judges both).
+        if result.returncode != 0 and named_test_killed(log, row['test'], row['anchors']):
             return 'KILLED', 'bound test failed at its assertion'
         return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
     if result.returncode == 0:
         return 'SURVIVED', 'bound node test still passed'
-    if (f'not ok' in log and row['test'] in log
-            and any(anchor in log for anchor in row['anchors'])):
+    if node_test_killed(log, row['test'], row['anchors']):
         return 'KILLED', 'bound node test failed at its assertion'
     return 'INVALID', 'missing bound node failure (syntax error, wrong test, or missing anchor)'
 
 
 def positive_ok(row, result):
     if row['runner'] == 'cargo':
-        return cargo_passed(result, row['test'])
+        return passed(result, row['test'])
     return result.returncode == 0
 
 
@@ -160,7 +201,8 @@ def main():
     paths = [row['path'] for row in ROWS]
     results = []
     try:
-        with mutating_sources(ROOT, paths) as originals:
+        with mutating_sources(ROOT, paths,
+                              baseline=os.environ.get('NEGATIVE_BASELINE') or 'HEAD') as originals:
             for row in ROWS:
                 status, reason = 'INVALID', ''
                 try:
