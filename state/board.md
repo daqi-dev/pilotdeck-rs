@@ -5978,3 +5978,35 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 下次两小时交接 | ~12:30 前写段（不空等） | coord2/e7 | 12:30 |
 
 （本段 READY 改动：hop-car-N 行 blocked→doing 前置解除；新增 recover-4 条恢复车道行；hop-car-M 行等待器灭失改协调者人工核。段后 next-task --check 自查。）
+
+## 2026-11-11 12:19（10:24–12:19，coord2/e7 两小时交接段·连续推进）
+
+开场核时：`date` 实跑 12:19。主线 #1357 A8.6-pr2 收口推进：四张关单闸门车与 #1517/#1781 收口链全在飞，human-comments 已跑无新拍板。
+
+- **网络两轮抖动均自愈**（10:42–11:15 恢复、11:3x–11:4x 第二轮 3 连过探针恢复）：受影响车道靠各自重试续跑，cb8 不经本机网络未受影响；2499→cb8（11:17）、1087→macmini-01（11:19）续派落定。
+- **#2879 锚点修复收口**：修复推送后 checks 全绿，`gh pr merge` 入队 **position 1**（12:0x GraphQL 复核），代理监视 MERGED 后核邮箱——#2186/#2157 关单链待其合入。
+- **Car L（#2199+#2207）**：r7 四角色评审在飞（超时角色重跑中），出块后贴评论+pr-gate+入队。
+- **#2098 fix-r1 收货（11:5x）→ PR #2944**：MM 三角色已出块——**boundary P0=2**（两条 #1494 负控行变结构性 SURVIVED：open 早退在变异点之前、且该行序在族前面使六条新 #2098 行取不到证据；`verified()` 摘要读上界取自可伪造记录无绝对上限——评审自注残余非回归可降级）**P1=1**（spec A7.2-003 文本与实现相反+行号漂移）；**sibling P1=2**（同两行；`cleanup_expired_leases` 的 `lease.json` 第四处同族裸读未加族）**P2=2**（硬链换链后 rename 同 inode 空操作、三条绑定负控行需实测复跑；spec 停在裁前口径）；simplify P2=1。DS 四角色 600s 全 TIMEOUT → 1200s 重挂 + MM concurrency 1200s 重挂在飞；**fix-r2 等 DS 出块即派**（避免代理与评审同树）。
+- **#1517（PR #2932）**：rebase 真合并新头 0831bd337（MERGEABLE，CI 新头跑）；增量双谱系评审**未收敛**：MM boundary P0 候选（standby-rearm 负控疑 SURVIVED，置臂点=release 后首次 poll_read、探针窗 +150.5s 盖不到 +94.4→+154.4 形态）、MM concurrency P1 候选（两个新 cell 存活前提与 idle-close +94.4s 矛盾——与实测 141 绿相抵触，正是仲裁要实测形态）、DS concurrency P2（`_headerSent` 写时语义需 TS 实测，证实升 P1）、MM 双 P2（flush 清零后无唤醒搁浅 withheld head；content-length 无 flush 旗标永置位）。**fix-r2 实测仲裁开路已派本机实现轮（12:1x）**：A 负控单变异 → C TS 探针 → B/D 连接存活与 hyper flush 探针，先测后改、证伪即驳回贴原始输出；DS boundary 第三次重跑（预算 3 USD、900s）在飞。
+- **#1781/#1805（PR #2943）**：fix-r1（3c4a6add7）DS 增量 P2=4 全 a 类 → **fix-r2 已交付 head 40a7af98d**（12:1x）：四条全落（GUARD_BUDGET/GUARD_STALL_ALLOWANCE 常量同源+负控锚同步、完成界双界断言、guard-budget-stretched 提交后单变异 **KILLED 实证**、pair 包装 8/9 处——第 9 处 `matches()` 扫描形态不适用已注明）；fmt/clippy/`--lib stimulus` 19 绿/负控 --check 21 锚/anchor_selfcheck 0 错全过。**收口链排队**：DS rev3 增量评审（12:1x 起）→ 出块后协调者跑全量 20 条负控（wt-1781 宿主、树不与评审并发）→ pr-gate 新头结果块 → 入队。
+- **#2513 冻结件（PR #2939）**：事件文件草稿 `_tmp/20261111-issue-2513/event-draft.md` 就绪；fix-r1 交付证据核验完整（53/53、改前 KILLED、B6 预 write 一致）；评审收敛后转正 specs/parity/frozen/20261111-2513.md + round.py 元组 + `check_frozen --write` 单独提交。
+- **磁盘**：11:3x 实测 192 GiB 过 180 硬闸（wt-status 可回收 0）→ 删 7 棵近 6h 无编译产物的树的 cargo-target → **168 GiB 回 WARN 档**（df 前后差 avail 16.0→44.3 GiB）；后续：Car L 完工清 wt-2199（9.5G）、2682 车道收尾清 50.3G。wt-2804 清账（树早回收，仅剩无害陈旧锁）。
+- **board/decisions PR（#2941/#2942）**：pr-gate 因缺角色结果块红（纯 state 文件）→ 12:17 补 `pr-gate:waiver` 豁免评论，等待器（robust 版）续等全绿后入队。
+- 看板：#2944/#2932/#2939/#2943 实现方 GLM 已核正（2932/2943 曾被 claude/ 分支前缀误标）。
+
+#### 未结义务表（12:19，下一步动作 / 唯一责任人 / 最迟复查时间）
+
+| 义务 | 下一步 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| #2932 fix-r2 | 代理实测仲裁 A–D + R4 更正 E–G → 收货贴 PR → 两家增量复核（修 P0/P1 轮） | 本机实现代理 | 14:00 |
+| #2943 fix-r2 收口链 | DS rev3 出块 → 20 条负控宿主跑 → pr-gate 新块 → 入队 | coord2/e7 | 13:30 |
+| #2944 fix-r2 组书派单 | DS 四角色出块（12:35 前后）→ 汇总两家定级 → fix-r2 任务书派本机或 cb8（P0#2 降级判定落 PR 评论） | coord2/e7 | 13:00 |
+| #2941/#2942 合并 | waiver 后等待器自动入队合并；若 pr-gate 不因评论重跑则手动 rerun 失败 job | 等待器/coord2 | 13:00 |
+| #2879 | 出队 MERGED → 核邮箱 → #2186/#2157 关单 | 2879 代理 | 13:00 |
+| Car L r7 | 评审块出 → 贴 PR + pr-gate + 入队 + #2090 评论 | Car L 代理 | 13:00 |
+| #2939（#2513） | 评审收敛 → 冻结件转正 + --write 单独提交 → 入队 | coord2/e7 | 14:30 |
+| 远端车道 2692/2499/1087 | 哨兵通知交付即收货（各自 PR 链） | coord2/e7 | 滚动 |
+| 磁盘尾清 | Car L 完工清 wt-2199；2682 收尾清 50.3G | coord2/e7 | 15:00 |
+| 下次两小时交接 | ~14:30 前写段（不空等） | coord2/e7 | 14:30 |
+
+（本段 READY 改动：无新开单——各收口链均在既有行内推进。段后 next-task --check 自查。）
