@@ -308,8 +308,7 @@ fn read_tui_token(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 /// createLocalGateway() up to its first observable effects, then CliChannel.
-fn run_local_cli_channel(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let pilot_home = paths::pilot_home(env, cwd)?;
+fn prepare_legacy_skills(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
     // Node's import.meta.url is the realpath of the entry module; match it so a
     // symlinked launcher still probes beside the real install root.
     let exe = std::env::current_exe()
@@ -317,13 +316,19 @@ fn run_local_cli_channel(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, F
         .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
     let exe_dir = exe.as_deref().and_then(Path::parent);
     let builtin_root = skills::builtin_skills_root(env, cwd, exe_dir)?;
-    let migration = skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root, cwd)?;
+    let migration = skills::migrate_legacy_bundled_skill_copies(pilot_home, &builtin_root, cwd)?;
     if let Some(notice) = migration.notice {
         stdout_line(&notice);
     }
     for warning in migration.warnings {
         stderr_line(&warning);
     }
+    Ok(())
+}
+
+fn run_local_cli_channel(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    let pilot_home = paths::pilot_home(env, cwd)?;
+    prepare_legacy_skills(env, cwd, &pilot_home)?;
     config::check(env, cwd, &pilot_home)?;
     cli_channel::run(argv, env, cwd)
 }

@@ -13,10 +13,12 @@ pub(super) struct NativeProjectFactory {
     options: Options,
     env: Env,
     background: Option<Arc<dyn ResourceFamilySource>>,
+    router_events: Arc<super::router_events::RouterEventJournal>,
 }
 impl NativeProjectFactory {
     pub(super) fn new(options: Options, env: Env) -> Self {
         Self {
+            router_events: Arc::new(super::router_events::RouterEventJournal::new(&options.home)),
             options,
             env,
             background: {
@@ -39,6 +41,7 @@ impl ProjectRuntimeFactory for NativeProjectFactory {
             &self.env,
             root,
             self.background.clone(),
+            self.router_events.clone(),
         )
         .stage(root, resources)
     }

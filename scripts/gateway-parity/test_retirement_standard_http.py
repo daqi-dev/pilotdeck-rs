@@ -72,6 +72,7 @@ common = _load('common', _apparatus / 'common.py')
 # <<< apparatus bootstrap
 import json
 import unittest
+import types
 module = _load('retirement_standard_http', _apparatus / 'retirement_standard_http.py')
 
 def row(body, headers=()):
@@ -95,6 +96,13 @@ class FullProjection(unittest.TestCase):
         projected = project(row({'ok': True}))
         self.assertEqual(projected['headers']['content-length'], ['11'])
 
+    def test_status_line_protocol_and_reason_are_retained(self):
+        for replacement in (b'HTTP/1.0 200 OK', b'HTTP/1.1 200 Different'):
+            original = row({'ok': True})
+            changed = dict(original, responseHex=bytes.fromhex(original['responseHex']).replace(
+                b'HTTP/1.1 200 OK', replacement, 1).hex())
+            self.assertNotEqual(project(original), project(changed))
+
     def test_extra_header_is_retained(self):
         self.assertNotEqual(project(row({'ok': True})), project(row({'ok': True}, [('X-Contract', 'changed')])))
 
@@ -117,6 +125,43 @@ class FullProjection(unittest.TestCase):
     def test_diagnostic_background_cannot_certify_parity(self):
         present = {('cron', side): object() for side in ('ts', 'native')}
         self.assertEqual(module.comparison(None, present, 'cron', 'cron')['status'], 'BLOCKED')
+
+    def test_empty_project_summary_created_at_is_metadata(self):
+        n = module.compare.Normalizer()
+        value = {'projectKey': '/project', 'name': 'project', 'fullPath': '/project',
+                 'sessionCount': 0, 'createdAt': 1}
+        self.assertEqual(n.value(value), n.value(dict(value, createdAt=2)))
+        for key in ('projectKey', 'name', 'fullPath'):
+            incomplete = {k: v for k, v in value.items() if k != key}
+            self.assertNotEqual(n.value(incomplete), n.value(dict(incomplete, createdAt=2)))
+        business = dict(value, runAt=1, nextRunAt=2, durationMs=3, usage=4)
+        self.assertNotEqual(n.value(business), n.value(dict(business, runAt=99)))
+
+    def test_full_comparison_accepts_equal_originals_and_rejects_changed_disk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = {key: str(root / 'cur' / key) for key in ('home', 'project', 'tmp', 'workspaces')}
+            runtime.update(providerUrl='http://127.0.0.1:28531/v1', gatewayPort=28478)
+            observed = {}
+            for side in ('ts', 'native'):
+                folder = root / ('http-' + side); folder.mkdir()
+                (folder / 'home').mkdir(); (folder / 'project').mkdir()
+                (folder / 'project/note.txt').write_text('complete durable text')
+                response = dict(row({'ok': True}), id='gateway.http:ANY /health')
+                raw = {'http': [response], 'providerRequests': []}
+                (folder / 'result.json').write_text(json.dumps(raw))
+                (folder / 'provenance.json').write_text(json.dumps({'runtime': runtime}))
+                stat = folder.stat()
+                preservation = {'originalRuntime': str(root / 'cur'), 'preservedAt': str(folder),
+                                'device': stat.st_dev, 'inode': stat.st_ino, 'exitCode': 0,
+                                'originals': {name: module.hashlib.sha256((folder / name).read_bytes()).hexdigest()
+                                              for name in ('result.json', 'provenance.json')}}
+                (root / (folder.name + '.preservation.json')).write_text(json.dumps(preservation))
+                observed[('http', side)] = (folder, raw, None)
+            d = types.SimpleNamespace(read=lambda path: json.loads(path.read_text()))
+            self.assertEqual(module.comparison(d, observed, 'http', 'ANY /health')['status'], 'PASS')
+            (root / 'http-native/project/note.txt').write_text('unexpected changed durable text')
+            self.assertEqual(module.comparison(d, observed, 'http', 'ANY /health')['status'], 'FAIL')
 
     def test_missing_side_cannot_certify_parity(self):
         self.assertEqual(module.comparison(None, {}, 'http', '/health')['status'], 'BLOCKED')

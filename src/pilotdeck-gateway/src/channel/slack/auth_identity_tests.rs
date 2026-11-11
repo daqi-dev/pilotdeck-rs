@@ -40,7 +40,7 @@ async fn successful_auth_records_identity_without_waiting_for_a_parked_ack() {
     let reader_was_running = !reader.is_finished();
     reader.abort();
     let _ = reader.await;
-    assert!(
+    crate::negative_assert!(
         matches!(result, Ok(Ok(()))),
         "successful auth queued behind ACK"
     );

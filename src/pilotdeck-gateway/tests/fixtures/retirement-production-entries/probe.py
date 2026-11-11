@@ -50,7 +50,7 @@ config={'schemaVersion':1,'agent':{'model':'fixture/mock','maxOutputTokens':MAX_
 if a.mode=='alwayson':config['alwaysOn']={'trigger':{'tickIntervalMinutes':0.01,'cooldownMinutes':1,'dailyBudget':1,'recentUserMsgMinutes':0},'projects':{str(project):{'enabled':True}}}
 (home/'pilotdeck.yaml').write_text(json.dumps(config,indent=2))
 port=a.gateway_port if a.gateway_port is not None else (28478 if a.engine=='ts' else 28479)
-env={k:v for k,v in os.environ.items()if k in ('PATH','LANG','LC_ALL','LD_LIBRARY_PATH')};env.update(HOME=str(home),PILOT_HOME=str(home),TMPDIR=str(tmp),DATABASE_PATH=str(home/'auth.db'),WORKSPACES_ROOT=str(a.out/'workspaces'),PILOTDECK_GATEWAY_HOST='127.0.0.1',PILOTDECK_GATEWAY_PORT=str(port),PILOTDECK_GATEWAY_TOKEN=token,PILOTDECK_GATEWAY_TOKEN_PATH=str(home/'token'),PILOTDECK_SKIP_BROWSER_OPEN='1',PILOTDECK_RS_SIDECAR=str(a.sidecar),PDRS_BASELINE=str(a.baseline))
+env={k:v for k,v in os.environ.items()if k in ('PATH','LANG','LC_ALL','LD_LIBRARY_PATH')};env.update(HOME=str(home),PILOT_HOME=str(home),TMPDIR=str(tmp),DATABASE_PATH=str(home/'auth.db'),WORKSPACES_ROOT=str(a.out/'workspaces'),PILOTDECK_GATEWAY_HOST='127.0.0.1',PILOTDECK_GATEWAY_PORT=str(port),PILOTDECK_GATEWAY_TOKEN=token,PILOTDECK_GATEWAY_TOKEN_PATH=str(home/'token'),PILOTDECK_SKIP_BROWSER_OPEN='1',PILOTDECK_RS_SIDECAR=str(a.sidecar),PDRS_BASELINE=str(a.baseline),PILOTDECK_BUNDLED_SKILLS_DIR=str(root/'skills'))
 command=([str(a.node),str(a.baseline/'dist/src/cli/pilotdeck.js')]if a.engine=='ts'else[str(a.cli)])+['server','--host','127.0.0.1','--port',str(port)]
 provenance={'engine':a.engine,'mode':a.mode,'sourceManifest':{'path':str(a.source_manifest),'sha256':sha(a.source_manifest)},'candidateManifest':{'path':str(a.candidate_manifest),'sha256':sha(a.candidate_manifest)},'binaries':{'pilotdeck':sha(a.cli),'sidecar':sha(a.sidecar)},'producerSha256':sha(__file__),'cronDriverSha256':sha(HERE/'cron.mts'),'baselineEntrySha256':sha(a.baseline/'dist/src/cli/pilotdeck.js'),'node':versions,'command':command,'networkNamespace':os.readlink('/proc/self/ns/net'),'formalAcceptance':False}
 provenance['runtime']={'home':str(home),'project':str(project),'tmp':str(tmp),'workspaces':str(a.out/'workspaces'),'providerUrl':config['model']['providers']['fixture']['url'],'gatewayPort':port}
@@ -96,7 +96,7 @@ def read_after_reap():
 
 # Same fixture input mtimes on both sides; response Last-Modified remains exact.
 for seeded in sorted(a.out.rglob('*'),reverse=True):
- if seeded.is_file():os.utime(seeded,(1700000000,1700000000))
+ os.utime(seeded,(1700000000,1700000000))
 common.install_shutdown()
 try:
  lease.__enter__();leased=True

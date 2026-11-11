@@ -1,0 +1,31 @@
+{
+  "source": "fixed fixture-encrypt-key / IV=16 bytes of 7 / timestamp1700000000 / fixture-nonce; existing configured TS actual requests",
+  "fixedTS": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceRawSha256": "ed8356f6dc9bc4dad4618c6310baa0cec2a214ce805ed09621a026d3d4e40969",
+  "cases": [
+    {
+      "label": "challenge",
+      "requestBody": "{\"encrypt\":\"BwcHBwcHBwcHBwcHBwcHB+6gRspcQWfSCB5AKszbC7JTwj94SmT9GqzFRzvNfMm7eHhDg4EAbU6xtH8p49STjvq0lG+DV1oeNEJVLc0i+uuvVve1Q4NOa+cGwRz4HTzCcMQy4JrkAa4rbefZj+/TqQ==\"}",
+      "signature": "a32ae0e34c2a0161a0dae2e218d5fbbfc3a8e278a32118f08aedee30b073def6",
+      "response": {
+        "challenge": "HTTP_CHALLENGE_42"
+      }
+    },
+    {
+      "label": "message-0",
+      "requestBody": "{\"encrypt\":\"BwcHBwcHBwcHBwcHBwcHBxbRufv43vChrcwjA7EbIK0mZ0C5upmbotqNQS6LJPFCz265LI06nnxjPK6+OA6JE+Tj5Jqitb0vxjjmF6a2Ba7S71JyMi9tKnAi6faIWkacjsTjr974EeHELDIXF9e02CqC2tqWkNIbq79WjvKrQw4wPNKh8xPeWFdA9Gp/qkjHOPr07Mh69OyiysGkFM2C00PXmhFmu8nYBLAFlbiObwBrkVP9ZWhcw+a/k1H1iluDTm7F3x1tVDOM4zKbnWguITA3T3GYkSI7yhc+1M050pLItKLhLly6irwiZ76IIfe95BzZEOPm3iXVfwKkY8/tyh4Tn82FPGxnjhmwyMUZBO/BZqVgr8FPDJdfx/RlofoLzWk27kPno6Dyk/YmgD9rLfYpNhDBEqO5HVCXJQMqorhfhoExFmOKvJuDfCoR5vMtuwWn5Z2/AG4D9yvZiQIPb5PtT+bNshmhUrSF1PqNd9w=\"}",
+      "signature": "8276282cfbf6ecc1095c5413bd2488110a1d93dce2727a10c6ef8df4100a961d",
+      "response": {
+        "ok": true
+      }
+    },
+    {
+      "label": "message-1",
+      "requestBody": "{\"encrypt\":\"BwcHBwcHBwcHBwcHBwcHBxbRufv43vChrcwjA7EbIK0mZ0C5upmbotqNQS6LJPFCz265LI06nnxjPK6+OA6JE7JkyHlP0ClydIEJejd5RL4OfcnsaxJk7HnLofLcj3EJBEe4PyNSDZ4fzXPuy21m5NXDhFTM0p+koClu69EWj6OSJgWOe+/TFdorplmoDHH1NMYwSdr3eGM82hVvlTf8NgcX5/adFECpy5eEBMktYGBIUcLfDo48pebSpoihoeI88fZKPPWR1Z3OziIirRzx0ArPiUOxPoPcXIlx7GMtIbJIKctSFoFkeJC6Z/v1FV2WPS5dJJUlWVtA1A7J9uAxHGTQiXcQuCNvdrmQJQ6HA7k4zFrytSKV/cBL6fhBCScaUZHEC8+Xm6hblzMvtomg2pjmigFoXOKo8lllGPMWqEZWbb7Nc4f5PP6gQEe7DHjn21UAHGvG3JEf7nru0JYoJzDq66RHal8yT/BZwsxTPJI=\"}",
+      "signature": "6906d0ffa56eb129b2b5d3426b4cecff39bb3e3bb436f242a3ca018542b8f307",
+      "response": {
+        "ok": true
+      }
+    }
+  ]
+}

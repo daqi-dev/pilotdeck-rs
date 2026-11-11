@@ -973,7 +973,8 @@ class ImportIsolation(unittest.TestCase):
         entries = {name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
                                     'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py',
-                                    'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py')}
+                                    'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py',
+                                    'retirement_standard_http.py', 'retirement_public_http.py', 'test_retirement_standard_http.py')}
         self.assertEqual(set(contract['errors']),
                          {'ordinary', 'interrupt', 'timeout', 'permission', 'subprocess_timeout',
                           'apparatus', 'rule_only', 'system_exit'}, message + ': required exception classes')
@@ -1939,7 +1940,8 @@ class ApparatusInputs(unittest.TestCase):
             'native_evidence.py', 'observer.py', 'run_round.py', 'session_domain.py', 'test_safety.py',
             'controls/run_all.py', 'controls/prerequisites.py',
             'controls/session_domain.py', 'host_suite.py', 'retirement_native.py',
-            'retirement_cold.py', 'retirement_entries.py']), '#1140 complete standard bootstrap entry set')
+            'retirement_cold.py', 'retirement_entries.py', 'retirement_standard_http.py',
+            'retirement_public_http.py', 'test_retirement_standard_http.py']), '#1140 complete standard bootstrap entry set')
         self.assertEqual(len(set(blocks.values())), 1,
                          '#1140 apparatus bootstrap differs between entries')
         block = next(iter(blocks.values()))
@@ -1977,7 +1979,8 @@ class ApparatusInputs(unittest.TestCase):
         entries = [name for name in common.A2_SCRIPTS if name.endswith('.py')
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
                                     'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py',
-                                    'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py')]
+                                    'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py',
+                                    'retirement_standard_http.py', 'retirement_public_http.py', 'test_retirement_standard_http.py')]
         for name in entries:
             with self.subTest(entry=name):
                 text = (folder / name).read_text(encoding='utf-8')
@@ -2019,7 +2022,8 @@ class ApparatusInputs(unittest.TestCase):
 
     def test_suite_libraries_are_authenticated_and_have_no_unmeasured_cli(self):
         import ast
-        for name in ('host_suite.py', 'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py'):
+        for name in ('host_suite.py', 'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py',
+                     'retirement_standard_http.py', 'retirement_public_http.py'):
             with self.subTest(library=name):
                 path = Path(__file__).resolve().parent / name
                 tree = ast.parse(path.read_text(encoding='utf-8'))

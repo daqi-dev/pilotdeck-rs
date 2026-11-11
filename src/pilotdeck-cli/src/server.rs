@@ -150,6 +150,7 @@ fn remote_policy(bind_host: &str, env: &Env) -> Result<bool, Failure> {
 pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let core = super::local_host_options(env, cwd)?;
     super::config::check(env, cwd, &core.home)?;
+    super::prepare_legacy_skills(env, cwd, &core.home)?;
     let bind_host = string_flag(args, "--host")
         .map(str::to_owned)
         .or_else(|| env.string("PILOTDECK_GATEWAY_HOST"))

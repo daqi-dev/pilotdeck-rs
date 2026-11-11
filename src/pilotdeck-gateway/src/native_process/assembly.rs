@@ -2676,7 +2676,13 @@ pub(super) fn project_resources_factory(
     env: &Env,
     project_root: &Path,
     background: Option<Arc<dyn crate::runtime::project::ResourceFamilySource>>,
+    router_events: Arc<dyn crate::runtime::model::router::RouterEventSink>,
 ) -> ProjectResourcesFactory {
+    let mut families = Families::unwired().with_native_models_from_env(env.clone());
+    families.router_runtime = Arc::new(crate::runtime::project::model::RouterFamilySource {
+        custom_routers: None,
+        events: Some(router_events),
+    });
     ProjectResourcesFactory::new(ProjectResourcesOptions {
         pilot_home: options.home.clone(),
         cwd: options.project.clone(),
@@ -2690,9 +2696,8 @@ pub(super) fn project_resources_factory(
         families: Families {
             lsp: Some(Arc::new(LspFamily)),
             session_title: Some(Arc::new(TitleFamily)),
-            ..Families::unwired()
+            ..families
         }
-        .with_native_models_from_env(env.clone())
         .with_context_memory()
         .with_tools_mcp()
         .with_shared_native_background_tasks(background)

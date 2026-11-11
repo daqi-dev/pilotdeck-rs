@@ -70,3 +70,8 @@ R13编号碰撞以接收基线main原字节为正本；本支未经批准的CLI�
 媒体/Notebook 64 MiB源读取保护按可撤回资源保护接收为候选合同，精确条款见新增 `A8.4-{MEDIA,NOTEBOOK}-SOURCE-BOUND-001`；新增值不是TS阈值，两份文件保留未登记状态，须独立两谱系复核后正式登记，不自动豁免冻结比较。96ea公开消费者和helper原件保留；不扩展先前自动审查拒绝的权限实验。JPEG静态符号污染通过Linux链接隐藏静态归档符号修复，固定TS与同源C探针证据见 `_tmp/20261111-gateway-media-alias/jpeg-link-fix/`；必须由新Rust二进制15格真实消费验证，C探针不冒充产品通过。
 
 原则：接收主线修复时保留整合分支已实现的完整执行链；原始失败永不覆盖，兼容差异不代替缺失功能。
+
+
+### #2961 项目摘要 createdAt 元数据规则补齐（2026-11-11 人批）
+
+卡点：f32 实际两侧同路径 HTTP 全字段比较，空会话项目的 storage birthtime 自然不同；旧规则要求 lastActivity 存在，漏掉 TS 合法无历史项目。人已明确允许仅补此字段，并要求独立评审、真实 TS 重算、登记。范围为同时包含 projectKey/name/(path 或 fullPath) 的项目摘要 createdAt；不增业务时间容差，不改变 schedule.runAt/nextRunAt、超时、token 或其他字段。变更可撤回；既有 FAIL 原件保留 `_tmp/20261111-gateway-closeout` 所引 cb8 standard-http-f32faeff7。已按批准改候选规则及正反例，尚待两家复核/真实校准/冻结登记，当前不称 formal PASS。原则：只归一确有实体形状的生命周期元数据，不按字段名广泛放宽。

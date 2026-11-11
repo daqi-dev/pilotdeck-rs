@@ -53,7 +53,7 @@ async fn auth_failure_aborts_the_reader_before_waiting_for_its_runtime_lock() {
     // Always retire the controlled parked task, including on a regression.
     reader.abort();
     assert!(reader.await.unwrap_err().is_cancelled());
-    assert!(
+    crate::negative_assert!(
         result.is_ok(),
         "auth failure queued behind its parked reader"
     );
@@ -105,7 +105,7 @@ async fn stale_auth_failure_aborts_only_its_reader_and_keeps_the_new_app() {
         "stale auth cleanup did not abort its own reader"
     );
     assert!(new_was_running, "old auth failure aborted the new reader");
-    assert!(
+    crate::negative_assert!(
         registry_kept_new,
         "old auth failure removed the new reader registry entry"
     );

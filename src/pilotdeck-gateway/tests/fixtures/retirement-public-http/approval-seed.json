@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 3,
+  "sessionId": "web:sop-fixture",
+  "bundle": {},
+  "state": {
+    "version": 1,
+    "selected_skill_id": "fixture",
+    "slots_json": {},
+    "skill_stack_json": [],
+    "successful_tool_names": [],
+    "status": "handoff",
+    "active_skill_id": "fixture",
+    "active_step_id": "node",
+    "awaiting_input_json": {
+      "wait_id": "human-wait-42"
+    }
+  },
+  "revision": 5,
+  "wait": {
+    "id": "human-wait-42",
+    "kind": "handoff",
+    "skillId": "fixture",
+    "stepId": "node",
+    "createdAt": "2026-10-13T00:00:00.000Z"
+  },
+  "resumeRequests": {},
+  "updatedAt": "2026-10-13T00:00:00.000Z"
+}

@@ -187,7 +187,7 @@ SITE_SUFFIXES = ('.pth',)
 A2_SCRIPTS = (
     '_guard.py', 'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
-    'observer.py', 'retirement_driver.mts', 'retirement_cold.py', 'retirement_entries.py', 'retirement_standard_http.py', 'retirement_native.py', 'run_round.py', 'session_history_driver.mts', 'test_retirement_standard_http.py', 'test_safety.py', 'watcher.mjs',
+    'observer.py', 'retirement_driver.mts', 'retirement_cold.py', 'retirement_entries.py', 'retirement_standard_http.py', 'retirement_public_http.py', 'retirement_native.py', 'run_round.py', 'session_history_driver.mts', 'test_retirement_standard_http.py', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'native_evidence.py', 'session_observations.mjs', 'controls/session_domain.py',
     'linux_group_cleanup.py', 'host_suite.py',
 )

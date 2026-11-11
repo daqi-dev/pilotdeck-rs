@@ -169,7 +169,7 @@ class Normalizer:
         pending = 'requestId' in parent and {'ownerId', 'kind', 'toolCallId'} <= parent.keys()
         registry = {'runId', 'ownerPid', 'acceptedAt'} <= parent.keys()
         if key == 'createdAt':
-            return transcript or cron or pending or (project and 'lastActivity' in parent)
+            return transcript or cron or pending or project
         if key == 'updatedAt':
             return cron or {'firstPrompt', 'lastPrompt'} <= parent.keys() or 'isSnapshot' in parent or registry
         if key in ('startedAt', 'completedAt'):

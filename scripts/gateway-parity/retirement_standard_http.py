@@ -98,7 +98,9 @@ def http_projection(row, normalizer):
     method, target, version = head.split(b'\r\n', 1)[0].decode('ascii').split(' ')
     if method != row['method'] or target != row['path'] or version != 'HTTP/1.1':
         raise ValueError('request metadata differs from original bytes')
-    response = HTTPResponse(Wire(bytes.fromhex(row['responseHex'])))
+    response_bytes = bytes.fromhex(row['responseHex'])
+    status_line = response_bytes.split(b'\r\n', 1)[0].decode('ascii')
+    response = HTTPResponse(Wire(response_bytes))
     response.begin()
     body = response.read().decode('utf8', errors='strict')
     if response.status != row['status'] or body != row['body']:
@@ -116,7 +118,7 @@ def http_projection(row, normalizer):
         pass
     return normalizer.value({'method': method, 'path': target,
                              'requestBodyHex': request_body.hex(),
-                             'status': response.status, 'headers': headers, 'body': body})
+                             'status': response.status, 'statusLine': status_line, 'headers': headers, 'body': body})
 
 
 def digest(value):

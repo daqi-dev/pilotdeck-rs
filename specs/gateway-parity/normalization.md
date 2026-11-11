@@ -21,7 +21,7 @@ recorder.seq 从 1 起逐行连续，用于完整性；语义投影按 connectio
 | 容器形状 | 允许归一化的字段 |
 |---|---|
 | transcript 同时含 entryId/sequence/turnId/type；cron 同时含 taskId/schedule/message/status；pending 同时含 requestId/ownerId/kind/toolCallId | createdAt |
-| 项目摘要同时含 projectKey/name 及（path 或 fullPath），并含 lastActivity | createdAt |
+| 项目摘要同时含 projectKey/name 及（path 或 fullPath），无论是否含 lastActivity | createdAt |
 | 上述 cron；session metadata 同时含 firstPrompt/lastPrompt 或含 isSnapshot；下述 run registry | updatedAt |
 | agent turn result 同时含 type/sessionId/turnId/stopReason/usage/turns/startedAt/completedAt，type 为 success/error/aborted/max_turns；或 tool result 同时含 type/toolCallId/toolName/content/startedAt/completedAt，type 为 success/error | startedAt、completedAt |
 | run registry 同时含 runId/ownerPid/acceptedAt | ownerPid、acceptedAt、updatedAt |

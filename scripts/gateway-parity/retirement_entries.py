@@ -361,6 +361,179 @@ def channel_transport_observation(raw, channel, records):
                 raise ValueError('CHANNEL_TRANSPORT_ACK')
     return dict(result, actualTransportRecords=len(records), actualHttpPairs=len(responses))
 
+def channel_artifact(d, ref):
+    path = Path(ref['path'])
+    d.require(path.is_absolute() and path.is_file() and not path.is_symlink() and path.resolve() == path
+              and path.is_relative_to(d.ROOT / '_tmp') and sha(path) == ref['sha256'],
+              'ENTRY_CHANNEL_RAW', 'missing, aliased, or changed channel raw artifact')
+    return path
+
+
+def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
+                         executable_role='pilotdeck-gateway', argv_prefix=('--native',),
+                         deployment_ref=None, node_ref=None, baseline=None, preload_refs=()):
+    """Verify shared observation originals, without assigning business coverage."""
+    fixed_bins = {row['path']: row['sha256'] for row in d.read(native.manifest)}
+    tracked = {str(d.ROOT / row['path']): row['sha256'] for row in native.source['files']}
+    originals, missing = [], []
+    def artifact(ref):
+        path = channel_artifact(d, ref)
+        if ref not in originals:
+            originals.append(ref)
+        return path
+    receipt_path = artifact(receipt_ref)
+    receipt = d.read(receipt_path)
+    d.require(receipt.get('schemaVersion') == 1 and receipt.get('channel') == channel
+              and receipt.get('rawEvidence') == raw_ref
+              and receipt.get('sourceManifest') == {'path': str(native.source_manifest), 'sha256': native.source_sha}
+              and receipt.get('candidateManifest') == {'path': str(native.manifest), 'sha256': native.manifest_sha}
+              and receipt.get('runtimeLibraries') == native.source.get('runtimeLibraries'),
+              'ENTRY_CHANNEL_SOURCE', 'process receipt is not bound to the same raw/source/bin/runtime')
+    expected_path = str(native.manifest.parent / executable_role)
+    expected_host = Path(expected_path)
+    expected_sha = fixed_bins.get(executable_role)
+    deployment = None
+    if deployment_ref is not None:
+        public = d._load('retirement_public_http', d.SCRIPT / 'retirement_public_http.py')
+        deployment = public.verify_deployment(d, native, deployment_ref)
+        mapped = deployment['executables'][executable_role]
+        expected_path = mapped['path']
+        expected_host = Path(mapped.get('hostPath', mapped['path']))
+        if executable_role != 'ts-node':
+            d.require(mapped['sha256'] == expected_sha, 'ENTRY_CHANNEL_PROCESS', 'deployment binary differs from fixed candidate')
+        expected_sha = mapped['sha256']
+        originals.extend(deployment['originals'])
+    if executable_role == 'ts-node':
+        d.require(node_ref is not None and baseline is not None,
+                  'ENTRY_CHANNEL_PROCESS', 'fixed TS process requires its Node and baseline identity')
+        if deployment is None:
+            expected_path = node_ref['path']
+            expected_host = Path(expected_path)
+            expected_sha = node_ref['sha256']
+        d.require(str(expected_host) == node_ref['path'] and expected_sha == node_ref['sha256'],
+                  'ENTRY_CHANNEL_PROCESS', 'observed TS runtime differs from the fixed Node reference')
+    d.require(expected_host.is_absolute() and expected_host.is_file() and not expected_host.is_symlink()
+              and expected_host.resolve() == expected_host and sha(expected_host) == expected_sha,
+              'ENTRY_CHANNEL_PROCESS', 'fixed executable identity changed')
+    if executable_role == 'ts-node':
+        versions = json.loads(d.subprocess.check_output(
+            [str(expected_host), '-p', 'JSON.stringify(process.versions)'], timeout=5))
+        d.require([versions.get(key) for key in ('node', 'icu', 'uv')] == ['22.22.0', '78.2', '1.52.1']
+                  and d.subprocess.check_output(['git', '-C', str(baseline), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
+                      == d.RETIREMENT_BASELINE_REVISION
+                  and not d.subprocess.check_output(['git', '-C', str(baseline), 'status', '--porcelain', '--untracked-files=no'], timeout=10).strip(),
+                  'ENTRY_CHANNEL_PROCESS', 'fixed TS process source or runtime changed')
+        runtime_baseline = str(baseline) if deployment is None else deployment['baseline']['path']
+        imports = []
+        for preload in preload_refs:
+            path = Path(preload['path'])
+            d.require(path.is_absolute() and path.resolve() == path and path.is_file() and not path.is_symlink()
+                      and tracked.get(str(path)) == preload['sha256'] == sha(path),
+                      'ENTRY_CHANNEL_PRODUCER', 'TS preload is not an authenticated source input')
+            runtime_path = str(path)
+            if deployment is not None:
+                choices = [mapped for mapped in deployment.get('preloads', [])
+                           if mapped['hostPath'] == str(path) and mapped['sha256'] == preload['sha256']]
+                d.require(len(choices) == 1, 'ENTRY_CHANNEL_PRODUCER', 'preload has no unique verified mount mapping')
+                runtime_path = choices[0]['path']
+            imports.extend(('--import', runtime_path))
+        runtime_baseline = Path(runtime_baseline)
+        argv_prefix = (*imports, '--import', str(runtime_baseline / 'node_modules/tsx/dist/loader.mjs'),
+                       str(runtime_baseline / 'src/cli/pilotdeck.ts'), 'server')
+    producer = receipt['producer']
+    d.require(tracked.get(producer['path']) == producer['sha256']
+              and sha(Path(producer['path'])) == producer['sha256'],
+              'ENTRY_CHANNEL_PRODUCER', 'producer is not an authenticated source input')
+    d.require(receipt.get('bindingErrors') == [], 'ENTRY_CHANNEL_PROCESS', 'observer reported binding errors')
+    observer_path = artifact(receipt['observer'])
+    observer = d.read(observer_path)
+    d.require(tracked.get(observer['path']) == observer['sha256']
+              and sha(Path(observer['path'])) == observer['sha256'],
+              'ENTRY_CHANNEL_PRODUCER', 'observer is not an authenticated source input')
+    if 'finalizer' in receipt:
+        finalizer = receipt['finalizer']
+        d.require(tracked.get(finalizer['path']) == finalizer['sha256']
+                  and sha(Path(finalizer['path'])) == finalizer['sha256'],
+                  'ENTRY_CHANNEL_PRODUCER', 'finalizer is not an authenticated source input')
+    else:
+        missing.append('source-bound-process-finalizer')
+    observation_path = artifact(receipt['observationTrace'])
+    observations = d.read(observation_path)
+    d.require(len(observations) == 1 and observations[0].get('errors') == [],
+              'ENTRY_CHANNEL_PROCESS', 'missing or erroneous actual process observations')
+    process = receipt['process']
+    observed_process = observations[0]
+    actual_listeners = {json.dumps(listener, sort_keys=True) for observation in
+                        observed_process.get('observations', [])
+                        for listener in observation.get('readyListeners', [])}
+    d.require({json.dumps(listener, sort_keys=True) for listener in process['readyListeners']}
+              == actual_listeners, 'ENTRY_CHANNEL_PROCESS', 'ready listener receipt diverges from observations')
+    d.require(all(process.get(field) == observed_process.get(field) for field in
+                  ('pid', 'argv', 'executable', 'birth', 'cwd', 'exit', 'remainingOwnedIdentities'))
+              and observed_process.get('closeObservedAt') is not None
+              and observed_process.get('identityStillPresent') is False
+              and observed_process.get('portsStillListening') == [],
+              'ENTRY_CHANNEL_PROCESS', 'process receipt diverges from actual observation trace')
+    executable = process['executable']
+    d.require(type(process['pid']) is int and process['pid'] > 0
+              and executable['path'] == expected_path
+              and executable['sha256'] == expected_sha
+              and process['argv'][:len(argv_prefix) + 1] == [executable['path'], *argv_prefix]
+              and isinstance(process['birth']['bootId'], str) and bool(process['birth']['bootId'])
+              and str(process['birth']['startTimeTicks']).isdigit()
+              and process['readyListeners'] and all(listener['host'] == '127.0.0.1'
+                 and listener['ownerPid'] == process['pid'] and type(listener['port']) is int
+                 and 0 < listener['port'] < 65536 for listener in process['readyListeners'])
+              and process['exit'] == {'code': 0, 'signal': None}
+              and process['reaped'] is True and process['portsClosed'] is True
+              and process['remainingOwnedIdentities'] == [],
+              'ENTRY_CHANNEL_PROCESS', 'owned production lifecycle is incomplete')
+    preflight = d.read(artifact(receipt['networkPreflight']))
+    cleanup = d.read(artifact(receipt['containerCleanup']))
+    tests = preflight['negativeControls']
+    d.require(preflight['interfaces'] == [[1, 'lo']] and preflight['loopbackConnect'] == 'PASS'
+              and len(tests) == 4 and all(test['blocked'] is True for test in tests)
+              and {(test['family'], test['kind']) for test in tests} == {(2, 1), (2, 2), (10, 1), (10, 2)}
+              and cleanup['ownedContainerStillRunning'] == '',
+              'ENTRY_CHANNEL_ISOLATION', 'network blocking or owned container cleanup is unproven')
+    files = receipt['afterReapFiles']
+    d.require(files and all(artifact(ref).stat().st_size == ref['bytes'] for ref in files),
+              'ENTRY_CHANNEL_DURABLE', 'post-reap business bytes are missing')
+    if 'preservation' in receipt:
+        preserved = d.read(artifact(receipt['preservation']))
+        preserver = preserved['preserver']
+        d.require(preserved.get('schemaVersion') == 1
+                  and preserved.get('method') == 'rename actual stopped cur directory'
+                  and preserved.get('processObservation') == receipt['observationTrace']
+                  and tracked.get(preserver['path']) == preserver['sha256'] == sha(Path(preserver['path'])),
+                  'ENTRY_CHANNEL_DURABLE', 'preservation is not bound to the observed process and registered producer')
+        original_root, preserved_root = Path(preserved['originalRoot']), Path(preserved['preservedRoot'])
+        d.require(original_root.is_absolute() and original_root.name == 'cur' and '..' not in original_root.parts
+                  and preserved_root.is_absolute() and preserved_root.resolve() == preserved_root,
+                  'ENTRY_CHANNEL_DURABLE', 'invalid original or preserved business root')
+        by_path = {row['path']: row for row in preserved['files']}
+        d.require(len(by_path) == len(preserved['files']), 'ENTRY_CHANNEL_DURABLE', 'duplicate preserved business file')
+        for row in files:
+            path = artifact(row)
+            original = by_path.get(str(path))
+            info = path.stat()
+            d.require(original is not None and path.is_relative_to(preserved_root)
+                      and original['originalPath'] == str(original_root / path.relative_to(preserved_root))
+                      and row.get('originalPath') == original['originalPath']
+                      and original['relativePath'] == str(path.relative_to(preserved_root))
+                      and original['sha256'] == row['sha256'] and original['bytes'] == row['bytes']
+                      and original['device'] == info.st_dev and original['inode'] == info.st_ino,
+                      'ENTRY_CHANNEL_DURABLE', 'preserved file is not the same original business inode and bytes')
+    records = []
+    if 'transportTrace' in receipt:
+        path = artifact(receipt['transportTrace'])
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+    else:
+        missing.append('production-inbound-and-outbound-response-originals')
+    return {'receipt': receipt, 'transportRecords': records, 'afterReapFiles': files,
+            'originals': originals, 'missing': missing}
+
+
 def channel_results(d, native, entry_root, baseline=None):
     """Consume the 19 + 13 original IDs; incomplete production faces stay explicit."""
     baseline = baseline or d.BASELINE
@@ -420,77 +593,13 @@ def channel_results(d, native, entry_root, baseline=None):
             if 'processReceipt' not in row:
                 cell['missing'].append('owned-process-and-listener-reap-receipt')
             else:
-                receipt_path = artifact(row['processReceipt'])
-                receipt = d.read(receipt_path)
-                cell['originals'].append({'path': str(receipt_path), 'sha256': sha(receipt_path)})
                 identity = key.partition(':')[2]
                 adapter = identity if key.startswith('gateway.channel:') else identity.partition(':')[0]
                 adapter = {'api-server': 'apiServer', 'wecom-callback': 'wecomCallback'}.get(adapter, adapter)
-                d.require(receipt.get('schemaVersion') == 1 and receipt.get('channel') == adapter
-                          and receipt.get('rawEvidence') == row['rawEvidence']
-                          and receipt.get('sourceManifest') == {'path': str(native.source_manifest), 'sha256': native.source_sha}
-                          and receipt.get('candidateManifest') == {'path': str(native.manifest), 'sha256': native.manifest_sha}
-                          and receipt.get('runtimeLibraries') == native.source.get('runtimeLibraries'),
-                          'ENTRY_CHANNEL_SOURCE', 'process receipt is not bound to the same raw/source/bin/runtime')
-                producer = receipt['producer']
-                d.require(tracked.get(producer['path']) == producer['sha256']
-                          and sha(Path(producer['path'])) == producer['sha256'],
-                          'ENTRY_CHANNEL_PRODUCER', 'producer is not an authenticated source input')
-                d.require(receipt.get('bindingErrors') == [], 'ENTRY_CHANNEL_PROCESS', 'observer reported binding errors')
-                observer_path = artifact(receipt['observer'])
-                observer = d.read(observer_path)
-                d.require(tracked.get(observer['path']) == observer['sha256']
-                          and sha(Path(observer['path'])) == observer['sha256'],
-                          'ENTRY_CHANNEL_PRODUCER', 'observer is not an authenticated source input')
-                if 'finalizer' in receipt:
-                    finalizer = receipt['finalizer']
-                    d.require(tracked.get(finalizer['path']) == finalizer['sha256']
-                              and sha(Path(finalizer['path'])) == finalizer['sha256'],
-                              'ENTRY_CHANNEL_PRODUCER', 'finalizer is not an authenticated source input')
-                else:
-                    cell['missing'].append('source-bound-process-finalizer')
-                observation_path = artifact(receipt['observationTrace'])
-                observations = d.read(observation_path)
-                d.require(len(observations) == 1 and observations[0].get('errors') == [],
-                          'ENTRY_CHANNEL_PROCESS', 'missing or erroneous actual process observations')
-                process = receipt['process']
-                observed_process = observations[0]
-                actual_listeners = {json.dumps(listener, sort_keys=True) for observation in
-                                    observed_process.get('observations', [])
-                                    for listener in observation.get('readyListeners', [])}
-                d.require({json.dumps(listener, sort_keys=True) for listener in process['readyListeners']}
-                          == actual_listeners, 'ENTRY_CHANNEL_PROCESS', 'ready listener receipt diverges from observations')
-                d.require(all(process.get(field) == observed_process.get(field) for field in
-                              ('pid', 'argv', 'executable', 'birth', 'cwd', 'exit', 'remainingOwnedIdentities'))
-                          and observed_process.get('closeObservedAt') is not None
-                          and observed_process.get('identityStillPresent') is False
-                          and observed_process.get('portsStillListening') == [],
-                          'ENTRY_CHANNEL_PROCESS', 'process receipt diverges from actual observation trace')
-                executable = process['executable']
-                d.require(type(process['pid']) is int and process['pid'] > 0
-                          and executable['path'] == str(native.manifest.parent / 'pilotdeck-gateway')
-                          and executable['sha256'] == fixed_bins['pilotdeck-gateway']
-                          and process['argv'][0] == executable['path'] and '--native' in process['argv']
-                          and isinstance(process['birth']['bootId'], str) and bool(process['birth']['bootId'])
-                          and str(process['birth']['startTimeTicks']).isdigit()
-                          and process['readyListeners'] and all(listener['host'] == '127.0.0.1'
-                             and listener['ownerPid'] == process['pid'] and type(listener['port']) is int
-                             and 0 < listener['port'] < 65536 for listener in process['readyListeners'])
-                          and process['exit'] == {'code': 0, 'signal': None}
-                          and process['reaped'] is True and process['portsClosed'] is True
-                          and process['remainingOwnedIdentities'] == [],
-                          'ENTRY_CHANNEL_PROCESS', 'owned production lifecycle is incomplete')
-                preflight = d.read(artifact(receipt['networkPreflight']))
-                cleanup = d.read(artifact(receipt['containerCleanup']))
-                tests = preflight['negativeControls']
-                d.require(preflight['interfaces'] == [[1, 'lo']] and preflight['loopbackConnect'] == 'PASS'
-                          and len(tests) == 4 and all(test['blocked'] is True for test in tests)
-                          and {(test['family'], test['kind']) for test in tests} == {(2, 1), (2, 2), (10, 1), (10, 2)}
-                          and cleanup['ownedContainerStillRunning'] == '',
-                          'ENTRY_CHANNEL_ISOLATION', 'network blocking or owned container cleanup is unproven')
-                files = receipt['afterReapFiles']
-                d.require(files and all(artifact(ref).stat().st_size == ref['bytes'] for ref in files),
-                          'ENTRY_CHANNEL_DURABLE', 'post-reap business bytes are missing')
+                process_evidence = verify_owned_process(d, native, row['processReceipt'], row['rawEvidence'], adapter)
+                receipt = process_evidence['receipt']
+                cell['originals'].extend(process_evidence['originals'])
+                cell['missing'].extend(process_evidence['missing'])
                 cell['covered'].append('source-bound-owned-process-network-and-after-reap-files')
             identity = key.partition(':')[2]
             channel = identity if key.startswith('gateway.channel:') else identity.partition(':')[0]
@@ -567,13 +676,18 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
     inventory, manifest_sha = expected_rows(d, baseline, methods)
     observed = production_results(d, native, baseline, product_capture.resolve(strict=True)) if product_capture else {}
     channels = channel_results(d, native, product_capture, baseline)
+    public_http = _load('retirement_public_http', _apparatus / 'retirement_public_http.py').report(
+        d, native, baseline, product_capture, rounds)
     result = []
     for expected in inventory:
         key = expected['id']
         group, _, identity = key.partition(':')
         state = 'BLOCKED'
         pointers = []
-        if group == 'gateway.method':
+        if key in public_http:
+            cell = public_http[key]
+            state, detail, pointers = cell['status'], cell['detail'], cell['originals']
+        elif group == 'gateway.method':
             records = [v['methodVerdicts'].get(identity) for v in coverage]
             original = outcome.get('report') or {}
             violations = [row for row in original.get('violations', []) if row.get('method') == identity]

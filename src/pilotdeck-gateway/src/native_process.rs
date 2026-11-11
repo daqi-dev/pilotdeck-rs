@@ -40,6 +40,7 @@ mod public_host_disconnect_tests;
 mod public_host_file;
 #[cfg(test)]
 mod public_host_skills_tests;
+mod router_events;
 mod sdk_tools;
 mod server_host;
 mod sop_control;
