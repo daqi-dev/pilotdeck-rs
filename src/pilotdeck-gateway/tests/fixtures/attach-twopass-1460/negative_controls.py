@@ -24,6 +24,15 @@ base breaks the outer prefix), the absolute branch never reads the
 cwd at all — a deleted cwd must not eat the diagnostic — and the
 relative branch answers from the cached first read after the cwd is
 deleted, the way Node's `process.cwd()` does.
+
+#1637 fix-r1 (DS sibling#1): a row whose bound test skips *itself* on this
+host (the unopenable-path arm under a permission-blind runner — root or
+CAP_DAC_OVERRIDE — prints the PDRS_TEST_SKIPPED marker) is recorded SKIPPED
+through the same accounting cron-store got in #1637: the marker means the
+positive certified nothing here, so the row must never walk into the mutant
+and read the mutant's identical self-skip as a survival. Only a green
+self-skip (rc 0 plus the named ok line) is platform-absence; a run that
+printed the marker and then died stays INVALID (Grok boundary#1).
 """
 import argparse
 import hashlib
@@ -39,7 +48,8 @@ SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import ReceiptRun, invalidate_completed, judge, passed
+from negative_suite import (ReceiptRun, invalidate_completed, judge,
+                            named_test_ok, passed, self_skipped)
 
 GOLDEN = 'native_process::services_tests::direct_content_with_channel_key_path_is_registered'
 SILENT = 'native_process::services_tests::direct_content_with_an_invalid_channel_key_path_stays_silent'
@@ -210,6 +220,10 @@ def check_binding_scope():
         raise RuntimeError('#1460 binding checker lost its own assertion')
 
 
+class _SelfSkipped(Exception):
+    """#1637 fix-r1: control flow, not a fault — the row's positive self-skipped."""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -265,31 +279,66 @@ def main():
                 item = dict(name=name, test=test, assertion=assertion,
                             status='INVALID', reason='not run', compiled=False)
                 try:
-                    if not args.compile_only and not passed(run(name + '-positive', env, test), test):
-                        raise RuntimeError('positive bound test failed')
-                    path.write_text(originals[path].decode().replace(old, new, 1))
-                    if run(name + '-compile', env, test, compile_only=True).returncode:
-                        raise RuntimeError('mutant did not compile; not a runtime kill')
-                    item['compiled'] = True
-                    if args.compile_only:
-                        item.update(status='COMPILED', reason='mutated source compiled')
-                    else:
-                        receipt = ReceiptRun(output, name, [(test, assertion)])
-                        result = run(name + '-negative', receipt.environment(env), test)
-                        killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
-                        item.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'),
-                                    reason=reason, hits=hits)
+                    if not args.compile_only:
+                        positive = run(name + '-positive', env, test)
+                        if self_skipped(positive, test):
+                            # #1637 fix-r1 (DS sibling#1): the same self-skip
+                            # accounting cron-store got in #1637 — the marker
+                            # means the positive control certified nothing on
+                            # this host, so a kill here would rest on a
+                            # vacuous positive and the mutant's identical
+                            # self-skip would read as a survival. Record
+                            # SKIPPED, never a pass, never a silent walk into
+                            # the mutant. Grok boundary#1: only a green
+                            # completion (rc 0 plus the named ok line) reads
+                            # as platform-absence; a run that printed the
+                            # marker and then died is "did not run" and stays
+                            # INVALID through the passed() refusal below.
+                            if (positive.returncode == 0
+                                    and named_test_ok(positive, test)):
+                                item.update(status='SKIPPED', compiled=False,
+                                            reason='positive control self-skipped on '
+                                                   'this host (#1637 '
+                                                   'PDRS_TEST_SKIPPED marker): '
+                                                   'the row certified nothing here')
+                                print(f'{name}: SKIPPED: positive control '
+                                      'self-skipped (#1637 marker)', flush=True)
+                                raise _SelfSkipped()
+                        if not passed(positive, test):
+                            raise RuntimeError('positive bound test failed')
+                    try:
+                        path.write_text(originals[path].decode().replace(old, new, 1))
+                        if run(name + '-compile', env, test, compile_only=True).returncode:
+                            raise RuntimeError('mutant did not compile; not a runtime kill')
+                        item['compiled'] = True
+                        if args.compile_only:
+                            item.update(status='COMPILED', reason='mutated source compiled')
+                        else:
+                            receipt = ReceiptRun(output, name, [(test, assertion)])
+                            result = run(name + '-negative', receipt.environment(env), test)
+                            killed, reason, hits = judge(result, '', [(test, assertion)], receipt)
+                            item.update(status='KILLED' if killed else ('SURVIVED' if passed(result, test) else 'INVALID'),
+                                        reason=reason, hits=hits)
+                    finally:
+                        path.write_bytes(originals[path])
+                except _SelfSkipped:
+                    # SKIPPED was already recorded above; no mutation ran, so
+                    # neither the write-back nor the restored control applies.
+                    pass
                 except Exception as error:
                     item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-                finally:
-                    path.write_bytes(originals[path])
-                try:
-                    if not args.compile_only:
-                        if not passed(run(name + '-restored', env, test), test):
-                            raise RuntimeError('restored bound test failed')
-                        item['restoredPass'] = True
-                except Exception as error:
-                    item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
+                if item['status'] != 'SKIPPED':
+                    # The original two-phase shape: the restored control runs
+                    # even after a failed mutation phase (runtime proof the
+                    # byte-restore really left a green tree) — only the
+                    # self-skipped row never mutated anything.
+                    try:
+                        if not args.compile_only:
+                            if not passed(run(name + '-restored', env, test), test):
+                                raise RuntimeError('restored bound test failed')
+                            item['restoredPass'] = True
+                    except Exception as error:
+                        item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
                 results.append(item)
                 print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     except Exception as error:
@@ -299,16 +348,22 @@ def main():
             results.append(dict(name=name, test=test, assertion=assertion,
                                 status='INVALID', reason=reason, compiled=False))
     counts = {state: sum(row['status'] == state for row in results)
-              for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
+              for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED', 'SKIPPED']}
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
         {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
-          f'INVALID={counts["INVALID"]}', flush=True)
+          f'INVALID={counts["INVALID"]}, SKIPPED={counts["SKIPPED"]}', flush=True)
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
     success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(any(row['status'] != success for row in results))
+    # #1637 fix-r1: SKIPPED (positive self-skip, recorded above) is not a
+    # failure, but the accounting cron-store applies keeps the zero-kill
+    # clause: with no KILLED rows the exit stays nonzero so a caller cannot
+    # read an all-SKIPPED selection (say, only the unopenable row on a
+    # permission-blind host) as verified.
+    return int(not counts[success]
+               or any(row['status'] not in (success, 'SKIPPED') for row in results))
 
 
 if __name__ == '__main__':

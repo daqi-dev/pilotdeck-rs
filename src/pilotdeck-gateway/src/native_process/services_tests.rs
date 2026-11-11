@@ -3155,10 +3155,16 @@ fn direct_content_with_an_unopenable_path_stays_silent() {
              (root or a permission-blind runner); this arm needs a host that enforces mode bits \
              (需要强制 mode 位的宿主)"
         );
-        crate::test_skip_line::stderr_skip_line(
-            "#1460 skip: direct_content_with_an_unopenable_path_stays_silent: \
+        // #1637 fix-r1 (DS sibling#1): marker-prefixed through the shared
+        // constant, the same shape as the two cron/tests.rs emission points —
+        // negative_suite.passed() vetoes the vacuous positive only through
+        // this marker, and the attach-twopass runner's SKIPPED accounting
+        // keys on it; the bare `#1460 skip:` text carried neither.
+        crate::test_skip_line::stderr_skip_line(&format!(
+            "{}direct_content_with_an_unopenable_path_stays_silent: skipped, \
              running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
-        );
+            crate::test_skip_line::TEST_SKIPPED_MARKER,
+        ));
         return;
     }
     let entry = object([

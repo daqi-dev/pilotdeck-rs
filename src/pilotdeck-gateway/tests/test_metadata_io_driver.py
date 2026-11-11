@@ -135,6 +135,7 @@ class EnvironmentControls(unittest.TestCase):
         'test(=dispatch::tests::list_projects_preserves_real_node_scandir_error_suppression) | '
         'test(=runtime::cron::tests::migration_blocked_dir_tasks_eacces_matches_ts) | '
         'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key) | '
+        'test(=runtime::cron::tests::probe_eacces_from_a_read_only_scratch_fails_closed) | '
         'test(=native_process::tests::non_utf8_home_and_sidecar_are_refused) | '
         'test(=storage::tests::temporary_create_failure_reports_the_transcript_not_the_staging_name) | '
         'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path) | '
