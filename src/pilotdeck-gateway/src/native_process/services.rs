@@ -2051,8 +2051,10 @@ pub(super) mod swap_test_hook {
     /// Which injection point the swap happens in: right after `lease_guard`'s
     /// canonicalization but before the approved identity is sampled (#1468
     /// r2 — the approved stat must not follow a link planted here), after
-    /// that sample but before `File::open` (#1468 — the open itself may then
-    /// follow a swapped link), between `File::open` and the post-open
+    /// that sample but before the guarded open (#1468 — the open itself
+    /// refuses a swapped symlink at the open, #2098, so a swap planted here
+    /// is a hard link onto an outside regular file), between the open and
+    /// the post-open
     /// `canonicalize` containment revalidation (step 2), between the
     /// revalidation and the `(dev, inode)` path-stat/fstat comparison
     /// (step 3), or between the handle's own stat — the authoritative

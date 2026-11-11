@@ -112,6 +112,10 @@ READ_AT_FIFO = ('upload::tests::upload_read_at_metadata_swapped_for_a_fifo_'
 READ_AT_ZERO = ('upload::tests::upload_read_at_metadata_swapped_for_a_dev_zero_symlink_'
                 'is_rejected_at_open')
 READ_AT_CAP = 'upload::tests::upload_read_at_metadata_over_the_size_cap_is_rejected'
+# #2098 fix-r2 (P2a): the exact-read term's own row — the `BeforeRead` window
+# grows the leaf between the validated length and the read.
+READ_AT_GROWN = (
+    'upload::tests::upload_read_at_record_grown_between_stat_and_read_is_rejected')
 # #2098 fix-r2 (review DS#1, option b): the listing skips an unreadable
 # record with the sweep's own logged-skip 口径 instead of failing the whole
 # project's later `create` calls.
@@ -666,20 +670,45 @@ mutations = [
      '                if false {',
      READ_AT_CAP,
      '#2098 a sparse record leaf past the cap must be refused before the read'),
-    # #2098 fix-r2 (review DS#1, option b): the write side can reach ~100 MiB
-    # of record JSON in one frame while the read cap is 64 MiB, so the
-    # listing's strict `?` turned one unreadable record into every later
-    # `create` of that project failing. The fix skips it with the sweep's own
-    # logged-skip 口径; this mutant restores the strict `?`, and the named
-    # test's `create` then fails on the over-cap sibling — its `expect`
-    # receipt is the kill.
+    # #2098 fix-r2 (P2a): the type term had no row of its own. The FIFO row's
+    # mutant drops only the type refusal; the identity term then refuses the
+    # FIFO with a *different* message, so the named test's message assertion
+    # is the kill (kill-via-different-error, review-endorsed).
+    ('read-at-type-check-dropped', STORE,
+     '                if !opened.file_type().is_file() && !opened.file_type().is_dir() {',
+     '                if false {',
+     READ_AT_FIFO,
+     '#2098 the FIFO record must be refused by the type term'),
+    # #2098 fix-r2 (P2a): the exact read itself. The read-to-EOF mutant
+    # streams a record grown inside the `BeforeRead` window back and parses
+    # it (the growth is JSON-legal whitespace), so the named test's
+    # `expect_err` receipt is the kill.
+    ('read-at-exact-read-dropped', STORE,
+     '                read_exact_file(&mut file, opened.len())?',
+     '''                {
+                    let mut grown = Vec::new();
+                    file.read_to_end(&mut grown)
+                        .map_err(|e| UploadError::io(e, "read", None))?;
+                    grown
+                }''',
+     READ_AT_GROWN,
+     '#2098 a record grown inside the window must never be read back'),
+    # #2098 fix-r2 (review DS#1, option b, refined by the oracle replay): the
+    # write side can reach ~100 MiB of record JSON in one frame while the read
+    # cap is 64 MiB, so the listing's strict `?` turned one such record into
+    # every later `create` of that project failing. The fix skips only the
+    # read hardening's own faces (the oracle pins `create` still failing on
+    # an identity-mismatched sibling); this mutant restores the strict `?`,
+    # and the named test's `create` then fails on the over-cap sibling — its
+    # `expect` receipt is the kill.
     ('list-strict-error-restored', STORE, '''            let record = match self.read_at(project, &id) {
                 Ok(Some(record)) => record,
                 Ok(None) => continue,
-                Err(e) => {
+                Err(e) if Self::unreadable_record_face(&e) => {
                     self.skip_record(&root.join(&id), &e);
                     continue;
                 }
+                Err(e) => return Err(e),
             };
             records.push(record);''', '''            if let Some(record) = self.read_at(project, &id)? {
                 records.push(record);
@@ -1289,6 +1318,7 @@ EXPECTED_NAMES = (
     'verify-hash-length-dropped', 'verify-bytes-cap-dropped',
     'read-at-open-nonblock-dropped',
     'read-at-open-nofollow-dropped', 'read-at-metadata-cap-dropped',
+    'read-at-type-check-dropped', 'read-at-exact-read-dropped',
     'list-strict-error-restored',
     'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',

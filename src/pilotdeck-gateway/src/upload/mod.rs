@@ -563,8 +563,9 @@ impl UploadStore {
     }
 
     /// The record half of [`Self::cleanup_expired`]. Like
-    /// [`Self::list_in_project`] (since #2098 fix-r2), every per-record
-    /// failure here is a logged skip rather than a round-wide abort.
+    /// [`Self::list_in_project`] (since #2098 fix-r2), a per-record failure
+    /// the read hardening owns is a logged skip rather than a round-wide
+    /// abort — here unconditionally, like the sweep's own pre-#2098 口径.
     fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
         // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
         // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
@@ -1163,6 +1164,8 @@ impl UploadStore {
                         "Upload metadata file exceeds the supported size.",
                     ));
                 }
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeRead, &canonical_path);
                 read_exact_file(&mut file, opened.len())?
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -1179,25 +1182,65 @@ impl UploadStore {
         }
         Ok(Some(record))
     }
+    /// #2098 fix-r2 (条4 refinement): which `read_at` refusals a listing may
+    /// treat as "record unreadable" (skip, the sweep's own logged-skip 口径)
+    /// and which keep failing the round. The line is what TS answers for the
+    /// same record: an identity mismatch, an escaping symlink, a JSON parse
+    /// failure or a genuine fs error fails TS's listing too — the oracle pins
+    /// `create` failing on the first two (`metadata-identity`#3,
+    /// `metadata-symlink`#4) — so those stay strict. What is skipped is
+    /// exactly the read hardening this family added: the FIFO/device type
+    /// term, the 64 MiB read cap and the exact-read terms. TS reads an
+    /// oversized record back fine (its side has no cap) and has no refusal to
+    /// mirror for the rest, so propagating them would make records TS accepts
+    /// poison every later `create`/`find_idempotent` of the project.
+    fn unreadable_record_face(error: &UploadError) -> bool {
+        match error.code.as_str() {
+            "PROJECT_PATH_FORBIDDEN" => matches!(
+                error.message_string().as_str(),
+                "Upload metadata path became a non-regular file after validation."
+                    | "Upload metadata file exceeds the supported size."
+            ),
+            // The exact-read terms raise synthetic io errors with no errno
+            // to mirror, so the wire code is empty and the message is the io
+            // Display string; a real errno'd read failure keeps its code and
+            // fails the listing round like any other fs error. A JSON parse
+            // failure is also code-empty but carries the parser's message,
+            // which matches neither term.
+            "" => matches!(
+                error.message_string().as_str(),
+                "unexpected end of file" | "invalid data"
+            ),
+            _ => false,
+        }
+    }
+
     fn list_in_project(&self, project: &Path) -> Result<Vec<UploadRecord>> {
         let mut records = vec![];
         let root = project.join(".tmp/chat-uploads");
         for id in names(&root).into_iter().filter(|id| safe_id(id)) {
-            // #2098 fix-r2 (review DS#1, option b): the read side's cap is
-            // 64 MiB while the write side can reach ~100 MiB in one frame
-            // (`name`/`relativePath` carry no length term), so one oversized
-            // record used to fail every later `create` and
-            // `find_idempotent` of that project through the strict `?`.
-            // Skipping is the sweep's own 口径 for a bad record: the
-            // readable records keep their exact semantics, and an unreadable
-            // one is treated as absent rather than poisoning the listing.
+            // #2098 fix-r2 (review DS#1, option b, refined by the oracle
+            // replay): the read side's cap is 64 MiB while the write side
+            // can reach ~100 MiB in one frame (`name`/`relativePath` carry
+            // no length term), so one oversized record used to fail every
+            // later `create` and `find_idempotent` of that project through
+            // the strict `?`. Only the read hardening's own faces are
+            // skipped, with the sweep's logged-skip 口径 — a blanket skip
+            // would also swallow the refusals TS itself produces, and the
+            // oracle pins `create` failing on both (`metadata-identity`#3,
+            // `metadata-symlink`#4): an identity-mismatched or escaping
+            // sibling record must still fail the round. The pre-#2098
+            // refusals (`#1494`'s symlink-after-validation, handle identity
+            // and escape, realpath/open errors, JSON parse failures) keep
+            // main's strict propagation.
             let record = match self.read_at(project, &id) {
                 Ok(Some(record)) => record,
                 Ok(None) => continue,
-                Err(e) => {
+                Err(e) if Self::unreadable_record_face(&e) => {
                     self.skip_record(&root.join(&id), &e);
                     continue;
                 }
+                Err(e) => return Err(e),
             };
             records.push(record);
         }
@@ -1753,7 +1796,7 @@ fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
 /// (`_tmp/20261107-issue-1887/lease-open-probe/`): a FIFO swapped into the
 /// entry made a plain `File::open` never return, and a symlink to `/dev/zero`
 /// read past 64 MiB without reaching EOF. Both terms therefore run on the one
-/// descriptor `open_lease_entry` returns.
+/// descriptor `open_artifact_guarded` returns.
 #[cfg(unix)]
 fn lease_link_matches(
     destination: &Path,
@@ -1808,9 +1851,9 @@ fn lease_link_matches(
     expected_bytes: f64,
 ) -> bool {
     // The identity term has no cross-platform answer (see above), and the
-    // `O_NOFOLLOW` open is Unix-only; the content term applies here too
-    // rather than being skipped with it.
-    match File::open(destination) {
+    // open-family flags are Unix-only; the content term applies here too
+    // rather than being skipped with them.
+    match open_artifact_guarded(destination) {
         Ok(mut file) => lease_link_content_matches(&mut file, expected_sha256, expected_bytes),
         Err(_) => false,
     }
@@ -1849,17 +1892,18 @@ fn lease_link_content_matches(file: &mut File, expected_sha256: &str, expected_b
     hash_file_exact(file, expected_bytes as u64).is_ok_and(|digest| digest == expected_sha256)
 }
 
-/// `verified()` bound the digest to a handle whose length equalled the
-/// record's `bytes`. Re-reading to EOF here would let an entry that grows
-/// after the `fstat` (same inode, so both identity terms still pass) turn the
-/// acquire into an unbounded read: a sparse multi-TiB file is enough, and a
-/// writer appending at least as fast as the read never reaches EOF at all.
-/// Reading exactly `bytes` and requiring the entry to end there bounds the
-/// work by the approved size.
-fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
-    let mut digest = Sha256::new();
+/// The shared engine of the family's two exact reads (#2098 fix-r2, review
+/// simplify#1: the digest form and the byte form were two side-by-side
+/// implementations of the same terms, so a future edit to one would silently
+/// leave the other behind — one pinned by a negative control, the other
+/// unpinned). Read exactly `len` bytes in chunks — a short read is an error,
+/// not a shorter answer — and then require the entry to end there, so a
+/// sparse file grown past its stat or a same-inode writer appending at least
+/// as fast as the read can never turn the read into an unbounded one.
+/// `sink` receives each chunk as it is read.
+fn read_exact_chunks(file: &mut File, len: u64, mut sink: impl FnMut(&[u8])) -> Result<()> {
     let mut chunk = [0; 64 * 1024];
-    let mut left = limit;
+    let mut left = len;
     while left > 0 {
         let want = chunk.len().min(left as usize);
         let n = file
@@ -1872,7 +1916,7 @@ fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
                 None,
             ));
         }
-        digest.update(&chunk[..n]);
+        sink(&chunk[..n]);
         left -= n as u64;
     }
     let mut extra = [0_u8; 1];
@@ -1886,6 +1930,19 @@ fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
             None,
         ));
     }
+    Ok(())
+}
+
+/// `verified()` bound the digest to a handle whose length equalled the
+/// record's `bytes`. Re-reading to EOF here would let an entry that grows
+/// after the `fstat` (same inode, so both identity terms still pass) turn the
+/// acquire into an unbounded read: a sparse multi-TiB file is enough, and a
+/// writer appending at least as fast as the read never reaches EOF at all.
+/// Reading exactly `bytes` and requiring the entry to end there bounds the
+/// work by the approved size.
+fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
+    let mut digest = Sha256::new();
+    read_exact_chunks(file, limit, |chunk| digest.update(chunk))?;
     Ok(format!("{:x}", digest.finalize()))
 }
 
@@ -1905,41 +1962,19 @@ const MAX_METADATA_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ATTACHMENT_READ_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// [`hash_file_exact`]'s byte form, for the record leaf: read exactly `len`
-/// bytes and require the file to end there. A `read_to_end` here would let
-/// the same faces through that the lease entry's digest read refuses — a
-/// sparse file grown past its stat, or a same-inode writer appending at
-/// least as fast as the read — so the read is bounded by the length the
-/// type-checked descriptor reported. `len == 0` reads nothing and only
-/// requires the trailing EOF, which is what an empty record is.
+/// bytes and require the file to end there, through the same
+/// [`read_exact_chunks`] engine. A `read_to_end` here would let the same
+/// faces through that the lease entry's digest read refuses — a sparse file
+/// grown past its stat, or a same-inode writer appending at least as fast as
+/// the read — so the read is bounded by the length the type-checked
+/// descriptor reported. `len == 0` reads nothing and only requires the
+/// trailing EOF, which is what an empty record is.
 fn read_exact_file(file: &mut File, len: u64) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut chunk = [0; 64 * 1024];
-    let mut left = len;
-    while left > 0 {
-        let want = chunk.len().min(left as usize);
-        let n = file
-            .read(&mut chunk[..want])
-            .map_err(|e| UploadError::io(e, "read", None))?;
-        if n == 0 {
-            return Err(UploadError::io(
-                io::Error::from(io::ErrorKind::UnexpectedEof),
-                "read",
-                None,
-            ));
-        }
-        out.extend_from_slice(&chunk[..n]);
-        left -= n as u64;
-    }
-    let mut extra = [0_u8; 1];
-    match file.read(&mut extra) {
-        Ok(0) => Ok(out),
-        Ok(_) => Err(UploadError::io(
-            io::Error::from(io::ErrorKind::InvalidData),
-            "read",
-            None,
-        )),
-        Err(e) => Err(UploadError::io(e, "read", None)),
-    }
+    // `len` was checked against the cap on the same descriptor; the min only
+    // guards a caller that passes an unbounded length by mistake.
+    let mut out = Vec::with_capacity(len.min(MAX_METADATA_JSON_BYTES) as usize);
+    read_exact_chunks(file, len, |chunk| out.extend_from_slice(chunk))?;
+    Ok(out)
 }
 
 fn random_id() -> Result<String> {
@@ -2142,6 +2177,14 @@ pub(crate) mod swap_test_hook {
         /// not by the walk, so this window is what keeps that term provable —
         /// without it the term has no deterministic kill.
         BetweenWalkAndCanonicalize,
+        /// #2098 fix-r2: after the cap check passed but before the exact read
+        /// consumes the leaf — the window an in-place sparse extension uses to
+        /// grow the file between its validated length and the read. Without
+        /// this window the exact-read term (the must-end-there read) has no
+        /// deterministic kill: the fstat and the read would otherwise observe
+        /// the same already-grown length. The same precedent as
+        /// `BetweenWalkAndCanonicalize` above.
+        BeforeRead,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;

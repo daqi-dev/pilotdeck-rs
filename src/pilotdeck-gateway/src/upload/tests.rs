@@ -551,7 +551,12 @@ fn upload_lease_cleanup_does_not_wait_on_a_fifo_lease_entry() {
     let store = h.store.clone();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(store.cleanup_expired().map(|_| ()).map_err(|e| e.code.clone()));
+        let _ = tx.send(
+            store
+                .cleanup_expired()
+                .map(|_| ())
+                .map_err(|e| e.code.clone()),
+        );
     });
     match rx.recv_timeout(Duration::from_secs(2)) {
         Ok(Ok(_)) => {}
@@ -1293,11 +1298,15 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
 /// regular file through a swapped-in hard link (so the descriptor references
 /// the outside record; #2098's guarded open refuses a symlink at the open
 /// itself, so the window swap-in is a hard link onto the outside file) and
-/// then rename that record over `metadata.json`: the handle now names a
-/// location inside the upload root, the prefix check ran on the pre-open
-/// spelling and passes, and only the identity recorded before the open
-/// exposes the swap. RED against the previous head, where this returned the
-/// forged record.
+/// then really rename a different-inode replacement over `metadata.json`
+/// (fix-r2 MM sibling#3: renaming the hard link's other name over the leaf
+/// is a POSIX same-inode no-op, so the pre-fix-r2 shape never renamed
+/// anything). `F_GETPATH` keeps answering the name the open used
+/// (`_tmp/20261111-issue-2098/fix-r2/probe-rename-getpath`, P3), so the
+/// handle still names a location inside the upload root, the prefix check
+/// ran on the pre-open spelling and passes, and only the identity recorded
+/// before the open exposes the swap. RED against the previous head, where
+/// this returned the forged record.
 #[cfg(unix)]
 #[test]
 fn upload_read_at_record_renamed_after_open_is_rejected() {
@@ -1310,6 +1319,9 @@ fn upload_read_at_record_renamed_after_open_is_rejected() {
     let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
     set(&mut forged, "forgedMarker", text("outside"));
     fs::write(&outside, json_line(&forged).unwrap()).unwrap();
+    // A real rename needs a different inode to cover the leaf with.
+    let replacement = project.join("replacement-in-root.json");
+    fs::write(&replacement, fs::read_to_string(&metadata).unwrap()).unwrap();
     let opened = Arc::new(AtomicBool::new(false));
     let renamed = Arc::new(AtomicBool::new(false));
     let link = {
@@ -1325,9 +1337,9 @@ fn upload_read_at_record_renamed_after_open_is_rejected() {
     let rename = {
         let renamed = renamed.clone();
         let metadata = metadata.clone();
-        let outside = outside.clone();
+        let replacement = replacement.clone();
         move |_path: &Path| {
-            fs::rename(&outside, &metadata).unwrap();
+            fs::rename(&replacement, &metadata).unwrap();
             renamed.store(true, Ordering::SeqCst);
         }
     };
@@ -2088,6 +2100,52 @@ fn upload_read_at_metadata_over_the_size_cap_is_rejected() {
     );
 }
 
+/// #2098 fix-r2 (P2a, review simplify#1): the exact-read term on the record
+/// leaf — the length the descriptor reported, all of it, and nothing past
+/// it. The `BeforeRead` window (the same one-window-per-term precedent as
+/// `BetweenWalkAndCanonicalize`) grows the leaf in place with JSON-legal
+/// trailing whitespace: same inode, so the identity term still passes, and
+/// parseable, so a read-to-EOF mutant streams the grown record back and
+/// parses it. The exact read consumes only the reported length and refuses
+/// the entry at the must-end-there term — a synthetic `InvalidData` the
+/// receipt surfaces with no errno code.
+#[test]
+fn upload_read_at_record_grown_between_stat_and_read_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let fired = Arc::new(AtomicBool::new(false));
+    let grow = {
+        let fired = fired.clone();
+        let metadata = metadata.clone();
+        move |_path: &Path| {
+            let mut leaf = fs::OpenOptions::new()
+                .append(true)
+                .open(&metadata)
+                .expect("#2098 open the record leaf for the in-window growth");
+            leaf.write_all(&[b' '; 4096])
+                .expect("#2098 grow the record leaf with JSON-legal whitespace");
+            drop(leaf);
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeRead, grow);
+    let result = h.store.get("upload-1");
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#2098 the growth hook must fire between the cap check and the exact read"
+    );
+    let error = result.expect_err("#2098 a record grown inside the window must never be read back");
+    assert!(
+        error.message_string().contains("invalid data"),
+        "#2098 the growth must be refused at the exact read's must-end-there term: {}",
+        error.message_string()
+    );
+}
+
 /// #2098 fix-r2 (review DS#1, option b): one record leaf past the read cap
 /// must not poison the project listing. The write side can reach ~100 MiB of
 /// record JSON in one frame (`name`/`relativePath` carry no length term)
@@ -2118,6 +2176,37 @@ fn upload_create_survives_a_sibling_record_over_the_read_cap() {
         status(&h.store.get(&string(&record, "uploadId").unwrap()).unwrap()),
         "created",
         "#2098 the new record round-trips through the listing that skipped its sibling"
+    );
+}
+
+/// #2098 fix-r2 (条4 refinement, caught by the oracle replay): the listing
+/// skips only the read hardening's own faces. A sibling whose record fails
+/// the identity check is a refusal TS itself produces — the oracle pins
+/// `create` failing on exactly this state (`metadata-identity`#3) — so it
+/// keeps failing the round instead of being skipped like the over-cap
+/// sibling above. A blanket skip would have turned this `create` into an
+/// `ok` and diverged from the TS baseline.
+#[test]
+fn upload_create_still_fails_on_a_tampered_sibling_record() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let path = metadata_path(&project);
+    let mut record = parse_json(&fs::read_to_string(&path).unwrap()).unwrap();
+    set(&mut record, "uploadId", text("other"));
+    fs::write(&path, json_line(&record).unwrap()).unwrap();
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
+    let error = h
+        .store
+        .create("project", &manifest, None)
+        .expect_err("#2098 an identity-mismatched sibling record must still fail the listing");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "UPLOAD_INTEGRITY_MISMATCH",
+            "Upload metadata identity does not match its directory."
+        )
     );
 }
 
