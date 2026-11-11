@@ -286,12 +286,24 @@ export function keepAlivePremise(r) {
  * fix-r2（concurrency#3 残余）：freeSocketCount 改按各 origin 键下数组长度
  * 求和——原 Object.keys().length 数的是 origin 键数，同 origin 多 socket 时
  * 低估；键删除时机虽经实测（v22.22.0 空闲收尾后键已删、freeSockets 同步填充，
- * 见 fix-r2 仲裁矩阵），但求和版不依赖该未文档化行为、语义即函数名。 */
+ * 见 fix-r2 仲裁矩阵），但求和版不依赖该未文档化行为、语义即函数名。
+ * #2759 fix-r2（两线整合）：另暴露 freeSocketKeys()（agent.freeSockets 的 origin
+ * 键数组，形如 `host:port:localPort`——Agent.getName 产物，同 origin 多 socket
+ * 共用一键，消费方只可判「该 origin 是否有 idle socket」；freeSockets 不可观测时
+ * undefined——fix-r3 实测（v22.22.0）：Agent 构造器即把 freeSockets 初始化为对象、
+ * keepAlive 与否皆是，该 undefined 支路运行时不可达，系防御性分支（人工格
+ * derivePooledPremise(…, undefined) 覆盖），不是运行时降级路径）——
+ * p16 的入池直测（derivePooledPremise 的 direct 分量、freeKeysBeforeReuse）在
+ * 共用 agent 上取直接观测量，与 freeSocketCount 的 close 前复检并存：前者证
+ * 「请求 1 已入池」（direct 压过头推断），后者证「close 前池内仍占用」。 */
 export async function keepAliveProbe(port) {
   const http = await import("node:http");
   const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
   const freeSocketCount = () => Object.values(agent.freeSockets ?? {}).reduce(
     (n, a) => n + (Array.isArray(a) ? a.length : 0), 0);
+  const freeSocketKeys = () => agent.freeSockets === undefined
+    ? undefined
+    : Object.keys(agent.freeSockets);
   const once = (pathName) =>
     new Promise((res) => {
       const req = http.request(
@@ -309,7 +321,7 @@ export async function keepAliveProbe(port) {
       req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, error: `${e.code ?? e.name}: ${e.message}`, reusedSocket: req.reusedSocket }));
       req.end();
     }).then((r) => ({ ...r, ...keepAlivePremise(r) }));
-  return { once, freeSocketCount, destroy: () => agent.destroy() };
+  return { once, freeSocketCount, freeSocketKeys, destroy: () => agent.destroy() };
 }
 
 /** 新 TCP 是否被拒（连接层）。 */
