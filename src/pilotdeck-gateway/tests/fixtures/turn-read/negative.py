@@ -56,14 +56,21 @@ with mutating_sources(repo, [source, registry_source]) as snapshots:
          '"read_session_messages is not wired.",',
          'read_not_configured'),
         ('merge-stream-first', source,
-         '    let mut merged = history.as_object().cloned().unwrap_or_default();\n    merged.insert("stream".into(), stream.to_json());',
-         '    let mut merged = JsObject::new();\n    merged.insert("stream".into(), stream.to_json());\n'
+         '    let mut merged = history.as_object().cloned().unwrap_or_default();\n    merged.insert(\n'
+         '        "stream".into(),\n'
+         '        echo_request_session_key(stream.to_json(), raw_key),\n    );',
+         '    let mut merged = JsObject::new();\n    merged.insert(\n'
+         '        "stream".into(),\n'
+         '        echo_request_session_key(stream.to_json(), raw_key),\n    );\n'
          '    for (key, value) in history.as_object().cloned().unwrap_or_default().entries().iter() {\n'
          '        merged.insert(key.clone(), value.clone());\n    }',
          'read_stable_active_merges_history_and_stream'),
         ('merge-keeps-stale-stream', source,
-         '    merged.insert("stream".into(), stream.to_json());',
-         '    if merged.get("stream").is_none() {\n        merged.insert("stream".into(), stream.to_json());\n    }',
+         '    merged.insert(\n        "stream".into(),\n'
+         '        echo_request_session_key(stream.to_json(), raw_key),\n    );',
+         '    if merged.get("stream").is_none() {\n        merged.insert(\n'
+         '            "stream".into(),\n'
+         '            echo_request_session_key(stream.to_json(), raw_key),\n        );\n    }',
          'read_history_stream_key_replaced_in_place'),
         ('cursor-validation-removed', source,
          '        && !is_non_negative_safe_integer(value)',

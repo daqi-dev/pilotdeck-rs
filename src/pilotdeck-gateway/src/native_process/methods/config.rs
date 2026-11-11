@@ -263,7 +263,7 @@ impl Requests {
         owner: Option<&JsString>,
     ) -> Result<JsValue, RequestError> {
         let project_key = resolve_project(self, params)?;
-        // #1872: TS consults `hasActiveTurn` on the request spelling only
+        // #1872: TS consults `hasActiveTurn` on the request key only
         // (ts-blankkey-probe B: a turn held on the blank spelling itself
         // still answers SESSION_BUSY — the gate fires before the port
         // write's sessionKey gate), so the request-side check stays live for
@@ -272,16 +272,26 @@ impl Requests {
         // that same port gate: `""` folds onto the `session` transcript,
         // and the owner side must not answer this busy code first for a
         // request TS rejects as `INVALID_SESSION_KEY` (probe E/G).
-        // #2692: a turn born from `sessionKey:null` hangs on the
-        // template-literal spelling "null" (submit side no longer folds to
-        // `""`), so the busy gate consults that spelling, not only string
-        // keys — TS `hasActiveTurn(input.sessionKey)` sees the raw value,
-        // and the spelling is where that value's turn now lives.
-        let request_key =
-            crate::js_value::template_key(params.get("sessionKey").unwrap_or(&UNDEFINED));
-        if self.owner.has_active_turn(&request_key)
-            || trimmed_string_is_non_empty(&request_key)
-                && owner.is_some_and(|owner| self.owner.has_active_turn(owner))
+        // #2692: TS `hasActiveTurn(input.sessionKey)` indexes the raw
+        // value (SameValueZero), so this gate consults the router domain:
+        // `null` meets a null-born turn (ts-prodkey-probe cell F), the
+        // string `"null"` meets only a `"null"`-born turn (cell c), and a
+        // value whose spelling throws (a too-deep array) consults nothing
+        // and falls through to the sessionKey gate — TS's
+        // `trim is not a function` path (cell e).
+        // #2692 Grok#2: the owner conjunction is that registered divergence
+        // narrowed to string requests — a null/absent request never answers
+        // for a busy owner session (TS answers INVALID_SESSION_KEY, probe
+        // cell c owner 格).
+        let request_session_key = params.get("sessionKey").unwrap_or(&UNDEFINED);
+        let string_request = matches!(request_session_key, JsValue::String(_));
+        let request_key = crate::js_value::router_key(request_session_key);
+        if match &request_key {
+            Ok(key) => self.owner.has_active_turn(key),
+            Err(_) => false,
+        } || string_request
+            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))
+            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))
         {
             return Err(gateway_error(
                 "SESSION_BUSY",
@@ -535,13 +545,15 @@ impl Requests {
                 JsString::from_utf16(units),
             ));
         }
-        // #2692: same spelling lookup as session_model_set — a turn born
-        // from `sessionKey:null` lives on "null", and TS's
-        // `hasActiveTurn(input.sessionKey)` (InProcessGateway.ts:2325) sees
-        // the raw request value.
+        // #2692: same router-domain lookup as session_model_set — TS's
+        // `hasActiveTurn(input.sessionKey)` (InProcessGateway.ts:2325)
+        // indexes the raw request value, so `null` meets a null-born turn
+        // (probe cell F) and the string `"null"` meets only a
+        // `"null"`-born turn (cell c). A value whose spelling throws
+        // consults nothing and falls through to the sessionKey gate.
         let request_key =
-            crate::js_value::template_key(params.get("sessionKey").unwrap_or(&UNDEFINED));
-        if self.owner.has_active_turn(&request_key) {
+            crate::js_value::router_key(params.get("sessionKey").unwrap_or(&UNDEFINED));
+        if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {
             return Err(gateway_error(
                 "SESSION_BUSY",
                 "Cannot change permission mode during an active turn.",
@@ -1823,8 +1835,8 @@ mod tests {
 
     /// The production submitter over the fixture's own owner and registry,
     /// with the hanging refresh: a `submit_turn` born here parks in flight
-    /// on the template spelling its `sessionKey` spells (#2692: null →
-    /// "null", absent → "undefined", `""` → "").
+    /// on the router key of its raw `sessionKey` (#2692: strings are their
+    /// own router key, null → `\0\0raw:null`, absent → `\0\0raw:undefined`).
     fn hanging_submitter(r: &Requests) -> Arc<crate::runtime::turn::submit::TurnSubmitter> {
         let admission = crate::runtime::turn::admission::GatewaySubmitAdmission::new(
             crate::runtime::turn::admission::SubmitAdmissionOptions::new(r.replacement.clone()),
@@ -1854,29 +1866,107 @@ mod tests {
     }
 
     /// Submit through the real chain and wait until the turn is in flight on
-    /// the given spelling. The consumer task drains the submission for the
+    /// the given router key. The consumer task drains the submission for the
     /// rest of the test, so the parked pump is never cancelled mid-turn.
-    async fn submit_in_flight(r: &Requests, input: JsValue, spelling: &str) {
+    async fn submit_in_flight(r: &Requests, input: JsValue, router_key: &str) {
         let mut submission = hanging_submitter(r).submit(input);
         tokio::spawn(async move { while let Ok(Some(_)) = submission.next().await {} });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !r.owner.has_active_turn(&spelling.into()) {
+        while !r.owner.has_active_turn(&router_key.into()) {
             assert!(
                 std::time::Instant::now() < deadline,
-                "#2692 the {spelling}-spelling turn was never admitted"
+                "#2692 the {router_key:?}-keyed turn was never admitted"
             );
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 
-    /// #2692 S1 probe A (ts-deepkey-probe.out): a `sessionKey:null` turn
-    /// born from the full submit chain — TS keeps it distinct from `""`
-    /// (registry record JSON null, router Map key null) — answers the
-    /// method cells exactly as the probe measured them: cell E (`""`
-    /// request) `INVALID_SESSION_KEY`, cell F (null request)
-    /// `SESSION_BUSY`, and the permission twins the same shape. Before the
-    /// fix the submit side folded null to `""`, so the turn lived on the
-    /// blank key and both cells inverted.
+    /// Submit through the real chain and collect every event through End —
+    /// `next()` at End awaits the run's own completion, so the submission is
+    /// fully settled when this returns.
+    async fn submit_collect(r: &Requests, input: JsValue) -> Vec<JsValue> {
+        let mut submission = hanging_submitter(r).submit(input);
+        let mut events = vec![];
+        while let Ok(Some(event)) = submission.next().await {
+            events.push(event);
+        }
+        events
+    }
+
+    /// The sibling#1 submitter: the production host over the REAL native
+    /// services (`resolve_model_selection` is `session_model::execute`, the
+    /// same chain the isolated process runs), over the fixture's own owner
+    /// and registry. Only the snapshot recorder leg is absent — the
+    /// model-resolution leg under test is the real one.
+    fn real_services_submitter(r: &Requests) -> Arc<crate::runtime::turn::submit::TurnSubmitter> {
+        let services = Arc::new(crate::native_process::services::Services {
+            options: r.options.clone(),
+            project: r.project.clone(),
+            env: r.env.clone(),
+            recorders: Arc::default(),
+            owner: r.owner.clone(),
+            snapshot_recorder: None,
+            upload_store: Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_: &JsString| {
+                        Err(crate::upload::UploadError::dialog(
+                            "PROJECT_NOT_FOUND",
+                            "unavailable in test",
+                        ))
+                    },
+                    || Ok(vec![]),
+                ),
+            )),
+        });
+        let admission = crate::runtime::turn::admission::GatewaySubmitAdmission::new(
+            crate::runtime::turn::admission::SubmitAdmissionOptions::new(r.replacement.clone()),
+        );
+        Arc::new(crate::runtime::turn::submit::TurnSubmitter {
+            owner: r.owner.clone(),
+            coordinator: r.coordinator.clone(),
+            projector: Arc::new(
+                crate::runtime::turn::projector::GatewayAgentEventProjector::new(
+                    crate::runtime::turn::projector::GatewayAgentEventProjectorOptions::default(),
+                )
+                .expect("#879 default projector"),
+            ),
+            registry: r
+                .runs
+                .clone()
+                .map(|runs| runs as Arc<dyn crate::runtime::turn::publish::TurnRunRegistry>),
+            host: Arc::new(crate::runtime::turn::submit_host::GatewaySubmitHost::new(
+                services,
+                Arc::new(crate::runtime::turn::submit_host::NativeSubmitReplacement(
+                    (*r.replacement).clone(),
+                )),
+                Arc::new(admission),
+            )),
+            workspace_admissions: crate::runtime::turn::submit::WorkspaceAdmissions::default(),
+        })
+    }
+
+    /// Submit through the real-services chain and collect every event
+    /// through End.
+    async fn real_services_submit_collect(r: &Requests, input: JsValue) -> Vec<JsValue> {
+        let mut submission = real_services_submitter(r).submit(input);
+        let mut events = vec![];
+        while let Ok(Some(event)) = submission.next().await {
+            events.push(event);
+        }
+        events
+    }
+
+    /// #2692 S1 probes (ts-deepkey-probe.out + fix-r1 ts-prodkey-probe.out
+    /// cell c): a `sessionKey:null` turn born from the full submit chain —
+    /// TS keeps it distinct from `""` (registry record JSON null, router
+    /// Map key null) — answers the method cells exactly as the probe
+    /// measured them: cell E (`""` request) `INVALID_SESSION_KEY`, cell F
+    /// (null request) `SESSION_BUSY`, the `"null"` string request
+    /// **success** (raw Map miss, non-empty string passes the gate), and
+    /// the permission twins the same three-way shape. Before fix-r1 the
+    /// submit side parked the turn on the "null" template spelling, so the
+    /// busy gate met a `"null"`-born turn for a null request (cell 8
+    /// inverted) and the `"null"` request hit cell F instead of succeeding.
     #[tokio::test]
     async fn session_model_set_null_key_turn_from_the_submit_chain_answers_the_ts_cells() {
         let (_scratch, r) = setup_fixture();
@@ -1888,14 +1978,14 @@ mod tests {
                 ("message", "deep-key probe".into()),
                 ("channelKey", "probe-channel".into()),
             ]),
-            "null",
+            "\0\0raw:null",
         )
         .await;
-        // The probe's key separation: the turn is in flight on the "null"
-        // spelling, not on the blank key.
+        // The probe's key separation: the turn is in flight on the null
+        // router key, not on the blank key.
         negative_assert!(
             !r.owner.has_active_turn(&"".into()),
-            "#2692 the null-spelling turn does not fold onto the blank key"
+            "#2692 the null-keyed turn does not fold onto the blank key"
         );
         // The probe's storage cell: the record body keeps the raw JSON null
         // while the dedupe key spells "null".
@@ -1992,8 +2082,123 @@ mod tests {
             "sessionKey is required.",
             "#2692 permission cell E message"
         );
-        // The parked pump holds admission for the rest of the test; end it
-        // here so teardown's shutdown is not the first release.
+        // cell c success: null turn in flight, `"null"` string request — the
+        // router Map misses (the turn lives on the null value's key) and the
+        // non-empty string passes the port gate (probe cell c).
+        r.session_config_request(
+            "session_model_set".into(),
+            object([
+                ("sessionKey", "null".into()),
+                ("selection", selection("model", "test", "test")),
+            ]),
+        )
+        .await
+        .expect("#2692 cell c: a \"null\" request succeeds under a null-born turn");
+        let result = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "null".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect("#2692 permission cell c: a \"null\" request applies under a null-born turn");
+        negative_assert_eq!(
+            result,
+            object([("applied", JsValue::Bool(true))]),
+            "#2692 permission cell c answer"
+        );
+        // matrix row 3 (probe cell c): a second null-keyed submit with a new
+        // runId meets the busy gate on the null value's own key — the TS
+        // message spells the template fold ("Session null already has an
+        // active turn."), delivered as the agent_status + recoverable error
+        // pair.
+        let events = submit_collect(
+            &r,
+            object([
+                ("sessionKey", JsValue::Null),
+                ("runId", "run-2".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+        )
+        .await;
+        negative_assert_eq!(
+            events.len(),
+            2,
+            "#2692 the busy rejection is the agent_status + error pair"
+        );
+        negative_assert_eq!(
+            events[0].get("type").and_then(JsValue::as_string),
+            Some(&"agent_status".into()),
+            "#2692 the busy pair's first frame"
+        );
+        negative_assert_eq!(
+            events[0].get("event").and_then(JsValue::as_string),
+            Some(&"session_busy".into()),
+            "#2692 the busy status event"
+        );
+        negative_assert_eq!(
+            events[0]
+                .get("detail")
+                .and_then(|detail| detail.get("message"))
+                .and_then(JsValue::as_string),
+            Some(&"Session null already has an active turn.".into()),
+            "#2692 the busy message spells the template fold"
+        );
+        negative_assert_eq!(
+            events[1].get("code").and_then(JsValue::as_string),
+            Some(&"session_busy".into()),
+            "#2692 the busy error code"
+        );
+        negative_assert_eq!(
+            events[1].get("recoverable"),
+            Some(&JsValue::Bool(true)),
+            "#2692 the busy error is recoverable"
+        );
+        negative_assert_eq!(
+            events[1].get("message").and_then(JsValue::as_string),
+            Some(&"Session null already has an active turn.".into()),
+            "#2692 the busy error message"
+        );
+        // matrix row 4 (probe cell c): the `"null"` string spelling is a
+        // different router key — both turns fly at once, and the record
+        // body keeps the raw JSON string.
+        submit_in_flight(
+            &r,
+            object([
+                ("sessionKey", "null".into()),
+                ("runId", "run-3".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+            "null",
+        )
+        .await;
+        negative_assert!(
+            r.owner.has_active_turn(&"\0\0raw:null".into()),
+            "#2692 the null-keyed turn stays in flight beside the string one"
+        );
+        let record = r
+            .runs
+            .as_ref()
+            .expect("#2692 fixture registry")
+            .call(|registry| {
+                registry.get(&crate::storage::RunRef {
+                    session_key: "null".into(),
+                    project_key: None,
+                    run_id: "run-3".into(),
+                })
+            })
+            .await
+            .expect("#2692 registry worker")
+            .expect("#2692 the string-spelling record is readable");
+        negative_assert_eq!(
+            record.as_json().get("sessionKey"),
+            Some(&JsValue::String("null".into())),
+            "#2692 the row-4 record body keeps the raw JSON string"
+        );
+        // The parked pumps hold admission for the rest of the test; end
+        // them here so teardown's shutdown is not the first release.
+        r.owner.end_turn(&"\0\0raw:null".into(), None, None);
         r.owner.end_turn(&"null".into(), None, None);
         teardown(&r).await;
     }
@@ -2019,8 +2224,8 @@ mod tests {
         )
         .await;
         negative_assert!(
-            !r.owner.has_active_turn(&"null".into()),
-            "#2692 the blank-spelling turn does not leak onto the null spelling"
+            !r.owner.has_active_turn(&"\0\0raw:null".into()),
+            "#2692 the blank-spelling turn does not leak onto the null router key"
         );
         // cell B: blank turn in flight, `""` request.
         let error = r
@@ -2090,7 +2295,7 @@ mod tests {
                 ("message", "deep-key probe".into()),
                 ("channelKey", "probe-channel".into()),
             ]),
-            "null",
+            "\0\0raw:null",
         )
         .await;
         negative_assert!(
@@ -2117,7 +2322,393 @@ mod tests {
             );
         }
         r.owner.end_turn(&"".into(), None, None);
+        r.owner.end_turn(&"\0\0raw:null".into(), None, None);
+        teardown(&r).await;
+    }
+
+    /// #2692 fix-r1 probe cell c: a `sessionKey:"null"` (string) turn from
+    /// the submit chain — the string is its own router key, so it stays
+    /// distinct from a null-born turn. A null request must answer the
+    /// sessionKey gate (`INVALID_SESSION_KEY`): TS's `hasActiveTurn(null)`
+    /// indexes the raw null value and misses the string-keyed turn. Before
+    /// fix-r1 the gate folded the null request onto the "null" template
+    /// spelling and answered `SESSION_BUSY` — cell 8 inverted. The `"null"`
+    /// request keeps meeting its own turn (cell 9), and the permission twins
+    /// the same two-way shape.
+    #[tokio::test]
+    async fn session_model_set_string_null_turn_from_the_submit_chain_answers_the_ts_cells() {
+        let (_scratch, r) = setup_fixture();
+        submit_in_flight(
+            &r,
+            object([
+                ("sessionKey", "null".into()),
+                ("runId", "run-1".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+            "null",
+        )
+        .await;
+        // The storage cell: the record keeps the raw JSON string "null",
+        // readable under the template spelling "null".
+        let record = r
+            .runs
+            .as_ref()
+            .expect("#2692 fixture registry")
+            .call(|registry| {
+                registry.get(&crate::storage::RunRef {
+                    session_key: "null".into(),
+                    project_key: None,
+                    run_id: "run-1".into(),
+                })
+            })
+            .await
+            .expect("#2692 registry worker")
+            .expect("#2692 the string-null record is readable");
+        negative_assert_eq!(
+            record.as_json().get("sessionKey"),
+            Some(&JsValue::String("null".into())),
+            "#2692 the record body keeps the raw JSON string"
+        );
+        // cell 8: "null" turn in flight, null request — the router domain
+        // misses (null is not the string "null") and the sessionKey gate
+        // answers. The pre-fix template fold made this cell SESSION_BUSY.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::Null),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 cell 8: a null request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 cell 8 code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2692 cell 8 message"
+        );
+        // cell 9: "null" turn in flight, `"null"` request — the router domain
+        // hits its own key.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "null".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 cell 9: a \"null\" request meets the busy gate");
+        negative_assert_eq!(error.code.as_str(), "SESSION_BUSY", "#2692 cell 9 code");
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change the model during an active turn.",
+            "#2692 cell 9 message"
+        );
+        // permission twins: cell 8 and cell 9 spellings.
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", JsValue::Null), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#2692 permission cell 8: a null request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 permission cell 8 code"
+        );
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "null".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#2692 permission cell 9: a \"null\" request meets the busy gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#2692 permission cell 9 code"
+        );
         r.owner.end_turn(&"null".into(), None, None);
+        teardown(&r).await;
+    }
+
+    /// #2692 fix-r1 Grok#2 (probe cell c owner 格): a string-keyed owner
+    /// session with an in-flight turn never answers for a *null* request —
+    /// TS has no cross-session owner conjunction there and answers
+    /// `INVALID_SESSION_KEY`. The Rust owner conjunction is the registered
+    /// #1872 divergence; fix-r1 narrows it to string requests, so the null
+    /// request falls through to the sessionKey gate. The `"owner-sess"`
+    /// control cell keeps answering `SESSION_BUSY` through the request key.
+    #[tokio::test]
+    async fn session_model_set_null_request_never_answers_for_a_busy_owner_session() {
+        let (_scratch, r) = setup_fixture();
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&"owner-sess".into(), &run)
+            .expect("#2692 stage the owner session's active turn");
+        // Grok#2 cell: busy string owner, null request.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::Null),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 Grok#2: a null request answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#2692 Grok#2 code: not the owner's SESSION_BUSY"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#2692 Grok#2 message"
+        );
+        // Control cell: the owner's own spelling still meets the busy gate.
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "owner-sess".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#2692 control: the owner's spelling meets the busy gate");
+        negative_assert_eq!(error.code.as_str(), "SESSION_BUSY", "#2692 control code");
+        r.owner
+            .end_turn(&"owner-sess".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #2692 fix-r1 P0 (probe cell e): a `sessionKey` whose ToString throws
+    /// — a too-deep array — fails durable acceptance with the accept-catch
+    /// shape TS answers on the same input (`result_unknown` +
+    /// "Maximum call stack size exceeded" + the acceptance userHint).
+    /// TS's record lands first and only the structuredClone on the return
+    /// path throws (probe: `String(deep)` is `""` in V8); Rust's key
+    /// construction cannot index what it cannot spell, so nothing lands and
+    /// the registry stays whole — the no-record difference is registered
+    /// (R15). Before fix-r1 the unchecked fold landed the record under `""`.
+    #[tokio::test]
+    async fn deep_array_session_key_submit_is_rejected_without_landing_a_record() {
+        let (_scratch, r) = setup_fixture();
+        // 2001 nested arrays: past MAX_ARRAY_DEPTH, the same depth family
+        // the probe measured for the accept-catch rejection.
+        let mut deep = JsValue::Array(vec![]);
+        for _ in 0..2001 {
+            deep = JsValue::Array(vec![deep]);
+        }
+        let events = submit_collect(
+            &r,
+            object([
+                ("sessionKey", deep),
+                ("runId", "run-deep".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+        )
+        .await;
+        negative_assert_eq!(events.len(), 1, "#2692 the rejection is a single event");
+        let event = &events[0];
+        negative_assert_eq!(
+            event.get("type").and_then(JsValue::as_string),
+            Some(&"error".into()),
+            "#2692 the rejection event type"
+        );
+        negative_assert_eq!(
+            event.get("code").and_then(JsValue::as_string),
+            Some(&"result_unknown".into()),
+            "#2692 the accept-catch code"
+        );
+        negative_assert_eq!(
+            event.get("message").and_then(JsValue::as_string),
+            Some(&"Maximum call stack size exceeded".into()),
+            "#2692 the raw RangeError message"
+        );
+        negative_assert_eq!(
+            event.get("recoverable"),
+            Some(&JsValue::Bool(false)),
+            "#2692 the rejection is not recoverable"
+        );
+        negative_assert_eq!(
+            event.get("userHint").and_then(JsValue::as_string),
+            Some(&"Gateway acceptance could not be durably confirmed. Inspect the run state before retrying.".into()),
+            "#2692 the accept-time userHint"
+        );
+        negative_assert_eq!(
+            event.get("runId").and_then(JsValue::as_string),
+            Some(&"run-deep".into()),
+            "#2692 the rejection names the run"
+        );
+        // Nothing landed: no admission, and no record under the `""` spelling
+        // TS's fold would have keyed it by.
+        negative_assert!(
+            !r.owner.has_active_turn(&"".into()),
+            "#2692 the deep-keyed turn is never admitted"
+        );
+        let record = r
+            .runs
+            .as_ref()
+            .expect("#2692 fixture registry")
+            .call(|registry| {
+                registry.get(&crate::storage::RunRef {
+                    session_key: "".into(),
+                    project_key: None,
+                    run_id: "run-deep".into(),
+                })
+            })
+            .await
+            .expect("#2692 registry worker");
+        negative_assert!(record.is_none(), "#2692 no record lands for the deep key");
+        teardown(&r).await;
+    }
+
+    /// #2692 fix-r1 sibling#1, disposition (a) (probe cell a1): through the
+    /// REAL native services — `resolve_model_selection` is
+    /// `session_model::execute`, the chain the isolated process runs — a
+    /// `sessionKey:null` turn with no explicit modelSelection dies at model
+    /// resolution: the storage-side sessionKey gate rejects it and the pump
+    /// catch publishes the TS-measured failure pair (agent_status
+    /// `gateway_submit_failed` + the `gateway_submit_failed` error with the
+    /// turn-failure userHint). The turn does not survive; the stubbed
+    /// services used to park turns answer `source=default` unconditionally,
+    /// which is exactly the stub-vs-real difference this regression pins.
+    /// The record stays in the accepted state with the failure events
+    /// appended (TS marks it failed — registered divergence, R15).
+    #[tokio::test]
+    async fn real_services_null_session_key_turn_dies_at_model_resolution() {
+        let (_scratch, r) = setup_fixture();
+        let events = real_services_submit_collect(
+            &r,
+            object([
+                ("sessionKey", JsValue::Null),
+                ("runId", "run-a1".into()),
+                ("message", "deep-key probe".into()),
+                ("channelKey", "probe-channel".into()),
+            ]),
+        )
+        .await;
+        negative_assert_eq!(
+            events.len(),
+            2,
+            "#2692 the model-resolution failure is the TS a1 pair"
+        );
+        let failure = &events[0];
+        negative_assert_eq!(
+            failure.get("type").and_then(JsValue::as_string),
+            Some(&"agent_status".into()),
+            "#2692 the first frame is an agent_status"
+        );
+        negative_assert_eq!(
+            failure.get("event").and_then(JsValue::as_string),
+            Some(&"gateway_submit_failed".into()),
+            "#2692 the agent_status event code"
+        );
+        negative_assert_eq!(
+            failure
+                .get("detail")
+                .and_then(|detail| detail.get("message"))
+                .and_then(JsValue::as_string),
+            Some(&"sessionKey is required.".into()),
+            "#2692 the agent_status message"
+        );
+        negative_assert_eq!(
+            failure.get("runId").and_then(JsValue::as_string),
+            Some(&"run-a1".into()),
+            "#2692 the agent_status names the run"
+        );
+        let error = &events[1];
+        negative_assert_eq!(
+            error.get("type").and_then(JsValue::as_string),
+            Some(&"error".into()),
+            "#2692 the second frame is an error"
+        );
+        negative_assert_eq!(
+            error.get("code").and_then(JsValue::as_string),
+            Some(&"gateway_submit_failed".into()),
+            "#2692 the error code"
+        );
+        negative_assert_eq!(
+            error.get("message").and_then(JsValue::as_string),
+            Some(&"sessionKey is required.".into()),
+            "#2692 the error message"
+        );
+        negative_assert_eq!(
+            error.get("recoverable"),
+            Some(&JsValue::Bool(false)),
+            "#2692 the pump failure is not recoverable"
+        );
+        negative_assert_eq!(
+            error.get("userHint").and_then(JsValue::as_string),
+            Some(&"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.".into()),
+            "#2692 the turn-failure userHint"
+        );
+        // The turn is dead: no admission survives the pump failure.
+        negative_assert!(
+            !r.owner.has_active_turn(&"\0\0raw:null".into()),
+            "#2692 the null-keyed turn does not survive the real model resolution"
+        );
+        // The record body keeps the raw JSON null under the "null" spelling,
+        // with the failure events appended (state divergence registered).
+        let record = r
+            .runs
+            .as_ref()
+            .expect("#2692 fixture registry")
+            .call(|registry| {
+                registry.get(&crate::storage::RunRef {
+                    session_key: "null".into(),
+                    project_key: None,
+                    run_id: "run-a1".into(),
+                })
+            })
+            .await
+            .expect("#2692 registry worker")
+            .expect("#2692 the null-spelling record is readable");
+        negative_assert_eq!(
+            record.as_json().get("sessionKey"),
+            Some(&JsValue::Null),
+            "#2692 the record body keeps the raw JSON null"
+        );
+        let recorded = r
+            .runs
+            .as_ref()
+            .expect("#2692 fixture registry")
+            .call(|registry| {
+                registry.events(
+                    &crate::storage::RunRef {
+                        session_key: "null".into(),
+                        project_key: None,
+                        run_id: "run-a1".into(),
+                    },
+                    None,
+                    None,
+                )
+            })
+            .await
+            .expect("#2692 registry worker");
+        negative_assert!(
+            recorded.iter().any(|entry| {
+                entry.get("event").is_some_and(|event| {
+                    event.get("type") == Some(&JsValue::from("error"))
+                        && event.get("code") == Some(&JsValue::from("gateway_submit_failed"))
+                        && event.get("message") == Some(&JsValue::from("sessionKey is required."))
+                })
+            }),
+            "#2692 the failure pair is durably recorded on the run record"
+        );
         teardown(&r).await;
     }
 

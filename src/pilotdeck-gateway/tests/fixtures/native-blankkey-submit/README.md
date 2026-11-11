@@ -1,36 +1,63 @@
-# #2692 submit 侧空键拼法负控
+# #2692 submit 侧空键折叠坍缩负控
 
-S1 探针（`_tmp/20261110-issue-2692/probes/ts-deepkey-probe.mjs`）证明 TS 的
-`sessionKey:null` 与 `sessionKey:""` 回合能越过完整 submit 链存活到存储/读取
-路径：null 记录体落盘为 JSON null、复合键拼 `"null"`、router Map 键分离、同
-runId 交叉拼法各成第二条记录。修复让 Rust submit 链保留折叠前拼法（null →
-`"null"`、缺失 → `"undefined"`），记录体经 `RunAcceptInput.session_key_raw` 保
-持原始拼写；`session_model_set` 与 `set_permission_mode` 的 busy 门按拼法查
-admission。
+S1 探针（`ts-deepkey-probe.out`）证明 TS 的 `sessionKey:null` 与 `sessionKey:""`
+回合能越过完整 submit 链存活到存储/读取路径；fix-r1 探针
+（`ts-prodkey-probe.out`）进一步把两个键域分开：复合 run 键拼
+`String(sessionKey)`（null → `"null"`、缺失 → `"undefined"`、`template_key_checked`
+把不可拼的深数组当 Err 回答），router 形 Map（admission / sessions / fence /
+coordinator / busy 门预检）按原始值本身索引（`router_key`：字符串即自身，其余类别
+打 `\0\0raw:…` 标签，null 与 `"null"` 是两个会话、一条记录拼法）。记录体经
+`RunAcceptInput.session_key_raw` 保持原始值；读取面把请求自己的 `sessionKey` 回显进
+snapshot（miss 也回显）。
 
-绑定测试（均经真实 `TurnSubmitter` 诞生回合，`HangingRefreshServices` 把回合停
-在 pump 的 config refresh——TS 探针里永不 yield 的 `submit` 生成器的移植）：
+## 变异名册（11 行，逐行绑死测试）
 
-- `native_process::methods::config::tests::session_model_set_null_key_turn_from_the_submit_chain_answers_the_ts_cells`
-  —— null 键回合 + 四格方法答案（E/F + permission 孪生）+ 记录体 JSON null；
-- `native_process::methods::config::tests::session_model_set_blank_key_turn_from_the_submit_chain_answers_the_ts_cells`
-  —— `""` 键回合 + B/D 格 + 交叉拼法第二记录/第二在飞回合；
-- `storage::run_registry_tests::null_session_key_body_keeps_json_null_while_the_key_spells_null`
-  —— 记录体/键/磁盘往返；
-- `js_value::tests::template_key_spells_the_template_literal_form` ——
-  `template_key` 拼法表。
+- `submit-owner-uses-template-key` —— owner 各 Map 回退模板拼法，null 回合对
+  router 域查找不可见（admit 截止期先死）；
+- `router-key-folds-null` —— Null 臂回退字符串拼法，null 与 `"null"` 重新折叠成
+  一个 router 键；
+- `template-key-checked-folds` —— 复合键助手把拼法 Err 折回 `""`（修复前的
+  unchecked 折叠）；
+- `acceptance-error-swallowed` —— accept-catch 形状被丢掉：ToString 抛错的键被
+  静默接受，无 result_unknown 事件；
+- `owner-conjunction-only` —— busy 门只剩 #1872 owner 合取，请求键查不到自己的
+  在飞回合（Grok#2 控制格）；
+- `model-set-gate-string-only` / `permission-gate-string-only` —— 两个 busy 门回退
+  as_string 字符串键，null 请求永远见不到自己的回合（F 格）；
+- `registry-body-spelling` / `submit-raw-spelling` —— 记录体丢掉原始 JSON null
+  （round-1 行，重锚后幸存）；
+- `registry-skip-reverted` —— 折叠带跳过被整个去掉，深键记录越过带也跳过，load
+  不再像 TS 那样失败；
+- `echo-drops-raw-key` —— 读取面回显固定 null 而不是请求自己的值。
 
-七个负控依次编译、跑绑定测试、恢复正控并汇总，任何非 KILLED 非零退出：
-submit 回退折叠（两格：null 格与交叉拼法格）、记录体回退拼法串、raw 字段喂拼
-法、两个 busy 门回退 as_string、`template_key` 本身回退折叠。锚点必须唯一；
-变异通过 `mutating_sources` 持锁（要求源码等于 HEAD），cargo 通过 `run_owned`
-和 `wait_for_slot`，必须使用调用方 CARGO_TARGET_DIR。未提交的新金样会被 HEAD
-守卫拒绝，此时交协调者提交后执行，不绕过守卫。
+绑定测试：`config::tests::session_model_set_null_key_turn_from_the_submit_chain_answers_the_ts_cells`
+（键域 + 四格 + 记录体）、`config::tests::deep_array_session_key_submit_is_rejected_without_landing_a_record`
+（accept-catch）、`config::tests::session_model_set_null_request_never_answers_for_a_busy_owner_session`
+（Grok#2）、`js_value::tests::template_key_spells_the_template_literal_form`（拼法表）、
+`storage::run_registry_tests::null_session_key_body_keeps_json_null_while_the_key_spells_null`
+（记录体）、`storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
+（折叠带）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
+（回显）。
+
+## 启动契约（#2391 迁移）
+
+`negative_selection` 契约：`registered()` 名册等值核验（漂移 = 启动拒绝）、
+`refuse()` 形拒跑（rc 2、stderr `INVALID:`）、`missing_target()` +
+`refuse_unusable_target()` 在占用证据目录之前、`claim_dir` 原子占用（已存在目录
+rc 2）、`verdict_exit` 共享裁决（永不自算）。`--check` 的 argv 契约按 #2495 fix-r2
+机器核验：多余参数 / `--compile-only` 混入都拒绝。
+
+每行变异依次正控 → 应用 → `cargo test --no-run` 编译核 → 负控 → 恢复 + 字节核对
+→ 恢复后正控；`--compile-only` 只跑到编译核（COMPILED 即过）。变异通过
+`mutating_sources` 持锁（要求参与源码等于 HEAD 且 index 干净），cargo 经
+`run_owned` 与 `wait_for_slot`，必须使用调用方 CARGO_TARGET_DIR。未提交的改动
+会被 HEAD 守卫拒绝，此时交协调者提交后执行，不绕过守卫。
 
 ```sh
 export CARGO_TARGET_DIR=/abs/owned/target
-export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
-python3 -I src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/negative_controls.py --check-anchors
+python3 -I src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/negative_controls.py --check
 # 提交后且工作树源码等于 HEAD：
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/negative_controls.py /abs/fresh/evidence
+# 或只做编译核：
+python3 -I src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/negative_controls.py --compile-only /abs/fresh/evidence
 ```

@@ -953,3 +953,82 @@ fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
         "#2692 the absent body field reads as undefined"
     );
 }
+
+// #2692 fix-r1 matrix row 15 (ts-prodkey-probe e): a submit accept can land
+// a deep-array sessionKey record (TS persists it before the result clone
+// throws), so one can sit on disk when the registry reopens. V8's key
+// template join folds 2621 levels of nesting to "" and throws past that
+// (Node 22.22.0 on the probe machine); Rust cannot re-spell past the shared
+// 2000-level bound at all. Inside the fold band the record is skipped — TS
+// keeps it under the folded "" key but every read of it throws on the record
+// clone, so "single record invisible, the rest readable" is the aligned
+// shape (registered divergence). Past the band the load fails like TS's get
+// does (#251 boundary oracle).
+#[test]
+fn deep_session_key_record_reopens_without_bricking_the_other_records() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let snapshot_with = |depth: usize| {
+        let deep = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+        format!(
+            r#"{{"schemaVersion":1,"records":[{{"sessionKey":null,"runId":"run-a1","state":"completed","requestMaterial":"m1"}},{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+        )
+    };
+    // Inside the fold band: the null record stays readable, the deep record
+    // is invisible under every spelling, and the skip is counted.
+    for depth in [2001, 2621] {
+        let text = snapshot_with(depth);
+        fs::write(&path, &text).unwrap();
+        let registry = FileRunRegistry::open(&path).unwrap();
+        assert_eq!(
+            registry.skipped_unrekeyable(),
+            1,
+            "#2692 depth {depth} sits inside V8's fold band, so the record is skipped, not fatal"
+        );
+        let record = registry
+            .get(&run(None, "null", "run-a1"))
+            .unwrap()
+            .expect("#2692 the null record survives the deep record on disk");
+        assert_eq!(
+            field(record.as_json(), "sessionKey"),
+            &JsValue::Null,
+            "#2692 the null record keeps its JSON null body"
+        );
+        assert!(
+            registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+            "#2692 the skipped deep record is invisible under the blank spelling"
+        );
+        // A later mutation persists without the skipped record (registered:
+        // TS re-persists it under the folded key; Rust cannot spell it).
+        registry
+            .accept(&accept_input(&run(None, "later", "run-later"), "m2"))
+            .unwrap();
+        let text = String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned();
+        assert!(
+            text.contains(r#""runId":"run-a1""#),
+            "#2692 the null record persists"
+        );
+        assert!(
+            text.contains(r#""runId":"run-later""#),
+            "#2692 the fresh record persists"
+        );
+        assert!(
+            !text.contains(r#""runId":"run-deep""#),
+            "#2692 the rewrite drops the skipped deep record (registered divergence)"
+        );
+    }
+    // Past the fold band the load fails like TS's get (the #251 oracle's
+    // RangeError), with the snapshot and the lock left as they were.
+    let text = snapshot_with(2622);
+    fs::write(&path, &text).unwrap();
+    let Err(RunRegistryError::Invalid(message)) = FileRunRegistry::open(&path) else {
+        panic!("#2692 depth 2622 is past V8's fold band and must fail the load");
+    };
+    assert_eq!(
+        message, "Maximum call stack size exceeded",
+        "#2692 the load failure carries V8's RangeError text"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    assert!(!lock_path(&path).exists());
+    no_temporaries(&scratch.0);
+}

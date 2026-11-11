@@ -214,6 +214,11 @@ struct Snapshot {
     /// Keyed like the TS Map: first insertion keeps its position on replace.
     records: JsObject,
     events: JsObject,
+    /// #2692 fix-r1: records `read_snapshot` skipped as un-rekeyable — their
+    /// key template cannot be re-spelled within the shared depth bound. They
+    /// stay invisible to every read (a mutation that persists rewrites the
+    /// file without them); the counter keeps the skip observable for tests.
+    unrekeyable: usize,
 }
 
 /// TS `FileRunRegistry`. Every mutation takes the in-process chain, then the
@@ -282,6 +287,15 @@ impl FileRunRegistry {
     }
     pub fn path(&self) -> &Path {
         &self.path
+    }
+    /// #2692 test support: how many records the current disk read skipped as
+    /// un-rekeyable (`Snapshot::unrekeyable`). Reads reload, like every other
+    /// read face, so this counts what the file holds now.
+    #[cfg(test)]
+    pub(super) fn skipped_unrekeyable(&self) -> usize {
+        read_snapshot(&self.path)
+            .map(|snapshot| snapshot.unrekeyable)
+            .unwrap_or(0)
     }
     /// #1370: the controlled stimulus this registry's persists witness, so the
     /// async port adapter can capture the same entry once at its own
@@ -690,11 +704,39 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
                 "Cannot read properties of null (reading 'projectKey')",
             ));
         }
-        let key = run_key(
-            field(record, "projectKey"),
-            field(record, "sessionKey"),
-            field(record, "runId"),
-        )?;
+        let project = field(record, "projectKey");
+        let session = field(record, "sessionKey");
+        let run_id = field(record, "runId");
+        let key = match run_key(project, session, run_id) {
+            Ok(key) => key,
+            Err(error) => {
+                // #2692 fix-r1 (matrix row 15, ts-prodkey-probe e): TS keys
+                // each loaded record by the same template literal (RunRegistry
+                // .ts:70) and V8's recursive array join folds a nested
+                // container to `""` while it has stack left and throws
+                // "Maximum call stack size exceeded" when it does not (Node
+                // 22.22.0 on the probe machine: 2621 levels fold, 2622
+                // throws; `JSON.parse` itself is iterative and loads any
+                // depth). A record past the shared 2000-level spelling bound
+                // but inside that fold band is skipped here — TS keeps it
+                // under the folded `""` key, but every read of it throws on
+                // the record clone, so "single record invisible, the rest
+                // readable" is the aligned shape (registered divergence). At
+                // or beyond the throw band the load fails like TS's does
+                // (#251 boundary oracle: TS `get` rejects with the same
+                // RangeError).
+                if [project, session, run_id]
+                    .into_iter()
+                    .map(container_depth)
+                    .max()
+                    .is_some_and(|depth| depth > TS_KEY_FOLD_DEPTH)
+                {
+                    return Err(error);
+                }
+                snapshot.unrekeyable += 1;
+                continue;
+            }
+        };
         snapshot.records.insert(key, record.clone());
     }
     // Object.entries(snapshot.events). Load order is irrelevant to the bytes:
@@ -736,6 +778,34 @@ fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsStri
     units.push(0);
     units.extend(template_units(run)?);
     Ok(JsString::from_utf16(units))
+}
+
+/// The deepest container nesting V8's recursive array join folds before it
+/// throws (measured on the #2692 probe machine, Node 22.22.0: 2621 folds,
+/// 2622 throws — stack-dependent, like every V8 recursion bound; the
+/// #251 boundary fixture ran 10,000, far past it). `read_snapshot` bands an
+/// un-rekeyable record on this: inside the band it skips the record, beyond
+/// the band the load fails the way TS's load does.
+const TS_KEY_FOLD_DEPTH: usize = 2621;
+
+/// The nesting depth of the deepest array or object under `value` (0 for a
+/// non-container). Iterative, like the rest of the depth-bounded walks.
+fn container_depth(value: &JsValue) -> usize {
+    let mut max = 0;
+    let mut pending = vec![(value, 0usize)];
+    while let Some((value, depth)) = pending.pop() {
+        max = max.max(depth);
+        match value {
+            JsValue::Array(items) => {
+                pending.extend(items.iter().map(|item| (item, depth + 1)));
+            }
+            JsValue::Object(object) => {
+                pending.extend(object.entries().iter().map(|(_, item)| (item, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+    max
 }
 /// JS template-literal ToString of a JSON value.
 fn template_units(value: &JsValue) -> Result<Vec<u16>> {

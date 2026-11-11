@@ -238,6 +238,10 @@ jobs:
           # （stale 扫描在树锁内读净树，锁忙本身也是 rc 2 拒跑）；全量杀灭轮（需要 cargo
           # 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/issue-2495/negative_controls.py --check
+          # #2692 fix-r2（同 #1433/#2391/#2495 先例）：blankkey 负控夹具迁到
+          # negative_selection 启动契约后的 --check 进 CI——锚点 / 绑定 / 静态名册
+          # 任一漂移即本步非零退出；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

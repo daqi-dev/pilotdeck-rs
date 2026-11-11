@@ -22,6 +22,12 @@ fn run_ref() -> RunRef {
         project_key: Some("p".into()),
     }
 }
+/// #2692: the router-domain key the coordinator indexes by; a string session
+/// key is its own router key, so the fixture's key doubles as both.
+fn router_key() -> JsString {
+    run_ref().session_key
+}
+
 const MATERIAL: &str = "{\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}";
 fn input() -> RunAcceptInput {
     let run = run_ref();
@@ -220,6 +226,7 @@ impl ConnectionGateway for TestGateway {
                 TurnAcceptance::Accepted => {
                     let stream = Arc::new(TurnPublisher::start(
                         run_ref(),
+                        router_key(),
                         self.port.clone(),
                         self.coordinator.clone(),
                     ));
@@ -418,6 +425,7 @@ async fn file_registry_publication_preserves_fifo_across_workers() {
     let coordinator = Arc::new(TurnEventCoordinator::new());
     let stream = Arc::new(TurnPublisher::start(
         run_ref(),
+        router_key(),
         Some(registry.clone()),
         coordinator.clone(),
     ));
@@ -469,6 +477,7 @@ async fn concurrent_host_entries_keep_replay_durable_and_live_in_one_order() {
     let coordinator = Arc::new(TurnEventCoordinator::new());
     let stream = Arc::new(TurnPublisher::start(
         run_ref(),
+        router_key(),
         Some(registry.clone()),
         coordinator.clone(),
     ));
@@ -575,7 +584,8 @@ async fn durable_spawn_panic_matrix() {
         });
         let second: RegistryFuture<()> = Box::pin(async { panic!("injected panic") });
         let registry = Arc::new(PanicRegistry(Mutex::new(VecDeque::from([first, second]))));
-        let publisher = TurnPublisher::start(run_ref(), Some(registry), Arc::default());
+        let publisher =
+            TurnPublisher::start(run_ref(), router_key(), Some(registry), Arc::default());
         publisher.gateway_event(js(&json!({"type":"delta"})));
         publisher.gateway_event(js(&json!({"type":"delta"})));
         let writes = publisher.publication.state.lock().unwrap().pending.clone();
@@ -664,6 +674,7 @@ async fn durable_spawn_cancelled_predecessor_releases_successor() {
     });
     let publisher = TurnPublisher::start(
         run_ref(),
+        router_key(),
         Some(Arc::new(PanicRegistry(Mutex::new(VecDeque::from([
             first, second,
         ]))))),
@@ -726,6 +737,7 @@ async fn durable_poisoned_state_cleans_pending_and_wakes_all() {
         });
         let publisher = TurnPublisher::start(
             run_ref(),
+            router_key(),
             Some(Arc::new(PanicRegistry(Mutex::new(VecDeque::from([
                 future,
             ]))))),
@@ -839,7 +851,12 @@ async fn durable_construction_panic_releases_fifo_and_all_waiters() {
             panic_at: usize::from(pending_predecessor),
             drop_panics: false,
         });
-        let publisher = TurnPublisher::start(run_ref(), Some(registry.clone()), Arc::default());
+        let publisher = TurnPublisher::start(
+            run_ref(),
+            router_key(),
+            Some(registry.clone()),
+            Arc::default(),
+        );
         if pending_predecessor {
             publisher.emit(&js(
                 &json!({"type":"assistant_text_delta", "text":"predecessor"}),
@@ -976,7 +993,8 @@ async fn durable_panic_payload_drop_runs_after_cleanup() {
             let success: RegistryFuture<()> = Box::pin(async { Ok(()) });
             Arc::new(PanicRegistry(Mutex::new(VecDeque::from([panic, success]))))
         };
-        let publisher = TurnPublisher::start(run_ref(), Some(registry), Arc::default());
+        let publisher =
+            TurnPublisher::start(run_ref(), router_key(), Some(registry), Arc::default());
         publisher.gateway_event(js(&json!({"type":"first"})));
         publisher.gateway_event(js(&json!({"type":"successor"})));
         panic_deadline(publisher.finish()).await;
@@ -1014,7 +1032,7 @@ async fn pump_poison_does_not_disable_publication() {
             .unwrap();
         assert_eq!(case["thrown"], "TypeError");
         assert_eq!(case["outcomes"], json!(["drained", "drained", "drained"]));
-        let publisher = TurnPublisher::start(run_ref(), None, Arc::default());
+        let publisher = TurnPublisher::start(run_ref(), router_key(), None, Arc::default());
         let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
         let mut cancelled = Box::pin(publisher.next());
         assert!(cancelled.as_mut().poll(&mut cx).is_pending());
@@ -1095,7 +1113,8 @@ fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: b
     };
     let publisher = {
         let _entered = runtime_a.enter();
-        let publisher = TurnPublisher::start(run_ref(), Some(registry), Arc::default());
+        let publisher =
+            TurnPublisher::start(run_ref(), router_key(), Some(registry), Arc::default());
         for _ in 0..2 {
             publisher.gateway_event(js(&json!({"type":"delta"})));
         }
@@ -1269,6 +1288,7 @@ fn durable_executor_already_closed_releases_new_writes() {
         let _entered = runtime_a.enter();
         TurnPublisher::start(
             run_ref(),
+            router_key(),
             Some(Arc::new(PanicRegistry(Mutex::new(VecDeque::from([
                 Box::pin(async { Ok(()) }) as RegistryFuture<()>,
                 Box::pin(async { Ok(()) }),

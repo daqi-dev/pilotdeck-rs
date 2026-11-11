@@ -1,51 +1,168 @@
 #!/usr/bin/env python3
-"""#2692 submit-chain blank/null sessionKey folding controls. Run after committing the candidate.
+"""#2692 fix-r1/fix-r2: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
 
-Usage: CARGO_TARGET_DIR=... python3 negative_controls.py OUT [mutation ...]
-Every selected mutant compiles first; all results are reported before exit.
+The submit chain keeps TS's two key domains apart (`ts-prodkey-probe.out`):
+the composite run key spells `String(sessionKey)` (null → "null", absent →
+"undefined", template_key_checked) while the router-shaped maps (admission,
+sessions, fence, coordinator, the busy-gate pre-checks) index by the raw value
+itself (router_key: strings are identity, every other category tagged
+`\0\0raw:…`, so null and "null" are two sessions over one record spelling).
+Each mutation restores one shape of the pre-fix collapse and is bound to the
+test that must die:
+
+- `submit-owner-uses-template-key`: the owner maps go back to the template
+  spelling, so the null-born turn is invisible to the router-domain gate
+  (`submit_in_flight`'s admit deadline dies first).
+- `router-key-folds-null`: the Null arm returns the string spelling, so
+  null and "null" collapse onto one router key again (probe cells b-d).
+- `template-key-checked-folds`: the composite-key helper folds a spelling
+  error back to "" instead of answering it (the original submit fold).
+- `acceptance-error-swallowed`: a key whose ToString throws is accepted
+  silently with no result_unknown event (probe cell e's accept-catch shape).
+- `owner-conjunction-only`: the model-set busy gate consults only the #1872
+  owner conjunction, so the request key never meets its own turn (the
+  Grok#2 control cell stops answering SESSION_BUSY).
+- `model-set-gate-string-only` / `permission-gate-string-only`: the two busy
+  gates go back to string keys only, so a null request never meets its turn
+  (probe cells F / permission F).
+- `registry-body-spelling` / `submit-raw-spelling`: the record body loses
+  the raw JSON null (round-1 rows, re-anchored survivors).
+- `registry-skip-reverted`: the fold-band skip is dropped, so a deep-key
+  record past the band also skips and the load no longer fails like TS's.
+- `echo-drops-raw-key`: the read face echoes a fixed null instead of the
+  request's own value (probe cell b echo shape).
+
+Each mutant compiles before its exact test runs. Every case is reported,
+then restoration and all statuses determine the exit code; never bypass HEAD.
+The execution table is verified against the static EXPECTED_NAMES roster
+before anything runs, and every refusal is the shared `negative_selection`
+shape (rc 2, `INVALID:` on stderr) — the #2391/#2495 migrated contract.
 """
-import argparse
-import json
-import os
-import subprocess
 from pathlib import Path
+import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
-                               run_owned, wait_for_slot)
-from negative_suite import Case, classify, passed
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, verdict_exit)
+from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
-root = Path(__file__).resolve().parents[5]
-submit = root / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
-gates = root / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
-registry = root / 'src/pilotdeck-gateway/src/storage/run_registry.rs'
-js_value = root / 'src/pilotdeck-gateway/src/js_value.rs'
-null_test = ('native_process::methods::config::tests::'
-              'session_model_set_null_key_turn_from_the_submit_chain_answers_the_ts_cells')
-blank_test = ('native_process::methods::config::tests::'
-              'session_model_set_blank_key_turn_from_the_submit_chain_answers_the_ts_cells')
+ROOT = Path(__file__).resolve().parents[5]
+# The five sources the rows mutate; the assertion messages also live in the
+# CONFIG test module, so that file is scanned for pins too.
+SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
+GATES = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
+REGISTRY = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry.rs'
+JS_VALUE = ROOT / 'src/pilotdeck-gateway/src/js_value.rs'
+READ = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/read.rs'
+SOURCE_TEXTS = (SUBMIT, GATES, REGISTRY, JS_VALUE, READ)
+
+CFG = 'native_process::methods::config::tests::'
+null_test = (CFG + 'session_model_set_null_key_turn_from_the_submit_chain_'
+             'answers_the_ts_cells')
+deep_test = CFG + 'deep_array_session_key_submit_is_rejected_without_landing_a_record'
+grok2_test = CFG + 'session_model_set_null_request_never_answers_for_a_busy_owner_session'
 registry_test = ('storage::run_registry_tests::'
                  'null_session_key_body_keeps_json_null_while_the_key_spells_null')
-cases = [
-    # The fix itself: the submit side goes back to folding null to "".
-    ('submit-folds-null-to-blank', submit,
-     'session_key: crate::js_value::template_key(&session_key_raw),',
-     'session_key: string(&session_key_raw),',
-     null_test, '#2692 the null-spelling turn was never admitted'),
-    # Same fold read through the cross-spelling cell: the second submit of
-    # the same runId under the other spelling becomes duplicate replay.
-    ('submit-fold-cross-spelling', submit,
-     'session_key: crate::js_value::template_key(&session_key_raw),',
-     'session_key: string(&session_key_raw),',
-     blank_test, '#2692 the null-spelling turn was never admitted'),
-    # The record body goes back to the spelling string; JSON null is lost.
-    ('registry-body-spelling', registry,
+reopen_test = ('storage::run_registry_tests::'
+               'deep_session_key_record_reopens_without_bricking_the_other_records')
+echo_test = ('runtime::turn::read::tests::'
+             'read_session_messages_reads_the_router_domain_and_echoes_the_raw_key')
+mutations = [
+    # The owner maps (admission here, then every fence/coordinator call below)
+    # go back to the template spelling, so the null-born turn parks on "null"
+    # and the router-domain lookup of the submit_in_flight helper — and of the
+    # busy gates — never sees it.
+    ('submit-owner-uses-template-key', SUBMIT,
+     '        cleanup.reservation = self.owner.begin_turn(&router_key, &run.run_id);',
+     '        cleanup.reservation = self.owner.begin_turn(&run.session_key, &run.run_id);',
+     null_test, '-keyed turn was never admitted'),
+    # The Null arm returns the string spelling, collapsing null and "null"
+    # onto one router key (the pre-fix single-domain shape).
+    ('router-key-folds-null', JS_VALUE,
+     '        JsValue::Null => tagged(format!("{TAG}null")),',
+     '        JsValue::Null => JsString::from("null"),',
+     null_test, '-keyed turn was never admitted'),
+    # The composite-key helper folds a spelling error back to "" (the
+    # original unchecked fold) instead of answering it.
+    ('template-key-checked-folds', JS_VALUE,
+     'pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {\n'
+     '    to_string_units_checked(value).map(JsString::from_utf16)\n'
+     '}',
+     'pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {\n'
+     '    Ok(to_string_units(value).map(JsString::from_utf16).unwrap_or_default())\n'
+     '}',
+     'js_value::tests::template_key_spells_the_template_literal_form',
+     '#2692 a too-deep array is an unreadable key, not a blank one'),
+    # The accept-catch shape is dropped: a key whose ToString throws is
+    # accepted silently, no result_unknown event, nothing reported.
+    ('acceptance-error-swallowed', SUBMIT,
+     '            (Err(error), _) | (_, Err(error)) => {\n'
+     '                emit_all(send, vec![acceptance_error_event(&run_id, &error)]);\n'
+     '                return Ok(());\n'
+     '            }',
+     '            (Err(error), _) | (_, Err(error)) => {\n'
+     '                let _ = (&run_id, &error);\n'
+     '                return Ok(());\n'
+     '            }',
+     deep_test, '#2692 the rejection is a single event'),
+    # The busy gate consults only the #1872 owner conjunction: the router-key
+    # lookup is gone, so a request key never meets its own turn and the
+    # owner's spelling stops answering SESSION_BUSY (the Grok#2 control
+    # cell, whichever way it dies: the expect_err or the code assert).
+    ('owner-conjunction-only', GATES,
+     '        if match &request_key {\n'
+     '            Ok(key) => self.owner.has_active_turn(key),\n'
+     '            Err(_) => false,\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     '        if string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     grok2_test, ["#2692 control: the owner's spelling meets the busy gate",
+                  '#2692 control code']),
+    # session_model_set's busy gate goes back to string keys only: a null
+    # request skips the gate and answers the sessionKey gate instead.
+    ('model-set-gate-string-only', GATES,
+     '        let request_session_key = params.get("sessionKey").unwrap_or(&UNDEFINED);\n'
+     '        let string_request = matches!(request_session_key, JsValue::String(_));\n'
+     '        let request_key = crate::js_value::router_key(request_session_key);\n'
+     '        if match &request_key {\n'
+     '            Ok(key) => self.owner.has_active_turn(key),\n'
+     '            Err(_) => false,\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     null_test, '#2692 cell F code'),
+    # set_permission_mode's busy gate goes back to string keys only.
+    ('permission-gate-string-only', GATES,
+     '        let request_key =\n'
+     '            crate::js_value::router_key(params.get("sessionKey").unwrap_or(&UNDEFINED));\n'
+     '        if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {',
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
+     '            && self.owner.has_active_turn(key)\n'
+     '        {',
+     null_test, '#2692 permission cell F code'),
+    # The record body goes back to the spelling string; JSON null is lost
+    # (round-1 row, anchor unchanged).
+    ('registry-body-spelling', REGISTRY,
      'record.insert("sessionKey".into(), input.session_key_raw.clone());',
      'record.insert("sessionKey".into(), JsValue::String(input.run.session_key.clone()));',
      registry_test, '#2692 the record body keeps the raw JSON null'),
-    # The submitter feeds the raw field the spelling instead of the raw value.
-    ('submit-raw-spelling', submit,
+    # The submitter feeds the raw field the spelling instead of the raw
+    # value (round-1 row, anchor unchanged).
+    ('submit-raw-spelling', SUBMIT,
      '        let acceptance = RunAcceptInput {\n'
      '            run: run.clone(),\n'
      '            request_material: request_material(&input)?.into(),\n'
@@ -57,136 +174,250 @@ cases = [
      '            session_key_raw: JsValue::String(run.session_key.clone()),\n'
      '        };',
      null_test, '#2692 the record body keeps the raw JSON null'),
-    # session_model_set's busy gate goes back to string keys only: a null
-    # request skips the gate and answers the sessionKey gate instead.
-    ('model-set-gate-string-only', gates,
-     '        let request_key =\n'
-     '            crate::js_value::template_key(params.get("sessionKey").unwrap_or(&UNDEFINED));\n'
-     '        if self.owner.has_active_turn(&request_key)\n'
-     '            || trimmed_string_is_non_empty(&request_key)\n'
-     '                && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
-     '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
-     '        {',
-     null_test, '#2692 cell F code'),
-    # set_permission_mode's busy gate goes back to string keys only.
-    ('permission-gate-string-only', gates,
-     '        let request_key =\n'
-     '            crate::js_value::template_key(params.get("sessionKey").unwrap_or(&UNDEFINED));\n'
-     '        if self.owner.has_active_turn(&request_key) {',
-     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
-     '            && self.owner.has_active_turn(key)\n'
-     '        {',
-     null_test, '#2692 permission cell F code'),
-    # The helper itself folds non-strings to "" (the original submit fold).
-    ('template-key-folds', js_value,
-     'pub(crate) fn template_key(value: &JsValue) -> JsString {\n'
-     '    to_string_units(value)\n'
-     '        .map(JsString::from_utf16)\n'
-     '        .unwrap_or_default()\n'
-     '}',
-     'pub(crate) fn template_key(value: &JsValue) -> JsString {\n'
-     '    value.as_string().cloned().unwrap_or_default()\n'
-     '}',
-     'js_value::tests::template_key_spells_the_template_literal_form', '#2692'),
+    # The fold-band skip is dropped entirely, so a deep-key record past the
+    # throw band also skips and the reopen stops failing like TS's get.
+    ('registry-skip-reverted', REGISTRY,
+     '                if [project, session, run_id]\n'
+     '                    .into_iter()\n'
+     '                    .map(container_depth)\n'
+     '                    .max()\n'
+     '                    .is_some_and(|depth| depth > TS_KEY_FOLD_DEPTH)\n'
+     '                {\n'
+     '                    return Err(error);\n'
+     '                }\n'
+     '                snapshot.unrekeyable += 1;\n'
+     '                continue;',
+     '                snapshot.unrekeyable += 1;\n'
+     '                continue;',
+     reopen_test, "past V8's fold band and must fail the load"),
+    # The read face echoes a fixed null instead of the request's own value,
+    # so a string request's miss stops echoing its own spelling.
+    ('echo-drops-raw-key', READ,
+     '        Some(raw) => {\n'
+     '            if let JsValue::Object(object) = &mut snapshot {\n'
+     '                object.insert("sessionKey".into(), raw.clone());\n'
+     '            }\n'
+     '        }',
+     '        Some(raw) => {\n'
+     '            let _ = raw;\n'
+     '            if let JsValue::Object(object) = &mut snapshot {\n'
+     '                object.insert("sessionKey".into(), JsValue::Null);\n'
+     '            }\n'
+     '        }',
+     echo_test, '#2692 the miss echoes the raw request value'),
 ]
+# Every bound assertion lives verbatim in the scanned sources; each needs its
+# own pin or the completeness rule refuses the run (#2065 shape).
+LITERAL_ANCHORS = [
+    # config.rs spells the admit-deadline assert as an f-string on the poll
+    # key (`"#2692 the {router_key:?}-keyed turn was never admitted"`), so the
+    # pin — and the anchor classify matches in the panic payload — is the
+    # literal tail.
+    (GATES, '-keyed turn was never admitted'),
+    (JS_VALUE, '#2692 a too-deep array is an unreadable key, not a blank one'),
+    (GATES, '#2692 the rejection is a single event'),
+    (GATES, "#2692 control: the owner's spelling meets the busy gate"),
+    (GATES, '#2692 control code'),
+    (GATES, '#2692 cell F code'),
+    (GATES, '#2692 permission cell F code'),
+    (GATES, '#2692 the record body keeps the raw JSON null'),
+]
+
+# The denominator is this literal, never `len(mutations)` (#2391 fix-r1,
+# specs/negative-controls/README.md invariant 1): `registered()` compares the
+# two in order and refuses on any drift, so a dropped, renamed, duplicated or
+# reordered row is a startup refusal (rc 2) instead of a silently shorter run
+# that still reports "N/N killed".
+EXPECTED_NAMES = (
+    'submit-owner-uses-template-key',
+    'router-key-folds-null',
+    'template-key-checked-folds',
+    'acceptance-error-swallowed',
+    'owner-conjunction-only',
+    'model-set-gate-string-only',
+    'permission-gate-string-only',
+    'registry-body-spelling',
+    'submit-raw-spelling',
+    'registry-skip-reverted',
+    'echo-drops-raw-key',
+)
+
+
+def _assertions(case):
+    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+
+
+def check_literal_anchors(cases, bound_rows=None):
+    """`cases` are validated; a pin may bind to any of `bound_rows`."""
+    bound_rows = cases if bound_rows is None else bound_rows
+    texts = {}
+    for path in SOURCE_TEXTS:
+        try:
+            texts[path] = path.read_text()
+        except OSError as error:
+            refuse(f'#2692 scanned source unreadable: {path.name}: {error}')
+    for case in cases:
+        if case.path not in texts:
+            refuse('#2692 row mutates a file outside SOURCE_TEXTS: '
+                   f'{case.mutation} -> {case.path.name}')
+    for path, anchor in LITERAL_ANCHORS:
+        if path not in texts:
+            refuse(f'#2692 literal anchor declared outside SOURCE_TEXTS: {path.name}')
+        if anchor not in texts[path]:
+            refuse(f'#2692 literal anchor not in {path.name}: {anchor!r}')
+        if not any(anchor == assertion
+                   for case in bound_rows for assertion in _assertions(case)):
+            refuse(f'#2692 literal anchor unbound to any row: {anchor!r}')
+    pinned = set(LITERAL_ANCHORS)
+    for case in cases:
+        for assertion in _assertions(case):
+            unregistered = [path.name for path, text in texts.items()
+                            if assertion in text and (path, assertion) not in pinned]
+            if unregistered:
+                refuse('#2692 unpinned literal anchor '
+                       f'(verbatim in {", ".join(unregistered)}): {assertion!r}')
+
+
+def mutate(case, original):
+    count = original.count(case.old)
+    if count != 1 or case.old == case.new:
+        raise ValueError(f'#2692 {case.mutation}: stale anchor (expected 1, got {count})')
+    return original.replace(case.old, case.new, 1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--compile-only', action='store_true')
-    parser.add_argument('out', type=Path)
-    parser.add_argument('mutations', nargs='*')
-    args = parser.parse_args()
-    env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR'):
-        parser.error('CARGO_TARGET_DIR must be provided by the caller')
-    unknown = set(args.mutations) - {row[0] for row in cases}
+    args = sys.argv[1:]
+    compile_only = '--compile-only' in args
+    args = [arg for arg in args if arg != '--compile-only']
+    every_row = [Case(*row) for row in mutations]
+    selected_rows = every_row
+    # #2692 fix-r2: every refusal below happens before any mutation, so it is
+    # rc 2 ("this run never started", printed by `negative_selection.refuse`)
+    # and not rc 1 ("ran, not green") — the four-way exit table in
+    # `specs/negative-controls/README.md`.
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except (ValueError, OSError) as error:
+        refuse(f'mutation roster drifted: {error}')
+    # #2495 fix-r2 shape: --check's argv contract is machine-checked — a
+    # typo'd `--check some-name` or a silently dropped --compile-only used
+    # to return the same green "OK" line as the real roster check without
+    # ever reading it.
+    if args and args[0] == '--check':
+        if compile_only or len(args) > 1:
+            refuse('#2692 --check takes no output directory, no mutation names, '
+                   'and no --compile-only flag')
+        try:
+            check_literal_anchors(selected_rows, bound_rows=every_row)
+            for case in selected_rows:
+                mutate(case, case.path.read_text())
+        except (ValueError, OSError) as error:
+            refuse(str(error))
+        print(f'#2692 {len(selected_rows)} mutation anchors OK; '
+              f'{len(LITERAL_ANCHORS)} literal anchors OK')
+        return 0
+    if not args:
+        refuse('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
+    selected = args[1:]
+    unknown = sorted(set(selected) - {case.mutation for case in selected_rows})
     if unknown:
-        parser.error(f'unknown mutations: {sorted(unknown)}')
-    selected = [row for row in cases if not args.mutations or row[0] in args.mutations]
-    args.out.mkdir(parents=True, exist_ok=False)
+        refuse(f'#2692 unknown mutation names: {unknown}')
+    if len(selected) != len(set(selected)):
+        repeated = sorted({name for name in selected if selected.count(name) > 1})
+        refuse(f'#2692 repeated mutation names: {repeated}')
+    if selected:
+        selected_rows = [case for case in selected_rows if case.mutation in selected]
+    check_literal_anchors(selected_rows, bound_rows=every_row)
+    # The target is admitted by the shared rule (absent, empty, blank, dot,
+    # root, repo root, inside `src`) *before* the evidence directory exists,
+    # so a rejected target cannot leave a directory that reads like a
+    # finished run.
+    if missing_target():
+        refuse('#2692 set CARGO_TARGET_DIR to the caller-owned build tree')
+    refuse_unusable_target()
+    out = claim_dir(args[0])
+    env = dict(os.environ)
+    for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
+        env.pop(key, None)
+    env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
     results = []
 
-    def run(label, test, compile_only=False):
-        try:
-            # #1908: the wait budget must exceed the single-sample cap
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
-            (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-            suffix = ['--no-run'] if compile_only else [test, '--', '--exact']
-            result = run_owned(command + suffix, cwd=root, env=env, timeout=300)
-            (args.out / f'{label}.log').write_text(result.stdout + result.stderr)
-            return result
-        except Exception as error:
-            raw = ''
-            if isinstance(error, subprocess.TimeoutExpired):
-                for value in (error.stdout, error.stderr):
-                    raw += value.decode(errors='replace') if isinstance(value, bytes) else value or ''
-            with (args.out / f'{label}.log').open('a') as log:
-                log.write(raw + f'\n{type(error).__name__}: {error}\n')
-            raise
+    def run(label, args):
+        slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
+        (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
+        result = run_owned(command + args, cwd=ROOT, env=env, timeout=900)
+        (out / (label + '.log')).write_text(result.stdout + result.stderr)
+        return result
 
-    def record(name, test, assertion, status, reason):
-        results.append(dict(mutation=name, test=test, assertion=assertion, status=status, reason=reason))
-        print(f'{name}: {status}: {reason}', flush=True)
+    def record(row):
+        results.append(row)
+        print(f"{row['mutation']}: {row['status']}: {row['reason']}", flush=True)
 
+    def invalid(case, reason):
+        return dict(mutation=case.mutation, test=case.test, assertion=case.assertion,
+                    status='INVALID', reason=reason, compiled=False)
+
+    phase = 'enter'
+    body_error = None
     try:
-        with mutating_sources(root, [submit, gates, registry, js_value]) as snapshots:
-            for name, path, old, new, test, assertion in selected:
-                status, reason = 'INVALID', 'not run'
-                try:
-                    original = snapshots[path].decode()
-                    if original.count(old) != 1:
-                        raise ValueError(f'{name}: expected one source anchor')
-                    if not args.compile_only and not passed(run(name + '-positive', test), test):
-                        reason = 'bound positive test did not pass'
-                    else:
-                        path.write_text(original.replace(old, new, 1))
-                        if run(name + '-compile', test, compile_only=True).returncode != 0:
-                            reason = 'mutant failed to compile'
-                        elif args.compile_only:
-                            status, reason = 'COMPILED', 'mutant cargo test --no-run passed'
+        paths = list(dict.fromkeys(case.path for case in selected_rows))
+        with mutating_sources(ROOT, [*paths, Path(__file__).resolve()]) as originals:
+            phase = 'body'
+            try:
+                for case in selected_rows:
+                    row = invalid(case, '')
+                    args = [case.test, '--', '--exact']
+                    try:
+                        changed = mutate(case, originals[case.path].decode())
+                        if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
+                            raise RuntimeError('#2692 positive control failed')
+                        write_source_atomic(ROOT, case.path, changed.encode())
+                        compiled = run(case.mutation + '-compile', ['--no-run'])
+                        row['compiled'] = compiled.returncode == 0
+                        if not row['compiled']:
+                            raise RuntimeError('#2692 mutant did not compile')
+                        if compile_only:
+                            row.update(status='COMPILED', reason='mutant cargo test --no-run passed')
                         else:
-                            status, reason = classify(run(name + '-negative', test),
-                                Case(name, path, old, new, test, assertion))
-                except Exception as error:
-                    status, reason = 'INVALID', f'{type(error).__name__}: {error}'
-                finally:
-                    path.write_bytes(snapshots[path])
-                try:
-                    if not args.compile_only and not passed(run(name + '-restored', test), test):
-                        status, reason = 'INVALID', reason + '; restored bound test did not pass'
-                except Exception as error:
-                    status, reason = 'INVALID', reason + f'; restored: {error}'
-                record(name, test, assertion, status, reason)
-    except Exception as error:
-        reason = f'source guard: {error}'
-        for row in results:
-            row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
-        for name, _, _, _, test, assertion in selected[len(results):]:
-            record(name, test, assertion, 'INVALID', reason)
-    counts = {state: sum(row['status'] == state for row in results)
-              for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
-    (args.out / 'summary.json').write_text(json.dumps(dict(controls=results, counts=counts), indent=2) + '\n')
-    print(json.dumps(counts), flush=True)
-    success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(not results or any(row['status'] != success for row in results))
+                            row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
+                    except Exception as error:
+                        row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                    finally:
+                        phase = 'restore'
+                        write_source_atomic(ROOT, case.path, originals[case.path])
+                        if case.path.read_bytes() != originals[case.path]:
+                            raise RuntimeError('#2692 source restoration failed')
+                        phase = 'body'
+                    if not compile_only:
+                        try:
+                            if not passed(run(case.mutation + '-restored', args), case.test):
+                                raise RuntimeError('#2692 restored positive control failed')
+                        except Exception as error:
+                            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                    record(row)
+            except BaseException as error:
+                body_error = error
+                raise
+            phase = 'exit'
+    except BaseException as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for case in selected_rows[len(results):]:
+            record(invalid(case, reason))
+        publish_summary(out, results)
+        if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
+            return 2
+        return 1
+    publish_summary(out, results)
+    # The shared exit contract (#2391 fix-r1): zero rows is never 0 (`0/0
+    # killed` is not a pass), and every row must be KILLED — COMPILED under
+    # --compile-only.
+    return verdict_exit(results, key='status',
+                        killed='COMPILED' if compile_only else 'KILLED')
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['--check-anchors']:
-        stale = []
-        for name, path, old, _new, _test, _assertion in cases:
-            count = path.read_text().count(old)
-            if count != 1:
-                stale.append((name, count))
-        if stale:
-            raise SystemExit(f'STALE ANCHORS: {stale}')
-        print(f'{len(cases)} anchors: ok')
-        raise SystemExit(0)
     raise SystemExit(main())

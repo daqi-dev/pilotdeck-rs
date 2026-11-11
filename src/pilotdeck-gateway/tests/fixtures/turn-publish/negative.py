@@ -95,7 +95,7 @@ with mutating_sources(repo, [source, connection]) as snapshots:
          '            Err(_) if !state.failure_published => { state.queue.push_back(event);',
          'real_storage_persist_failure'),
         ('external-emitter-skipped', source,
-         '        self.coordinator\n            .emit(&self.publication.run.session_key, event)',
+         '        self.coordinator.emit(&self.publication.router_key, event)',
          '        let _ = event; false', 'ordered_durable_terminal_after_session_end'),
         ('file-adapter-skips-durable', source,
          '            return self.call(move |registry| registry.append(&run, &event));',

@@ -289,35 +289,41 @@ mutations = [
     # ── #1872: the alias-key busy gate. Reverting the owner-side check to the
     # pre-fix request-key-only shape lets the request through; it appends
     # through the owner's recorder and the close aborts the running turn, so
-    # the bound test's expect_err dies on a success.
+    # the bound test's expect_err dies on a success. #2692 fix-r1
+    # (sibling#2): re-anchored onto the router-domain gate — the owner arm is
+    # now the string-request conjunction `string_request && matches!(… if
+    # trimmed_string_is_non_empty(key)) && owner.is_some_and(…)`; the mutant
+    # floors the last conjunct to `false`, the same request-key-only shape.
     ('set-alias-owner-busy-removed', CONFIG,
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
      '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && self.owner.has_active_turn(key)\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && false\n'
      '        {',
      CFG + 'session_model_set_rejects_active_turn_on_alias_owner',
      '#1872 session_model_set is busy on the alias owner'),
     # ── #1872 fix-r2: the owner-side blank-key arm of the same gate. TS's
     # busy gate consults the request spelling alone, so a blank request key
     # that folds onto the `session` transcript must reach the port write's
-    # sessionKey gate; removing the `trimmed_string_is_non_empty(key)`
-    # conjunct lets the owner-side check fire first and the bound test dies
-    # on the SESSION_BUSY answer instead of the sessionKey gate's. The
-    # anchor is the test's own assert label — the expect_err message never
-    # reaches the panic payload on this path (cb8 sample r1 INVALID).
+    # sessionKey gate; dropping the `trimmed_string_is_non_empty(key)` guard
+    # from the conjunction lets the owner-side check fire first and the bound
+    # test dies on the SESSION_BUSY answer instead of the sessionKey gate's.
+    # The anchor is the test's own assert label — the expect_err message
+    # never reaches the panic payload on this path (cb8 sample r1 INVALID).
+    # #2692 fix-r1 (sibling#2): re-anchored onto the router-domain gate —
+    # `matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))`
+    # becomes `matches!(&request_key, Ok(_))`.
     ('set-busy-gate-blank-key-guard-removed', CONFIG,
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
      '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(_))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
      '        {',
      CFG + 'session_model_set_blank_key_answers_the_session_key_gate',
      '#1872 the blank key is a sessionKey error'),
@@ -325,43 +331,32 @@ mutations = [
     # SESSION_BUSY for a turn held on the blank spelling itself (probe B),
     # so the request-side check must stay live; reverting to the fix-r1
     # whole-gate skip makes the bound test see INVALID_SESSION_KEY instead
-    # of the busy code.
+    # of the busy code. #2692 fix-r1 (sibling#2): re-anchored onto the
+    # router-domain gate — the request arm grows the blank-key skip
+    # `trimmed_string_is_non_empty(key) &&` in front of its table check.
     ('set-blank-key-busy-reverted-to-gate-skip', CONFIG,
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
-     '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && trimmed_string_is_non_empty(key)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
-     '        {',
+     '        if match &request_key {\n'
+     '            Ok(key) => self.owner.has_active_turn(key),\n'
+     '            Err(_) => false,\n'
+     '        } || string_request\n',
+     '        if match &request_key {\n'
+     '            Ok(key) => trimmed_string_is_non_empty(key) && self.owner.has_active_turn(key),\n'
+     '            Err(_) => false,\n'
+     '        } || string_request\n',
      CFG + 'session_model_set_reports_busy_for_a_turn_held_on_the_blank_key',
      '#1872 the blank key answers busy'),
     # ── #1872 fix-r2 arbitration of the DS P1: the real TS wiring runs
     # hasActiveTurn on the raw request key before the callback's sessionKey
     # gate (probe C), so permission needs no blank-key guard — this mutant
     # is the reviewed-away shape, and the bound test dies on the
-    # INVALID_SESSION_KEY answer instead of the busy code.
+    # INVALID_SESSION_KEY answer instead of the busy code. #2692 fix-r1
+    # (sibling#2): re-anchored onto the router-domain gate — the request arm
+    # grows the blank-key skip inside `is_ok_and`.
     ('permission-blank-key-busy-skipped', CONFIG,
-     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
-     '            && self.owner.has_active_turn(key)\n'
-     '        {\n'
-     '            return Err(gateway_error(\n'
-     '                "SESSION_BUSY",\n'
-     '                "Cannot change permission mode during an active turn.",\n'
-     '            ));\n'
-     '        }',
-     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
-     '            && trimmed_string_is_non_empty(key)\n'
-     '            && self.owner.has_active_turn(key)\n'
-     '        {\n'
-     '            return Err(gateway_error(\n'
-     '                "SESSION_BUSY",\n'
-     '                "Cannot change permission mode during an active turn.",\n'
-     '            ));\n'
-     '        }',
+     '        if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {',
+     '        if request_key\n'
+     '            .is_ok_and(|key| trimmed_string_is_non_empty(key) && self.owner.has_active_turn(&key))\n'
+     '        {',
      CFG + 'set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key',
      '#1872 the blank key answers busy for permission'),
     # ── #1872 fix-r2: clear answers the sessionKey gate first — TS's
