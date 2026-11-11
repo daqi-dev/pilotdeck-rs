@@ -290,6 +290,24 @@ mutations = [
         ADMISSION_ORACLE,
         "#2775 the registered parser-admission cells must be exactly the oracle's bare 400s plus the inert",
     ),
+    (
+        # #2775 fix-r2 (review r2, MM sibling#1 + MM boundary#1 + DS
+        # sibling#3): the replay's mask selection point goes through
+        # `fn parser_admission`, and the guard's through-the-predicate leg
+        # derives its admission set from the same function, so widening the
+        # predicate (the pre-#1683 blanket shape — the mask on every cell)
+        # fails the guard by name instead of silently re-widening the mask.
+        # Same shape as native-http's `native-http-cl0-wide`, native-ws's
+        # `native-ws-budget-cl0-wide` and webhook's `webhook-replay-cl0-wide`;
+        # the `(true || …)` spelling keeps the parameter used, matching the
+        # `api-server-cl0-mask-always` row's own `(parser_admission || true)`.
+        "api-server-cl0-wide",
+        TESTS,
+        '    PARSER_ADMISSION_CELLS.contains(&id)\n',
+        '    (true || PARSER_ADMISSION_CELLS.contains(&id))\n',
+        ADMISSION_ORACLE,
+        "#2775 the parser-admission predicate must admit exactly the oracle's bare 400s plus the inert",
+    ),
 ]
 
 def mutate(text, scope, replacements):

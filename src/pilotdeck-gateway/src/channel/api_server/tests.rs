@@ -191,7 +191,12 @@ fn assert_parser_admission_cell_records_its_knob(id: &str, case: &Value) {
 /// and — fix-r1 (#2775 review, DS sibling#1 + MM boundary#1) — the registered
 /// set is exactly the bare cells plus the inert entry, so a stale widening
 /// fails here by name instead of only at the knob guard's indirect
-/// `other => panic!` arm.
+/// `other => panic!` arm. fix-r2 (#2775 review, MM sibling#1 + MM boundary#1 +
+/// DS sibling#3) adds the through-the-predicate leg: the admission set
+/// derived from `fn parser_admission` — the one function the replay's
+/// selection point reads — must be that same bare ∪ inert set, so widening
+/// the predicate fails here instead of silently re-widening the mask (the
+/// constant comparison stays the stale-entry leg).
 #[test]
 fn parser_admission_cells_stay_justified_by_the_oracle() {
     let recorded = oracle();
@@ -261,6 +266,21 @@ fn parser_admission_cells_stay_justified_by_the_oracle() {
         registered, justified,
         "#2775 the registered parser-admission cells must be exactly the oracle's bare 400s plus the inert {INERT_PARSER_ADMISSION_CELLS:?} exemption: a stale entry must fail here, not only at the knob guard"
     );
+    // #2775 fix-r2 (review r2, MM sibling#1 + MM boundary#1 + DS sibling#3):
+    // through the same `fn parser_admission` the replay's selection point
+    // reads, so widening the predicate fails here instead of silently
+    // re-widening the mask — the constant comparison above stays the
+    // stale-entry leg.
+    let mut admitted: Vec<&str> = cases
+        .iter()
+        .map(|case| case["id"].as_str().expect("#1333 case id"))
+        .filter(|id| parser_admission(id))
+        .collect();
+    admitted.sort_unstable();
+    assert_eq!(
+        admitted, justified,
+        "#2775 the parser-admission predicate must admit exactly the oracle's bare 400s plus the inert {INERT_PARSER_ADMISSION_CELLS:?} exemption: widening the mask's selection point must fail here instead of silently re-widening the mask"
+    );
 }
 
 /// #2775 fix-r1 (review r1, MM sibling#1 / DS sibling#2): the
@@ -270,6 +290,10 @@ fn parser_admission_cells_stay_justified_by_the_oracle() {
 /// of the mask normalizing it away), while the registered bare 400's line
 /// stays masked. Sibling lanes carry the same leg (`native_http`,
 /// `native_ws`, `webhook`, `api_web`); this is the api-server lane's.
+/// fix-r2 (review r2, MM boundary#1): the exemption flag is derived from
+/// the same `fn parser_admission` the replay's selection point reads, not a
+/// literal, so widening the predicate turns this test red too (the
+/// unregistered leg's two sides become equal) instead of only the guard.
 #[test]
 fn only_the_registered_cells_mask_a_content_length_zero() {
     let recorded = oracle();
@@ -314,15 +338,21 @@ fn only_the_registered_cells_mask_a_content_length_zero() {
         }
     };
     assert_ne!(
-        actual_headers(&response("stream", true), false),
-        actual_headers(&response("stream", false), false),
+        actual_headers(&response("stream", true), parser_admission("stream")),
+        actual_headers(&response("stream", false), parser_admission("stream")),
         "#2775 an injected content-length: 0 on an unregistered cell must not normalize away"
     );
     // The registered direction stays masked: hyper's line on the bare 400 is
     // the one exemption left, so the TS-shaped headers still compare equal.
     assert_eq!(
-        actual_headers(&response("unknown-method", true), true),
-        actual_headers(&response("unknown-method", false), true),
+        actual_headers(
+            &response("unknown-method", true),
+            parser_admission("unknown-method")
+        ),
+        actual_headers(
+            &response("unknown-method", false),
+            parser_admission("unknown-method")
+        ),
         "#2775 the registered bare-400 exemption still masks hyper's content-length: 0"
     );
 }
@@ -945,12 +975,13 @@ fn mask_text(text: &str) -> String {
 /// date+chunked on both sides and never carries a length line, so the mask
 /// cannot fire — kept registered because #1683 scoped the pair together).
 /// `parser_admission_cells_stay_justified_by_the_oracle` holds the list
-/// against the oracle in all three directions: every entry exists and none
+/// against the oracle in all four directions: every entry exists and none
 /// can mask a TS-recorded length line, every cell whose recorded rejection
-/// is the bare parser shape is in the list, and — #2775 fix-r1 — the list is
-/// exactly those bare cells plus the inert entry below, so a future
-/// bare-400 cell cannot replay green with the line unmasked and a stale
-/// widening entry cannot hide behind the knob guard's panic either.
+/// is the bare parser shape is in the list, the list is exactly those bare
+/// cells plus the inert entry below, and — #2775 fix-r2 — the admission set
+/// `fn parser_admission` derives from it is that same set, so neither a stale
+/// widening entry nor a widened predicate can hide behind the knob guard's
+/// panic or a still-narrow constant.
 const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];
 
 /// #2775 fix-r1: the inert half of `PARSER_ADMISSION_CELLS` — `missing-host`
@@ -960,8 +991,18 @@ const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];
 /// instead of a subset.
 const INERT_PARSER_ADMISSION_CELLS: &[&str] = &["missing-host"];
 
-/// #1683: `parser_admission` scopes the one registered transport difference to
-/// the two cells that actually exhibit it. hyper adds `content-length: 0` to
+/// #2775 fix-r2: the predicate that grants the `content-length: 0` exemption.
+/// The replay's selection point (`compare_response`) and the knob guard both
+/// go through this one function, and the coverage guard derives its admission
+/// set from it too, so widening it (the pre-#1683 blanket shape) fails the
+/// guard's through-the-predicate leg instead of silently re-widening the mask.
+fn parser_admission(id: &str) -> bool {
+    PARSER_ADMISSION_CELLS.contains(&id)
+}
+
+/// #1683: the `parser_admission` flag — `fn parser_admission` at the
+/// replay's selection point — scopes the one registered transport difference
+/// to the two cells that actually exhibit it. hyper adds `content-length: 0` to
 /// the parser-level bare 400 where Node writes no length at all (the same
 /// registered diff the native-http and webhook lanes already normalize —
 /// A8.4-NATIVE-HTTP-001, extended to this lane by A8.3-API-SERVER-005). The
@@ -1272,7 +1313,7 @@ fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResp
         })
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
-        actual_headers(actual, PARSER_ADMISSION_CELLS.contains(&case)),
+        actual_headers(actual, parser_admission(case)),
         expected_headers,
         "#1333 {case} request {index}: headers differ"
     );
@@ -1691,7 +1732,9 @@ async fn replays_real_ts_api_server_cells() {
         assert_boundary_body_len(id, case);
         // #1683: the two parser-admission cells must keep the knobs that make
         // them rejections (FROB / `setHost: false`), not drift into controls.
-        if PARSER_ADMISSION_CELLS.contains(&id) {
+        // #2775 fix-r2: through the same predicate the replay's selection
+        // point reads, so the knob scope and the mask scope cannot drift apart.
+        if parser_admission(id) {
             assert_parser_admission_cell_records_its_knob(id, case);
         }
         // #1606 r3: `compare_response` walks `expect` by request index, so a
