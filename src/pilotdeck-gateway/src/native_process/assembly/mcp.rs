@@ -295,6 +295,16 @@ mod tests {
             resolved.refresh().await,
             "#2157 refresh must run on the generation the resolver leased",
         );
+        // The lease must also survive the refresh itself: `refresh` runs on
+        // the leased generation and returns with the handle still held, so
+        // the count stays deterministic here too (r4 DS concurrency P2:
+        // the early claim above proves the window entry, this one re-proves
+        // the exit the original #2157 assertion carried).
+        crate::negative_assert_eq!(
+            runtime.lease_count(),
+            1,
+            "#2157 the resolved project must own the generation lease"
+        );
         crate::negative_assert!(
             retired.is_err(),
             "#2157 retirement must wait for the resolver's lease; the returned project dropped it"
