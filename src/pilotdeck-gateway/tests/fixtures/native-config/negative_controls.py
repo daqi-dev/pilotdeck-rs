@@ -986,6 +986,57 @@ mutations = [
      DIR + 'tag_session_blank_key_gate_order',
      '#2272 a null projectKey falls back like a missing one, '
      'so the sessionKey gate answers the blank key'),
+    # ── #2207/#2199 fix-r3 (DS r6 sibling#1): the cells the two fix rounds
+    # added — the zero-length sessionKey spelling, the empty-string and
+    # relative projectKey spellings — were positive-only; the pre-existing
+    # mutants killed at the first cell of each loop, never at these. Each
+    # new spelling family gets a mutant whose first discriminating point is
+    # exactly that cell (the (2) loop order pins unserved / "." / "foo" /
+    # "" so each row below dies at its own cell):
+    #   - relative-served admits every relative key — first kill: "." cell;
+    #   - empty-served admits only the empty string — first kill: "" cell;
+    #   - nonempty-only trim keeps "   " but passes "" — first kill: the
+    #     (1) loop's empty sessionKey cell (the code assertion dies).
+    ('admission-relative-projectkey-served-resume', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy)\n'
+     '                        || std::path::Path::new(&lossy).is_relative()',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-relative-projectkey-served-config', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy)\n'
+     '                        || std::path::Path::new(&lossy).is_relative()',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-empty-projectkey-served-resume', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy) || lossy.is_empty()',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-empty-projectkey-served-config', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy) || lossy.is_empty()',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('blank-gate-nonempty-only-resume', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if crate::metadata::js_trim(&text).is_empty() && !text.is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'resume_session_blank_key_gate_order',
+     ['#2090 a empty sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    ('blank-gate-nonempty-only-config', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if crate::metadata::js_trim(&text).is_empty() && !text.is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'session_model_set_blank_key_gate_order',
+     ['#2199 session_model_set rejects a empty sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -1260,6 +1311,9 @@ mutations = [
 # moved the counts to 98 rows / 65 literal-anchor entries.
 # #2207 fix-r2: the four admission-null-refused session_dir rows above
 # (GLM r3 sibling#1) moved the counts to 102 rows / 65 literal-anchor entries.
+# #2207/#2199 fix-r3 (DS r6 sibling#1): the six admission/trim rows above
+# (per-spelling discriminative mutants) moved the counts to 108 rows /
+# 65 literal-anchor entries.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
