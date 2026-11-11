@@ -1139,6 +1139,48 @@ class MutatingSources(unittest.TestCase):
                                 "#1166 r9 copy must restore its own mutation")
 
 
+class ParityGuardedPredicate(unittest.TestCase):
+    """#2513 fix-r2 (DS r2 sibling#1 + concurrency#1): one shared spelling.
+
+    ``parity_guarded`` decides whose mutation window holds
+    /tmp/pdrs-parity.lock. Four families take that lease through their own
+    copies of the protocol; the fix-r1 inline predicate covered only two, so
+    cli-parity windows mutated the lock implementation itself without holding
+    the lease. The consumers (mutating_sources' parity branch,
+    parity-lock-release's shared copy, cli-parity-mock-gateway's inner-lock
+    stand-down and cli-parity-lock-bounded's --check) all read this one
+    definition, so the family set is pinned here: a fifth family must be a
+    deliberate change, not a missed one.
+    """
+
+    def test_the_family_set_is_pinned(self):
+        self.assertEqual(
+            negative_process.PARITY_GUARDED_PREFIXES,
+            ("scripts/gateway-parity/", "scripts/parity/",
+             "scripts/cli-parity/", "scripts/ui-server-parity/"))
+
+    def test_all_four_lock_families_are_guarded(self):
+        for relative in ("scripts/gateway-parity/common.py",
+                         "scripts/gateway-parity/run_round.py",
+                         "scripts/parity/round.py",
+                         "scripts/parity/controls/lock_release.py",
+                         "scripts/cli-parity/common.py",
+                         "scripts/cli-parity/run_round.py",
+                         "scripts/ui-server-parity/calibrate.py",
+                         "scripts/ui-server-parity/calibrate.sh"):
+            self.assertTrue(negative_process.parity_guarded(relative),
+                            f'{relative} takes /tmp/pdrs-parity.lock '
+                            'and must be in the lease family')
+
+    def test_lookalikes_outside_the_family_are_not_guarded(self):
+        for relative in ("", "scripts/parity", "scripts/round.py",
+                         "scripts/gateway-parityx/common.py",
+                         "src/pilotdeck-gateway/tests/fixtures/negative_process.py",
+                         "specs/parity/README.md"):
+            self.assertFalse(negative_process.parity_guarded(relative),
+                             f'{relative} must not take the shared lease')
+
+
 class ParityMutationLock(unittest.TestCase):
     """#166 real ruler lock, isolated paths and deterministic source IO hooks."""
 

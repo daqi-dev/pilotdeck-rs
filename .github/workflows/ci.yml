@@ -287,6 +287,11 @@ jobs:
           # 夹具的 --check 进 CI——锚点 / 变异体编译 / 泄漏标记绑定 / 静态名册任一漂移
           # 即本步非零退出；全量杀灭轮（需要净树与共享 parity 租约）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/parity-env-isolation/negative_controls.py --check
+          # #2513 fix-r2（评审 DS concurrency#1 建议，同上先例）：cli-parity-lock-bounded
+          # 的静态断言进 CI——其守护集必须仍落在 parity 锁族（parity_guarded 四前缀），
+          # 否则变异窗会静默失去共享租约、活体 cli-parity 轮次又能与窗口交错；断言不取
+          # 租约、不建目录，CI 可直接跑，全量杀灭轮仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-lock-bounded/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

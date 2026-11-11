@@ -50,6 +50,26 @@ CARGO_SLOTS_SAMPLE_SECONDS = 10.0
 # larger cap — still bounded, still below any caller's total budget.
 CARGO_SLOTS_CALL_SECONDS = 300.0
 
+# The repo-relative source prefixes whose mutation windows must hold the
+# shared /tmp/pdrs-parity.lock lease. Four families take that one lease
+# through their own copies of the same protocol: scripts/gateway-parity/
+# (common.py), scripts/parity/ (round.py), scripts/cli-parity/ (common.py)
+# and scripts/ui-server-parity/ (calibrate.sh) — #2513 fix-r2 (DS r2
+# sibling#1 + concurrency#1: the fix-r1 predicate covered only the first
+# two, so cli-parity windows mutated the lock implementation itself without
+# holding the lease, and ui-server-parity was covered only by coincidence).
+# One predicate, one spelling: parity-lock-release's `shared` computation and
+# cli-parity-lock-bounded's `--check` read this same definition, so a fifth
+# family cannot be added to one consumer and missed by another.
+PARITY_GUARDED_PREFIXES = ("scripts/gateway-parity/", "scripts/parity/",
+                           "scripts/cli-parity/", "scripts/ui-server-parity/")
+
+
+def parity_guarded(relative):
+    """True when a repo-relative source belongs to the shared parity lock family."""
+    return relative.startswith(PARITY_GUARDED_PREFIXES)
+
+
 # Depth of the source-restore critical section and the signal it swallowed.
 # Read and written from a signal handler, which runs on the main thread between
 # bytecodes, so plain globals are enough.
@@ -943,12 +963,15 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
 
     Nested product-only use by one thread is supported through TreeLock;
     parity mutation windows must not nest their non-reentrant ruler lease.
-    Any scripts/gateway-parity or scripts/parity path takes the shared parity
-    lease (a live parity round imports round.py from this checkout, so the
-    mutation window must be mutually exclusive with it, #2513 fix-r1 review
-    P1-3), and the lease protocol loads common.py from verified bytes, so the
-    module joins the guarded set even when the caller named only a
-    scripts/parity source. Acquire the shared parity lease before yielding,
+    Any parity-guarded path (PARITY_GUARDED_PREFIXES: the gateway-parity,
+    parity, cli-parity and ui-server-parity families share the one lease)
+    takes the shared parity lease — a live parity round imports round.py and
+    a live cli-parity round imports common.py from this checkout, so the
+    mutation window must be mutually exclusive with both (#2513 fix-r1
+    review P1-3, widened in fix-r2 to the four-family predicate). The lease
+    protocol loads common.py from verified bytes, so the module joins the
+    guarded set even when the caller named only another family's source.
+    Acquire the shared parity lease before yielding,
     then retain it through restoration and byte verification. Lease polling and
     each guard flock acquisition have separate 60s bounds; a busy lock fails
     before source writes.
@@ -974,14 +997,17 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         # #2513 fix-r1 (review P1-3): a scripts/parity mutation window must
         # hold the same shared /tmp/pdrs-parity.lock lease a live parity round
         # takes (that round imports round.py from this checkout), exactly like
-        # the scripts/gateway-parity windows already do. The lease protocol
-        # loads common.py from verified snapshot bytes, so the module joins the
-        # guarded set (pristine-checked and byte-verified like every caller
-        # path, never mutated) even when the caller named only a scripts/parity
-        # source — without this, #2513's control would have to remember an
-        # invariant every gateway-parity caller already pays for.
-        parity = any(relative.startswith(("scripts/gateway-parity/",
-                                          "scripts/parity/"))
+        # the scripts/gateway-parity windows already do. fix-r2 (DS r2
+        # sibling#1 + concurrency#1): the predicate is the one shared
+        # PARITY_GUARDED_PREFIXES spelling — cli-parity (common.py) and
+        # ui-server-parity (calibrate.sh) take the same lease, so their
+        # windows must be mutually exclusive with live rounds too. The lease
+        # protocol loads common.py from verified snapshot bytes, so the module
+        # joins the guarded set (pristine-checked and byte-verified like
+        # every caller path, never mutated) even when the caller named only
+        # another family's source — without this, every caller would have to
+        # remember an invariant gateway-parity callers already pay for.
+        parity = any(parity_guarded(relative)
                      for _alias, _path, relative in normalized)
         if parity and "scripts/gateway-parity/common.py" not in {
                 _relative for _alias, _path, _relative in normalized}:

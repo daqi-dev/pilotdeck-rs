@@ -187,13 +187,13 @@ MUTATIONS = [
     ('native_evidence-normal-exit-zero', ROOT / 'scripts/gateway-parity/native_evidence.py',
      "    run_entry(main, 'traceback')",
      "    run_entry(lambda: (main(), 0)[1], 'traceback')"),
-    # #2513 fix-r1 widened the parity predicate to a two-prefix tuple, so the
-    # anchor follows the new spelling; the kill semantics are unchanged — with
-    # parity pinned False the window takes nullcontext and never requests the
-    # shared lease (#166).
+    # #2513 fix-r2 replaced the inline two-prefix predicate with the shared
+    # parity_guarded() (four lock families), so the anchor follows the new
+    # spelling; the kill semantics are unchanged — with parity pinned False the
+    # window takes nullcontext and never requests the shared lease (#166).
     ('entry-suite-parity-lock-bypassed', ROOT / 'src/pilotdeck-gateway/tests/fixtures/negative_process.py',
-     'parity = any(relative.startswith(("scripts/gateway-parity/",',
-     'parity = False and any(relative.startswith(("scripts/gateway-parity/",'),
+     'parity = any(parity_guarded(relative)',
+     'parity = False and any(parity_guarded(relative)'),
     ('entry-suite-common-not-guarded', Path(__file__).resolve(),
      '    paths = [COMMON, *dict.fromkeys(row[1] for row in selected)]\n    try:',
      '    paths = list(dict.fromkeys(row[1] for row in selected))\n    try:'),

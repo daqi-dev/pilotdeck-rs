@@ -48,7 +48,8 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (mutating_sources, new_output_directory, parity_guarded,
+                              run_owned)
 from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -501,12 +502,24 @@ def main():
         # /tmp/pdrs-parity.lock the real runs use, loaded from baseline bytes.
         # RUNNER is guarded too because the runner rows mutate this delivered
         # runner to prove the cancellation regression bites (#1059).
-        # A scripts/gateway-parity source makes mutating_sources take that same
-        # lease itself, from verified bytes. The lease is not reentrant: holding
-        # it here as well blocks on /tmp/pdrs-parity.lock.guard against our own
-        # process until the 60s bound, voiding every row (#1398).
-        shared = any((ROOT / path).resolve().is_relative_to(GATEWAY.parent)
-                     for path in paths)
+        # Any parity-guarded source (the shared parity_guarded predicate, one
+        # spelling for the four lock families — #2513 fix-r2) makes
+        # mutating_sources take that same lease itself, from verified bytes;
+        # the fix-r1 local copy only knew scripts/gateway-parity, so a
+        # round-only subset (--only a1-release-ungated mutates only
+        # scripts/parity/round.py) computed shared=False, took the outer lease
+        # and then deadlocked mutating_sources' second flock on
+        # /tmp/pdrs-parity.lock.guard until the 60s bound, voiding every row
+        # (DS r2 sibling#1). The lease is not reentrant: when mutating_sources
+        # holds it, we must not hold it too (#1398).
+        def _parity_relative(path):
+            try:
+                return path.resolve().relative_to(ROOT).as_posix()
+            except ValueError:
+                return None  # outside this checkout: not a lock-family source
+
+        shared = any(rel is not None and parity_guarded(rel)
+                     for rel in map(_parity_relative, paths))
         lease = nullcontext() if shared else parity_lease()
         with lease, mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
             for name, source, old, new in selected:

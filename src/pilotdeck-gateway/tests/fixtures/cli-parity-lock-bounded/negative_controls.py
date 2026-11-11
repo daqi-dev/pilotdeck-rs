@@ -55,7 +55,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (mutating_sources, new_output_directory, parity_guarded,
+                              run_owned)
 from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
@@ -440,13 +441,44 @@ def record(out, summary, row):
     print(f"{row['mutation']}: {row['status']}: {row['reason']}", flush=True)
 
 
+def check_static():
+    """Assert this fixture's guarded set triggers the shared parity lease.
+
+    #2513 fix-r2 (DS r2 concurrency#1): the guarded set is scripts/cli-parity
+    — the third family that takes /tmp/pdrs-parity.lock. If a future edit moves
+    these apparatus files or the family prefix drifts, mutating_sources would
+    silently stop taking the lease and a live cli-parity round could again
+    interleave with a mutation window; this static gate fails closed (exit 2)
+    before any window opens, without taking the lease itself (no output
+    directory is created, so it never self-locks).
+    """
+    guarded = {path.resolve().relative_to(root).as_posix()
+               for path in (RUNNER, common, test_script)}
+    if not any(parity_guarded(relative) for relative in guarded):
+        sys.stderr.write('#2513 cli-parity-lock-bounded: guarded set no longer '
+                         'touches the parity lock family\n')
+        raise SystemExit(2)
+    print('OK: guarded set includes parity lock family sources')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('output', type=Path)
+    ap.add_argument('output', type=Path, nargs='?',
+                    help='evidence directory (omit with --check)')
     ap.add_argument('selection', nargs='*', help='mutation name; only those rows run')
     ap.add_argument('--baseline', default='HEAD',
                     help='tree to prove the sources pristine against (default HEAD)')
+    ap.add_argument('--check', action='store_true',
+                    help='assert the guarded set triggers the shared parity lease, then exit')
     args = ap.parse_args()
+    if args.check:
+        if args.output is not None or args.selection:
+            sys.stderr.write('#2513 --check takes no output directory or selection\n')
+            raise SystemExit(2)
+        check_static()
+        return
+    if args.output is None:
+        ap.error('output is required unless --check is given')
     rows = mutations
     if args.selection:
         rows = [mutation for mutation in mutations if mutation[0] in args.selection]

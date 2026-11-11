@@ -145,7 +145,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 278 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 3 with unresolvable shapes only, 73 in both; 1467 keys: 412 bare-filename joins and 1055 shared-helper import keys.
+# 278 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 3 with unresolvable shapes only, 72 in both; 1467 keys: 412 bare-filename joins and 1055 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -315,7 +315,10 @@ KNOWN_BLIND = {
     'operation-ledger/negative.py': '6 keys',
     'output-schema/negative.py': '5 keys',
     'p01-preflight/negative_controls.py': '6 keys + 1 unresolvable',
-    'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
+    # #2513 fix-r2: the lock-family predicate now resolves (the fix-r1
+    # (ROOT / path).resolve().is_relative_to spelling was the one unresolvable
+    # shape; the shared parity_guarded call keyes the helpers normally).
+    'parity-lock-release/negative_controls.py': '6 keys',
     # #2398 parity-subprocess-hardening 与 #1891 sidecar-liveness：随 #2136
     # fix-r41 合并 main（c3100a2b7）到达的两张新表，无 DISCOVERY_ANCHORS，
     # 按 #2141 规则以实测键数登记为 blind；补锚点归 #2141 修表清单。

@@ -17,7 +17,13 @@ branch must be committed before the run; the control subprocess is bounded
 (run_owned) and every cargo launch inside negative_process goes through the
 shared slot gate.  The mutation window over scripts/parity/round.py holds the
 shared parity lease a live round of the same tree also takes (#2513 fix-r1
-review P1-3), so the two can never interleave on mutated bytes.
+review P1-3), so the window and a lease-taking round cannot run concurrently;
+#2513 fix-r2 (MM r2 concurrency#1) closes the import-window residue: a round
+started *inside* the window is refused after it acquires the lease, because
+round.py verifies its executing code and g03_compare bytes against HEAD
+(gateway-parity #166 verified_parity_lock precedent) before doing any work.
+The offline controls redirect the lock to a temp path and never take the
+shared lease, so they do not participate in this exclusion.
 
 Every mutated source equals HEAD before its window opens (mutating_sources);
 each mutant compiles before its control runs; stale anchors abort instead of
@@ -36,11 +42,14 @@ refused run never leaves a directory a host would read as its verdict
 (#2513 fix-r1 review P2#2: claim_dir used to run before the selection
 refusals).
 """
-import json
 import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+sys.dont_write_bytecode = True
+import json
 from pathlib import Path
 
-sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, tree_lock, write_source_atomic
 from negative_selection import (claim_dir, missing_target, refuse,

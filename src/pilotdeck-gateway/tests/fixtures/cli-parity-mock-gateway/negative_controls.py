@@ -58,7 +58,7 @@ if not _boot_sys.flags.isolated or any(
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import argparse
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 import hashlib
 import importlib.util
 import json
@@ -86,7 +86,7 @@ class _BootFinder:
 
 _boot_finder = _BootFinder()
 sys.meta_path.insert(0, _boot_finder)
-from negative_process import mutating_sources, run_owned  # noqa: E402
+from negative_process import mutating_sources, parity_guarded, run_owned  # noqa: E402
 sys.meta_path.remove(_boot_finder)
 
 root = Path(__file__).resolve().parents[5]
@@ -98,6 +98,16 @@ mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
 fixture = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/negative_controls.py'
 fixture_test = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/test_negative_controls.py'
+
+# #2513 fix-r2: the guarded set is now in the parity lock family (all of it is
+# scripts/cli-parity/, one of the shared parity_guarded prefixes), so
+# mutating_sources itself takes the real /tmp/pdrs-parity.lock for the whole
+# window. The per-test machine_parity_lock below would then block on the same
+# non-reentrant lease until its 90s bound and void every row; the window is
+# already holding it, so the per-test inner lock must stand down.
+_WINDOW_HOLDS_MACHINE_LEASE = any(parity_guarded(path.resolve().relative_to(root).as_posix())
+                                 for path in (policy, common, compare, run_round,
+                                              mock_gateway, isolation_probe, fixture))
 
 # The real cli-parity driver serialises a whole round on this same mkdir lease
 # (common.py: LOCK = /tmp/pdrs-parity.lock). Loading common.py by explicit path
@@ -572,8 +582,11 @@ def run_test(out, label, test):
         else:
             # Hold the machine lease across the WHOLE child run, not only the
             # probe: the port probe alone can be overtaken before the child
-            # binds 28999.
-            with machine_parity_lock():
+            # binds 28999. #2513 fix-r2: when the mutation window itself
+            # already holds the shared lease (parity_guarded set), taking it
+            # again here would self-deadlock on the non-reentrant lease.
+            with (nullcontext() if _WINDOW_HOLDS_MACHINE_LEASE
+                  else machine_parity_lock()):
                 # A stale listener on the pinned port makes the bound test fail
                 # in setUp, which the judge would record as INVALID (not a
                 # product observation).
