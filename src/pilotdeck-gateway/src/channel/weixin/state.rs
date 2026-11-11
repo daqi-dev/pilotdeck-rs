@@ -331,7 +331,9 @@ impl ChannelStatePersistence {
         // probe pinned the TS shape (`every key attempted before any
         // rejection: true`). The error is the first one in key order, the
         // deterministic stand-in for `Promise.all`'s first temporal
-        // rejection.
+        // rejection — a registered intentional deviation, not an
+        // equivalence claim (`A8.3-CH-WEIXIN-FLUSH-001`: the TS flush
+        // rejects with the temporally first of two failing keys).
         let outcomes =
             futures_util::future::join_all(keys.iter().map(|key| self.ensure_write(key))).await;
         for outcome in outcomes {

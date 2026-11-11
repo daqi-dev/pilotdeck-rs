@@ -1569,6 +1569,42 @@ async fn flush_waiter_observes_the_drainers_failure() {
     );
 }
 
+/// W9c (`A8.3-CH-WEIXIN-FLUSH-001`): the TS `flush` is
+/// `Promise.all(keys.map(ensureWrite))` and rejects with the first
+/// *temporal* rejection — the probe `p1-weixin-flush-first-rejection` showed
+/// the real class reporting the temporally first of two failing keys (30/30
+/// rounds) and the reported error flipping with rejection time, not key
+/// order. Rust reports the first error in key order instead: the registered
+/// intentional deviation (a deterministic test surface; completion order is
+/// timing-dependent). This cell pins the Rust side of that registration: one
+/// flush, two failing keys whose error texts differ — `a`'s target is a
+/// directory (rename `EISDIR`), `z/sub`'s tmp path sits inside the missing
+/// directory `z` (write `ENOENT`) — and the reported error is `a`'s, the
+/// key-order first.
+#[tokio::test]
+async fn flush_reports_the_key_order_first_error_when_two_keys_fail_differently() {
+    let root = Root::new();
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
+    failing_key(&root, "a");
+    persistence.save(&js("a"), state_with_value(1.0));
+    persistence.save(&js("z/sub"), state_with_value(2.0));
+
+    let error = crate::test_negative_receipt::expect_err(
+        persistence.flush().await,
+        "#1725 a flush with two failing keys reports a write error",
+    );
+    crate::negative_assert!(
+        error.contains("Is a directory"),
+        "#1725 the flush error is the key-order first key's EISDIR, per A8.3-CH-WEIXIN-FLUSH-001"
+    );
+    // Defence in depth, not the bound assertion: the key-order-first error
+    // must not be the later key's write failure.
+    crate::negative_assert!(
+        !error.contains("No such file or directory"),
+        "#1725 the flush error is not the later key's ENOENT: {error}"
+    );
+}
+
 /// A channel bound to a credentials file the test owns, with no polling —
 /// `save_credentials`/`save_cursor` are synchronous fs and never touch the
 /// client factory.

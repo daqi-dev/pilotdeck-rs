@@ -462,6 +462,23 @@ MUTATIONS = [
      '                }\n',
      'channel::weixin::tests::flush_waiter_observes_the_drainers_failure',
      "#1725 the waiter observes the drainer's failure, not a success"),
+    # A8.3-CH-WEIXIN-FLUSH-001: the flush error is the first one in KEY order,
+    # the registered stand-in for the TS `Promise.all` temporal first
+    # rejection. A reversed iteration reports the LAST failing key's error
+    # instead — the deterministic any-order surrogate (a true time-order
+    # mutant would be unreproducible, which is exactly why key order was
+    # registered: completion order is timing-dependent).
+    ('flush-error-order-reversed', weixin / 'state.rs',
+     '        for outcome in outcomes {\n'
+     '            outcome?;\n'
+     '        }\n',
+     '        for outcome in outcomes.into_iter().rev() {\n'
+     '            outcome?;\n'
+     '        }\n',
+     'channel::weixin::tests::'
+     'flush_reports_the_key_order_first_error_when_two_keys_fail_differently',
+     "#1725 the flush error is the key-order first key's EISDIR, per "
+     'A8.3-CH-WEIXIN-FLUSH-001'),
 
     # #1725 persistence close-out (S3). The reporter's whole
     # read-modify-write must sit inside the shared lock — the TS module is
