@@ -108,29 +108,6 @@ def workspace_dirty(root):
 
 
 @contextmanager
-def inherited_lock(fd):
-    """The control's tree lock, handed over with the descriptor (#1695).
-
-    The dirty-src control takes the shared `flock` on one descriptor and
-    passes that descriptor here with `pass_fds`: a `flock` belongs to the
-    open file description, so the lock survives the exec and this process
-    owns it from its first statement -- there is no instant between the
-    control's release of its own copy and this run in which the lock is free
-    while the marker is on disk, which is the false `src/ is dirty` the old
-    release-and-reacquire handoff could hand a sibling runner.
-
-    Releasing is the close itself: an explicit `flock(LOCK_UN)` is not needed
-    (nobody else shares the description once the control closed its copy) and
-    would race nothing. The cargo / rustc / timing children never see the
-    descriptor -- `run_owned` spawns with the default close-fds -- so no
-    orphan can outlive this process still holding the tree lock.
-    """
-    try:
-        yield
-    finally:
-        os.close(fd)
-
-
 def driver_lock(root):
     """The tree lock for this run: inherited from the control, or taken here.
 
@@ -139,14 +116,30 @@ def driver_lock(root):
     control has already transferred its descriptor, so this run OWNS the lock
     from the first statement: nothing is requested and the two marker lines
     print back to back -- the wait between them is zero by construction, not
-    by luck. A `PDRS_NEGCTL_LOCK_FD` that is not an integer crashes before any
-    summary is written, and the control reads a driver that died before the
-    lock as INVALID, never as a survivor.
+    by luck. A `flock` belongs to the open file description, so the lock
+    survives the exec with the `pass_fds` descriptor, and this process
+    releasing is the `os.close(fd)` itself -- an explicit `flock(LOCK_UN)` is
+    not needed (nobody else shares the description once the control closed its
+    copy) and would race nothing. The cargo / rustc / timing children never
+    see the descriptor -- `run_owned` spawns with the default close-fds -- so
+    no orphan can outlive this process still holding the tree lock.
+
+    Holding it from the first statement narrows the marker's exposure; it
+    does not remove it (fix-r1 review, concurrency P2 / boundary P2): if this
+    process dies before `negctl_restore`, the descriptor closes with it and
+    the marker is briefly on disk with the lock free — the control's
+    `restore_locked` answers that. A `PDRS_NEGCTL_LOCK_FD` that is not an
+    integer crashes before any summary is written, and the control reads a
+    driver that died before the lock as INVALID, never as a survivor.
     """
     spec = os.environ.get('PDRS_NEGCTL_LOCK_FD')
     if spec is None:
         return tree_lock(root, timeout=3600)
-    return inherited_lock(int(spec))
+    fd = int(spec)
+    try:
+        yield
+    finally:
+        os.close(fd)
 
 
 def negctl_restore():
@@ -165,9 +158,12 @@ def negctl_restore():
     P1): the marker is on disk from the moment the control writes it until
     this process's restore, which is why the lock now comes with the process
     (#1695): the control hands its `flock` descriptor over with `pass_fds` and
-    closes its copy without unlocking, so the marker never sits on disk while
-    the tree lock is free and no sibling can win it in between. See
-    `dirty_tree_control_1555.py`'s module docstring and `driver_lock`.
+    closes its copy without unlocking, so no sibling can win the lock between
+    the write and this restore. That is a narrowed window, not an eliminated
+    one (fix-r1 review, concurrency P2 / boundary P2): a crash before this
+    restore still closes the descriptor with the marker on disk. See
+    `dirty_tree_control_1555.py`'s module docstring — the canonical wording —
+    and `driver_lock`.
 
     `PDRS_NEGCTL_RESTORE` is `<relative path>\\x1f<original file>\\x1f<marked
     file>`; both files live in the control's output directory, outside the

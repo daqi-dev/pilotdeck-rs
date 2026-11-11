@@ -14,7 +14,9 @@ Two checks, one per half of the fix:
    the blocking `flock` (stamped with the driver's own `time.monotonic()`, so
    the measured wait is not inflated by the control's polling delay), then
    `lock-acquired` as the first statement after the
-   request returns. Seeing the request without the acquisition at the end of
+   request returns. The blocking request belongs to this leg only; the
+   dirty-src leg below inherits the lock with the descriptor instead of
+   requesting it (#1695). Seeing the request without the acquisition at the end of
    the hold is a state proof that it is blocked -- the only code between the
    two is the request itself, so neither a slow interpreter nor a git-heavy
    preflight can be mistaken for a lock wait (fix-r4: the old 3 s quiet-window
@@ -22,10 +24,11 @@ Two checks, one per half of the fix:
    Delete the driver's `with driver_lock(...)` block (which is `tree_lock`
    here -- this leg always runs standalone) and `lock-acquired` follows the
    request at once: SURVIVED.
-2. `dirty-src` — one tracked product source is dirtied *while the control holds
-   the lock*, and the driver is started inside that same hold, so it is already
-   blocked on the lock when the bytes change and finds them dirty the instant it
-   is released. There is no window in which it could build. Delete the dirty
+2. `dirty-src` — one tracked product source is dirtied while the control holds
+   the lock, and the driver is started with that same lock handed over with
+   the descriptor (`launch_under_lock`, #1695), so it owns the lock from its
+   first statement and finds the bytes dirty the moment it looks; it never
+   gets a clean window in which it could build. Delete the dirty
    gate and it builds and measures: SURVIVED. The refusal must be the driver's
    own `src_dirty` bit (a machine field), so an unrelated build failure cannot
    pass for a killed mutation. The marker is undone by the *driver*, still
@@ -36,15 +39,21 @@ Two checks, one per half of the fix:
    (fix-r5 review, concurrency P1). The fallback here only covers a driver that
    never reached the dirty branch.
 
-   The handoff is **atomic** (#1695, closing the seam fix-r5 had only
-   narrowed): the marker never sits on disk while the tree lock is free. The
-   control takes the `flock` on one descriptor (`handoff_lock`), writes the
-   marker while it holds it, starts the driver with that descriptor in
-   `pass_fds` and then closes its own copy *without unlocking* — a `flock`
-   belongs to the open file description, which the child shares, so the lock
-   is never released between the write and the driver's restore. Releasing the
-   old way (unlock here, let the driver re-acquire) left the marker exposed to
-   a sibling polling `LOCK_NB` in that gap, recording a false `src/ is dirty`.
+   The handoff closes the seam fix-r5 had only narrowed (#1695): the control
+   takes the `flock` on one descriptor (`handoff_lock`), writes the marker
+   while it holds it, starts the driver with that descriptor in `pass_fds` and
+   then closes its own copy *without unlocking* — a `flock` belongs to the
+   open file description, which the child shares, so no sibling polling
+   `LOCK_NB` can win the lock between the write and the driver's own restore.
+   Releasing the old way (unlock here, let the driver re-acquire) left the
+   marker exposed in that gap, recording a false `src/ is dirty`.
+   This narrows the window; it does not remove it (fix-r1 review,
+   concurrency P2 / boundary P2): a driver that dies before its
+   `negctl_restore` takes the descriptor with it — the lock is free while the
+   marker is still on disk — and a launch that fails after the marker write
+   leaves a short gap between the caller closing the descriptor and
+   `restore_locked` re-taking it. Both are exactly the residual windows
+   `restore_locked` exists for; see its docstring.
 
 The lock check does not trust the driver's own markers alone (fix-r5). A mutant
 that deletes the whole `with driver_lock(...)` block *including* the
@@ -156,6 +165,18 @@ def read_log(path):
         return ''
 
 
+def early_lines(text, limit=3):
+    """The first whole lines of an early window, for the row's `early_output`.
+
+    `split('\n')` (never `splitlines()`, the shared rule — a U+2028 in some
+    output must not tear a line in two) yields `['']` on an empty or
+    whitespace-only window, where the old `splitlines()` shape produced `[]`:
+    the row must keep reporting "the driver printed nothing" as an empty
+    list (fix-r1 review, boundary P3 / simplify P3).
+    """
+    return [line for line in text.strip().split('\n') if line][:limit]
+
+
 def scratch(name):
     """Temp path for the atomic swaps: same filesystem, outside `src/`.
 
@@ -192,7 +213,18 @@ def handoff_lock(root_path, *, timeout=LOCK_TIMEOUT):
     path = Path(root_path) / '.negative-source.lock'
     deadline = time.monotonic() + timeout
     while True:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        # `O_CLOEXEC` matches the shared `TreeLock` invariant (children inherit
+        # the lock only through `pass_fds`, which clears the flag for the one
+        # handoff). A daemonized caller with stdio closed can otherwise see the
+        # lock descriptor land on 0/1/2, where the child's stdio `dup2` would
+        # clobber it (fix-r1 review, boundary P3) — move it out of that range
+        # before it is ever handed over. `F_DUPFD_CLOEXEC` keeps the flag on
+        # the copy, so the invariant survives the move.
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+        if fd <= 2:
+            moved = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+            os.close(fd)
+            fd = moved
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return fd
@@ -210,15 +242,17 @@ def launch_under_lock(out, env, name, log, fd):
     The child is started with the lock descriptor in `pass_fds`, and only
     then is this process's copy closed — WITHOUT `flock(LOCK_UN)`. The lock
     belongs to the open file description, which the child now shares, so the
-    close leaves it held by the driver: between this process's marker write
-    and the driver's own restore there is no instant at which the lock is free
-    while the marker is on disk. Unlocking here (the pre-#1695 shape, where
-    the driver re-acquired on its own) drops the child's lock as well and
-    re-opens the window a polling sibling could win; closing before the child
-    exists releases the lock outright. The marker is already on disk when
-    this is called, so a launch failure is answered by the caller's
-    `finally`/`restore_locked`, and the descriptor must still be open here
-    for exactly that path.
+    close leaves it held by the driver: from this process's marker write,
+    through the child's first statement, to the driver's own restore, the
+    lock is held continuously and a sibling polling `LOCK_NB` cannot win it
+    in between. Unlocking here (the pre-#1695 shape, where the driver
+    re-acquired on its own) drops the child's lock as well and re-opens that
+    window; closing before the child exists releases the lock outright.
+    Narrowed, not eliminated (fix-r1 review, concurrency P2 / boundary P2):
+    if the child dies before its restore the descriptor closes with it, and
+    a launch failure between the write and this call is answered by the
+    caller's `finally` closing the descriptor so `restore_locked` can re-take
+    it — the descriptor must still be open here for exactly that path.
     """
     process = launch(out, env, name, log, pass_fds=(fd,))
     os.close(fd)
@@ -226,24 +260,29 @@ def launch_under_lock(out, env, name, log, fd):
 
 
 def process_census():
-    """One `ps` snapshot: a list of `(pid, ppid, pgid)` rows (#1705).
+    """One `ps` snapshot: a list of `(pid, ppid, pgid, state)` rows (#1705).
 
-    `pid=,ppid=,pgid=` suppresses the header on both BSD and GNU `ps`, and
-    the census is what makes the setsid descendants of the driver visible:
+    `pid=,ppid=,pgid=,state=` suppresses the header on both BSD and GNU `ps`,
+    and the census is what makes the setsid descendants of the driver visible:
     they are in *their own* sessions, so no group signal aimed at the leader
-    reaches them (#1705). A census with no parseable row is an error, not an
-    empty tree — the caller falls back to the leader-group kill and says so.
+    reaches them (#1705). The `state` column is how the caller tells a live
+    leader from a zombie one: a zombie's children are already reparented, so
+    the ppid walk below it is broken even though every row is still there
+    (fix-r1 review, concurrency P2). A census with no parseable row is an
+    error, not an empty tree — the caller falls back to the leader-group kill
+    and says so.
     """
-    result = subprocess.run(['ps', '-eo', 'pid=,ppid=,pgid='],
+    result = subprocess.run(['ps', '-eo', 'pid=,ppid=,pgid=,state='],
                             capture_output=True, text=True,
                             timeout=PS_CENSUS_TIMEOUT)
     rows = []
     for line in result.stdout.split('\n'):
         fields = line.split()
-        if len(fields) != 3:
+        if len(fields) != 4:
             continue
         try:
-            rows.append((int(fields[0]), int(fields[1]), int(fields[2])))
+            rows.append((int(fields[0]), int(fields[1]), int(fields[2]),
+                         fields[3]))
         except ValueError:
             continue
     if not rows:
@@ -262,10 +301,11 @@ def descendant_groups(leader, census):
     signal — is reached through *its* group instead. A descendant that exited
     between the census and the kill is simply gone; one that was *spawned* in
     that gap escapes this snapshot, which is why the census follows the leader
-    group kill as closely as it does.
+    group kill as closely as it does. The walk ignores the `state` column: a
+    zombie descendant still owns its pgid, and signalling it is a no-op.
     """
     children = {}
-    for pid, ppid, _pgid in census:
+    for pid, ppid, _pgid, _state in census:
         children.setdefault(ppid, []).append(pid)
     found = {leader}
     stack = [leader]
@@ -275,7 +315,25 @@ def descendant_groups(leader, census):
             if child not in found:
                 found.add(child)
                 stack.append(child)
-    return {pgid for pid, _ppid, pgid in census if pid in found}
+    return {pgid for pid, _ppid, pgid, _state in census if pid in found}
+
+
+def _kill_group_guarded(process):
+    """`_kill_group` under `_kill_tree`'s never-raise contract (#1705).
+
+    `negative_process._kill_group` re-raises its `PermissionError` after the
+    reap-and-retry (the macOS sandbox EPERM on an unreaped exited leader), and
+    that must not escape either: the cleanup answers an already-failed row,
+    so a second failure is printed — the residue stays visible — instead of
+    replacing the timeout the caller is about to report (fix-r1 review,
+    boundary P2).
+    """
+    try:
+        _kill_group(process)
+    except OSError as error:
+        print(f'#1705 the driver group kill failed too '
+              f'({type(error).__name__}: {error}); orphan descendants '
+              '(if any) are left running', file=sys.stderr, flush=True)
 
 
 def _kill_tree(process):
@@ -288,19 +346,42 @@ def _kill_tree(process):
     put HEAD bytes back. The census is taken while the leader is still alive
     (reparenting on its death would hide the children), the leader's group is
     killed first to stop new spawns, then each enumerated group — never this
-    control's own — gets `SIGKILL`. Best effort by design: a census failure
-    falls back to the pre-#1705 leader-group kill and *prints* instead of
-    raising, so cleanup can never mask the timeout it answers; the row is
-    already INVALID on this path.
+    control's own — gets `SIGKILL`. Best effort by design, fail-closed on the
+    error paths, all of which *print* instead of raising so cleanup can never
+    mask the timeout it answers; the row is already INVALID on this path:
+
+    * the census itself — `subprocess.run(..., timeout=PS_CENSUS_TIMEOUT)`
+      times out with `subprocess.TimeoutExpired`, a `SubprocessError` that is
+      *not* an `OSError`, so the except tuple catches the whole
+      `SubprocessError` family instead of enumerating members (fix-r1
+      review, sibling P2 / concurrency P2 / boundary P2 — three independent
+      hits on the same hole); a plain `OSError`/`ValueError` rides along;
+    * a leader that exited before the census — the caller's `poll()`/`wait()`
+      liveness check and the census are two instants, and a leader that dies
+      in between is a zombie (or already reaped) whose children are
+      reparented to init: the ppid walk would enumerate nobody while the
+      setsid orphans stay invisible. The census's `state` column makes that
+      visible instead of silent (fix-r1 review, concurrency P2), and the
+      leader-group fallback still reaches the driver's direct children,
+      which never left its group;
+    * the leader-group kill — see `_kill_group_guarded`.
     """
     try:
         census = process_census()
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f'#1705 ps census failed ({type(error).__name__}: {error}); '
               'killed the driver group only', file=sys.stderr, flush=True)
-        _kill_group(process)
+        _kill_group_guarded(process)
         return
-    _kill_group(process)
+    leader_state = next((state for pid, _ppid, _pgid, state in census
+                         if pid == process.pid), None)
+    if leader_state is None or leader_state.startswith('Z'):
+        print('#1705 the driver exited before the ps census; its descendants '
+              'were reparented and are not enumerable; killed the driver '
+              'group only', file=sys.stderr, flush=True)
+        _kill_group_guarded(process)
+        return
+    _kill_group_guarded(process)
     own = os.getpgrp()
     for pgid in sorted(descendant_groups(process.pid, census)):
         if pgid == own or pgid == process.pid:
@@ -491,13 +572,15 @@ def restore_locked(path, original):
     """Restore the marker under the tree lock, bounded, then release.
 
     The primary path is now the driver's own restore (`negctl_restore` in
-    `rss_probe_1555.py`), and since #1695 the handoff to that driver is
-    atomic (see the module docstring): the lock is never free while the
-    marker is on disk. This fallback is still required, not redundant: a
-    driver that never reaches the dirty branch (a mutant without the dirty
-    gate, a crash, a watchdog kill) exits with the marker still on disk, and
-    it would stay marked forever -- the marker is process-tagged, so no other
-    control will ever clear it. This function is the fallback for exactly
+    `rss_probe_1555.py`), and since #1695 the lock travels with the descriptor
+    from the marker write to that restore (see the module docstring), so this
+    fallback is off the normal path. It is still required, not redundant: the
+    handoff narrows the window, it does not remove it — a driver that never
+    reaches the dirty branch (a mutant without the dirty gate), crashes, or
+    is killed exits with the marker still on disk *and the lock already free*
+    (the descriptor died with the process), and it would stay marked forever
+    -- the marker is process-tagged, so no other control will ever clear it.
+    This function is the fallback for exactly
     that, and for the second call from `main`. It re-takes the tree lock with
     a bounded wait; a sibling that holds the lock for longer than the bound
     must not be able to skip the restore, so the timeout falls back to the
@@ -679,7 +762,7 @@ def lock_check(out, env):
                 positive=dict(returncode=None if positive is None else positive.returncode,
                               status=positive_summary.get('status'),
                               minima=positive_summary.get('minima')),
-                early_output=early.strip().split('\n')[:3],
+                early_output=early_lines(early),
                 returncode=returncode, driver_status=summary.get('status'),
                 minima=summary.get('minima'), reason=reason)
 
@@ -749,9 +832,14 @@ def dirty_check(out, env, original):
 
     #1695: the tree lock is taken on one raw descriptor (`handoff_lock`) and
     handed to the driver with `pass_fds` (`launch_under_lock`), so the marker's
-    whole life on disk -- write, driver observation, driver restore -- is spent
-    inside one continuous hold. There is no release-and-reacquire gap for a
-    sibling to squeeze into any more; the old window is what #1695 was.
+    life on disk -- write, driver observation, driver restore -- is spent
+    inside one continuous hold, with no release-and-reacquire gap for a
+    sibling to squeeze into. That closed #1695's seam; it is not a
+    crash-proofing claim (fix-r1 review, concurrency P2 / boundary P2): a
+    driver that dies before its restore frees the lock with the marker still
+    on disk, and a launch failure between the write and the handoff is closed
+    by the `finally` below. Both residual windows are what `restore_locked`
+    answers; see its docstring.
     """
     path = out / 'probe-dirty.log'
     log = path.open('w')
@@ -813,13 +901,6 @@ def dirty_check(out, env, original):
         returncode = settle(process, log)
     except (subprocess.TimeoutExpired, OSError, RuntimeError) as error:
         failure = f'{type(error).__name__}: {error}'
-        if fd is not None:
-            # The launch failed before the handoff: this process is still the
-            # only holder, so closing releases the lock for `restore_locked`.
-            # After a successful handoff `fd` is None and the driver's own
-            # death (below) releases it instead.
-            os.close(fd)
-            fd = None
         if process is not None and process.poll() is None:
             _kill_tree(process)
             process.wait(timeout=60)
@@ -828,8 +909,15 @@ def dirty_check(out, env, original):
     finally:
         if fd is not None:
             # The marker is on disk and this process still holds the only
-            # reference: release before `restore_locked` re-takes the lock,
-            # or the restore would deadlock against this very fd.
+            # reference — the launch failed before the handoff, or an error
+            # landed between the write and `launch_under_lock` (fix-r1 review,
+            # simplify P3: this close used to be duplicated in the except body
+            # above; `finally` always runs, so one site is enough, and the
+            # descriptor now also rides out the kill cleanup above — the lock
+            # stays held for that bounded window, which only delays, never
+            # deadlocks, the siblings queued behind it). Release before
+            # `restore_locked` re-takes the lock, or the restore would
+            # deadlock against this very fd.
             os.close(fd)
             fd = None
         restored, mode_lost, complaint = restore_locked(source, original)
@@ -855,9 +943,30 @@ def dirty_check(out, env, original):
     return dict(control='dirty-src-driver-refused', status=status,
                 returncode=returncode, driver_status=summary.get('status'),
                 built=(out / 'probe-dirty' / 'build.log').exists(),
-                early_output=early.strip().split('\n')[:3],
+                early_output=early_lines(early),
                 failures=summary.get('failures'), restored=restored,
                 restore_complaint=complaint, reason=reason)
+
+
+def sanitized_env():
+    """The caller's environment minus the control-injection variables.
+
+    Both `PDRS_NEGCTL_LOCK_FD` and `PDRS_NEGCTL_RESTORE` are set per-launch by
+    `dirty_check` only (#1695 hygiene; the restore spec joined the drop in
+    fix-r1 review, sibling P3). A `PDRS_NEGCTL_LOCK_FD` inherited from the
+    caller would make the `lock_check` leg's driver (which must prove it
+    *blocks*) silently own an inherited lock instead and print `lock-acquired`
+    during the hold -- the exact false SURVIVED that leg exists to catch --
+    and a leftover `PDRS_NEGCTL_RESTORE` (say, a marker environment left by a
+    SIGKILLed dirty run, the very case `restore_locked` answers) would make a
+    driver that finds the tree dirty run `negctl_restore` on files that are
+    not this control's, outside this control's lock. Nothing legit ever
+    passes either in, so both are dropped unconditionally.
+    """
+    env = os.environ.copy()
+    env.pop('PDRS_NEGCTL_LOCK_FD', None)
+    env.pop('PDRS_NEGCTL_RESTORE', None)
+    return env
 
 
 def main():
@@ -865,16 +974,9 @@ def main():
         raise SystemExit('usage: dirty_tree_control_1555.py NEW_OUTPUT_DIR')
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    env = os.environ.copy()
+    env = sanitized_env()
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be provided by the caller')
-    # #1695 hygiene: the handoff descriptor is set per-launch by `dirty_check`
-    # only. A `PDRS_NEGCTL_LOCK_FD` inherited from the caller would make the
-    # `lock_check` leg's driver (which must prove it *blocks*) silently own an
-    # inherited lock instead and print `lock-acquired` during the hold -- the
-    # exact false SURVIVED that leg exists to catch. Nothing legit ever passes
-    # it in, so it is dropped unconditionally.
-    env.pop('PDRS_NEGCTL_LOCK_FD', None)
     original = _head_bytes(root, RELATIVE, 'HEAD')
     rows = []
     restored = False

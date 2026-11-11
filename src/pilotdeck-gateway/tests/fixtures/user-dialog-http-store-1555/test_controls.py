@@ -31,7 +31,7 @@ time and requires the bound test to fail with its single-line marker
 to a full unittest name; the run never stops early, and any SURVIVED or
 INVALID row makes the exit code non-zero.
 """
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import fcntl
 import io
 import os
@@ -86,6 +86,18 @@ child = subprocess.Popen([sys.executable, '-I', '-c',
 with open(sys.argv[1], 'w') as handle:
     handle.write(str(child.pid))
 time.sleep(120)
+'''
+
+# The dead-leader stub (fix-r1, concurrency P2): same shape, but it exits on
+# its own right after reporting the child, so the census sees a zombie leader
+# whose child was already reparented -- the race the state column answers.
+TREE_DRIVER_EXITING = '''
+import os, subprocess, sys
+child = subprocess.Popen([sys.executable, '-I', '-c',
+                         'import time; time.sleep(120)'], start_new_session=True)
+with open(sys.argv[1], 'w') as handle:
+    handle.write(str(child.pid))
+os._exit(0)
 '''
 
 
@@ -299,14 +311,49 @@ class HandoffTests(unittest.TestCase):
                         child.wait(timeout=5)
 
 
+    def test_handoff_lock_returns_a_non_stdio_fd(self):
+        # fix-r1 (boundary P3): a daemonized caller with stdio closed can see
+        # the lock descriptor land on 0/1/2, where the child's stdio dup2
+        # would clobber it; the handoff must move it out of that range and
+        # still hold the real lock.
+        with tempfile.TemporaryDirectory(prefix='1695-lowfd-') as directory:
+            work = Path(directory)
+            saved = os.dup(0)
+            try:
+                os.close(0)  # the next open() inside handoff_lock returns 0
+                fd = dirty_tree_control_1555.handoff_lock(work)
+                try:
+                    self.assertTrue(fd > 2,
+                                    '#1695 the handoff descriptor never shares '
+                                    'a number with stdio')
+                    probe = os.open(work / '.negative-source.lock', os.O_RDWR)
+                    try:
+                        try:
+                            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            free = True
+                        except BlockingIOError:
+                            free = False
+                    finally:
+                        os.close(probe)
+                    self.assertTrue(not free,
+                                    '#1695 the moved descriptor still holds '
+                                    'the real lock')
+                finally:
+                    os.close(fd)
+            finally:
+                os.dup2(saved, 0)
+                os.close(saved)
+
+
 class KillTreeTests(unittest.TestCase):
     """(#1705) A timeout kill must reach the setsid descendants."""
 
     def test_descendant_groups_grid(self):
-        census = [(1, 0, 1), (10, 1, 10), (20, 10, 20), (30, 20, 30),
-                  (40, 30, 10), (50, 1, 50)]
-        # 10 leads to 20 (own group) to 30 (own group); 40 sits in the
-        # leader's group; 50 is not a descendant. All of 10's side must come
+        census = [(1, 0, 1, 'S'), (10, 1, 10, 'S'), (20, 10, 20, 'S'),
+                  (30, 20, 30, 'Z'), (40, 30, 10, 'S'), (50, 1, 50, 'S')]
+        # 10 leads to 20 (own group) to 30 (own group, a zombie -- still
+        # enumerated, signalling it is a no-op); 40 sits in the leader's
+        # group; 50 is not a descendant. All of 10's side must come
         # back, and nothing else.
         groups = dirty_tree_control_1555.descendant_groups(10, census)
         self.assertTrue(groups == {10, 20, 30},
@@ -361,6 +408,160 @@ class KillTreeTests(unittest.TestCase):
                     except subprocess.TimeoutExpired:
                         pass
 
+    def _sleeper(self):
+        return subprocess.Popen(
+            [sys.executable, '-I', '-c', 'import time; time.sleep(120)'],
+            start_new_session=True, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+
+    def _reap(self, process):
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+    def test_kill_tree_swallows_census_timeout(self):
+        # fix-r1 (sibling#1 / concurrency#1 / boundary#2, promoted P1): `ps`
+        # timing out raises subprocess.TimeoutExpired, a SubprocessError that
+        # is NOT an OSError; the cleanup must fall back to the leader-group
+        # kill and never raise out of _kill_tree.
+        process = self._sleeper()
+        killed = []
+        try:
+            with patch.object(dirty_tree_control_1555, 'process_census',
+                              side_effect=subprocess.TimeoutExpired('ps', 30)), \
+                 patch.object(dirty_tree_control_1555, '_kill_group',
+                              lambda proc: killed.append(proc.pid)), \
+                 redirect_stderr(io.StringIO()) as captured:
+                raised = None
+                try:
+                    dirty_tree_control_1555._kill_tree(process)
+                except Exception as error:
+                    raised = error
+            self.assertTrue(raised is None,
+                            '#1705 a ps timeout during the census never '
+                            'escapes the cleanup')
+            self.assertTrue(killed == [process.pid],
+                            '#1705 a ps timeout falls back to the driver '
+                            'group kill')
+            self.assertTrue('#1705 ps census failed (TimeoutExpired' in
+                            captured.getvalue(),
+                            '#1705 a ps timeout is reported, not silent')
+        finally:
+            self._reap(process)
+
+    def test_kill_tree_swallows_group_kill_permission_error(self):
+        # fix-r1 (boundary P2): negative_process._kill_group re-raises its
+        # PermissionError after the reap-and-retry (the macOS EPERM on an
+        # unreaped exited leader); the cleanup must print it, not raise it.
+        process = self._sleeper()
+        try:
+            census = [(process.pid, os.getpid(), process.pid, 'S')]
+            with patch.object(dirty_tree_control_1555, 'process_census',
+                              return_value=census), \
+                 patch.object(dirty_tree_control_1555, '_kill_group',
+                              side_effect=PermissionError('EPERM: leader group')), \
+                 redirect_stderr(io.StringIO()) as captured:
+                raised = None
+                try:
+                    dirty_tree_control_1555._kill_tree(process)
+                except Exception as error:
+                    raised = error
+            self.assertTrue(raised is None,
+                            '#1705 a group-kill PermissionError never escapes '
+                            'the cleanup')
+            self.assertTrue('#1705 the driver group kill failed too '
+                            '(PermissionError' in captured.getvalue(),
+                            '#1705 a group-kill PermissionError is reported, '
+                            'not silent')
+        finally:
+            self._reap(process)
+
+    def test_kill_tree_reports_a_dead_leader(self):
+        # fix-r1 (concurrency#2): the caller's poll()/wait() liveness check and
+        # the ps census are two instants; a leader that exits in between is a
+        # zombie whose children are already reparented, so the ppid walk would
+        # enumerate nobody. The census's state column must turn that into a
+        # visible leader-group fallback, not a silent empty kill.
+        with tempfile.TemporaryDirectory(prefix='1705-dead-') as directory:
+            work = Path(directory)
+            pid_file = work / 'grandchild.pid'
+            process = subprocess.Popen(
+                [sys.executable, '-I', '-c', TREE_DRIVER_EXITING, str(pid_file)],
+                start_new_session=True, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            grandchild = None
+            killed = []
+            try:
+                deadline = time.monotonic() + 15
+                while (not pid_file.exists() and time.monotonic() < deadline
+                       and process.poll() is None):
+                    time.sleep(0.05)
+                self.assertTrue(pid_file.exists(),
+                                '#1705 the stub driver reported its setsid child')
+                grandchild = int(pid_file.read_text().strip())
+                # Wait for the exit WITHOUT reaping (WNOWAIT): the census must
+                # see the zombie row, the exact race shape from the review.
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if os.waitid(os.P_PID, process.pid,
+                                 os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                        break
+                    time.sleep(0.05)
+                with patch.object(dirty_tree_control_1555, '_kill_group',
+                                  lambda proc: killed.append(proc.pid)), \
+                     redirect_stderr(io.StringIO()) as captured:
+                    dirty_tree_control_1555._kill_tree(process)
+                self.assertTrue(killed == [process.pid],
+                                '#1705 a dead leader still gets its group kill')
+                self.assertTrue('#1705 the driver exited before the ps census'
+                                in captured.getvalue(),
+                                '#1705 a leader that died before the census is '
+                                'reported, not silently skipped')
+                # The reparented setsid grandchild is by design unreachable
+                # from here; the note above is what keeps that visible.
+            finally:
+                if grandchild is not None:
+                    try:
+                        os.killpg(grandchild, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                process.wait(timeout=5)
+
+
+class EnvHygieneTests(unittest.TestCase):
+    """(#1695 fix-r1) Control-injection variables never reach the driver env."""
+
+    def test_sanitized_env_drops_injection_variables(self):
+        with patch.dict(os.environ, {'PDRS_NEGCTL_LOCK_FD': '9',
+                                     'PDRS_NEGCTL_RESTORE':
+                                         'src/x.rs\x1fa\x1fb'}):
+            env = dirty_tree_control_1555.sanitized_env()
+        self.assertTrue('PDRS_NEGCTL_LOCK_FD' not in env
+                        and 'PDRS_NEGCTL_RESTORE' not in env,
+                        '#1695 inherited control-injection variables are '
+                        'dropped from the driver environment')
+
+
+class EarlyLinesTests(unittest.TestCase):
+    """(#1695 fix-r1) An empty early window stays an empty list."""
+
+    def test_early_lines_shape(self):
+        self.assertTrue(dirty_tree_control_1555.early_lines('') == [],
+                        "#1695 an empty early window is an empty list, not ['']")
+        self.assertTrue(dirty_tree_control_1555.early_lines('  \n  \n') == [],
+                        '#1695 a whitespace-only early window is an empty list')
+        lines = dirty_tree_control_1555.early_lines(
+            'starting\nlock-requested 5.0\nlock-acquired\nprovenance\n')
+        self.assertTrue(lines == ['starting', 'lock-requested 5.0',
+                                  'lock-acquired'],
+                        '#1695 early_lines keeps the first three whole lines')
+
 
 # These are Python-only branch mutations of the control module, compiled in
 # memory (the #1128 jsobject-density pattern). No product source, no index
@@ -409,6 +610,97 @@ IN_MEMORY_MUTANTS = [
      '    if False:',
      VerdictGridTests, 'test_dirty_verdict_cells',
      '#1713 dirty cell 7: the refusal verdict is KILLED'),
+    # fix-r1 cluster 1 (three review roles hit the same hole): a ps timeout is
+    # a SubprocessError, not an OSError, and _kill_group's EPERM-after-retry
+    # must not escape either -- cleanup never masks the timeout it answers.
+    ('kill-tree-raises-on-census-timeout', dirty_tree_control_1555,
+     '    except (OSError, ValueError, subprocess.SubprocessError) as error:',
+     '    except (OSError, ValueError) as error:',
+     KillTreeTests, 'test_kill_tree_swallows_census_timeout',
+     '#1705 a ps timeout during the census never escapes the cleanup'),
+    ('kill-tree-raises-on-group-kill-eperm', dirty_tree_control_1555,
+     '        _kill_group(process)\n    except OSError as error:',
+     '        _kill_group(process)\n    except ValueError as error:',
+     KillTreeTests, 'test_kill_tree_swallows_group_kill_permission_error',
+     '#1705 a group-kill PermissionError never escapes the cleanup'),
+    # fix-r1 concurrency#2: a leader that died before the census must be
+    # reported and answered with the leader-group fallback, not silently
+    # walked as an empty tree.
+    ('kill-tree-censuses-a-dead-leader', dirty_tree_control_1555,
+     "    if leader_state is None or leader_state.startswith('Z'):",
+     '    if False:',
+     KillTreeTests, 'test_kill_tree_reports_a_dead_leader',
+     '#1705 a leader that died before the census is reported, not silently '
+     'skipped'),
+    # fix-r1 boundary#4: the handoff descriptor must never share a number with
+    # the child's stdio.
+    ('handoff-keeps-a-stdio-descriptor', dirty_tree_control_1555,
+     '        if fd <= 2:',
+     '        if False:',
+     HandoffTests, 'test_handoff_lock_returns_a_non_stdio_fd',
+     '#1695 the handoff descriptor never shares a number with stdio'),
+    # fix-r1 sibling#3: the restore spec is as much a control-injection
+    # variable as the lock fd.
+    ('env-hygiene-keeps-the-restore-spec', dirty_tree_control_1555,
+     "    env.pop('PDRS_NEGCTL_RESTORE', None)",
+     '    pass',
+     EnvHygieneTests, 'test_sanitized_env_drops_injection_variables',
+     '#1695 inherited control-injection variables are dropped from the driver '
+     'environment'),
+    # fix-r1 boundary#3 / simplify#6: an empty early window must stay [].
+    ('early-lines-keeps-empty-strings', dirty_tree_control_1555,
+     "    return [line for line in text.strip().split('\\n') if line][:limit]",
+     "    return text.strip().split('\\n')[:limit]",
+     EarlyLinesTests, 'test_early_lines_shape',
+     "#1695 an empty early window is an empty list, not ['']"),
+    # fix-r1 sibling#6: --negative previously pinned only 3 of 12 lock units
+    # and 4 of 8 dirty units; the remaining branch heads get their own
+    # mutants so every grid assertion is provably falsifiable.
+    ('lock-verdict-ignores-a-passed-lock-during-hold',
+     dirty_tree_control_1555,
+     "    if 'lock-acquired' in early:",
+     '    if False:',
+     VerdictGridTests, 'test_lock_verdict_cells',
+     '#1713 lock cell 1: acquiring the shared lock under the hold is SURVIVED'),
+    ('lock-verdict-ignores-progress-under-hold', dirty_tree_control_1555,
+     '    if progressed:',
+     '    if False:',
+     VerdictGridTests, 'test_lock_verdict_cells',
+     '#1713 lock cell 2: building under the hold is SURVIVED'),
+    ('lock-verdict-ignores-the-min-block-band', dirty_tree_control_1555,
+     '    if blocked < MIN_BLOCK_SECONDS:',
+     '    if False:',
+     VerdictGridTests, 'test_lock_verdict_cells',
+     '#1713 lock cell 9: a too-short block is INVALID'),
+    # The restore branch is one head for two cells, so each half is mutated on
+    # its own to keep the kill bound to exactly one marker.
+    ('dirty-verdict-ignores-unrestored-bytes', dirty_tree_control_1555,
+     '    if not restored or mode_lost:',
+     '    if mode_lost:',
+     VerdictGridTests, 'test_dirty_verdict_cells',
+     '#1713 dirty cell 1: unrestored bytes are INVALID'),
+    ('dirty-verdict-ignores-a-lost-mode', dirty_tree_control_1555,
+     '    if not restored or mode_lost:',
+     '    if not restored:',
+     VerdictGridTests, 'test_dirty_verdict_cells',
+     '#1713 dirty cell 2: a lost file mode is INVALID'),
+    ('dirty-verdict-ignores-driver-mode-loss', dirty_tree_control_1555,
+     "    if provenance.get('negctl_restore_mode_lost'):",
+     '    if False:',
+     VerdictGridTests, 'test_dirty_verdict_cells',
+     '#1713 dirty cell 3: the driver losing the mode is INVALID'),
+    ('dirty-verdict-ignores-control-failure', dirty_tree_control_1555,
+     '    if failure:\n'
+     '        # A control-side failure (handoff timeout, launch error, watchdog\n',
+     '    if False:\n'
+     '        # A control-side failure (handoff timeout, launch error, watchdog\n',
+     VerdictGridTests, 'test_dirty_verdict_cells',
+     '#1713 dirty cell 4: a control-side failure is INVALID'),
+    ('dirty-verdict-ignores-never-reached', dirty_tree_control_1555,
+     '    if not provenance:',
+     '    if False:',
+     VerdictGridTests, 'test_dirty_verdict_cells',
+     '#1713 dirty cell 6: dying before the dirty check is INVALID'),
 ]
 
 
