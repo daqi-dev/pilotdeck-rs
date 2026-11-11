@@ -943,10 +943,15 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
 
     Nested product-only use by one thread is supported through TreeLock;
     parity mutation windows must not nest their non-reentrant ruler lease.
-    Any scripts/gateway-parity path requires common.py in the guarded set:
-    acquire the shared parity lease before yielding, then retain it through
-    restoration and byte verification. Lease polling and each guard flock
-    acquisition have separate 60s bounds; a busy lock fails before source writes.
+    Any scripts/gateway-parity or scripts/parity path takes the shared parity
+    lease (a live parity round imports round.py from this checkout, so the
+    mutation window must be mutually exclusive with it, #2513 fix-r1 review
+    P1-3), and the lease protocol loads common.py from verified bytes, so the
+    module joins the guarded set even when the caller named only a
+    scripts/parity source. Acquire the shared parity lease before yielding,
+    then retain it through restoration and byte verification. Lease polling and
+    each guard flock acquisition have separate 60s bounds; a busy lock fails
+    before source writes.
     """
     root = Path(root).resolve()
     normalized = []
@@ -966,6 +971,26 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         _assert_workspace_sources(root, baseline)
         _ensure_workspace_scanner()
         _assert_product_pristine(root, baseline)
+        # #2513 fix-r1 (review P1-3): a scripts/parity mutation window must
+        # hold the same shared /tmp/pdrs-parity.lock lease a live parity round
+        # takes (that round imports round.py from this checkout), exactly like
+        # the scripts/gateway-parity windows already do. The lease protocol
+        # loads common.py from verified snapshot bytes, so the module joins the
+        # guarded set (pristine-checked and byte-verified like every caller
+        # path, never mutated) even when the caller named only a scripts/parity
+        # source — without this, #2513's control would have to remember an
+        # invariant every gateway-parity caller already pays for.
+        parity = any(relative.startswith(("scripts/gateway-parity/",
+                                          "scripts/parity/"))
+                     for _alias, _path, relative in normalized)
+        if parity and "scripts/gateway-parity/common.py" not in {
+                _relative for _alias, _path, _relative in normalized}:
+            common = root / "scripts/gateway-parity/common.py"
+            if not common.is_file():
+                raise SourceBaselineError(
+                    root, "scripts/gateway-parity/common.py", "missing file")
+            normalized.append((common, common,
+                               "scripts/gateway-parity/common.py"))
         baseline_bytes = {path: _head_bytes(root, relative, baseline)
                           for _alias, path, relative in normalized}
         for _alias, path, relative in normalized:
@@ -979,8 +1004,6 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
         # 继承了。传回去才不会有 mode-only `git diff` 把下一次 preflight 卡死。
         snapshot_modes = {path: path.stat().st_mode & 0o7777
                           for _alias, path, _relative in normalized}
-        parity = any(relative.startswith("scripts/gateway-parity/")
-                     for _alias, _path, relative in normalized)
         lock = (_parity_mutation_lock(root, snapshot, min(lock_timeout, 60))
                 if parity else nullcontext())
         with lock as restored:

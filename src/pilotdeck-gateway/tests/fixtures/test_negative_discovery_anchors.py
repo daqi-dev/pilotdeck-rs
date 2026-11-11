@@ -76,8 +76,9 @@ join, a display string that only looks like a path, a package initialiser whose
 own imports must be keyed, and new blind, import-only or unresolvable tables
 appearing outside both registers.
 
-Scope: the four tables named by #2133 are the ones that carry anchors today;
-adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
+Scope: the four tables named by #2133 are the ones that carried anchors first,
+and ``parity-env-isolation`` (#2513 fix-r1) joined them with its two import
+keys. Adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
 ``DISCOVERY_ANCHORS`` match its own keys. Everything else that already builds
 repository paths from bare file names, or imports a shared helper without
 spelling its key, is listed in ``KNOWN_BLIND`` with a measured reason (the register's own
@@ -124,6 +125,11 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #2513 fix-r1 (review P1-1): the parity-env-isolation table arrived with
+    # its own kill row and a #1066-registered entry point, so it joined TABLES
+    # instead of KNOWN_BLIND — a change to negative_process/negative_selection
+    # schedules it instead of passing silently.
+    'parity-env-isolation/negative_controls.py',
 )
 
 
@@ -4935,7 +4941,11 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
-            'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
+            # fix-r1 (#2513): the fifth registered table is not #2133-named,
+            # so the paragraph now names both provenances and the count lives
+            # on the whole register (the rewording rewrote this parse, which
+            # is the binding the docstring above promises).
+            'registered table count': r'本闸门当前登记 \*\*(\d+) 张表\*\*',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

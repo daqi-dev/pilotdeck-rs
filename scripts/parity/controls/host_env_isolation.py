@@ -138,7 +138,13 @@ class HostEnvIsolationControls(unittest.TestCase):
                 'PILOTDECK_AGENT_LOOP_SIDECAR_PATH': '/p2513-dummy/sidecar-path',
                 'PILOTDECK_AGENT_LOOP_TCP_HOST': 'p2513.invalid',
                 'PILOTDECK_AGENT_LOOP_TCP_PORT': '62513',
-                'P2513_HOST_PROBE': '1'}
+                # The probe carries the family prefix without being part of
+                # the deployment family the cleanup tuple names: a prefix-
+                # wide strip would remove it and turn this assertion red, so
+                # the enumeration below is discriminated, not assumed
+                # (#2513 fix-r1 review P2#5 — the probe used to be
+                # P2513_HOST_PROBE, which both strips survived).
+                'PILOTDECK_HOST_PROBE': '1'}
         with patch.object(sys, 'argv', argv), \
                 patch.dict(os.environ, {'PDRS_OUT': str(out_root), **host}), \
                 patch.object(G, 'WORKTREE', worktree), patch.object(G, 'BASELINE', baseline), \
@@ -176,10 +182,12 @@ class HostEnvIsolationControls(unittest.TestCase):
                             '#2513 PILOT_HOME 未按 round.py 构造传入子进程环境')
             self.assertTrue(env.get('TMPDIR') == str(out / 'tmp'),
                             '#2513 TMPDIR 未按 round.py 构造传入子进程环境')
-            # Enumerated isolation, not a prefix-wide strip: an unrelated
-            # host variable must survive into the child environment.
-            self.assertTrue(env.get('P2513_HOST_PROBE') == '1',
-                            '#2513 无关宿主变量 P2513_HOST_PROBE 被剥离：'
+            # Enumerated isolation, not a prefix-wide strip: a host variable
+            # outside the named tuple but inside the PILOTDECK_ prefix must
+            # survive into the child environment (the prefix is what makes
+            # this discriminating, #2513 fix-r1 review P2#5).
+            self.assertTrue(env.get('PILOTDECK_HOST_PROBE') == '1',
+                            '#2513 无关宿主变量 PILOTDECK_HOST_PROBE 被剥离：'
                             '隔离被改成了整前缀剥离（非本单语义）')
             # The pop only edits the child env copy; round's own process
             # environment must still carry the host export.

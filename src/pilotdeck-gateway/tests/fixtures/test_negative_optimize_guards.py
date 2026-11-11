@@ -104,6 +104,10 @@ SCRIPTS = (
     # refuse_unusable_target + verdict_exit); its startup refusals join the
     # machine-checked matrix here, and its --check is also wired into CI.
     ('issue-2495/negative_controls.py', (), ()),
+    # #2513 fix-r1 (review P2#2): the parity-env-isolation table moved its
+    # claim_dir behind the selection and target refusals, so its "never
+    # started" contract joins the matrix; its --check is also wired into CI.
+    ('parity-env-isolation/negative_controls.py', (), ('-I',)),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

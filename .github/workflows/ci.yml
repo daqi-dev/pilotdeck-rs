@@ -283,6 +283,10 @@ jobs:
           # （stale 扫描在树锁内读净树，锁忙本身也是 rc 2 拒跑）；全量杀灭轮（需要 cargo
           # 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/issue-2495/negative_controls.py --check
+          # #2513 fix-r1（评审 P2#3，同 #1433/#2590 先例）：parity-env-isolation 负控
+          # 夹具的 --check 进 CI——锚点 / 变异体编译 / 泄漏标记绑定 / 静态名册任一漂移
+          # 即本步非零退出；全量杀灭轮（需要净树与共享 parity 租约）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/parity-env-isolation/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零
