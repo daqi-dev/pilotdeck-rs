@@ -161,15 +161,20 @@ mutations = [
      '#1468 a handle outside the lease root must never be read'),
     # The pre-open identity is the one term inside the binding that a rename
     # after the open defeats; dropping only it must let the renamed-in
-    # outside handle through, so the named test goes red.
+    # outside handle through, so the named test goes red. #2098 fix-r2
+    # (MM sibling#3) rebound: `rename_after_open_is_not_found` now covers its
+    # rename with a different-inode replacement, so its refusal comes from
+    # the revalidation identity and this mutant would survive it; the
+    # multi-step sequence is the fixture where the approved-identity term is
+    # the last line of defense — dropping it lets the outside bytes inline.
     ('approved-identity-dropped', SERVICES,
      '''            let same_object = file
                 .metadata()
                 .map(|opened| attachment_identity_matches(approved, &opened))
                 .unwrap_or(false);''',
      '            let same_object = true;',
-     'native_process::services_tests::rename_after_open_is_not_found',
-     '#1468 a renamed-in outside handle must be diagnosed not-found'),
+     'native_process::services_tests::multi_step_swap_across_all_windows_is_not_found',
+     '#1468 a handle outside the lease root must never be read'),
     ('handle-path-fail-open-passes', SERVICES,
      '''        // #1468: an unavailable handle path is never approved.
         Err(_) => false,''',
@@ -371,6 +376,18 @@ mutations = [
      '        .custom_flags(libc::O_NONBLOCK);',
      'native_process::services_tests::composer_lease_entry_swapped_for_a_same_inode_symlink_is_diagnosed_not_found',
      '#2098 a same-inode symlink swapped for the lease entry must be diagnosed not-found'),
+    # #2098 fix-r2 (P2a): the composer's type term had no row of its own —
+    # the window-swap FIFO test above is also killed by the approved-identity
+    # term (its swap changes the inode mid-sequence), so it cannot tell a
+    # dropped type term from a working one. The named fixture is a FIFO in
+    # place before the whole sequence: every identity term describes the same
+    # object, so the type term is the only refusal — without it the FIFO is
+    # read empty and inlined, and the not-found assertion is the kill.
+    ('composer-type-check-dropped', SERVICES,
+     '        if !metadata.file_type().is_file() && !metadata.file_type().is_dir() {',
+     '        if false {',
+     'native_process::services_tests::composer_lease_entry_that_is_a_fifo_in_place_is_diagnosed_not_found',
+     '#2098 a FIFO lease entry in place before the open must be diagnosed not-found'),
 ]
 
 

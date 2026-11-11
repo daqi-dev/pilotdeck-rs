@@ -2070,8 +2070,11 @@ fn leaf_swapped_after_revalidation_fails_identity() {
 /// outside regular file before the open (so the open itself lands on the
 /// outside inode; #2098's guarded open refuses a symlink at the open, so the
 /// window swap-in is a hard link), is swapped back to a real in-root file
-/// for the post-open revalidation, and is swapped onto the outside file
-/// again for the path-stat/fstat identity comparison. Every path-based check
+/// for the post-open revalidation, and is really renamed onto the outside
+/// file again for the path-stat/fstat identity comparison (fix-r2 MM
+/// sibling#3: the covering step is a rename over a different-inode entry —
+/// renaming a hard link's other name over the leaf would be a POSIX
+/// same-inode no-op). Every path-based check
 /// passes while the opened handle is the outside file: only binding the
 /// approval to the handle's own resolved path (not any spelling checked
 /// around it) rejects the read. All three windows must fire and the
@@ -2123,9 +2126,13 @@ fn multi_step_swap_across_all_windows_is_not_found() {
         let leaf = path.clone();
         let outside_link = outside_root.join("outside.png");
         move |_| {
-            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf again");
-            std::fs::hard_link(&outside_link, &leaf)
-                .expect("#1468 swap the leaf for a hard link onto the outside file again");
+            // fix-r2 (MM sibling#3): a real rename — the outside file and the
+            // restored leaf are different inodes, so the leaf's entry is
+            // genuinely covered, not POSIX-no-op'ed (`probe-rename-getpath`
+            // P1/P3: a same-inode rename changes nothing, and `F_GETPATH`
+            // keeps answering the open-time name either way).
+            std::fs::rename(&outside_link, &leaf)
+                .expect("#1468 rename the outside file over the in-root leaf");
             fired.set(fired.get() + 1);
         }
     });
@@ -2176,13 +2183,15 @@ fn multi_step_swap_across_all_windows_is_not_found() {
 /// the object's *current* name, so a swap alone is not enough to pin it. Open
 /// the outside file through a swapped-in hard link (#2098's guarded open
 /// refuses a symlink at the open, so the window swap-in is a hard link onto
-/// the outside regular file), then rename that outside file over the leaf:
-/// the handle's name is now a genuine in-root spelling, the post-open
-/// canonicalize passes, and the path stat and the handle agree on
-/// `(dev, inode)` — only the identity recorded before the open (step 0)
-/// still shows that the approved file and the opened file are different
-/// objects. Without it the outside bytes are inlined (RED on the previous
-/// head, where the multi-step test also passed).
+/// the outside regular file), then really rename a different-inode
+/// replacement over the leaf (fix-r2 MM sibling#3: renaming the hard link's
+/// other name over the leaf is a POSIX same-inode no-op, so the pre-fix-r2
+/// shape never renamed anything). `F_GETPATH` keeps answering the open-time
+/// spelling (`_tmp/20261111-issue-2098/fix-r2/probe-rename-getpath`, P3), so
+/// the handle's name is still a genuine in-root spelling and the post-open
+/// canonicalize passes — but the path the leaf now names and the handle the
+/// open returned are different objects, so the revalidation identity
+/// refuses the read. Without it the outside bytes are inlined.
 #[cfg(unix)]
 #[test]
 fn rename_after_open_is_not_found() {
@@ -2203,6 +2212,10 @@ fn rename_after_open_is_not_found() {
     std::fs::create_dir_all(&outside_root).expect("#1468 outside rename fixture dir");
     let outside_file = outside_root.join("outside.png");
     std::fs::write(&outside_file, b"outside-bytes").expect("#1468 outside rename fixture");
+    // A real rename needs a different inode to cover the leaf with.
+    let replacement = outside_root.join("replacement.png");
+    std::fs::write(&replacement, b"replacement-bytes")
+        .expect("#1468 replacement fixture for the real rename");
     let fired = Rc::new(Cell::new(0));
     let _before = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeOpen, {
         let fired = Rc::clone(&fired);
@@ -2218,9 +2231,10 @@ fn rename_after_open_is_not_found() {
     let _after = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, {
         let fired = Rc::clone(&fired);
         let leaf = path.clone();
+        let replacement = replacement.clone();
         move |_| {
-            std::fs::rename(&outside_file, &leaf)
-                .expect("#1468 rename the outside file over the leaf");
+            std::fs::rename(&replacement, &leaf)
+                .expect("#1468 rename the replacement over the leaf");
             fired.set(fired.get() + 1);
         }
     });
@@ -2239,7 +2253,7 @@ fn rename_after_open_is_not_found() {
     let blocks = content_blocks(&result);
     negative_assert!(
         diagnostics_block(&blocks)
-            .contains("(attachment handle is not the lease object approved before the open)."),
+            .contains("(attachment resolved to a different file between revalidation and read)."),
         "#1468 a renamed-in outside handle must be diagnosed not-found"
     );
     negative_assert!(
@@ -2391,6 +2405,52 @@ fn composer_lease_entry_swapped_for_a_same_inode_symlink_is_diagnosed_not_found(
     negative_assert!(
         result.get("allowedReadFiles").is_none(),
         "#2098 a same-inode symlink swapped for the lease entry must never register \
+         allowedReadFiles"
+    );
+}
+
+/// #2098 fix-r2 (P2a): the composer's type term had no kill row of its own —
+/// the window-swap FIFO test above is also killed by the approved-identity
+/// term (its swap changes the inode mid-sequence), so it cannot tell a
+/// dropped type term from a working one. This fixture is a FIFO in place
+/// *before* the whole sequence: no swap, so the approved stat, the
+/// post-revalidation path stat, and the handle's fstat all describe the same
+/// object and every identity term passes — the type term is the only
+/// refusal. Under a dropped type term the no-writer `O_NONBLOCK` read returns
+/// empty and the FIFO is inlined as an empty image.
+#[cfg(unix)]
+#[test]
+fn composer_lease_entry_that_is_a_fifo_in_place_is_diagnosed_not_found() {
+    let scratch = Scratch::new();
+    let leaf = scratch.lease("target.png");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&leaf)
+        .status()
+        .expect("#2098 run mkfifo for the in-place FIFO lease fixture");
+    assert!(
+        made.success(),
+        "#2098 create the in-place FIFO lease fixture for the composer type term"
+    );
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&leaf, "image/png")],
+    )
+    .expect("#2098 the composer answers instead of waiting on the in-place FIFO");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains("Image attachment not found"),
+        "#2098 a FIFO lease entry in place before the open must be diagnosed not-found"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#2098 a FIFO lease entry in place before the open must never be inlined"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#2098 a FIFO lease entry in place before the open must never register \
          allowedReadFiles"
     );
 }
