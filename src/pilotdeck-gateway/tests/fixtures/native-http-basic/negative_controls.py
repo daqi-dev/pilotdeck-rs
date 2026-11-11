@@ -295,9 +295,18 @@ switches = [
     # pre-fix-r2 behavior — so the grid expiry arms the 51-byte 408 into the
     # never-accepted head's connection and the close never lands while the
     # transport is parked.
+    # fix-r3 (rev2 条 1, the released-body corner): the held-body cell keeps
+    # the in-flight slot up forever, so the mutant's red face only pins the
+    # never-released corner; the released variant — body handed off at
+    # +88.4 s, in-flight slot gone, the follow-up half head withheld behind
+    # `write_pending` alone — is the same mirror semantics (the pre-fix-r2
+    # set condition) so the same mutant kills both cells, each at its own
+    # close-landing anchor.
     ('native-http-headersent-needs-acceptance', SOURCE_PROXY,
-     'unaccepted_head_grid_destroys_silently_like_ts',
-     "#1517-f2 the never-accepted head's close lands at the +150 s grid point"),
+     ['unaccepted_head_grid_destroys_silently_like_ts',
+      'released_body_unaccepted_head_grid_destroys_silently_like_ts'],
+     ["#1517-f2 the never-accepted head's close lands at the +150 s grid point",
+      '#1517-f3 the released body\'s close lands at the +150 s grid point']),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
