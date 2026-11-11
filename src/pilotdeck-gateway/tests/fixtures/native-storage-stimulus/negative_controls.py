@@ -221,6 +221,9 @@ mutations = [
     # unconditionally inside the release-writing branch, so a stalled barrier
     # (block receipt on disk, release and complete forever absent — the worker
     # died inside wait_for_release) spun `Drop` forever instead of ending.
+    # fix-r2: the deadline is the named GUARD_BUDGET constant — anchors follow
+    # the constant, the mutation semantics are unchanged (refresh in the
+    # release branch = infinite spin).
     ('drop-budget-refreshed-in-release-branch', TESTS,
      '''            if observed.0.is_none()
                 && let Some(seq) = observed.1
@@ -239,7 +242,7 @@ mutations = [
             let current = sample(observe("block", 0));
             if current != observed {
                 observed = current;
-                deadline = Instant::now() + Duration::from_secs(2);
+                deadline = Instant::now() + GUARD_BUDGET;
             }''',
      '''            if observed.0.is_none()
                 && let Some(seq) = observed.1
@@ -249,7 +252,7 @@ mutations = [
                 if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
                     let _ = fs::rename(&temporary, self.control.join("release.json"));
                 }
-                deadline = Instant::now() + Duration::from_secs(2);
+                deadline = Instant::now() + GUARD_BUDGET;
             }
             // Only a receipt that actually advanced earns the durable write behind
             // it a fresh budget — the barrier the worker reaches late must not
@@ -260,6 +263,15 @@ mutations = [
             if current != observed {
                 observed = current;
             }''',
+     'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
+    # fix-r2: the completed-guard window is expressed against the named
+    # GUARD_BUDGET, not a fixed 5 s sample. Doubling the budget leaves the
+    # guard correct-but-slow — the old "sleep 5 s then check once" sampling
+    # passed that green; the bounded window (GUARD_BUDGET + allowance) kills
+    # it at the named assertion.
+    ('guard-budget-stretched', TESTS,
+     'let mut deadline = Instant::now() + GUARD_BUDGET;',
+     'let mut deadline = Instant::now() + GUARD_BUDGET + GUARD_BUDGET;',
      'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
     # #1805 item 2: receipts pair with the current barrier by sequence. With
     # the floor neutralized, a key that completed an earlier round reads as
