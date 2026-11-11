@@ -97,6 +97,10 @@ GUARDED = [
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',
     FIXTURES / 'negative_selection.py',
+    # anchor_selfcheck is lazily imported only at the denominator check
+    # (after verify_unchanged); without this entry a concurrent edit to it
+    # would run unhashed judgement code (rev: concurrency#1, PR #2974).
+    FIXTURES / 'anchor_selfcheck.py',
     Path(__file__).resolve(),
 ]
 
