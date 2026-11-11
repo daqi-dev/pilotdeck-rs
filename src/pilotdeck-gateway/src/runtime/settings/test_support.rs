@@ -980,6 +980,7 @@ impl Harness {
             .owner()
             .get_or_create(SessionContext {
                 session_key: JsString::from(key),
+                session_id: JsString::from(key),
                 project_key: Some("/p".into()),
                 channel_key: JsString::from(""),
                 allowed_tools: None,

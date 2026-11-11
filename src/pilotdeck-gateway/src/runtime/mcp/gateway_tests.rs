@@ -406,6 +406,7 @@ impl Harness {
                     .owner()
                     .get_or_create(SessionContext {
                         session_key: key.clone(),
+                        session_id: key.clone(),
                         project_key: Some("/p".into()),
                         channel_key: JsString::from(""),
                         allowed_tools: None,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#2692 fix-r1/fix-r2: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
+"""#2692 fix-r1/fix-r2/fix-r3: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
 
 The submit chain keeps TS's two key domains apart (`ts-prodkey-probe.out`):
 the composite run key spells `String(sessionKey)` (null → "null", absent →
@@ -31,6 +31,12 @@ test that must die:
   record past the band also skips and the load no longer fails like TS's.
 - `echo-drops-raw-key`: the read face echoes a fixed null instead of the
   request's own value (probe cell b echo shape).
+- `session-id-uses-router-key` (fix-r3 条1): the SessionContext handoff folds
+  the path/persistent-identity domain back onto the router key, so a
+  non-string sessionKey turn dies inside the production factory's
+  `create_storage` — `std::fs` rejects the raw-value tag's NUL bytes before
+  any transcript opens — instead of reaching model resolution, and
+  null.jsonl never lands on disk (the production-fixture a1 cell).
 
 Each mutant compiles before its exact test runs. Every case is reported,
 then restoration and all statuses determine the exit code; never bypass HEAD.
@@ -205,6 +211,17 @@ mutations = [
      '            }\n'
      '        }',
      echo_test, '#2692 the miss echoes the raw request value'),
+    # fix-r3 条1: the SessionContext handoff folds the path/identity domain
+    # back onto the router key (the fix-r1 single-domain shape), so the
+    # null-keyed turn dies inside the production factory's create_storage
+    # (std::fs rejects the raw-value tag's NUL bytes before any transcript
+    # opens) instead of reaching model resolution, and null.jsonl never
+    # lands on disk.
+    ('session-id-uses-router-key', SUBMIT,
+     '                session_id: run.session_key.clone(),',
+     '                session_id: router_key.clone(),',
+     CFG + 'real_services_null_session_key_turn_dies_at_model_resolution',
+     '#2692 the agent_status message'),
 ]
 # Every bound assertion lives verbatim in the scanned sources; each needs its
 # own pin or the completeness rule refuses the run (#2065 shape).
@@ -221,6 +238,7 @@ LITERAL_ANCHORS = [
     (GATES, '#2692 cell F code'),
     (GATES, '#2692 permission cell F code'),
     (GATES, '#2692 the record body keeps the raw JSON null'),
+    (GATES, '#2692 the agent_status message'),
 ]
 
 # The denominator is this literal, never `len(mutations)` (#2391 fix-r1,
@@ -240,6 +258,7 @@ EXPECTED_NAMES = (
     'submit-raw-spelling',
     'registry-skip-reverted',
     'echo-drops-raw-key',
+    'session-id-uses-router-key',
 )
 
 

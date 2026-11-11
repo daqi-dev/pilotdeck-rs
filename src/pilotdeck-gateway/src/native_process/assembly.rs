@@ -366,110 +366,67 @@ pub(super) async fn start_observed_with_permission_rule_sets(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn start_assembly(
-    options: Options,
-    env: Env,
-    upload_cleanup_interval: Duration,
-    cleanup_observer: CleanupObserver,
-    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
-    webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
-    switch_slots: Option<super::switch_wiring::AssemblySwitchSlots>,
-    seams: AssemblySeams,
-) -> Result<TurnGateway, ProxyError> {
-    let AssemblySeams {
+/// #2692 fix-r3: the production session-factory wiring, extracted verbatim
+/// from `start_assembly` so the management fixtures can build the very
+/// factory the isolated process runs (real `create_storage` -> fence ->
+/// `open_and_adopt` -> tool-results budget -> host binding) instead of a
+/// stub whose `create` ignores the `SessionContext`.
+pub(super) struct SessionFactoryWiring {
+    pub project: Arc<ProjectRuntimeRegistry>,
+    pub options: Options,
+    pub env: Env,
+    pub recorders: Recorders,
+    pub interactions: Arc<GatewayInteractionCoordinator>,
+    pub permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry>,
+    pub session_overrides: Arc<super::SessionOverrides>,
+    /// The gateway-level MCP config handle; production publishes into it
+    /// before serving requests, and the factory's prepare reads it live.
+    pub mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>>,
+    pub acquire_miss_report: AcquireMissReport,
+    /// The #1371 loop-stimulus plan resolved at assembly startup: an armed
+    /// directory with a plan suppresses the automatic title request. Passed
+    /// through so the factory's prepare sees the same resolution instant the
+    /// assembly logged, not a re-read that could race the sidecar.
+    pub loop_planned: bool,
+    /// The prepare closure's MCP composition diagnostics; production logs
+    /// to stderr like the factory's session diagnostic, a fixture may pass
+    /// None to keep its output clean.
+    pub mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink>,
+}
+
+pub(super) fn production_session_factory(
+    wiring: SessionFactoryWiring,
+) -> Arc<ProjectSessionFactory> {
+    let SessionFactoryWiring {
+        project,
+        options,
+        env,
+        recorders,
+        interactions,
         permission_rule_sets,
+        session_overrides,
+        mcp_config,
         acquire_miss_report,
-        publish_mcp_config,
-    } = seams;
-    let registry_switch = run_registry_switch(&env)?;
-    let stimulus_switch = storage_stimulus_switch(&env)?;
-    if let Some(dir) = &stimulus_switch {
-        // The #1368/#1370 storage stimulus boundary witness: the controlled
-        // entry states its resolved directory at construction, before any turn
-        // is driven. The receipt format follows the #1369 construction style.
-        eprintln!("native storage stimulus on {}", dir.display());
-    }
-    let loop_switch = loop_stimulus_switch(&env)?;
-    // #1371: only a resolved *plan* replaces the turn. An armed directory
-    // without a plan is inert, so it must keep the production behaviour byte
-    // for byte, automatic title request included. The plan is resolved here,
-    // at gateway startup; the sidecar resolves the same file when it starts,
-    // so the collector must write `loop.json` before launching the gateway
-    // (see the `loop_stimulus` module docs) or the two processes can disagree.
-    let loop_planned = pilotdeck_transport::loop_stimulus::LoopStimulus::global()
-        .is_some_and(|stimulus| stimulus.is_planned());
-    if let Some(dir) = &loop_switch {
-        // #1371: the controlled loop/fence entry states its directory before
-        // any turn is driven, in the same construction style as #1370.
-        eprintln!("native loop stimulus on {}", dir.display());
-    }
-    if let Some(switch) = &registry_switch {
-        // The #1368 registry boundary witness: the switch itself states its
-        // resolved state at construction, before any turn is driven.
-        let state = match switch {
-            RunRegistrySwitch::On => "on",
-            RunRegistrySwitch::Off => "off",
-        };
-        eprintln!("native run registry {state}");
-    }
-    // Management can inspect existing skills; turn admission still checks that
-    // unsupported skill prompt/tool composition is not silently omitted.
-    validate_profile_inner(&options, &env, true).await?;
-    register_project(&options)?;
-    let project = project_registry(&options, &env);
-    let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
-    let snapshot_recorder =
-        snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;
-    let memory = memory::build_memory(options.clone(), project.clone()).await?;
-    let recorders: Recorders = Arc::default();
-    let permission_rule_sets = permission_rule_sets.unwrap_or_default();
-    let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
-        permission_grants: Some(permission_rule_sets.clone()),
-        ..InteractionOptions::default()
-    }));
-    let user_dialog_bus = user_dialog::build_user_dialog_bus();
-    // #1864: the per-gateway session selection store. One instance serves
-    // both writers (the three selector methods on `Requests`) and the reader
-    // (the prepare closure composing each session's agent config).
-    let session_overrides: Arc<super::SessionOverrides> = Arc::default();
-    let prepare_overrides = session_overrides.clone();
+        loop_planned,
+        mcp_diagnostic,
+    } = wiring;
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
     let prepare_recorders = recorders.clone();
     let prepare_interactions = interactions.clone();
     let prepare_permission_rule_sets = permission_rule_sets.clone();
-    // Forward reference so the prepare closure can call sync_permission_rules
-    // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
-    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
-    // #1429: report at most once per assembly — a per-acquire stderr write would
-    // be unbounded if the publication regressed for good.
-    let acquire_miss_report: AcquireMissReport =
-        acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
-    let prepare_acquire_miss_report = acquire_miss_report.clone();
+    let prepare_mcp_config = mcp_config;
+    let prepare_acquire_miss_report = acquire_miss_report;
+    let prepare_mcp_diagnostic = mcp_diagnostic;
     let prepare_acquire_miss_reported: Arc<std::sync::OnceLock<()>> = Arc::default();
-    // #1433: the prepare closure's MCP composition diagnostics; production
-    // logs to stderr like the factory's session diagnostic.
-    let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> = Some(
-        Arc::new(|message: String, error: Option<RuntimeError>| match error {
-            Some(error) => eprintln!("native session MCP: {message}: {error}"),
-            None => eprintln!("native session MCP: {message}"),
-        }),
-    );
-    // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
-    // production always publishes into the handle the prepare closure reads.
-    let build_mcp_config = if publish_mcp_config {
-        prepare_mcp_config.clone()
-    } else {
-        Arc::new(std::sync::OnceLock::new())
-    };
-    let storage_project = project.clone();
+    let prepare_overrides = session_overrides;
+    let storage_project = project;
     let storage_options = options.clone();
     // #897: the composition-time budget preflight resolves the same directory
     // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
     let budget_project = options.project.clone();
-    let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
+    Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
@@ -671,7 +628,17 @@ async fn start_assembly(
                     title_provider: (!loop_planned).then_some(title),
                     ..Default::default()
                 };
-                let session = context.session_key;
+                // #2692 fix-r3: two key domains leave the context here. The
+                // recorders map is written under the persistent-identity
+                // spelling — its readers address runs by their client-facing
+                // sessionKey (Services::record_failure looks up run.session_key;
+                // the session_dir metadata methods look up the request's string
+                // key, which is the on-disk identity). The permission-mode
+                // source keeps the router-domain key, matching the TS registry
+                // (GatewaySessionPermissionModeRegistry) keyed by the raw
+                // sessionKey value.
+                let session = context.session_id;
+                let permission_session = context.session_key;
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -685,7 +652,7 @@ async fn start_assembly(
                         // the prepare closure read back.
                         let permission_source = {
                             let session_overrides = session_overrides.clone();
-                            let session = session.clone();
+                            let session = permission_session.clone();
                             Arc::new(move || session_overrides.permission_mode(&session))
                         };
                         let deployment = Deployment::Stdio {
@@ -740,7 +707,7 @@ async fn start_assembly(
                     .context()
                     .resource(Resource::Persistence)
                     .ok_or_else(|| RuntimeError::new("Native persistence is missing."))?;
-                let path = transcript_path(&options, &context.session_key);
+                let path = transcript_path(&options, &context.session_id);
                 let open_path = path.clone();
                 Ok(SessionStorage::Recording(RecordingPlan {
                     transcript_path: path,
@@ -755,7 +722,7 @@ async fn start_assembly(
                                 )
                             })?;
                         persistence
-                            .create_session(context.session_key.clone(), Some(open_path.clone()))
+                            .create_session(context.session_id.clone(), Some(open_path.clone()))
                     }),
                 }))
             })
@@ -765,7 +732,108 @@ async fn start_assembly(
             super::tools::session_tool_results_dir(&budget_project, session_id)
         })),
         diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_assembly(
+    options: Options,
+    env: Env,
+    upload_cleanup_interval: Duration,
+    cleanup_observer: CleanupObserver,
+    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
+    webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
+    switch_slots: Option<super::switch_wiring::AssemblySwitchSlots>,
+    seams: AssemblySeams,
+) -> Result<TurnGateway, ProxyError> {
+    let AssemblySeams {
+        permission_rule_sets,
+        acquire_miss_report,
+        publish_mcp_config,
+    } = seams;
+    let registry_switch = run_registry_switch(&env)?;
+    let stimulus_switch = storage_stimulus_switch(&env)?;
+    if let Some(dir) = &stimulus_switch {
+        // The #1368/#1370 storage stimulus boundary witness: the controlled
+        // entry states its resolved directory at construction, before any turn
+        // is driven. The receipt format follows the #1369 construction style.
+        eprintln!("native storage stimulus on {}", dir.display());
+    }
+    let loop_switch = loop_stimulus_switch(&env)?;
+    // #1371: only a resolved *plan* replaces the turn. An armed directory
+    // without a plan is inert, so it must keep the production behaviour byte
+    // for byte, automatic title request included. The plan is resolved here,
+    // at gateway startup; the sidecar resolves the same file when it starts,
+    // so the collector must write `loop.json` before launching the gateway
+    // (see the `loop_stimulus` module docs) or the two processes can disagree.
+    let loop_planned = pilotdeck_transport::loop_stimulus::LoopStimulus::global()
+        .is_some_and(|stimulus| stimulus.is_planned());
+    if let Some(dir) = &loop_switch {
+        // #1371: the controlled loop/fence entry states its directory before
+        // any turn is driven, in the same construction style as #1370.
+        eprintln!("native loop stimulus on {}", dir.display());
+    }
+    if let Some(switch) = &registry_switch {
+        // The #1368 registry boundary witness: the switch itself states its
+        // resolved state at construction, before any turn is driven.
+        let state = match switch {
+            RunRegistrySwitch::On => "on",
+            RunRegistrySwitch::Off => "off",
+        };
+        eprintln!("native run registry {state}");
+    }
+    // Management can inspect existing skills; turn admission still checks that
+    // unsupported skill prompt/tool composition is not silently omitted.
+    validate_profile_inner(&options, &env, true).await?;
+    register_project(&options)?;
+    let project = project_registry(&options, &env);
+    let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
+    let snapshot_recorder =
+        snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;
+    let memory = memory::build_memory(options.clone(), project.clone()).await?;
+    let recorders: Recorders = Arc::default();
+    let permission_rule_sets = permission_rule_sets.unwrap_or_default();
+    let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
+        permission_grants: Some(permission_rule_sets.clone()),
+        ..InteractionOptions::default()
     }));
+    let user_dialog_bus = user_dialog::build_user_dialog_bus();
+    // #1864: the per-gateway session selection store. One instance serves
+    // both writers (the three selector methods on `Requests`) and the reader
+    // (the prepare closure composing each session's agent config).
+    let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    // Forward reference so the prepare closure can call sync_permission_rules
+    // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
+    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
+    // #1429: report at most once per assembly — a per-acquire stderr write would
+    // be unbounded if the publication regressed for good.
+    let acquire_miss_report: AcquireMissReport =
+        acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
+    // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
+    // production always publishes into the handle the prepare closure reads.
+    let build_mcp_config = if publish_mcp_config {
+        prepare_mcp_config.clone()
+    } else {
+        Arc::new(std::sync::OnceLock::new())
+    };
+    let factory = production_session_factory(SessionFactoryWiring {
+        project: project.clone(),
+        options: options.clone(),
+        env: env.clone(),
+        recorders: recorders.clone(),
+        interactions: interactions.clone(),
+        permission_rule_sets: permission_rule_sets.clone(),
+        session_overrides: session_overrides.clone(),
+        mcp_config: prepare_mcp_config.clone(),
+        acquire_miss_report: acquire_miss_report.clone(),
+        loop_planned,
+        mcp_diagnostic: Some(Arc::new(
+            |message: String, error: Option<RuntimeError>| match error {
+                Some(error) => eprintln!("native session MCP: {message}: {error}"),
+                None => eprintln!("native session MCP: {message}"),
+            },
+        )),
+    });
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file
         // registry is never opened and no run persistence happens at all.

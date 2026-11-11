@@ -1142,7 +1142,7 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
                         project_root: directory.join("sandbox"),
                         pilot_home: directory.join("home"),
                         transcript_path: directory.join("transcript.jsonl"),
-                        session_id: context.session_key,
+                        session_id: context.session_id,
                     },
                 )))
             })
@@ -1374,6 +1374,7 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
     let restored = owner
         .get_or_create(SessionContext {
             session_key: SESSION.into(),
+            session_id: SESSION.into(),
             project_key: None,
             channel_key: "test".into(),
             allowed_tools: None,

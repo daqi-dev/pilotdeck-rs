@@ -802,7 +802,12 @@ impl TurnSubmitter {
             let _ = barrier.await;
         };
         tokio::join!(manage, consume);
-        let rejected = self.host.reject_pending(&router_key, "turn_ended");
+        // The pending-turn buses register under the turn's ExecutionIdentity
+        // sessionId (the template spelling, ReloadSource.session_id), so the
+        // turn_ended rejection keys by the same spelling as the timer arm's
+        // turn_timeout rejection — not by the raw-value router key (which the
+        // owner maps and the coordinator use).
+        let rejected = self.host.reject_pending(&run.session_key, "turn_ended");
         // TS releases admission before post_agent and the timeout close; fence
         // completion remains after both. Keep workspace ownership until then.
         cleanup.end_admission();
@@ -1031,6 +1036,11 @@ impl TurnSubmitter {
             .owner
             .get_or_create(SessionContext {
                 session_key: router_key.clone(),
+                // Path/persistent-identity domain: template spelling. run.session_key
+                // is the submit-side template spelling (null -> "null", missing ->
+                // "undefined"); router_key carries the raw-value tag and must not
+                // leak into paths (std::fs rejects NUL bytes).
+                session_id: run.session_key.clone(),
                 project_key: run.project_key.clone(),
                 channel_key: string(field(input, "channelKey")),
                 allowed_tools: strings(field(input, "allowedTools")),

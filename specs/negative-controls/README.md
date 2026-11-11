@@ -143,6 +143,12 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 取得之后含还原窗口的失败作废已跑行、发布 summary 并退 1），
 名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
 参数、空输出槽或 `--compile-only` 即拒跑）。
+以及 `native-blankkey-submit`（#2692 fix-r1/fix-r2 起按 `negative_selection`
+契约落形：`EXPECTED_NAMES` 静态名册 + `registered` 启动对表 + `claim_dir` +
+`missing_target`/`refuse_unusable_target` + `verdict_exit`，`--check` 进 CI、
+入口进 `test_negative_optimize_guards.py` 拒跑矩阵；断言字面量以
+`LITERAL_ANCHORS` 逐行绑定被扫源，fix-r3 增 `session-id-uses-router-key` 行，
+钉 SessionContext 路径域与映射域的分离）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，

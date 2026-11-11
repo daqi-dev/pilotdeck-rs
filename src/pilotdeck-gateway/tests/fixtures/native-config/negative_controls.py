@@ -355,7 +355,7 @@ mutations = [
     ('permission-blank-key-busy-skipped', CONFIG,
      '        if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {',
      '        if request_key\n'
-     '            .is_ok_and(|key| trimmed_string_is_non_empty(key) && self.owner.has_active_turn(&key))\n'
+     '            .is_ok_and(|key| trimmed_string_is_non_empty(&key) && self.owner.has_active_turn(&key))\n'
      '        {',
      CFG + 'set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key',
      '#1872 the blank key answers busy for permission'),

@@ -781,6 +781,7 @@ impl Requests {
             })?;
         let context = SessionContext {
             session_key: session_key.clone(),
+            session_id: session_key.clone(),
             project_key: params
                 .get("projectKey")
                 .and_then(JsValue::as_string)
@@ -1072,6 +1073,14 @@ mod tests {
     fn setup_fixture() -> (crate::native_process::management_tests::Scratch, Requests) {
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1457 config fixture")
+    }
+
+    /// #2692 fix-r3: the production fixture — same scratch, but the owner
+    /// runs `assembly::production_session_factory`, so turns cross the real
+    /// storage/fence/host-binding chain.
+    fn production_setup_fixture() -> (crate::native_process::management_tests::Scratch, Requests) {
+        std::panic::catch_unwind(crate::native_process::management_tests::production_setup)
+            .expect("#2692 production fixture")
     }
 
     fn selection(mode: &str, provider: &str, model: &str) -> JsValue {
@@ -1896,14 +1905,17 @@ mod tests {
     /// The sibling#1 submitter: the production host over the REAL native
     /// services (`resolve_model_selection` is `session_model::execute`, the
     /// same chain the isolated process runs), over the fixture's own owner
-    /// and registry. Only the snapshot recorder leg is absent — the
-    /// model-resolution leg under test is the real one.
+    /// and registry. `recorders` is the fixture's shared map — the same
+    /// shape `start_assembly` gives its `Services` (assembly.rs) — so
+    /// `record_failure` finds the recorders the factory registered. Only
+    /// the snapshot recorder leg is absent — the model-resolution leg under
+    /// test is the real one.
     fn real_services_submitter(r: &Requests) -> Arc<crate::runtime::turn::submit::TurnSubmitter> {
         let services = Arc::new(crate::native_process::services::Services {
             options: r.options.clone(),
             project: r.project.clone(),
             env: r.env.clone(),
-            recorders: Arc::default(),
+            recorders: r.recorders.clone(),
             owner: r.owner.clone(),
             snapshot_recorder: None,
             upload_store: Arc::new(crate::upload::UploadStore::new(
@@ -2576,21 +2588,26 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #2692 fix-r1 sibling#1, disposition (a) (probe cell a1): through the
-    /// REAL native services — `resolve_model_selection` is
-    /// `session_model::execute`, the chain the isolated process runs — a
-    /// `sessionKey:null` turn with no explicit modelSelection dies at model
-    /// resolution: the storage-side sessionKey gate rejects it and the pump
-    /// catch publishes the TS-measured failure pair (agent_status
+    /// #2692 fix-r1 sibling#1, disposition (a) (probe cell a1), rewired in
+    /// fix-r3 to the production fixture: the owner runs the very factory the
+    /// isolated process runs (`production_setup_fixture` ->
+    /// `assembly::production_session_factory`), so the turn first crosses the
+    /// real factory legs — prepare, `create_storage` (transcript
+    /// `<chat>/null.jsonl`), fence, tool-results budget, host binding — and
+    /// only then dies at model resolution: `resolve_model_selection` passes
+    /// the RAW `sessionKey` (the JSON null from the request, services.rs) to
+    /// `session_model::execute`, whose blank-key gate rejects it, and the
+    /// pump catch publishes the TS-measured failure pair (agent_status
     /// `gateway_submit_failed` + the `gateway_submit_failed` error with the
-    /// turn-failure userHint). The turn does not survive; the stubbed
-    /// services used to park turns answer `source=default` unconditionally,
-    /// which is exactly the stub-vs-real difference this regression pins.
+    /// turn-failure userHint). The turn does not survive. The storage legs
+    /// leave their marks: the transcript exists on disk under the template
+    /// spelling — never the router-domain tag — and `record_failure`, seeing
+    /// the recorder the factory registered, appends the failure pair to it.
     /// The record stays in the accepted state with the failure events
     /// appended (TS marks it failed — registered divergence, R15).
     #[tokio::test]
     async fn real_services_null_session_key_turn_dies_at_model_resolution() {
-        let (_scratch, r) = setup_fixture();
+        let (_scratch, r) = production_setup_fixture();
         let events = real_services_submit_collect(
             &r,
             object([
@@ -2708,6 +2725,44 @@ mod tests {
                 })
             }),
             "#2692 the failure pair is durably recorded on the run record"
+        );
+        // The production factory crossed the storage leg for real: the
+        // transcript lives on disk under the template spelling `null` — the
+        // path-domain key, never the router-domain tag (which `std::fs`
+        // rejects outright). This doubles as the positive control for the
+        // blankkey negative-control row: a mutant that routes the path
+        // domain back onto the router key dies at `create_storage`, leaving
+        // no transcript at all.
+        let entries = transcript_entries(&r, "null");
+        negative_assert!(
+            entries.iter().any(|entry| {
+                entry.get("event") == Some(&serde_json::json!("gateway_submit_failed"))
+                    && entry.get("kind") == Some(&serde_json::json!("error"))
+                    && entry.get("text") == Some(&serde_json::json!("sessionKey is required."))
+            }),
+            "#2692 record_failure appended the failure pair to null.jsonl"
+        );
+        let filenames = std::fs::read_dir(crate::session_chat_dir(
+            &r.options.home,
+            &r.options.project,
+            &r.options.project.to_string_lossy(),
+        ))
+        .expect("#2692 transcript directory")
+        .map(|entry| {
+            entry
+                .expect("#2692 transcript directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+        negative_assert!(
+            filenames.iter().any(|name| name == "null.jsonl"),
+            "#2692 the null-spelling transcript is on disk"
+        );
+        negative_assert!(
+            filenames.iter().all(|name| !name.contains("raw:")),
+            "#2692 no filename carries a router-domain tag"
         );
         teardown(&r).await;
     }
@@ -3068,6 +3123,7 @@ mod tests {
         let owner_key: JsString = "g7/session".into();
         let context = SessionContext {
             session_key: owner_key.clone(),
+            session_id: owner_key.clone(),
             project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
             channel_key: "test".into(),
             allowed_tools: None,
@@ -3148,6 +3204,7 @@ mod tests {
         let owner: JsString = "fb/session".into();
         let context = SessionContext {
             session_key: owner.clone(),
+            session_id: owner.clone(),
             project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
             channel_key: "test".into(),
             allowed_tools: None,
@@ -3206,6 +3263,7 @@ mod tests {
         let owner: JsString = "fc/session".into();
         let context = SessionContext {
             session_key: owner.clone(),
+            session_id: owner.clone(),
             project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
             channel_key: "test".into(),
             allowed_tools: None,
@@ -3763,6 +3821,7 @@ mod tests {
         let (_scratch, r) = setup_fixture();
         let live = |key: &str| SessionContext {
             session_key: key.into(),
+            session_id: key.into(),
             project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
             channel_key: "test".into(),
             allowed_tools: None,

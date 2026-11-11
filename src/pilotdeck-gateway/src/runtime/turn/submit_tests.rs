@@ -656,6 +656,7 @@ impl TurnRunRegistry for Registry {
 fn context() -> SessionContext {
     SessionContext {
         session_key: "s".into(),
+        session_id: "s".into(),
         project_key: Some("p".into()),
         channel_key: "test".into(),
         allowed_tools: None,

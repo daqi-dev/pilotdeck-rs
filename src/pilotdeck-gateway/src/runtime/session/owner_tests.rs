@@ -223,6 +223,7 @@ impl SessionFactory for Probe {
 fn context(key: &str) -> SessionContext {
     SessionContext {
         session_key: key.into(),
+        session_id: key.into(),
         project_key: Some("project".into()),
         channel_key: "web".into(),
         allowed_tools: None,
