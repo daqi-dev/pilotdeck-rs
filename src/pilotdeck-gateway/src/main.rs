@@ -58,14 +58,31 @@ async fn main() -> Result<(), ProxyError> {
     let address = listener.local_addr()?;
     println!("PilotDeck server listening: http://{address}");
     println!("WebSocket: ws://{address}/ws");
-    eprintln!("metadata cwd: {}", std::env::current_dir()?.display());
+    // #2558: a best-effort console line, like TS's `console.error` — an
+    // `eprintln!` here panics when the write fails (std behavior), and this
+    // line runs on the startup path inside the main task: an unwritable
+    // stderr would kill the listener right after it printed its banner. The
+    // `current_dir()` error still propagates; only the write is best-effort.
+    pilotdeck_gateway::native_process::console_log_line(
+        &mut std::io::stderr(),
+        &format!("metadata cwd: {}", std::env::current_dir()?.display()),
+    );
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (socket, _) = match accepted {
                     Ok(connection) => connection,
                     Err(error) => {
-                        eprintln!("downstream accept: {error}");
+                        // #2558: a best-effort console line, like TS's
+                        // `console.error` — an `eprintln!` here panics when
+                        // the write fails (std behavior), and the panic runs
+                        // in the accept-loop task itself: an unwritable
+                        // stderr would stop the listener instead of merely
+                        // losing the diagnostic line.
+                        pilotdeck_gateway::native_process::console_log_line(
+                            &mut std::io::stderr(),
+                            &format!("downstream accept: {error}"),
+                        );
                         if fatal_accept_error(&error) {
                             return Err(error.into());
                         }
@@ -78,7 +95,13 @@ async fn main() -> Result<(), ProxyError> {
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
                     if let Err(error) = proxy.serve_connection(socket).await {
-                        eprintln!("downstream HTTP: {error}");
+                        // #2558: same non-panicking shape as the accept line
+                        // above — a failed stderr write must not kill the
+                        // connection task that only owes a diagnostic line.
+                        pilotdeck_gateway::native_process::console_log_line(
+                            &mut std::io::stderr(),
+                            &format!("downstream HTTP: {error}"),
+                        );
                     }
                 });
             }

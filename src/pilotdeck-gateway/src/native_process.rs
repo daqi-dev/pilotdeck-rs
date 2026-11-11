@@ -18,6 +18,10 @@ mod capabilities;
 // #1328 replay test (channel::weixin::replay_tests) drives the assembly
 // directly, in the channel subtree rather than this one.
 pub(crate) mod channels;
+// #2558: the shared best-effort console writer, re-exported one hop up so the
+// A4 binary entry (src/main.rs) reaches it — the module stays `pub(crate)`,
+// only the writer itself is published, like `registered_methods` above.
+pub use channels::console_log_line;
 mod families;
 mod management;
 mod methods;

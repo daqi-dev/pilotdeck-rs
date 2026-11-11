@@ -1454,6 +1454,41 @@ fn console_channel_log_routes_levels_to_the_console_sinks() {
     );
 }
 
+/// #2558: `console_log_line` itself — the shared writer the eight A4 error
+/// lines now go through (`http_proxy`, `upstream`, the memory maintenance
+/// diagnostic, and the A4 entry's own startup/accept lines via the one-hop
+/// re-export) — must drop a failed write instead of panicking
+/// (`println!`/`eprintln!` panic when the write fails; std behavior). The
+/// #2301 probes above drive the production closures through a failing
+/// console, but a child exit cannot observe *which* writer ran; this binds
+/// the primitive's own contract directly, with a sink that fails every
+/// write and counts the attempts.
+struct FailingSink {
+    attempts: usize,
+}
+impl std::io::Write for FailingSink {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        self.attempts += 1;
+        Err(std::io::Error::other("#2558 the sink is closed"))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::other("#2558 the sink is closed"))
+    }
+}
+
+#[test]
+fn console_log_line_drops_a_failed_write_without_panicking() {
+    let mut sink = FailingSink { attempts: 0 };
+    super::channels::console_log_line(&mut sink, "#2558 a line nobody will read");
+    // Reaching here is the contract — the write error is dropped, nothing
+    // panics — and the attempted write keeps the case non-vacuous: a
+    // `console_log_line` that stopped writing at all would pass silently.
+    crate::negative_assert!(
+        sink.attempts >= 1,
+        "#2558 the failing write is attempted and never panics"
+    );
+}
+
 /// The child marker for [`console_ports_survive_a_failing_sink`]: when the
 /// `failing-console` token pair matches (see [`CHILD_PROBE_ENV`]), this
 /// process is the probe itself.
