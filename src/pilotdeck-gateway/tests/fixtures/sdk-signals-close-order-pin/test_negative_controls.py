@@ -64,6 +64,13 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   (OSError ENOSPC, not a pipe error), so it must not be swallowed as
   ``... | head``: rc 2 with a stderr diagnostic naming the failure, while
   the summary on disk still carries the completed verdict rows.
+- stdout-pipe-fault: the mirror of the write fault — the final counts
+  line fails with a BrokenPipeError, the measured shape of ``... | head``
+  closing the pipe. That one the runner must swallow: the exit code
+  routes the reader, not stdout, so the healthy verdict code (rc 0) must
+  survive and no "#1382 stdout summary write failed" diagnostic may
+  appear — pinning that the pipe branch stays ahead of the OSError
+  branch instead of both folding into one refusal.
 
 Both senses of exit 1 are pinned: the verdict path's 1 above, and the
 pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
@@ -206,6 +213,29 @@ else:
             return raw_replace(self, target)
 
         Path.replace = fail_summary_publish
+
+    if mode == 'stdout-pipe-fault':
+        # #1800 fix-r4（DS sibling#2 / boundary#1，两家同撞）：管道分支与
+        # 两个 except 的先后次序此前零仓内覆盖——合并或调序成统一的
+        # `except OSError` 后，健康的 `... | head` 运行会从「吞管道、按判
+        # 决码退」变成 rc 2 + 诊断（协调者把健康读成无判决，假 FAIL），
+        # 而 Ran 11 照旧全绿。形态对照 /dev/full 实测的反面：管道错误
+        # 是 BrokenPipeError（EPIPE），必须走吞掉 + close stdout 的分支。
+        real_stdout = sys.stdout
+
+        class ClosedPipeStdout:
+            def write(self, text):
+                if '"counts"' in text:
+                    raise BrokenPipeError('broken pipe')
+                return real_stdout.write(text)
+
+            def flush(self):
+                return real_stdout.flush()
+
+            def close(self):
+                return real_stdout.close()
+
+        sys.stdout = ClosedPipeStdout()
 
     if mode == 'stdout-write-fault':
         # #1800 fix-r3 (comment follow-up 1): the final counts line fails
@@ -589,6 +619,41 @@ class StdoutWriteFaultTests(_PinDriver, unittest.TestCase):
                    '/negative_controls.py')
         self.assertTrue(catalog.read_bytes() == before,
                         '#1800 a stdout-fault run must still restore the '
+                        'catalog byte for byte')
+
+    def test_stdout_pipe_fault_keeps_the_healthy_exit_code(self):
+        # #1800 fix-r4（DS sibling#2 与 boundary#1 两家同撞）：counts 行抛
+        # BrokenPipeError —— ``... | head`` 关管道的实测形态。except 的先后
+        # 顺序是本契约的承重墙：BrokenPipeError 分支必须先于 OSError 分支
+        # 吞掉管道错误（退出码路由读者，不由 stdout 决定），健康的全 KILLED
+        # 运行仍按判决码 rc 0 退出、不落 #1382 诊断。把两分支合并成一个
+        # `except OSError`（或调换次序）会让健康的 head 读法变成 rc 2 + 诊
+        # 断——协调者把全绿读成「无判决」，假 FAIL；而 Ran 11 的闸门照旧
+        # 全绿，所以这条必须自己钉。
+        process, summary, tree, before = self.run_pin('stdout-pipe-fault')
+        self.assertEqual(process.returncode, 0,
+                         '#1800 a broken pipe on the counts line is the '
+                         'reader leaving (`... | head`): the exit code '
+                         'routes the reader, so the healthy verdict code '
+                         'must survive it — got '
+                         f'rc={process.returncode}, stderr='
+                         f'{process.stderr!r}')
+        self.assertNotIn('#1382 stdout summary write failed', process.stderr,
+                         '#1800 the pipe branch must swallow the error '
+                         'ahead of the OSError branch: a healthy head '
+                         'read is not a write failure to diagnose')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 the run completed; only the reader left')
+        self.assertIn(': KILLED: ', process.stdout,
+                      '#1800 the record lines before the counts line must '
+                      'still have reached the reader')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line must not be readable from '
+                         'stdout: the pipe closed at it')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertTrue(catalog.read_bytes() == before,
+                        '#1800 a pipe-fault run must still restore the '
                         'catalog byte for byte')
 
 
