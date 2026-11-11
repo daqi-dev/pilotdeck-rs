@@ -127,9 +127,12 @@ mutations = [
      'if false {',
      CFG + 'session_model_set_gate_order_matches_the_ts_chain',
      '#1457 missing selection message'),
-    ('session-key-gate-code', CONFIG,
-     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )',
-     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )',
+    # #1623: config.rs now delegates its `require_session_key` to the shared
+    # guard (methods/mod.rs), so the gate-code mutant moved to the shared call
+    # — the effect on the bound config test is the same wrong-code answer.
+    ('session-key-gate-code', METHODS_MOD,
+     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )?;',
+     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )?;',
      CFG + 'set_permission_mode_applies_and_validates',
      '#1457 missing sessionKey code'),
     ('permission-mode-gate-removed', CONFIG,
@@ -582,11 +585,17 @@ mutations = [
      '                Ok(TrimGuard::Missing)',
      DIR + 'resume_session_rejects_blank_session_key',
      '#1455 resume_session rejects the blank key'),
+    # #1623 方案 B: the surrogate key is now refused by the shared
+    # `require_session_key` (methods/mod.rs), so this mutant re-adds the
+    # #1455-era `to_utf8` filter inside the family-shared `trim_guard` — the
+    # rejection then answers "sessionKey is required." instead of the #1623
+    # message, so the re-bound resume case must die at its message assertion
+    # (the filter would also fold a surrogate projectKey, #2083's cell).
     ('session-dir-surrogate-rejected', METHODS_MOD,
      '            if crate::metadata::js_trim(&text).is_empty() {',
      '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
-     DIR + 'resume_session_accepts_lone_surrogate_session_key',
-     '#1455 resume_session accepts the surrogate key'),
+     DIR + 'resume_session_rejects_lone_surrogate_session_key',
+     "#1623 the resume rejection is the shared guard's domain error"),
     # #1604: `close_project_sessions` keeps TS's plain `Error` shape on the
     # missing/blank branch; this mutant rewords the domain message so that
     # branch's test is the one that has to die.
@@ -611,6 +620,40 @@ mutations = [
      '            .map_err(|_| RequestError::new("projectKey is required."))?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
+    # ── #1623 方案 B: removing the lone-surrogate rejection from the shared
+    # `require_session_key` (methods/mod.rs) must be caught — one code point,
+    # four bound tests (#2564's one-mutation-many-rows shape): the resume
+    # identity path, the destructive delete, the issue's end-to-end alias
+    # acceptance, and the config write path. The delete/e2e anchors are the
+    # stable tails of `{method}`-templated assertion messages, so the runtime
+    # panic payload still carries them after format! expansion.
+    ('session-key-surrogate-guard-removed-resume', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'resume_session_rejects_lone_surrogate_session_key',
+     '#1623 resume_session rejects the surrogate key'),
+    ('session-key-surrogate-guard-removed-delete', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'delete_session_surrogate_key_gate',
+     'refuses the lone-surrogate session key'),
+    ('session-key-surrogate-guard-removed-e2e', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'surrogate_key_cannot_reach_the_fffd_transcripts_files',
+     '#1623 the surrogate-spelled tag is refused'),
+    ('session-key-surrogate-guard-removed-config', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     CFG + 'session_model_set_surrogate_key_answers_the_session_key_gate',
+     '#1623 the surrogate key answers the sessionKey gate'),
+    # #1623: the rejection keeps the guard family's error shape — rewording
+    # the message must be caught by the per-method message assertion.
+    ('session-key-surrogate-message', METHODS_MOD,
+     '            message: "sessionKey must not contain an unpaired surrogate.".into(),',
+     '            message: "sessionKey contains a surrogate.".into(),',
+     DIR + 'tag_session_surrogate_key_gate',
+     "answers the guard family's surrogate message"),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
     # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
     # Dropping the null arm restores the pre-#2272 shape where an explicit
@@ -1343,6 +1386,13 @@ mutations = [
 # 118 rows / 72 literal-anchor entries, so with our +3 rows / +3 pins the
 # head 8ecbdee3b `--check` reads #1457 121 mutation anchors / #2065 75
 # literal anchors (2026-11-12 实跑).
+# #1623: the sessionKey surrogate-rejection rows joined the table (one
+# re-bind of the old #1455 row, five new rows, one row re-pointed from
+# config.rs to the shared guard in methods/mod.rs); the later fix-r2/r4/r5
+# commits add their own rows above. The pre-rebase figures (123 rows / 77
+# literal-anchor entries) rode the stale #2207/#2199 chain this rebase
+# replaced, so the counts are re-derived against the post-rebase table by
+# the count-alignment commit on top (real `--check` output).
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1391,7 +1441,6 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1874 a closed session writer is an error, not a recorded status'),
     (SESSION_DIR, '#1873 a broken lock file is a storage error, not the retryable busy answer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
-    (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
     (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
                   'so the sessionKey gate answers the blank key'),
@@ -1430,6 +1479,16 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#2068 the surrogate projectKey keeps its raw unit inside the prefix'),
     # fix-r1: the bare-message mapping the throwing-object test pins.
     (SESSION_DIR, '#2068 the ToPrimitive failure keeps the bare V8 text'),
+    # #1623: the surrogate-rejection rows — the re-bound #1455 row's message
+    # assertion, the four guard-removal rows' panic anchors, and the message
+    # row's template tail (a `{method}` format string's stable fragment, the
+    # `permission-mode-gate-removed` prefix shape).
+    (SESSION_DIR, "#1623 the resume rejection is the shared guard's domain error"),
+    (SESSION_DIR, '#1623 resume_session rejects the surrogate key'),
+    (SESSION_DIR, 'refuses the lone-surrogate session key'),
+    (SESSION_DIR, '#1623 the surrogate-spelled tag is refused'),
+    (SESSION_DIR, "answers the guard family's surrogate message"),
+    (CONFIG, '#1623 the surrogate key answers the sessionKey gate'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
