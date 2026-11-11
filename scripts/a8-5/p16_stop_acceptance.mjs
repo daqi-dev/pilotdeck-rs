@@ -12,17 +12,20 @@
  * 守门与 note 推导为导出纯函数（#2759：供负控微测直调本文件的真实代码，不复制逻辑——
  * 入仓微测 scripts/a8-5/p16_gate_microtest.mjs）；主流程仅在直接执行本文件时运行
  * （被 import 时不跑）。fix-r3 起 import 无副作用：路径/Recorder 惰性初始化于 main()，
- * import 不建目录、不读调用方 argv/env（评审 sibling#7 / boundary#6 / simplify#3）；
- * 主模块守卫用 import.meta.main（fix-r3：v22.22.0 实测可用、symlink 入口下仍为
- * true——旧 pathToFileURL(argv[1]) 直比在 symlink 入口形状下守卫不命中、进程静默
- * no-op，见轮次证据 emp-misc；评审 concurrency#2 / boundary#7 / simplify#7）。
+ * import 不建目录、不读调用方 argv/env（评审 sibling#7 / boundary#6 / simplify#3）。
+ * 主模块守卫（fix-r4，评审 boundary#1）：import.meta.main 为真，或 argv[1] 与本模块
+ * 两侧 realpathSync 归一后同 URL（symlink 入口可比）任一命中即直接执行——import.meta.main
+ * 不提供的 Node 段（22.0–22.16）不再静默 no-op exit 0（尺子假通过面）；两信号皆不命中且
+ * import.meta.main 缺失时显式 exit 3（取舍见文件尾注释）；被 import（现代 Node
+ * import.meta.main === false）安静交还宿主、不退出（微测/T12 消费方）。
  * #2759 fix-r2（两线整合）：前提判定经 common.mjs 单源（keepAliveProbe 炮台 +
  * keepAlivePremise 判定，#2756）；头/体切分与 freeSockets 直测并入该主干（direct
  * 压过头推断），close 前池占用复检（A/pool-at-close）保留 #2756 登记面。
  */
 import { connect, createServer } from "node:net";
 import http from "node:http";
-import { writeSync } from "node:fs";
+import { writeSync, realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   makeFakeGateway, makeHome, makeStaticDir, keepAliveProbe, keepAlivePremise,
   Recorder, sleep, tcpRefused, makePaths, parseProbeArgs, TOKEN,
@@ -124,7 +127,9 @@ function watchSock(sock, events, label) {
  * http11/connHeader 原值照旧入 record。fix-r3（boundary#9）：头块内多条 connection:
  * 行取全量、值以逗号合并——对齐 node 侧 r.headers.connection 的多行合并（实测
  * v22.22.0 两行 Connection 合并为 "keep-alive, close"、keepAliveToken close 优先判
- * false；只取第一行会在该形状与 node 侧前提分歧）；connHeader 保留首行原值入 record。 */
+ * false；只取第一行会在该形状与 node 侧前提分歧）；connHeader 为头块小写归一后的首条
+ * connection 行、connValue 为全量合并值（fix-r4 起两者均入 record——多行形状可由落盘
+ * 原值复算 rawPremise，评审 boundary#5）。 */
 export function parseRawGate(head) {
   const headBlock = head.split("\r\n\r\n")[0];
   const headLines = headBlock.toLowerCase().split("\r\n");
@@ -219,7 +224,7 @@ export function rawReuseNote({ rawPremise, finBeforeWrite, eventsAfterWrite: aft
         : "写后 1.5s 观测窗内无 FIN 亦无异常事件（静默）";
     return `未观测到写前干净 FIN（finBeforeWrite=false；${cause}）：本条按「未 FIN 连接上的写」记录，不作 close 后复用的证据`;
   }
-  return "前提未成立（见 A/raw-keepalive-request1；成因以该记录 headComplete/http11/connHeader 为准，可能是响应头不完整/非 1.1/显式 close——不预设）：本条按现状记录，不作 close 后复用的证据";
+  return "前提未成立（见 A/raw-keepalive-request1；成因以该记录 headComplete/http11/connHeader/connValue 为准，可能是响应头不完整/非 1.1/显式 close——不预设）：本条按现状记录，不作 close 后复用的证据";
 }
 
 /** 观察 3 的裸层对照句（#2759）：「静默悬挂」只在实测成立（silentHang——含 fix-r3 的
@@ -238,7 +243,9 @@ export function reuseSilentHangClause(rawPremise, finBeforeWrite, silentHangDeri
  * 无条件断言——握手前 error、只 close 未 end 等形状如实降级为现状记录。fix-r3
  * （sibling#5）：rst 分支的异常判定改用 isAbnormalEvent（error ∥ close(hadError)），
  * 与措辞「error/close hadError」及 rawReuseNote 同构——旧谓词只认 error 事件，
- * 采样错过 error 只余 close(hadError=true) 时会被降级为「RST 未到达」。 */
+ * 采样错过 error 只余 close(hadError=true) 时会被降级为「RST 未到达」。fix-r4
+ * （sibling#2/boundary#3）：eof 分支同构化（干净 EOF 判 sawEnd && !sawAbnormal，
+ * end+close(hadError) 形状单列降级句，不再把异常拆链说成干净 EOF）。 */
 export function partBNote(mode, rawEvents) {
   const label = mode === "rst" ? "B-RST" : "B-EOF";
   const sawConnect = rawEvents.some((e) => e.event === "connect(handshake-ok)");
@@ -253,11 +260,19 @@ export function partBNote(mode, rawEvents) {
       ? "握手完成后收到 RST（error/close hadError，events 实测）——对照机制 A 的 connect 相位 ECONNREFUSED"
       : "握手完成但观测窗内未收到 error/异常 close（RST 未到达），本条按现状记录，不作 RST 观测面证据";
   } else {
-    outcome = sawEnd && !sawError
+    // fix-r4（sibling#2 / boundary#3）：干净 EOF 判定改 sawEnd && !sawAbnormal——与 rst
+    // 分支同构（error 事件被采样错过、只余 close(hadError=true) 的异常拆链形状不得判
+    // 「无错误」的干净 EOF）；「end + 只余 close(hadError)」单列降级句（对齐 rst 分支
+    // 「只余 close(hadError) 仍判 RST」的先例句式），无 end 分支的异常判定同步共用谓词。
+    outcome = sawEnd && !sawAbnormal
       ? "握手完成后收到 EOF（end 事件，无错误，events 实测）——对照机制 A 的 connect 相位 ECONNREFUSED"
       : sawError
         ? "握手完成后收到 error 而非干净 EOF（events 实测），本条按现状记录，不作 EOF 观测面证据"
-        : "握手完成但观测窗内未观测到 EOF，本条按现状记录，不作 EOF 观测面证据";
+        : sawEnd
+          ? "握手完成后观测到 end 但异常拆链（只余 close(hadError=true)、error 事件未入 rawEvents——与 rst 分支「只余 close(hadError) 仍判 RST」同构判异常），不判干净 EOF，本条按现状记录，不作 EOF 观测面证据"
+          : sawAbnormal
+            ? "握手完成后收到异常 close（hadError）而非干净 EOF（events 实测），本条按现状记录，不作 EOF 观测面证据"
+            : "握手完成但观测窗内未观测到 EOF，本条按现状记录，不作 EOF 观测面证据";
   }
   return { note: `机制 ${label}：${outcome}`, sawConnect, sawEnd, sawError, sawAbnormal };
 }
@@ -309,8 +324,11 @@ async function partA() {
   // keepAlivePremise 单源——#2756 fix-r1，两线口径 fix-r2 对拍一致）。
   const raw = await rawKeepAliveRequest(PORT_A);
   const gate = parseRawGate(raw.head);
+  // fix-r4（boundary#5）：connValue（多行合并值）随 record 落盘——重复 Connection 行
+  // 形状下 rawPremise 可由落盘原值复算（connHeader 只余小写归一首行，单靠它复算不了），
+  // 与 pooled 侧落分量（pooledHeader/pooledDirect）对齐。
   log("A/raw-keepalive-request1", {
-    statusLine: gate.statusLine, connHeader: gate.connHeader,
+    statusLine: gate.statusLine, connHeader: gate.connHeader, connValue: gate.connValue,
     headComplete: gate.headComplete, http11: gate.http11, rawPremise: gate.rawPremise,
   });
   const rawEvents = [];
@@ -401,7 +419,7 @@ async function partA() {
       ? "机制 A：close() 主动关空闲 keep-alive（A14① 复核，裸层直接观测；FIN 在 close() 之后、窗内到达）"
       : gate.rawPremise
         ? "close() 之后未观测到干净 FIN（finObserved=false，含 error→close 异常拆链情形）：FIN 时刻结论降级，不得据此引用 A14"
-        : "前提未成立（见 A/raw-keepalive-request1 的 headComplete/http11/connHeader 原值）：FIN 时刻不代表 server.close() 对空闲 keep-alive 的处置",
+        : "前提未成立（见 A/raw-keepalive-request1 的 headComplete/http11/connHeader/connValue 原值）：FIN 时刻不代表 server.close() 对空闲 keep-alive 的处置",
   });
 
   // 观察 2：在同一条已 FIN 的 socket 上复用发请求 2（裸层复用态——A14 重建连推断的对照面）。
@@ -509,7 +527,13 @@ async function partB(port, mode /* "rst" | "eof" */) {
     if (mode === "rst") sock.destroy();
     else sock.end();
   });
-  await new Promise((res) => srv.listen(port, "127.0.0.1", res));
+  // fix-r4（自查同模式跟改，sibling#1/concurrency#1 同源）：listen 挂 error 监听——
+  // 端口被占（如与另一实例并发）时 reject 进 main().catch（P16 FAILED + JSON 落盘 +
+  // exit 1 的受控失败），不再未捕获 'error' 裸崩。
+  await new Promise((res, rej) => {
+    srv.once("error", (e) => rej(e));
+    srv.listen(port, "127.0.0.1", res);
+  });
 
   // 裸 socket：握手是否完成 + 随后的事件序列（note 由 rawEvents 推导，见 partBNote）
   const rawEvents = [];
@@ -573,13 +597,53 @@ async function main() {
   process.exit(0);
 }
 
-// fix-r3（concurrency#2 / boundary#7 / simplify#7）：import.meta.main（v22.22.0 实测
-// 可用，symlink 入口下仍为 true——旧 pathToFileURL(argv[1]) 直比在该形状不命中、
-// 静默 no-op exit 0，见轮次证据 emp-misc）。
-if (import.meta.main) {
+// fix-r4（评审 boundary#1，P1）：主模块守卫兜底。import.meta.main 只在较晚的 22.x 才有
+// （Node 22.0–22.16 段 undefined → falsy）——旧守卫在该段直接执行本文件时一行不跑、
+// 零证据、进程 exit 0（尺子假通过面）。现两信号/三分支（isMainEntry 纯函数 + 调用点）：
+//   ① import.meta.main === true（v22.22.0 实测：直接执行/`-e` 宿主真、被导入 false），
+//     或 argv[1] 与本模块 URL 两侧 realpathSync 归一后相同（symlink 入口可比；argv[1]
+//     缺失/不可 stat（`-e`/REPL 形状）时兜底不命中）→ 直接执行，跑 main；
+//   ② 被 import（现代 Node import.meta.main === false）→ 不跑 main、不退出，安静交还宿主
+//     ——仓内 import 消费方（p16_gate_microtest 顶层静态 import、其 T12 子进程）在此
+//     分支通过；「import 无副作用」语义保留（fix-r3）；
+//   ③ import.meta.main 缺失（22.0–22.16 段）且 argv 兜底未命中 → 不跑 main 且显式
+//     process.exit(3)——「误判为非 main」以非零码可被下游察觉，不与「假通过」（exit 0
+//     零证据）不可区分。
+// exit 3 不上移到 ②（无条件「miss 即 exit 3」）的取舍：实测会杀死仓内唯一 import 消费方
+// ——微测顶层 import 本文件，进程在微测 body 前死亡（退出码 3、零测试输出；T12 子进程
+// 同理 status=3），见本轮证据 raw/emp-exit3-*.out。② 是 Node 明示的「非 main」真值、非
+// 误判；兜底后「直接执行而两信号皆 miss」已不可达（直接执行定义上 argv[1]=本文件真实
+// 路径，realpath 归一必命中兜底）——残余风险是兜底本身被改坏，由微测直接执行格 T14
+// 承担判别（守卫坏 → 微测红）。代价如实登记：import.meta.main 缺失的 Node 段上被 import
+// 会 exit 3（微测在该段不可用——其口径钉 v22.22.0，见 RESULT）。
+export function isMainEntry(importMetaMain, argv1Href, moduleUrlHref) {
+  if (importMetaMain === true) return true;
+  return argv1Href !== undefined && argv1Href === moduleUrlHref;
+}
+
+const p16Argv1Href = (() => {
+  try {
+    return process.argv[1] === undefined ? undefined : pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return undefined; // argv[1] 不可 stat（已删文件等形状）——兜底分支不命中
+  }
+})();
+const p16SelfHref = (() => {
+  try {
+    return pathToFileURL(realpathSync(fileURLToPath(import.meta.url))).href;
+  } catch {
+    return undefined;
+  }
+})();
+if (isMainEntry(import.meta.main, p16Argv1Href, p16SelfHref)) {
   main().catch((e) => {
     say(`P16 FAILED: ${e?.stack ?? e}`);
     rec?.dump?.("p16_stop_acceptance.json");
     process.exit(1);
   });
+} else if (import.meta.main === false) {
+  // 分支 ②：被 import——见上注，安静交还宿主
+} else {
+  // 分支 ③：import.meta.main 缺失且 argv 兜底未命中——不静默 exit 0（boundary#1）
+  process.exit(3);
 }

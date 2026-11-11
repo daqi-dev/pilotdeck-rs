@@ -1,5 +1,8 @@
 /**
- * #1353 A8.5 切换状态机矩阵 — TS 探针公共库（.mjs，纯 node 直跑；Node ≥ 22）。
+ * #1353 A8.5 切换状态机矩阵 — TS 探针公共库（.mjs，纯 node 直跑；Node ≥ 22——
+ * 本件只用 fs/path/url 的稳定 API；a8-5 探针的主模块守卫在 import.meta.main 未提供
+ * 的 Node 段（22.0–22.16）经 argv realpath 兜底支持直接执行，见 p16_stop_acceptance
+ * .mjs fix-r4）。
  * 驱动只读 TS 基线（PilotDeck）的 dist/ 构建；行号引用一律以 src/*.ts 为准。
  *
  * 用法（每个探针同参）：

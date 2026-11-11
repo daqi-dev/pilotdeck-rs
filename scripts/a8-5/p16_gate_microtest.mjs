@@ -6,7 +6,13 @@
  * 中止（收集后统一汇总，任一失败退出码 1）。
  * 运行：node scripts/a8-5/p16_gate_microtest.mjs（无参数、无落盘副作用——p16 的
  * 路径/Recorder 惰性初始化于 main()，import 本体无 mkdir/argv 副作用，fix-r3）。
- * 端口纪律：39894（微测专用，避让探针 39896–39898；段 39871–39898）。
+ * fix-r4：T4 的 listen 挂 error 监听（EADDRINUSE → 受控 FAIL 进 failures，不再
+ * 未捕获异常/挂起）；总时限 watchdog 60s（超时打印已收集 failures 后 exit 2，防任一
+ * section 挂起导致进程无出码）；T13/T14 新增（守卫纯函数三分支 + 直接执行正控——
+ * 守卫误判为非 main 时 T14 必红，评审 boundary#1）。
+ * 端口纪律：39994（微测专用——fix-r4 挪出 39871–39898 段：原 39894 与 p15_driver 的
+ * A-elevate 用例撞号、39895 为 p15 B-control，避让探针 39896–39898；39994 全仓无脚本
+ * 绑定，评审 sibling#1 / concurrency#1）。
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -14,16 +20,16 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { keepAliveProbe, keepAlivePremise } from "./common.mjs";
 import {
   parseRawGate, pooledHeaderPremise, derivePooledPremise,
   sawCleanFin, eventsAfterWrite, silentHang, isAbnormalEvent,
   rawReuseNote, reuseSilentHangClause, partBNote,
-  pooledSkipReason, agentReuseNote,
+  pooledSkipReason, agentReuseNote, isMainEntry,
 } from "./p16_stop_acceptance.mjs";
 
-const PORT_MT = 39894;
+const PORT_MT = 39994;
 const failures = [];
 const section = async (name, fn) => {
   try {
@@ -32,6 +38,23 @@ const section = async (name, fn) => {
     failures.push(`[${name}] ${e?.message ?? e}`);
   }
 };
+
+// fix-r4（sibling#1 / concurrency#1）：总时限 watchdog——任一 section 挂起（事件循环
+// 活着的 socket/timer 挂起，或纯 pending promise 使顶层 await 不决）时进程仍必须有
+// 受控结论：到点打印已收集的 failures 后 exit 2（区别于断言失败的 exit 1）。不 unref
+// ——drained-loop 挂起也要被钉住到点触发；正常收尾路径（下方汇总后）clearTimeout，
+// 不拖长正常跑。子进程全部为 spawnSync（同步、自带 timeout），触发时无存活子进程；
+// 触发即 process.exit，watchdog 自身计时器随进程终结，不越界存活。
+const WATCHDOG_MS = 60_000;
+const watchdogTimer = setTimeout(() => {
+  console.error(`p16_gate_microtest TIMEOUT（${WATCHDOG_MS}ms watchdog 触发，有 section 挂起）:`);
+  if (failures.length > 0) {
+    for (const f of failures) console.error(`  ${f}`);
+  } else {
+    console.error("  （触发前无 section 失败——挂起段不明，见上方各 section 输出）");
+  }
+  process.exit(2);
+}, WATCHDOG_MS);
 
 // T1 格点先全部解析（不设断言），再逐标签独立 section——变异下单格失败不遮蔽其余格
 const G = {
@@ -80,6 +103,7 @@ await section("T1i", () => {
   // keepAliveToken close 优先判 false——实测 v22.22.0，见 fix-r3 轮次证据 emp-misc）
   assert.equal(G.g9.rawPremise, false, "#T1i 重复 Connection 行（keep-alive + close）应按合并值 close 优先不成立");
   assert.equal(G.g9.connValue, " keep-alive, close", "#T1i connValue 应为两行值逗号合并");
+  assert.equal(G.g9.connHeader, "connection: keep-alive", "#T1i connHeader 为小写归一首条 connection 行（fix-r4：connHeader/connValue 双落盘的口径钉死）");
   assert.equal(keepAlivePremise({ ok: true, connection: "keep-alive, close", httpVersion: "1.1" }).premise, false, "#T1i 与 node 侧头值同形输入同判（对拍）");
 });
 
@@ -136,7 +160,13 @@ await section("T4", async () => {
     res.writeHead(200, { "Content-Type": "text/plain", "Content-Length": "2", Connection: "keep-alive" });
     res.end("ok");
   });
-  await new Promise((res) => srv.listen(PORT_MT, "127.0.0.1", res));
+  // fix-r4（sibling#1 / concurrency#1）：listen 挂 error 监听——端口被占（EADDRINUSE，
+  // 如并发跑 p15）时 reject 进本 section 的受控 FAIL（failures 汇总、退出码 1），
+  // 不再是未捕获异常/顶层 await 未决、汇总块永不执行（守门尺子假 FAIL / 无受控结论）。
+  await new Promise((res, rej) => {
+    srv.once("error", (e) => rej(e));
+    srv.listen(PORT_MT, "127.0.0.1", res);
+  });
   try {
     const ka = await keepAliveProbe(PORT_MT);
     assert.equal(ka.freeSocketKeys().length, 0, "#T4 请求前池空");
@@ -161,7 +191,11 @@ await section("T4", async () => {
     }
     assert.equal(ka.freeSocketKeys().length, 0, "#T4 destroy 后池空");
   } finally {
-    await new Promise((res) => srv.close(() => res()));
+    // fix-r4：listen 失败（EADDRINUSE reject）时 srv.listening=false——不 close
+    // （对未 listen 的 server close 回调带 ERR_SERVER_NOT_RUNNING，徒增噪声）。
+    if (srv.listening) {
+      await new Promise((res) => srv.close(() => res()));
+    }
     srv.closeAllConnections?.();
   }
 });
@@ -254,6 +288,18 @@ await section("T9", () => {
   ]);
   assert.ok(eof.note.includes("收到 EOF"), "#T9 eof EOF 句");
   assert.equal(eof.sawEnd, true, "#T9 eof sawEnd");
+  // fix-r4（sibling#2 / boundary#3）：end + close(hadError=true) 而 error 事件未入
+  // rawEvents（采样时序错过）——异常拆链形状不得判「无错误」的干净 EOF（与 rst 分支
+  // 「只余 close(hadError) 仍判 RST」同构），单列降级句、原值分立断言。
+  const eofCloseOnly = partBNote("eof", [
+    { event: "connect(handshake-ok)", at: 1 }, { event: "end(FIN/EOF)", at: 2 }, { event: "close", hadError: true, at: 3 },
+  ]);
+  assert.ok(!eofCloseOnly.note.includes("无错误"), "#T9 eof end+close(hadError) 不得判「无错误」的干净 EOF");
+  assert.ok(!eofCloseOnly.note.includes("收到 EOF（end 事件"), "#T9 eof end+close(hadError) 不得落干净 EOF 结论句");
+  assert.ok(eofCloseOnly.note.includes("不作 EOF 观测面证据"), "#T9 eof end+close(hadError) 落单列降级句");
+  assert.equal(eofCloseOnly.sawEnd, true, "#T9 eof close-only sawEnd（原值分立）");
+  assert.equal(eofCloseOnly.sawError, false, "#T9 eof close-only sawError=false（原值分立）");
+  assert.equal(eofCloseOnly.sawAbnormal, true, "#T9 eof close-only sawAbnormal=true");
   const noConn = partBNote("rst", [{ event: "error", code: "ECONNRESET", at: 1 }]);
   assert.ok(noConn.note.includes("未观测到 connect"), "#T9 握手前 error 如实降级");
   const eofErr = partBNote("eof", [
@@ -330,9 +376,40 @@ await section("T12", async () => {
   assert.equal(existsSync(scratch), false, "#T12 import 不得创建 A85_OUT 目录（惰性初始化，无副作用）");
 });
 
+// T13 守卫纯函数三分支（fix-r4 评审 boundary#1）：isMainEntry(main, argv1Href, moduleUrlHref)
+// ——main=true 命中 / main 不提供（22.0–22.16 段形状）但 argv 归一后命中 / 两者皆不命中
+// （期望不跑 main）/ 现代 Node 被导入（main===false，期望不命中且宿主安静继续）。
+await section("T13", () => {
+  assert.equal(isMainEntry(true, undefined, "file:///x/p16.mjs"), true, "#T13 main=true 命中（argv 缺失不影响）");
+  assert.equal(isMainEntry(true, "file:///a.mjs", "file:///x/p16.mjs"), true, "#T13 main=true 时 argv 不匹配仍命中");
+  assert.equal(isMainEntry(undefined, "file:///x/p16.mjs", "file:///x/p16.mjs"), true, "#T13 main 不提供但 argv 归一后命中（22.0–22.16 直接执行形状）");
+  assert.equal(isMainEntry(undefined, "file:///other.mjs", "file:///x/p16.mjs"), false, "#T13 两者皆不命中（被 import：argv[1] 是别的文件）→ 不跑 main");
+  assert.equal(isMainEntry(undefined, undefined, "file:///x/p16.mjs"), false, "#T13 main 不提供且 argv 缺失（-e 宿主形状）→ 不跑 main");
+  assert.equal(isMainEntry(false, "file:///other.mjs", "file:///x/p16.mjs"), false, "#T13 现代 Node 被导入（main===false）→ 不跑 main（本微测自身即此形状）");
+});
+
+// T14 直接执行正控（fix-r4 评审 boundary#1）：node 直接执行探针须跑 main——守卫坏了
+// （判成非 main）时零输出 + exit 0，本格必红。用不存在的 --base 让 main() 快速受控失败
+// （P16 FAILED + exit 1 + rec.dump 兜底落 JSON）：机器无关、秒级、不依赖 TS 基线 dist；
+// 全量输出正控由轮次验证腿的真实探针直跑承担（P16 DONE + 完整 JSON）。
+await section("T14", async () => {
+  const scratch = resolve(tmpdir(), `p16-direct-mt-${process.pid}-${Date.now()}`);
+  const probePath = fileURLToPath(new URL("./p16_stop_acceptance.mjs", import.meta.url));
+  const child = spawnSync(
+    process.execPath,
+    [probePath, "--base", resolve(scratch, "no-such-base"), "--out", resolve(scratch, "out")],
+    { timeout: 30_000, encoding: "utf8" },
+  );
+  assert.notEqual(child.status, 0, `#T14 直接执行不得静默 exit 0（status=${child.status}，守卫误判为非 main 的假通过面）`);
+  assert.ok((child.stdout ?? "").includes("P16 FAILED"), `#T14 直接执行须跑 main（P16 FAILED 信号；stdout=${JSON.stringify(child.stdout ?? "")}）`);
+  assert.equal(existsSync(resolve(scratch, "out", "p16_stop_acceptance.json")), true, "#T14 main() 失败路径亦落 JSON（rec.dump 兜底）");
+});
+
+// fix-r4：正常收尾——watchdog 计时器清除（不拖长正常跑；挂起路径由 watchdog 自身收场）
+clearTimeout(watchdogTimer);
 if (failures.length > 0) {
   console.error(`p16_gate_microtest FAILED（${failures.length} 处）:`);
   for (const f of failures) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log("p16_gate_microtest: ALL PASS (T1–T12)");
+console.log("p16_gate_microtest: ALL PASS (T1–T14)");
