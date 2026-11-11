@@ -159,7 +159,12 @@ fn assert_no_receipt(dir: &Path, site: &str, phase: &str, key: &str) {
 /// Pair-shaped queries (#1781): the shared (site, key) constants stay
 /// positional tuples (struct-shaped pairs are the #2951 follow-up), so these
 /// unpack the pair exactly once per call instead of leaving a `.0`/`.1` swap
-/// face at every call site.
+/// face at the call site. Coverage is deliberately partial: only the 7 direct
+/// `wait_receipt`/`assert_no_receipt` pair call sites converted in this
+/// change go through these; the rest of the file still unfolds constants
+/// positionally — `wait_receipt_after` (no pair variant), constructor-style
+/// `BarrierRelease::new`/`barrier_fragment`, and the `matches`/`count_receipts`
+/// scans — converging those is follow-up work, not a claim made here.
 fn wait_receipt_pair(dir: &Path, pair: (&str, &str), phase: &str, timeout: &str) -> JsValue {
     let (site, key) = pair;
     wait_receipt(dir, site, phase, key, timeout)

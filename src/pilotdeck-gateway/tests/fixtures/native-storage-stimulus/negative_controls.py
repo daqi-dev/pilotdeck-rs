@@ -273,6 +273,16 @@ mutations = [
      'let mut deadline = Instant::now() + GUARD_BUDGET;',
      'let mut deadline = Instant::now() + GUARD_BUDGET + GUARD_BUDGET;',
      'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
+    # fix-r3: the lower bound of the same window needs its own control. A
+    # shortened budget (one allowance under GUARD_BUDGET) leaves the guard
+    # correct-but-fast — the upper bound passes it, only the lower bound
+    # (GUARD_BUDGET <= elapsed) kills it at the named assertion. Shares the
+    # old anchor with guard-budget-stretched (still unique in the source;
+    # mutations apply one at a time).
+    ('guard-budget-shortened', TESTS,
+     'let mut deadline = Instant::now() + GUARD_BUDGET;',
+     'let mut deadline = Instant::now() + GUARD_BUDGET - GUARD_STALL_ALLOWANCE;',
+     'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
     # #1805 item 2: receipts pair with the current barrier by sequence. With
     # the floor neutralized, a key that completed an earlier round reads as
     # already released: the guard skips the release.json write the current
