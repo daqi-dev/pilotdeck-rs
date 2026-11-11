@@ -1512,8 +1512,19 @@ impl SubmitHostServices for Services {
         {
             let project = project
                 .as_string()
-                .and_then(|s| s.to_utf8().ok())
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
+            // #2617: the TS resolver chain runs a lone-surrogate `projectKey`
+            // to completion (`resolveProjectStorageId` slugs the key lossily;
+            // Node v22.22.0 probes: submit-level
+            // `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out`,
+            // resolver-level `_tmp/20261111-issue-2617/
+            // probe-submit-surrogate-resolver.out`), so the string branch
+            // converts lossily — the #2083 close-path shape (session_dir.rs)
+            // — and only the `serves_project` capability gate decides. A
+            // non-string keeps the type error above. Residual, accepted with
+            // #2083: a key whose lossy form names the configured project (a
+            // real path containing U+FFFD) is served.
+            let project = String::from_utf16_lossy(project.units());
             if !self.options.serves_project(&project) {
                 return Err(unavailable(
                     "The isolated native process serves only its configured project.",
