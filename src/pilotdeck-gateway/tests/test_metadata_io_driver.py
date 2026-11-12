@@ -1605,6 +1605,12 @@ class EnvironmentControls(unittest.TestCase):
         # #2981 fix-r3（MM sibling P1）：close-order pin 补出场侧冻结账本
         # 证明用例（exit-ledger-drift，删 runner :539 那行此前整套照绿——
         # 冻结件假 PASS），Ran 14→15（本轮实测约 2.7 s），下限同步抬到 15。
+        # #2981 fix-r4（MM sibling#1 + concurrency#1）：close-order pin 补
+        # 入场侧孪生用例（ledger-drift，删 runner 入场证明行此前整套照绿，
+        # 与出场侧同型）Ran 15→16（本轮实测约 2.8 s）；sdk-signals 补驱动
+        # 失败腿（hang：piped 驱动对写完首行后卡死的 runner 有界 + 回收）
+        # Ran 16→17（本轮实测约 9.8 s，hang 用例按构造须等满 5 s 注入超时，
+        # 是该模块耗时下界的一部分）。下限同步抬。
 
         minimums = (
             ('test_negative_optimize_guards', 10),
@@ -1613,8 +1619,8 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 15),
-            ('sdk-signals/test_negative_controls.py', 16),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 16),
+            ('sdk-signals/test_negative_controls.py', 17),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /

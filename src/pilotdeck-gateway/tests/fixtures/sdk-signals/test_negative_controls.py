@@ -93,6 +93,12 @@ registered as #1866 (a deliberate change there changes this class):
   completed: no summary.json, no leftover temp, and the record lines
   still on stdout.
 
+fix-r4（MM concurrency#1）adds the driver's own failure leg: a runner hung
+after its first delivered line must be bounded and reaped by
+``run_runner_piped`` — the old unbounded ``stderr.read()`` hung the whole
+module until the CI step killed it, taking all eight modules' verdicts with
+it.
+
 Both non-abort verdict edges pin this runner's current exit contract
 (``return int(any(row != KILLED))``): the verdict path's rc 1, distinct from
 the abort path's rc 2. That contract differs from the close-order pin's
@@ -224,7 +230,11 @@ if mode in ('busy-lock', 'preflight-drift'):
         # The timeout fires before any git work inside the guard, so the
         # temporary tree needs no repository.
         old = 'with mutating_sources(root, guarded) as originals:'
-        assert source.count(old) == 1, 'stale mutating_sources call anchor'
+        # #2981 fix-r4（MM sibling#2）：前提守卫不许用裸 assert——``python3 -O``
+        # 剥离后锚点漂移静默放行（fixtures README 三条硬要求之三）；raise 在
+        # 任何解释器档位都拒跑，与本文件 fix-r3 已改的 SELECTION 前提钉同形。
+        if source.count(old) != 1:
+            raise RuntimeError('#2981 stale mutating_sources call anchor')
         source = source.replace(
             old,
             'with mutating_sources(root, guarded, lock_timeout=2)'
@@ -241,6 +251,7 @@ if mode in ('busy-lock', 'preflight-drift'):
 else:
     @contextlib.contextmanager
     def fake_guard(actual_root, requested, **_kwargs):
+        state['guard'] = True
         snapshots = {Path(path): Path(path).read_bytes() for path in requested}
         try:
             yield snapshots
@@ -250,7 +261,16 @@ else:
             if mode == 'guard-exit-fault':
                 raise RuntimeError('#2981 injected guard exit failure')
 
-    calls = {'run': 0, 'head': 0}
+    # #2981 fix-r4（MM simplify#1）：注入按相位绑定，不按 _head_bytes 调用
+    # 序号——旧的 ``index >= 1`` / ``index >= 3`` 把「check_catalog 恰读一本、
+    # 每次证明恰读两本」写死，runner 增删账本或证明次数，注入就会落到错误
+    # 的相位（或不再触发），绿灯从此证明不了「钉的是哪条证明」。相位以
+    # runner 的可见行为绑定（实测）：check_catalog 的读在守卫打开之前
+    # （head 0 / guard 未开）；入场证明在守卫内、任何 run_owned 之前
+    # （head 1-2 / runs 0）；出场证明在全部 run_owned 之后（head 3-4 /
+    # runs 8 = 4×len(names)）。
+    calls = {'run': 0}
+    state = {'guard': False, 'exit_served': False}
 
     def fake_slot(script, **_kwargs):
         return subprocess.CompletedProcess([], 0, '', '')
@@ -297,6 +317,17 @@ else:
             time.sleep(0.2)
         index = calls['run']
         calls['run'] += 1
+        # Serving the last of the runner's deterministic phases (4 per
+        # control) marks the exit phase: every later _head_bytes read can
+        # only be the exit-side proof (see the state comment above).
+        if calls['run'] == 4 * len(names):
+            state['exit_served'] = True
+        if mode == 'hang' and index >= 4:
+            # #2981 fix-r4（MM concurrency#1）：确定性的「写完首行后卡死」——
+            # 第一条 record() 行已到达 reader（head 取行退出），第二个控制的
+            # 首相位起 runner 永不再前进。60 s 而非永久：即使驱动的回收被
+            # 变异掉，孤儿也自会退出，不把宿主钉成无限泄漏。
+            time.sleep(60)
         row = _row(index // 4)
         if mode == 'survived':
             # The verdict edge no abort mode can reach: every phase green,
@@ -320,22 +351,22 @@ else:
             command, 1, _failed_log(row[4], row[5]), '')
 
     def fake_head_bytes(actual_root, relative, _baseline):
-        index = calls['head']
-        calls['head'] += 1
-        if mode == 'ledger-drift' and index >= 1:
-            # Call 0 was check_catalog's close-order proof; calls 1-2 are the
-            # entry-side proof inside the guard, where `phase` is already
+        # #2981 fix-r4：相位判定见 state 上方注释（MM simplify#1）。
+        if mode == 'ledger-drift' and state['guard'] and calls['run'] == 0:
+            # The entry-side proof inside the guard, where `phase` is already
             # 'body' and only the FrozenLedgerDrift term of the
             # guard-failure predicate can route the run to rc 2.
+            # check_catalog's own proof runs before the guard opens and must
+            # stay green here — that read is the preflight-drift mode's
+            # territory.
             raise OSError('#2981 injected ledger drift')
-        if mode == 'exit-ledger-drift' and index >= 3:
-            # Calls 0-2 stay with check_catalog and the entry-side proof
-            # (the ledger-drift case's territory); calls 3-4 are the
-            # exit-side proof after the last control, where `phase` is
+        if mode == 'exit-ledger-drift' and state['exit_served']:
+            # The exit-side proof after the last control, where `phase` is
             # 'exit' and the raise comes out of the runner's own
             # assert_frozen_ledgers_match_head() on its way out of the
             # guard. Failing there and nowhere else is what makes this the
-            # use case for that proof: delete it and this case goes green.
+            # use case for that proof: delete it and this case goes red
+            # (rc 0 != the asserted 2), not green.
             raise OSError('#2981 injected exit ledger drift')
         return (Path(actual_root) / relative).read_bytes()
 
@@ -487,7 +518,7 @@ class _RunnerDriver:
             summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))
         return process, summary, tree, before, out
 
-    def run_runner_piped(self, mode, names=SELECTION):
+    def run_runner_piped(self, mode, names=SELECTION, timeout=120):
         """Drive the runner with its stdout feeding a real ``head -1`` reader.
 
         The measured ``... | head -1`` delivery shape: the reader takes the
@@ -502,20 +533,48 @@ class _RunnerDriver:
         swallow it — the CI's ubuntu-24.04 python is 3.12, so the close would
         ERROR the case there). ``communicate()`` itself flushes and closes the
         empty-input stdin, same semantics on every version.
+
+        fix-r4（MM concurrency#1）: both legs of the failure path are bounded.
+        The old ``process.stderr.read()`` after the reader's communicate had
+        no timeout — stderr only EOFs when the runner exits, so a runner
+        stuck after its first line hung the whole module until the CI step's
+        ``timeout-minutes`` killed all eight modules' verdicts together, and
+        a timeout on either leg leaked the runner itself. The runner's stderr
+        is now drained through ``process.communicate(timeout)`` (its stdout
+        already belongs to the reader's pipe, so communicate does not touch
+        it), and the finally group-kills and reaps both children (the
+        ``_kill_holder`` shape; each runs in its own session, so the group
+        kill cannot reach this process group). A TimeoutExpired is re-raised
+        with the reaped runner attached as ``.process``, so a caller can
+        prove the driver never returns with the runner still alive.
         """
         base = self._new_base('pdrs-2981-pipe-')
         tree, tree_runner, out, before, env = self._stage(base)
         reader = subprocess.Popen(
             ['head', '-1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            text=True)
+            text=True, start_new_session=True)
         process = subprocess.Popen(
             [sys.executable, '-I', '-B', str(base / 'harness.py'), mode,
              str(tree_runner), str(FIXTURES), str(tree), str(out), *names],
-            stdout=reader.stdin, stderr=subprocess.PIPE, text=True, env=env)
-        head_stdout, _reader_stderr = reader.communicate(timeout=120)
-        stderr_text = process.stderr.read()
-        process.stderr.close()
-        process.wait(timeout=120)
+            stdout=reader.stdin, stderr=subprocess.PIPE, text=True, env=env,
+            start_new_session=True)
+        try:
+            head_stdout, _reader_stderr = reader.communicate(timeout=timeout)
+            _process_stdout, stderr_text = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            error.process = process
+            raise
+        finally:
+            # fix-r4: neither child may outlive the driver — not on the
+            # happy path, not on a timeout. Group kill, then a bounded reap
+            # (the _kill_holder shape; a vanished group is not an error).
+            for child in (process, reader):
+                if child.poll() is None:
+                    try:
+                        os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                child.wait(timeout=30)
         return process, head_stdout, stderr_text, tree, before, out
 
     @staticmethod
@@ -691,8 +750,10 @@ class AbortAccountingTests(_RunnerDriver, unittest.TestCase):
         # 完成后的 assert_frozen_ledgers_match_head()（phase = "exit"）——
         # 此前无用例：ledger-drift 只打断 entry 侧（相位 body，靠
         # isinstance 项路由），guard-exit-fault 的异常来自守卫清理而非
-        # 这条证明。本例让真正的出场侧证明失败（_head_bytes 第 4 次调用
-        # 起抛，即出场侧读）：删掉那两行本用例转绿，正是它要钉的洞。
+        # 这条证明。本例让真正的出场侧证明失败（相位化注入：全部 run_owned
+        # 相位服务后，见 harness）。fix-r4（MM boundary#1）修正本注释的判别
+        # 力方向：删掉那两行本用例转红（rc 0 ≠ 断言的 2），正是它的判别
+        # 力所在。
         process, summary, tree, before, _out = self.run_runner(
             'exit-ledger-drift')
         self.assertEqual(process.returncode, 2,
@@ -938,6 +999,27 @@ class VerdictDeliveryTests(_RunnerDriver, unittest.TestCase):
         self.assertTrue((tree / REPLAY_RELATIVE).read_bytes() == before,
                         '#2981 a publish-fault run must still restore the'
                         ' tree')
+
+    def test_a_hung_runner_is_bounded_and_reaped(self):
+        # fix-r4（MM concurrency#1）：``run_runner_piped`` 的失败路径此前有
+        # 两条无界腿——reader 侧 communicate 超时后，runner stderr 的裸
+        # ``read()`` 无超时（stderr 到子进程退出才 EOF），且超时路径不回收
+        # runner：写完首行后卡死的 runner 让整个模块永不返回，只能靠 CI 步
+        # 的 timeout-minutes 整体杀掉，八个模块的结论一起丢。本例钉修复后
+        # 的两条性质：有限时间内以 TimeoutExpired 返回（墙钟下界），且驱动
+        # 返回时 runner 必须已死（不回收的孤儿持着临时树与管道写端）。
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
+            self.run_runner_piped('hang', timeout=5)
+        self.assertLess(time.monotonic() - started, 60,
+                        '#2981 the piped driver must bound a hung runner '
+                        'instead of waiting for the CI step to kill the '
+                        'whole module')
+        process = caught.exception.process
+        self.assertIsNotNone(process.poll(),
+                             '#2981 the hung runner must not outlive the '
+                             'piped driver: a leaked child holds the '
+                             'temporary tree and the pipe write end')
 
 
 class PreflightLedgerDriftTests(_RunnerDriver, unittest.TestCase):

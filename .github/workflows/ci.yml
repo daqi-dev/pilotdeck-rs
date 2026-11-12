@@ -131,9 +131,12 @@ jobs:
         # 判决+管道三态第三腿 Ran 13、fix-r6 三态×管道矩阵末格 Ran 14。
         # #2981 fix-r3（MM sibling P1）：close-order pin 出场侧冻结账本证明
         # 用例（exit-ledger-drift，删 runner 那行此前整套照绿）Ran 14→15。
+        # #2981 fix-r4（MM sibling#1）：close-order pin 补入场侧孪生用例
+        # （ledger-drift，删 runner 入场证明行此前整套照绿）Ran 15→16。
         # #2981：增第八模块（sdk-signals，close-order pin 的同型最近兄弟），
         # 其手写 abort 记账此前同样无仓内测试；12 例全子进程驱动临时树，
         # 不需要 cargo；fix-r2 三出口腿 + exit 相位补四用例后 Ran 16，
+        # fix-r4 驱动失败腿（hang：piped 驱动有界 + 回收）后 Ran 17，
         # 真跑钉与守卫同步扩到八模块。
         timeout-minutes: 5
         run: |

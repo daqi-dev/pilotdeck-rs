@@ -37,6 +37,15 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   recorded INVALID, the guard still restores the catalog, rc 2;
 - guard-exit-fault: the stub guard raises after the body completed — the
   revoke-everything half of the same accounting (#979);
+- ledger-drift: ``_head_bytes`` fails on the entry-side frozen-ledger proof
+  (the ``#1885 r3`` prove inside the guard, before the first control runs)
+  — the twin the exit-side case below was missing until fix-r4: the runner
+  has two identical ``assert_frozen_ledgers_match_head`` calls and only the
+  exit one had a case, so deleting the entry line left the suite green (a
+  frozen-device false PASS). No row was recorded yet, so both rows come from
+  the unrun accounting with no healthy prefix, rc 2, summary still
+  published — the close-order sibling of the sdk-signals side's body-phase
+  case;
 - exit-ledger-drift: ``_head_bytes`` fails on the exit-side frozen-ledger
   proof (the ``#1885 r3`` re-prove after the last control) — until this case
   no in-repo test triggered that proof: deleting its whole line left the
@@ -145,7 +154,12 @@ if mode == 'busy-lock':
     # issue-2495 GUARD_LOCK_FAST shape). The timeout fires before any git
     # work, so the temporary tree needs no repository.
     old = 'LOCK_TIMEOUT_SECONDS = 60'
-    assert source.count(old) == 1, 'stale LOCK_TIMEOUT anchor'
+    # #2981 fix-r4（MM sibling#2）：前提守卫不许用裸 assert——``python3 -O``
+    # 剥离后锚点漂移静默放行（fixtures README 三条硬要求之三）；raise 在
+    # 任何解释器档位都拒跑（fix-r3 已把 sdk-signals 侧的同型锚点守卫改成
+    # raise，不留半迁移状态）。
+    if source.count(old) != 1:
+        raise RuntimeError('#2981 stale LOCK_TIMEOUT anchor')
     source = source.replace(old, 'LOCK_TIMEOUT_SECONDS = 2', 1)
 else:
     catalog = tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py'
@@ -164,15 +178,25 @@ else:
                 raise RuntimeError('#1800 injected guard exit failure')
 
     calls = {'count': 0}
-    head_calls = {'count': 0}
+    # #2981 fix-r4（MM simplify#1）：注入按相位绑定，不按 _head_bytes 调用
+    # 序号——旧的 ``index >= 2`` 把「出场证明是第 3-4 次读」写死，runner
+    # 增删一本账本或增一次入场前证明，注入就会落到错误的证明上（或不再
+    # 触发），绿灯从此证明不了「钉的是出场侧那条证明」。相位以 runner
+    # 的可见行为绑定：入场证明先于任何 run_owned（实测 head 0-1 / runs 0），
+    # 出场证明后于全部 run_owned（head 2-3 / runs 5）。
+    exit_served = {'done': False}
 
     def fake_run_owned(command, **_kwargs):
         # The check command carries no phase label, so the phases are served
         # from the runner's own deterministic order: positive-before, then
         # negative/restored per selected control (the SessionRunnerTests
-        # stage-queue shape).
+        # stage-queue shape). Serving the last of those phases
+        # (1 + 2 per control) is what marks the exit phase: every later
+        # _head_bytes read can only be the exit-side proof.
         index = calls['count']
         calls['count'] += 1
+        if calls['count'] == 1 + 2 * len(names):
+            exit_served['done'] = True
         if mode in ('survived', 'survived-pipe'):
             # The verdict edge no abort mode can reach: every phase green, so
             # the negative run's preflight still passes and the row survives.
@@ -199,17 +223,20 @@ else:
             command, 0, 'product anchors: PASS\\n', '')
 
     def fake_head_bytes(actual_root, relative, _baseline):
-        index = head_calls['count']
-        head_calls['count'] += 1
-        if mode == 'exit-ledger-drift' and index >= 2:
-            # Calls 0-1 are the entry-side proof inside the guard (each
-            # assert_frozen_ledgers_match_head reads both ledgers: the
-            # close-order ledger first, then the #1145 rejection ledger);
-            # calls 2-3 are the exit-side proof after the last control, the
-            # `#1885 r3` re-prove on the way out. Failing there and nowhere
-            # else is what makes this the use case for that proof: delete it
-            # and this case goes green, and no earlier fault reaches it —
-            # every completed row must still land in the abort accounting.
+        # #2981 fix-r4：相位判定见 fake_run_owned 上方注释（MM simplify#1）。
+        if mode == 'ledger-drift' and calls['count'] == 0:
+            # The entry-side proof inside the guard, before any control ran
+            # (no run_owned served yet). Deleting the runner's entry proof
+            # line turns this case red (rc 0 != the asserted 2) — that is
+            # its discriminating power, not a green hole.
+            raise OSError('#2981 injected entry ledger drift')
+        if mode == 'exit-ledger-drift' and exit_served['done']:
+            # The exit-side proof after the last control, the `#1885 r3`
+            # re-prove on the way out. Failing there and nowhere else is
+            # what makes this the use case for that proof: delete it and
+            # this case goes red (rc 0 != the asserted 2), and no earlier
+            # fault reaches it — every completed row must still land in the
+            # abort accounting.
             raise OSError('#2981 injected exit ledger drift')
         return (Path(actual_root) / relative).read_bytes()
 
@@ -375,7 +402,12 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
         self.assertEqual([row['mutation'] for row in summary['results']],
                          list(SELECTION),
                          '#1800 every selected control must stay accounted for')
-        self.assertEqual([row['reason'] for row in summary['results']], reasons)
+        # #2981 fix-r4：绑定断言带专属消息且单行可识别（#1120 形态，对齐
+        # sdk-signals 侧 assert_rows）——它判定「注入落在哪条证明」。
+        self.assertTrue([row['reason'] for row in summary['results']] == reasons,
+                        '#1800 abort reasons must keep the revoked prefix and '
+                        'name the failure, got '
+                        + repr([row['reason'] for row in summary['results']]))
         self.assertEqual(summary['counts'],
                          {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(SELECTION)},
                          '#1800 an aborting run must revoke every kill and count '
@@ -487,8 +519,9 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
         # #2981 fix-r3（MM sibling P1）：runner 自己的出场侧冻结账本证明
         # （#1885 r3，最后一个控制完成后的 assert_frozen_ledgers_match_head()）
         # 此前无用例触发——删掉那一整行本文件照绿（冻结件假 PASS，与 sdk-signals
-        # 侧 fix-r2 补的 exit 相位用例同型）。本例让 _head_bytes 第 3 次调用起
-        # 抛（即出场侧读）：删掉那行本用例转绿，正是它要钉的洞。
+        # 侧 fix-r2 补的 exit 相位用例同型）。fix-r4（MM boundary#1）修正本
+        # 注释的判别力方向：删掉那行本用例转红（rc 0 ≠ 断言的 2），正是
+        # 它的判别力所在；注入按相位绑定（全部相位服务后，见 harness）。
         process, summary, tree, before = self.run_pin('exit-ledger-drift')
         self.assertEqual(process.returncode, 2,
                          f'#2981 an exit-phase ledger drift must exit 2: '
@@ -496,13 +529,11 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
         failure = 'run aborted: OSError: #2981 injected exit ledger drift'
         # The exit-side proof fires after the LAST control completed, so both
         # rows are recorded kills the accounting must revoke — each keeps
-        # its own healthy diagnostic as the prefix (#979).
+        # its own healthy diagnostic as the prefix (#979). assert_rows already
+        # pins every row INVALID with the counts; no per-row status echo on
+        # top (fix-r4 MM simplify#2 removed the redundant one).
         self.assert_rows(summary, [HEALTHY_REASON + '; ' + failure,
                                    HEALTHY_REASON + '; ' + failure])
-        self.assertEqual([row['status'] for row in summary['results']],
-                         ['INVALID'] * len(SELECTION),
-                         '#2981 an exit-phase ledger drift revokes every '
-                         'recorded kill')
         self.assertIn('#1382 run did not complete: OSError: '
                       '#2981 injected exit ledger drift', process.stderr,
                       '#2981 the abort must name the exit-side ledger drift '
@@ -514,6 +545,33 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
         self.assertEqual(catalog.read_bytes(), before,
                          '#2981 an exit-phase ledger drift happens after '
                          'every control restored its own catalog row')
+
+    def test_entry_ledger_drift_records_every_row_invalid(self):
+        # #2981 fix-r4（MM sibling#1）：runner 的入场侧冻结账本证明（#1885 r3，
+        # 守卫内、第一个控制之前的 assert_frozen_ledgers_match_head()）与出场侧
+        # 形状完全相同，此前却无用例触发——出场侧补了用例后，删掉入场那一行
+        # 本文件照绿（冻结件假 PASS）。本例只在相位上钉入场侧：任何 run_owned
+        # 服务之前失败。删掉 runner 那行 → 本用例转红（rc 0 ≠ 断言的 2）。
+        process, summary, tree, before = self.run_pin('ledger-drift')
+        self.assertEqual(process.returncode, 2,
+                         f'#2981 an entry-phase ledger drift must exit 2: '
+                         f'{process.stderr!r}{process.stdout!r}')
+        failure = 'run aborted: OSError: #2981 injected entry ledger drift'
+        # The entry proof fires before the first control ran, so no row was
+        # ever recorded: both come from the unrun accounting, each with the
+        # bare abort reason and no healthy prefix to keep.
+        self.assert_rows(summary, [failure, failure])
+        self.assertIn('#1382 run did not complete: OSError: '
+                      '#2981 injected entry ledger drift', process.stderr,
+                      '#2981 the abort must name the entry-side ledger drift '
+                      'on stderr')
+        self.assertEqual(self.counts_line(process.stdout)['counts']['INVALID'],
+                         len(SELECTION))
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertTrue(catalog.read_bytes() == before,
+                        '#2981 an entry-phase ledger drift happens before '
+                        'any control wrote the catalog')
 
     def test_cancellation_voids_recorded_kills_and_unrun_rows(self):
         # KeyboardInterrupt is a BaseException the per-control ``except
