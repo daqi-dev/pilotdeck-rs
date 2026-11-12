@@ -567,6 +567,8 @@ class CheckoutProvenance(unittest.TestCase):
     ENTRIES = ('build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
                'native_evidence.py', 'observer.py', 'run_round.py',
                'session_domain.py', 'test_safety.py',
+               'test_channel_provenance.py', 'test_retirement_channel_v2.py',
+               'test_retirement_public_http.py', 'test_project_clock_scope.py',
                'controls/run_all.py', 'controls/prerequisites.py',
                'controls/session_domain.py')
 

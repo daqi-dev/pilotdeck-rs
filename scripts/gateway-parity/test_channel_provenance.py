@@ -73,6 +73,7 @@ import errno
 import hashlib
 import json
 import shutil
+import subprocess
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -148,6 +149,56 @@ class ChannelProvenance(unittest.TestCase):
         path = self.out / name
         path.write_text(json.dumps(value) + '\n')
         return reference(path)
+
+    def test_git_source_scan_failure_has_a_source_rule(self):
+        self.d.subprocess = subprocess
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_SOURCE.*cannot read fixed TS source tree'):
+            entries.verify_channel_ts_sources(self.d, self.out / 'missing-checkout')
+
+    def test_git_failures_do_not_abort_other_channel_results(self):
+        self.write_json('manifest.json', [
+            {'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},
+            {'path': 'pilotdeck-agent-loop-sidecar', 'sha256': 'unit-sidecar'},
+        ])
+        native = types.SimpleNamespace(manifest=self.out / 'manifest.json', source_sha='unit-source',
+                                       source={'files': []})
+        raw_ref = self.write_json('native-evidence.json', {
+            'sourceManifestSha256': 'unit-source', 'gatewaySha256': 'unit-native',
+            'sidecarSha256': 'unit-sidecar', 'fixedTS': self.d.RETIREMENT_BASELINE_REVISION,
+        })
+        rows = [{'id': 'gateway.channel:' + channel, 'profile': 'native-eight-v2',
+                 'rawEvidence': raw_ref, 'processReceipt': {'path': 'unit-native-provenance'}}
+                for channel in ('telegram', 'discord')]
+        self.write_json('channels.json', {'schemaVersion': 1, 'entries': rows})
+        transport = self.out / 'transport.jsonl'
+        transport.write_text('')
+        evidence = dict(self.evidence, receipt={'transportTrace': reference(transport)})
+        applicability = {face: {'applicable': False, 'kinds': []}
+                         for face in ('attachment', 'channelInteraction')}
+        baseline = self.out / 'unused-baseline'
+        semantic = {'equal': True, 'differentFields': [], 'formalAcceptance': False}
+
+        def compare(d, _native, actual_baseline, row, _raw, _evidence):
+            if row['id'] == rows[0]['id']:
+                entries.verify_channel_ts_sources(d, actual_baseline)
+            return {'semanticComparison': semantic, 'missing': [], 'originals': []}
+
+        failures = [(subprocess.CalledProcessError(128, ['git', 'ls-tree']), 'exit status'),
+                    (subprocess.TimeoutExpired(['git', 'ls-tree'], 10), 'timed out')]
+        for error, detail in failures:
+            with self.subTest(error=type(error).__name__):
+                self.d.subprocess = types.SimpleNamespace(
+                    check_output=Mock(side_effect=error), SubprocessError=subprocess.SubprocessError)
+                with patch.object(entries, 'verify_owned_process', return_value=evidence), \
+                        patch.object(entries, 'channel_applicability', return_value=applicability), \
+                        patch.object(entries, 'channel_v2_comparison', side_effect=compare):
+                    cells = entries.channel_results(self.d, native, self.out, baseline=baseline)
+                self.assertEqual(len(cells), 32)
+                self.assertEqual(cells[rows[0]['id']]['status'], 'FAIL')
+                self.assertEqual(cells[rows[0]['id']]['rule'], 'ENTRY_CHANNEL_SOURCE')
+                self.assertIn(detail, cells[rows[0]['id']]['detail'])
+                self.assertEqual(cells[rows[1]['id']]['status'], 'BLOCKED')
+                self.assertEqual(cells[rows[1]['id']]['semanticComparison'], semantic)
 
     def test_v2_roles_accept_the_actual_registered_sources(self):
         entries.channel_v2_roles(self.d, self.native, self.raw, self.evidence)

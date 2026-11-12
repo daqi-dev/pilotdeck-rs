@@ -615,8 +615,11 @@ def verify_channel_ts_sources(d, baseline):
     """Reject source aliases and extra resolution candidates, including ignored files."""
     roots = ('src', 'packages/sdk/src')
     fixed = ('package.json', 'pnpm-lock.yaml', 'tsconfig.json')
-    tree = d.subprocess.check_output(['git', '-C', str(baseline), 'ls-tree', '-r', '-z',
-                                     d.RETIREMENT_BASELINE_REVISION, '--', *roots, *fixed], timeout=10)
+    try:
+        tree = d.subprocess.check_output(['git', '-C', str(baseline), 'ls-tree', '-r', '-z',
+                                         d.RETIREMENT_BASELINE_REVISION, '--', *roots, *fixed], timeout=10)
+    except (OSError, d.subprocess.SubprocessError) as error:
+        d.require(False, 'ENTRY_CHANNEL_SOURCE', 'cannot read fixed TS source tree: ' + str(error))
     expected = {}
     for entry in tree.split(b'\0'):
         if not entry:

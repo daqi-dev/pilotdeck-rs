@@ -49,7 +49,11 @@ with common.parity_lock(timeout=1):
      for attempt in range(100):
       inspection=subprocess.run(['docker','inspect',name],capture_output=True,text=True,timeout=5)
       if inspection.returncode==0:
-       save(run/'container-inspect.json',json.loads(inspection.stdout));break
+       inspected=json.loads(inspection.stdout)
+       # A created container is inspectable before its process has started.
+       # Keep polling until the retained snapshot proves the live collector.
+       if len(inspected)==1 and inspected[0]['State']['Running'] is True and inspected[0]['State']['Pid']>0:
+        save(run/'container-inspect.json',inspected);break
       if child.poll() is not None:break
       import time;time.sleep(.05)
      try:code=child.wait(timeout=240)
