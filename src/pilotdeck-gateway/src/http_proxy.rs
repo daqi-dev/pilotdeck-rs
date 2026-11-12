@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicI64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
 };
@@ -252,9 +252,29 @@ struct UpgradeReadGate<S> {
     /// ._headerSent`; probe `probe-g2.out`/`probe-c2.out`: a streaming
     /// response is simply destroyed with no 408, `probe-g4.out`: a held
     /// response that has written nothing still gets the 408). Mirrors
-    /// `_headerSent` by treating any hyper write as the head: hyper never
-    /// writes a response's body ahead of its head.
+    /// `_headerSent` at the hand-off (fix-r2, mutant
+    /// `native-http-headersent-needs-acceptance`): `poll_write` called
+    /// with a non-empty buffer already counts — hyper never writes a
+    /// response's body ahead of its head.
     response_head_written: bool,
+    /// #1517: hyper's write side holds bytes its flush has not confirmed on
+    /// the wire — either the gate itself wrote them (`poll_write`) or the
+    /// response's frames were handed off to hyper (`IdleBody::release`, fix-r1:
+    /// a tail that never reaches the gate at all — the transport accepts no
+    /// byte — must extend the same window, or the quadrant where the tail sits
+    /// entirely in hyper's `write_buf` loses both halves at once). Node's
+    /// `finish` — the moment `_httpMessage` detaches and the 408 guard opens —
+    /// needs the flush, not just the last frame's hand-off to hyper
+    /// (`probe-1517.out` T1: `end()` at +88 s, `writableLength` 2 097 167
+    /// still unflushed at the +90 s expiry, and the destroy carries no 408), so
+    /// the in-flight window this flag extends is exactly Node's attach window:
+    /// while it holds, the `_headerSent` mirror stays set (the expiry closes
+    /// silently) and a next head's bytes stay withheld gate-side — otherwise
+    /// they reach hyper's read buffer and its `mid_message_detect_eof` parks on
+    /// the non-empty buffer, stranding the parked headers deadline unpolled
+    /// (nothing would ever fire at the grid point). Shared with `IdleBody`
+    /// because the release happens on the write side of the same task.
+    write_pending: Arc<AtomicBool>,
     /// The connection's own stop signal, consulted only while
     /// [`Self::headers_deadline`] is armed: a stop disarms it (and blocks
     /// re-arming; Node clears its checker in `server.close()`).
@@ -331,6 +351,7 @@ impl<S> UpgradeReadGate<S> {
         stop: Option<watch::Receiver<bool>>,
         rearm: watch::Receiver<usize>,
         in_flight: Arc<AtomicUsize>,
+        write_pending: Arc<AtomicBool>,
         body_remaining: Arc<AtomicI64>,
         release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
     ) -> Self {
@@ -351,6 +372,7 @@ impl<S> UpgradeReadGate<S> {
             disarm_after: 0,
             awaited_head_started: false,
             response_head_written: false,
+            write_pending,
             headers_sleep: headers_deadline
                 .map(|deadline| Box::pin(tokio::time::sleep_until(deadline))),
             in_flight,
@@ -401,9 +423,26 @@ impl<S> UpgradeReadGate<S> {
     /// through hyper's `mid_message_detect_eof` while the response streams
     /// (`probe-g2.out`/`probe-c2.out`); the proxy lane has no headers
     /// deadline and keeps reading through.
+    /// #1517: the in-flight window extends past the last frame's hand-off to
+    /// hyper — while the write side has not flushed, Node's `_httpMessage` is
+    /// still attached (its `finish` needs the flush), and releasing the head
+    /// bytes into hyper's read buffer would park its read machinery on the
+    /// non-empty buffer, stranding the parked deadline unpolled (`_headerSent`
+    /// keeps the byte-reading half of the same window; the two flags cover
+    /// one attach window together). fix-r1: `write_pending` covers the tail
+    /// that never reached the gate too — set at `IdleBody::release` — or a
+    /// transport that accepts no byte after the body's end parks hyper with
+    /// `in_flight == 0` and nothing withheld, and the grid point goes quiet
+    /// (review concurrency #1, `probe-1517-t3.out` T3a).
     fn withholding_mid_stream(&self) -> bool {
         self.headers_timeout.is_some()
-            && self.in_flight.load(Ordering::Relaxed) > 0
+            && (self.in_flight.load(Ordering::Relaxed) > 0
+                || (self.write_pending.load(Ordering::Relaxed)
+                    // The pre-#1517 withholding the negative control kills:
+                    // the in-flight slot alone, so a tail stuck entirely in
+                    // hyper's write buffer withholds nothing and the half
+                    // head parks the parked deadline away.
+                    && !crate::mutants::on("native-http-withholding-unflushed-tail")))
             && self.body_remaining.load(Ordering::Relaxed) <= 0
     }
 
@@ -515,7 +554,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
         // finish — so an expiry from here on writes the 408 (`probe-g4.out`).
         // While one is streaming, poll_write has set the flag and the expiry
         // closes silently instead (`probe-g2.out`/`probe-c2.out`).
-        if self.in_flight.load(Ordering::Relaxed) == 0 {
+        // #1517: Node's `finish` itself waits for the flush — an ended body
+        // whose tail hyper has not flushed keeps `_httpMessage` attached, so
+        // the mirror must stay set and the expiry still closes silently
+        // (`probe-1517.out` T1/T2). fix-r1: the clear consults the shared
+        // flag, which the release sets even when the tail never reaches the
+        // gate. The mutant reverts to the in-flight slot alone — the
+        // pre-#1517 clear — so the expiry arms the 408 ahead of the stuck
+        // tail.
+        if self.in_flight.load(Ordering::Relaxed) == 0
+            && (!self.write_pending.load(Ordering::Relaxed)
+                || crate::mutants::on("native-http-408-into-unflushed-tail"))
+        {
             self.response_head_written = false;
         }
         // #1292 fix-r1: each response finish re-arms the deadline for the
@@ -524,7 +574,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
         // idle close. fix-r2: a head already mid-arrival — its first byte
         // anchored its own deadline — keeps it; the response ending does not
         // move Node's `last_message_start_`.
-        if self.rearm.has_changed().unwrap_or(false) {
+        // #1517 fix-r1: a bump consumed while the write side has not
+        // flushed would arm Node's stand-by window before the `finish` it is
+        // measured from — with no follow-up head Node has no window at all
+        // (`probe-1517-t3.out` T3b: the +150 s grid passes with the
+        // connection open and the tail undelivered) — so the change stays
+        // unconsumed until the flush confirms; hyper polls the gate the
+        // whole time, and the flush that confirms is the same transition
+        // that consumes it.
+        if self.rearm.has_changed().unwrap_or(false)
+            && (!self.write_pending.load(Ordering::Relaxed)
+                // The pre-fix-r1 behavior the negative control kills: the
+                // stand-by re-arm at the frame hand-off, arming a window
+                // Node never opens while the tail is stuck.
+                || crate::mutants::on("native-http-standby-rearm-ignores-unflushed"))
+        {
             self.rearm.borrow_and_update();
             if !self.awaited_head_started
                 || crate::mutants::on("native-http-rearm-resets-started-head")
@@ -726,15 +790,34 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 "connection closed",
             )));
         }
-        // #1292 fix-r2: hyper wrote response bytes — Node's `_headerSent`:
-        // hyper never writes a response's body ahead of its head, so any
-        // successful write means the in-flight response's head is on the
-        // wire, and a headers-timeout expiry from here on closes silently
-        // (`probe-g2.out`/`probe-c2.out`).
+        // #1292 fix-r2: hyper received response bytes — Node's `_headerSent`:
+        // hyper never writes a response's body ahead of its head, so a
+        // non-empty `poll_write` means the in-flight response's head has
+        // been handed off, and a headers-timeout expiry from here on closes
+        // silently (`probe-g2.out`/`probe-c2.out`).
+        // #1517: the bytes are only *handed off* — Node's `finish` needs the
+        // flush — so the same write also holds the response's in-flight
+        // window open until `poll_flush` confirms the drain.
+        // fix-r2: the mirror is set at the hand-off too, not at the
+        // transport's acceptance — Node's `_headerSent` flips at
+        // `res.write`, before the wire accepts a single byte
+        // (`probe-1517-c.json`: a pipelined second response whose head sits
+        // in the JS outputData queue with `res.socket === null` already
+        // reports `headersSent === true`, zero bytes on the wire), so a head
+        // whose first write the transport refuses — a kernel send buffer the
+        // previous traffic filled, parked in hyper's write buffer — still
+        // counts as started and the expiry destroys silently instead of
+        // writing a 408 ahead of it. The mutant reverts to the
+        // byte-accepted condition — the pre-fix-r2 mirror — so the expiry
+        // arms the 408 into the never-accepted head's connection.
+        if !buf.is_empty() && !crate::mutants::on("native-http-headersent-needs-acceptance") {
+            self.response_head_written = true;
+        }
         match Pin::new(&mut self.stream).poll_write(cx, buf) {
             Poll::Ready(Ok(written)) => {
                 if written > 0 {
                     self.response_head_written = true;
+                    self.write_pending.store(true, Ordering::Relaxed);
                 }
                 Poll::Ready(Ok(written))
             }
@@ -742,7 +825,30 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
         }
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.stream).poll_flush(cx)
+        match Pin::new(&mut self.stream).poll_flush(cx) {
+            Poll::Ready(Ok(())) => {
+                // #1517: the flush confirms every byte hyper handed off is on
+                // the wire — the same transition hyper itself treats as the
+                // write side's finish (its `poll_flush` only reaches the io
+                // layer once its own write buffer drained, `io.rs`:
+                // `poll_flush` polls the io `poll_flush` only from the
+                // drained state). The response's in-flight window closes
+                // here, not at the last frame's hand-off, matching Node's
+                // `_httpMessage` detach at `finish`. fix-r1: this is also
+                // the one transition that clears the release's hand-off
+                // share of the flag — a tail that never reached the gate is
+                // confirmed by the same drained flush. A write error or a
+                // shutdown instead leaves the flag set on purpose: hyper
+                // tears the connection down on either (the response future
+                // resolves and the socket drops), so no follow-up head can
+                // ever observe the stale window (review fix-r1 Grok #1).
+                if !crate::mutants::on("native-http-flush-clear-off") {
+                    self.write_pending.store(false, Ordering::Relaxed);
+                }
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
     }
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.stream).poll_shutdown(cx)
@@ -967,13 +1073,36 @@ struct IdleBody {
     /// response, so the completion here re-enters the gate and the parked
     /// bytes re-feed, the same place Node's llhttp serves pipelined heads.
     release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
+    /// #1517 fix-r1: the connection's shared write-side flag — the frame
+    /// hand-off means hyper's write side now owns bytes it has not confirmed,
+    /// whether or not the transport ever accepts them (a tail stuck entirely
+    /// in hyper's `write_buf` must keep Node's attach window open exactly
+    /// like one half-flushed through the gate). Cleared only by the gate's
+    /// confirming `poll_flush`.
+    write_pending: Option<Arc<AtomicBool>>,
 }
 impl IdleBody {
     /// Releases the slot and re-arms the idle deadline at body completion.
     /// Idempotent: the frame end and the drop can both reach it.
+    ///
+    /// #1517 fix-r3: that idempotence is load-bearing on the write-side flag
+    /// specifically — `take()` is what makes it so. The first arrival is the
+    /// frame end (`poll_frame`'s `Ready(None)`, hyper polling the body), and
+    /// the second is this body's `Drop` (the response handed off and dropped,
+    /// or the connection torn down). Between the two the flag may already
+    /// have been cleared by the gate's confirming `poll_flush` — the tail
+    /// fully on the wire — and a second `store(true)` here would re-set it
+    /// with no write left behind it, so no later flush could ever clear it:
+    /// the three read-side consumers (`withholding_mid_stream` withholding
+    /// follow-up heads, the mirror clear in `poll_read`, the stand-by
+    /// re-arm) would hold the flag forever, and the next request would be
+    /// withheld indefinitely.
     fn release(&mut self) {
         if let Some(rearm) = self.rearm.take() {
             rearm.send_modify(|generation| *generation += 1);
+        }
+        if let Some(write_pending) = self.write_pending.take() {
+            write_pending.store(true, Ordering::Relaxed);
         }
         if let Some((guard, activity)) = self.held.take() {
             drop(guard);
@@ -1037,6 +1166,11 @@ where
     let state = SharedReadState::default();
     let served_heads = Arc::new(AtomicUsize::new(0));
     let in_flight = Arc::new(AtomicUsize::new(0));
+    // #1517 fix-r1: hyper's write side holding unconfirmed bytes — set by the
+    // gate's own writes and by `IdleBody::release` alike (a tail stuck in
+    // hyper's `write_buf` extends the same attach window), cleared by the
+    // gate's confirming `poll_flush`.
+    let write_pending = Arc::new(AtomicBool::new(false));
     // #1292 fix-r2: the bytes the awaited request still owes its handler —
     // set at each parsed head — so the read gate can tell the request's own
     // body segments from a next head's first byte arriving mid-response.
@@ -1070,11 +1204,13 @@ where
         stop.clone(),
         rearm_rx,
         in_flight.clone(),
+        write_pending.clone(),
         body_remaining.clone(),
         release_waker.clone(),
     );
     let served_heads_in_connection = served_heads.clone();
     let in_flight_in_connection = in_flight.clone();
+    let write_pending_in_connection = write_pending.clone();
     let activity_in_connection = activity.clone();
     let rearm_in_connection = rearm.clone();
     let body_remaining_in_connection = body_remaining.clone();
@@ -1116,6 +1252,7 @@ where
         let activity = activity_in_connection.clone();
         let rearm = rearm_in_connection.clone();
         let release_waker = release_waker_in_connection.clone();
+        let write_pending = write_pending_in_connection.clone();
         let handler = handler(request, lease);
         async move {
             let result = handler.await;
@@ -1142,6 +1279,7 @@ where
                             held,
                             rearm: Some(rearm.clone()),
                             release_waker,
+                            write_pending: Some(write_pending.clone()),
                         }
                         .boxed()
                     }))

@@ -1,9 +1,10 @@
 // Execute frozen source without importing its server entrypoints or listening.
 // These responses are offline proof outputs only; never used by a runtime.
 import assert from 'node:assert/strict';
+import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { baseline, requireUI } from './env.mjs';
 
 const ts = requireUI('typescript');
@@ -90,7 +91,9 @@ export async function proveReplacementBaselineStale() {
     observations, fixtureResults, hostUpstreamCalls: fetches,
     diagnosis: 'Frozen replacement profile lacks mandatory identity; adding identity still requires the real StaffDeck copy bridge, absent from the independent replacement fixture.' };
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// fix-r11（DS r10 sibling#2，P1）：proofScript 入口守卫改双侧 realpathSync——同 baseline-stale-proof.mjs
+// fix-r10 家族的 symlink 失火面（单侧归一化在链接入口下静默 no-op，冻结基线证明被当作 PASS）。
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const { validateBaselineStale } = await import('./baseline-stale.mjs');
   await validateBaselineStale();
   console.log(JSON.stringify(await proveReplacementBaselineStale(), null, 2));

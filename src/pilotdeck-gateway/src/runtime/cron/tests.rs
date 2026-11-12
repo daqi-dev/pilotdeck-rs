@@ -962,14 +962,11 @@ fn migration_blocked_dir_tasks_eacces_matches_ts() {
         // test's note never reaches the log). The CI switch turns the same
         // skip into a failure; the read-error branch stays covered by
         // blocked-dir-tasks-isdir.
-        assert!(
-            !crate::test_permission_faults::require_permission_faults(),
-            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but this caller is root; the \
-             migration/blocked-dir-tasks-eacces cell needs an unprivileged host (需要非特权宿主)"
-        );
-        crate::test_skip_line::stderr_skip_line(
+        crate::test_permission_faults::skip_or_require(
             "#1263 skip: migration/blocked-dir-tasks-eacces: chmod(0) does not deny access \
              to root; the EACCES cell needs an unprivileged host\n",
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but this caller is root; the \
+             migration/blocked-dir-tasks-eacces cell needs an unprivileged host (需要非特权宿主)",
         );
         return;
     }

@@ -504,6 +504,7 @@ fn cancelling_service_lease_wakes_paused_reader() {
         None,
         tokio::sync::watch::channel(0usize).1,
         Arc::new(AtomicUsize::new(0)),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // #1292 fix-r2: no body pending in this gate-level test — it pins
         // the lease wake path, not the mid-stream anchoring.
         Arc::new(std::sync::atomic::AtomicI64::new(0)),
@@ -887,6 +888,7 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
         None,
         tokio::sync::watch::channel(0usize).1,
         in_flight,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // The request's own body is fully read: every byte from here on is
         // the *next* head's, which the gate withholds while the response
         // streams.
@@ -972,6 +974,9 @@ async fn a_next_head_parked_at_the_withholding_cap_wakes_at_the_response_release
         None,
         rearm_rx,
         in_flight.clone(),
+        // #1517: no unflushed write tail in this gate-level test — it pins
+        // the release wake, not the write-side attach window.
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // The request's own body is fully read: every byte from here on is
         // the *next* head's, parked while the response streams.
         Arc::new(std::sync::atomic::AtomicI64::new(0)),
@@ -1021,6 +1026,9 @@ async fn a_next_head_parked_at_the_withholding_cap_wakes_at_the_response_release
         held: Some((InFlightRequest(in_flight.clone()), activity)),
         rearm: Some(rearm),
         release_waker: release_waker.clone(),
+        // #1517: this cell pins the release wake alone — no write-side flag
+        // to hold open, so the flush mechanism stays out of the picture.
+        write_pending: None,
     };
     drop(body);
     assert_eq!(
@@ -1316,7 +1324,7 @@ async fn headers_timeout_408_arrives(client: &mut DuplexStream, what: &str) {
 /// head that was COMPLETE would never be header-timed-out there (leg A/B:
 /// deadline-immune, served at the finish) while this lane's parked bytes
 /// cannot be told apart without parsing them — is the residual
-/// `A8.4-NATIVE-HTTP-002-R3` item 2 registers; this cell is its machine
+/// `A8.4-NATIVE-HTTP-002-R6` item 2 registers; this cell is its machine
 /// judgment (the sms lane's twin pins `A8.3-CH-SMS-017` residual 4). Unlike
 /// the sms lane's destroy(), hyper keeps the duplex open until its connection
 /// ends, so the EOF is read after the serve task joins — the held handler is

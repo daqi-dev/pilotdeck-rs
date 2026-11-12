@@ -226,6 +226,11 @@ async fn released(gate: Gate) {
 #[derive(Clone, Default)]
 struct TurnScript {
     gate_before: Option<String>,
+    /// Per-event staging: event `i` is only sent after the gate
+    /// `<name>-<i>` flips true — the fine-grained control the gated-turn pin
+    /// needs (an event consumed while the turn is still current, then the
+    /// stream parked until after the superseding `/new`).
+    gate_each: Option<String>,
     events: Vec<Value>,
     error: Option<String>,
 }
@@ -296,7 +301,11 @@ impl TurnGateway for MockInbound {
             if let Some(name) = turn.gate_before {
                 released(gate(&gates, &name)).await;
             }
-            for event in turn.events {
+            let gate_each = turn.gate_each;
+            for (index, event) in turn.events.into_iter().enumerate() {
+                if let Some(name) = &gate_each {
+                    released(gate(&gates, &format!("{name}-{index}"))).await;
+                }
                 let _ = events.send(Ok(parse_json(&event.to_string()).expect("#1329 event JSON")));
             }
             if let Some(error) = turn.error {
@@ -600,6 +609,7 @@ fn turn_scripts(case: &Value) -> Vec<TurnScript> {
                 .iter()
                 .map(|turn| TurnScript {
                     gate_before: turn["gateBefore"].as_str().map(str::to_owned),
+                    gate_each: turn["gateEach"].as_str().map(str::to_owned),
                     events: turn["events"].as_array().cloned().unwrap_or_default(),
                     error: turn["error"].as_str().map(str::to_owned),
                 })
@@ -948,6 +958,7 @@ async fn token_invalid_code_drops_the_cached_token() {
     let gateway = MockInbound::new(
         vec![TurnScript {
             gate_before: None,
+            gate_each: None,
             events: vec![json!({"type": "assistant_text_delta", "text": "回复"})],
             error: None,
         }],
@@ -1064,7 +1075,7 @@ async fn losing_the_admission_race_requeues_the_turn() {
     };
     channel.runtime.run_queued_turns(chat_id, turn).await;
 
-    let state = channel.runtime.state.lock().expect("#1329 state mutex");
+    let state = channel.runtime.lock_state();
     let entry = state.chats.get(chat_id).expect("#1329 chat entry");
     crate::negative_assert_eq!(
         entry.queue.len(),
@@ -1132,7 +1143,7 @@ async fn queued_turns_drain_after_the_active_turn() {
         .run_queued_turns(chat_id, turn("queued-2"))
         .await;
     {
-        let state = channel.runtime.state.lock().expect("#1329 state mutex");
+        let state = channel.runtime.lock_state();
         crate::negative_assert_eq!(
             state.chats.get(chat_id).map(|entry| entry.queue.len()),
             Some(2),
@@ -1170,7 +1181,7 @@ async fn queued_turns_drain_after_the_active_turn() {
         "#1329 the drainer runs the queued turns after the live one"
     );
     {
-        let state = channel.runtime.state.lock().expect("#1329 state mutex");
+        let state = channel.runtime.lock_state();
         crate::negative_assert!(
             state
                 .chats
@@ -1203,7 +1214,7 @@ async fn superseded_batch_timer_does_not_drain() {
     const CHAT: &str = "c-timer";
     let (channel, _slot) = case_channel(0);
     {
-        let mut state = channel.runtime.state.lock().expect("#1329 state mutex");
+        let mut state = channel.runtime.lock_state();
         let batch = Batch {
             id: 7,
             timer_seq: 3,
@@ -1223,7 +1234,7 @@ async fn superseded_batch_timer_does_not_drain() {
     // Stale sequence (the batch is on 3): nothing is taken, nothing is claimed.
     channel.runtime.drain_inbound_batch(CHAT, 7, 2).await;
     {
-        let state = channel.runtime.state.lock().expect("#1329 state mutex");
+        let state = channel.runtime.lock_state();
         let batch = state.batches.get(CHAT).expect("#1329 batch kept");
         assert_eq!(
             batch.messages.len(),
@@ -1240,9 +1251,7 @@ async fn superseded_batch_timer_does_not_drain() {
     assert!(
         channel
             .runtime
-            .state
-            .lock()
-            .expect("#1329 state mutex")
+            .lock_state()
             .batches
             .get(CHAT)
             .is_some_and(|batch| batch.messages.len() == 1 && !batch.draining),
@@ -1252,13 +1261,7 @@ async fn superseded_batch_timer_does_not_drain() {
     // taken and dropped, which is what a turn without a gateway does).
     channel.runtime.drain_inbound_batch(CHAT, 7, 3).await;
     assert!(
-        !channel
-            .runtime
-            .state
-            .lock()
-            .expect("#1329 state mutex")
-            .batches
-            .contains_key(CHAT),
+        !channel.runtime.lock_state().batches.contains_key(CHAT),
         "the live timer finishes the batch and removes the entry"
     );
 }
@@ -1296,6 +1299,7 @@ async fn new_command_with_text_submits_on_the_new_session() {
     let gateway = MockInbound::new(
         vec![TurnScript {
             gate_before: None,
+            gate_each: None,
             events: vec![json!({"type": "assistant_text_delta", "text": "总结完毕"})],
             error: None,
         }],
@@ -1347,4 +1351,695 @@ async fn new_command_with_text_submits_on_the_new_session() {
         "#1329 /new with text does not answer the bare confirmation"
     );
     let _ = bounded("new text stop", handle.stop("done")).await;
+}
+
+use super::super::im_interaction::{InteractionFuture, PermissionAnswer as PortPermissionAnswer};
+
+// ---------------------------------------------------------------- #2055 pins
+
+/// #2055-2: the elicitation branch's occupancy. TS consumes the pending
+/// entry synchronously inside `answer()`, so at most one answer task ever
+/// exists per pending elicitation. The pending entry here lives behind the
+/// interaction port, so the channel holds the answering occupancy instead —
+/// and the release at the end of the answer is what keeps the next event
+/// from being swallowed forever.
+#[derive(Default)]
+struct ElicitationScript {
+    /// Every `elicitation_answer` invocation, pending or not — the count is
+    /// the property under test.
+    answers: Mutex<Vec<String>>,
+    pending: std::sync::atomic::AtomicBool,
+    release: tokio::sync::watch::Sender<bool>,
+}
+
+impl ElicitationScript {
+    fn armed() -> Arc<Self> {
+        Arc::new(Self {
+            answers: Mutex::new(Vec::new()),
+            pending: std::sync::atomic::AtomicBool::new(true),
+            release: tokio::sync::watch::Sender::new(false),
+        })
+    }
+
+    /// No pending entry: inbound text flows to the gateway as a turn (F1 needs
+    /// the gated turn to start, unlike F2 where the text is the answer).
+    fn idle() -> Arc<Self> {
+        Arc::new(Self {
+            answers: Mutex::new(Vec::new()),
+            pending: std::sync::atomic::AtomicBool::new(false),
+            release: tokio::sync::watch::Sender::new(false),
+        })
+    }
+}
+
+impl InteractionPort for ElicitationScript {
+    fn elicitation_pending(&self, _chat_id: &str) -> bool {
+        self.pending.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn elicitation_capture(&self, _: &str, _: &str, event: &JsValue) -> String {
+        // The question comes from the event, so a scripted case can ask a
+        // marker question while the turn is current and the stale one after.
+        // A question a stale turn must never ask (F1): unlike buffered text
+        // it is sent the moment its event passes the per-event gate.
+        event
+            .get("question")
+            .and_then(JsValue::as_string)
+            .map(|question| String::from_utf16_lossy(question.units()))
+            .unwrap_or_else(|| "STALE ELICITATION QUESTION".to_owned())
+    }
+    fn elicitation_answer<'a>(
+        &'a self,
+        _chat_id: &'a str,
+        text: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<String>, ChannelError>> {
+        // TS-faithful shape: the take happens before the first await, so a
+        // second call while an answer is in flight finds nothing.
+        let taken = self
+            .pending
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        self.answers
+            .lock()
+            .expect("#2055 answers lock")
+            .push(format!("{taken}:{text}"));
+        let release = self.release.clone();
+        Box::pin(async move {
+            if !taken {
+                return Ok(None);
+            }
+            let mut gate = release.subscribe();
+            while !*gate.borrow_and_update() {
+                gate.changed().await.expect("#2055 release retained");
+            }
+            Ok(None)
+        })
+    }
+    fn elicitation_clear(&self, _chat_id: &str) {}
+
+    fn permission_pending(&self, _: &str) -> bool {
+        false
+    }
+    fn permission_capture(&self, _: &str, _: &str, _: &JsValue) -> Option<String> {
+        None
+    }
+    fn permission_confirm_initial(&self, _: &str, _: bool, _: Option<&str>) {}
+    fn permission_answer<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<PortPermissionAnswer>, ChannelError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn permission_release_answer(&self, _: &str, _: Option<u64>) {}
+    fn permission_take_next_prompt(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_prompt_request_id(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_confirm_next(&self, _: &str, _: bool, _: Option<&str>, _: Option<u64>) {}
+    fn permission_clear_after_turn(&self, _: &str) {}
+}
+
+/// #2055-3: the permission answer panics (standing in for any panic inside
+/// the answer task); the token release must still run (TS `.finally`).
+struct PanickingPermissionPort {
+    calls: Mutex<Vec<String>>,
+}
+
+impl InteractionPort for PanickingPermissionPort {
+    fn permission_pending(&self, _chat_id: &str) -> bool {
+        true
+    }
+    fn permission_capture(&self, _: &str, _: &str, _: &JsValue) -> Option<String> {
+        None
+    }
+    fn permission_confirm_initial(&self, _: &str, _: bool, _: Option<&str>) {}
+    fn permission_answer<'a>(
+        &'a self,
+        _chat_id: &'a str,
+        text: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<PortPermissionAnswer>, ChannelError>> {
+        self.calls
+            .lock()
+            .expect("#2055 calls lock")
+            .push(text.to_owned());
+        Box::pin(async {
+            panic!("#2055 injected permission answer panic");
+        })
+    }
+    fn permission_release_answer(&self, _: &str, _: Option<u64>) {}
+    fn permission_take_next_prompt(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_prompt_request_id(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_confirm_next(&self, _: &str, _: bool, _: Option<&str>, _: Option<u64>) {}
+    fn permission_clear_after_turn(&self, _: &str) {}
+
+    fn elicitation_pending(&self, _: &str) -> bool {
+        false
+    }
+    fn elicitation_capture(&self, _: &str, _: &str, _: &JsValue) -> String {
+        String::new()
+    }
+    fn elicitation_answer<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<String>, ChannelError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn elicitation_clear(&self, _: &str) {}
+}
+
+/// The channel seam variant with a scripted interaction port (the parity
+/// cases pin `no_interaction()`; the #2055 pins need the helpers).
+fn case_channel_with_interaction(
+    lark_port: u16,
+    port: Arc<dyn InteractionPort>,
+) -> (FeishuChannel, Arc<FeishuWebhookSlot>) {
+    let slot = Arc::new(FeishuWebhookSlot::new());
+    let channel = FeishuChannel::with_seams(
+        FeishuOptions {
+            app_id: APP_ID.to_owned(),
+            app_secret: APP_SECRET.to_owned(),
+            encrypt_key: None,
+            verify_token: Some(VERIFY_TOKEN.to_owned()),
+            connection_mode: "webhook".to_owned(),
+            domain_name: "feishu".to_owned(),
+            permission_mode: None,
+            base_url: format!("http://127.0.0.1:{lark_port}"),
+        },
+        port,
+        Some(slot.clone()),
+        Arc::new(FixedClock),
+        Arc::new(|| JsString::from(FIXED_UUID)),
+    );
+    (channel, slot)
+}
+
+fn plain_message(chat: &str, text: &str) -> InboundMessage {
+    InboundMessage {
+        chat_id: chat.to_owned(),
+        text: text.to_owned(),
+        event_id: format!("ev-{chat}-{text}"),
+        message_id: None,
+        message_type: Some("text".to_owned()),
+        content: None,
+    }
+}
+
+/// F1: a turn gated in-flight (submit returned, no event polled yet) that a
+/// `/new` supersedes must send nothing for the stale events and still remove
+/// the reaction (TS: the per-event `isCurrentTurn()` break plus the
+/// unconditional `finally` delete). The stale stream carries two probes: a
+/// buffered delta (only the gated final flush could deliver it — it is
+/// consumed *while the turn is current*, so the per-event gate alone cannot
+/// account for it) and an elicitation whose question is sent the moment its
+/// event passes the per-event gate — together they pin both generation
+/// checks. The marker elicitation before the delta is the hard proof the
+/// delta was consumed before the `/new`: the stream is FIFO, and its
+/// question POSTs observably. The `/new` is delivered by calling
+/// `process_inbound_messages` directly: through the enqueue path it would
+/// only queue behind the chat's busy drainer, and the live window is the
+/// second-drainer interleave the `/new` branch's batch replacement creates
+/// (the TS probe `p5-feishu-new-gated-turn` reproduces the same interleave).
+#[tokio::test]
+async fn gated_submit_superseded_by_new_sends_nothing_and_deletes_reaction() {
+    // 18980 belongs to the /new-with-text pin; stay clear of it.
+    const GATED_PIN_LARK_PORT: u16 = 18981;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let lark = Lark::new();
+    lark.arm_script(
+        vec![
+            (
+                200,
+                "{\"code\":0,\"tenant_access_token\":\"t-1\",\"expire\":7200}".to_owned(),
+            ),
+            (
+                200,
+                "{\"code\":0,\"data\":{\"reaction_id\":\"re-1\"}}".to_owned(),
+            ),
+        ],
+        record.clone(),
+    );
+    start_lark_on(lark.clone(), GATED_PIN_LARK_PORT).await;
+    let gates = Gates::default();
+    let gateway = MockInbound::new(
+        vec![TurnScript {
+            gate_before: None,
+            gate_each: Some("f1-turn".to_owned()),
+            events: vec![
+                json!({"type": "assistant_text_delta", "text": "STALE OUTPUT"}),
+                json!({"type": "elicitation_request", "question": "MARKER QUESTION"}),
+                json!({"type": "elicitation_request", "question": "STALE ELICITATION QUESTION"}),
+            ],
+            error: None,
+        }],
+        record.clone(),
+        gates.clone(),
+    );
+    let (channel, slot) =
+        case_channel_with_interaction(GATED_PIN_LARK_PORT, ElicitationScript::idle());
+    let deps = case_deps(&record, gateway);
+    let handle = bounded("f1 start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+    let handler = slot.handler().expect("#2055 webhook handler");
+
+    let (status, _) = bounded(
+        "f1 event",
+        handler(v2_event("ev-f1", "c-f1", "hello", Some("om-f1"))),
+    )
+    .await;
+    crate::negative_assert_eq!(status, 200, "#2055 the gated turn's message is accepted");
+    // The turn is in flight once its reaction is on the message.
+    until(
+        "#2055 the gated turn is in flight before the /new",
+        "f1 reaction added",
+        || record.lock().expect("#2055 record mutex").lark.len() >= 2,
+    )
+    .await;
+
+    // Stage the stale delta: it is consumed while the turn is still current,
+    // so it lands in the live-reply buffer and only the gated final flush
+    // could ever deliver it. The marker question right behind it (FIFO) is
+    // the observable proof of the consumption.
+    gate(&gates, "f1-turn-0").send_replace(true);
+    gate(&gates, "f1-turn-1").send_replace(true);
+    until(
+        "#2055 the gated turn buffers its stale text before the /new",
+        "f1 marker question asked",
+        || {
+            record
+                .lock()
+                .expect("#2055 record mutex")
+                .lark
+                .iter()
+                .any(|entry| {
+                    entry["body"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("MARKER QUESTION")
+                })
+        },
+    )
+    .await;
+
+    // The /new supersedes the gated turn (second-drainer interleave).
+    channel
+        .runtime
+        .process_inbound_messages(&[plain_message("c-f1", "/new")])
+        .await;
+    let submitted = record.lock().expect("#2055 record mutex").gateway.clone();
+    crate::negative_assert_eq!(
+        submitted,
+        vec![json!({
+            "sessionKey": "feishu:chat=c-f1:general",
+            "channelKey": "feishu",
+            "message": "hello",
+        })],
+        "#2055 the /new carries no follow-up text, so only the gated turn was submitted"
+    );
+
+    // Release the stale elicitation: it must be gated before any send.
+    gate(&gates, "f1-turn-2").send_replace(true);
+    until(
+        "#2055 a superseded turn still removes its reaction",
+        "f1 reaction removed",
+        || {
+            record
+                .lock()
+                .expect("#2055 record mutex")
+                .lark
+                .iter()
+                .any(|entry| entry["method"] == "DELETE")
+        },
+    )
+    .await;
+
+    let lark_entries = record.lock().expect("#2055 record mutex").lark.clone();
+    crate::negative_assert!(
+        lark_entries.iter().all(|entry| !entry["body"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("STALE ELICITATION QUESTION")),
+        "#2055 the superseded turn's stale elicitation question is never asked"
+    );
+    crate::negative_assert!(
+        lark_entries
+            .iter()
+            .all(|entry| !entry["body"].as_str().unwrap_or_default().contains("STALE")),
+        "#2055 the superseded turn's stale events send nothing"
+    );
+    let confirmations = lark_entries
+        .iter()
+        .filter(|entry| {
+            entry["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("已创建新会话。")
+        })
+        .count();
+    crate::negative_assert_eq!(
+        confirmations,
+        1,
+        "#2055 the /new answers exactly the bare confirmation"
+    );
+    let _ = bounded("f1 stop", handle.stop("done")).await;
+}
+
+/// F2: two webhook deliveries racing across threads while the first
+/// elicitation answer has not been polled yet. On the current-thread test
+/// runtime the spawned task cannot run between two synchronous enqueues, so
+/// the second event deterministically sees the same pending entry — the
+/// occupancy is the only thing standing between it and a second answer task.
+#[tokio::test]
+async fn concurrent_elicitation_events_answer_once() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gateway = MockInbound::new(Vec::new(), record.clone(), Gates::default());
+    let script = ElicitationScript::armed();
+    let (channel, _slot) = case_channel_with_interaction(0, script.clone());
+    let deps = case_deps(&record, gateway);
+    let _handle = bounded("f2 start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+
+    // No await between the two enqueues: the first answer task has not been
+    // polled, so both events observe the pending entry.
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f2", "first"));
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f2", "second"));
+
+    until(
+        "#2055 one racing elicitation event yields exactly one answer",
+        "f2 first answer in flight",
+        || {
+            !script
+                .answers
+                .lock()
+                .expect("#2055 answers lock")
+                .is_empty()
+        },
+    )
+    .await;
+    // The first answer parks on the release gate; the second event was
+    // consumed by the occupancy (like the permission branch) — no second
+    // answer task exists.
+    let answers = script.answers.lock().expect("#2055 answers lock").clone();
+    crate::negative_assert_eq!(
+        answers,
+        vec!["true:first".to_owned()],
+        "#2055 the racing second event does not start a second answer"
+    );
+
+    // The release at the end of the answer is what re-arms the chat: after
+    // the gate opens and the answer ends, a fresh pending entry admits a
+    // new answer.
+    script.release.send_replace(true);
+    until(
+        "#2055 the elicitation occupancy is released when the answer ends",
+        "f2 occupancy released",
+        || {
+            channel
+                .runtime
+                .lock_state()
+                .elicitation_answering
+                .is_empty()
+        },
+    )
+    .await;
+    script
+        .pending
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f2", "third"));
+    until(
+        "#2055 the next event after the answer is not swallowed",
+        "f2 third answer",
+        || script.answers.lock().expect("#2055 answers lock").len() >= 2,
+    )
+    .await;
+}
+
+/// F3: a panic inside the permission answer task must still release the
+/// token (TS chains the release onto the answer with `.finally`).
+#[tokio::test]
+async fn panicking_permission_answer_releases_the_token() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gateway = MockInbound::new(Vec::new(), record.clone(), Gates::default());
+    let port = Arc::new(PanickingPermissionPort {
+        calls: Mutex::new(Vec::new()),
+    });
+    let (channel, _slot) = case_channel_with_interaction(0, port.clone());
+    let deps = case_deps(&record, gateway);
+    let _handle = bounded("f3 start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f3", "yes"));
+    until(
+        "#2055 a panicking permission answer still releases the token",
+        "f3 token released",
+        || {
+            !channel
+                .runtime
+                .lock_state()
+                .permission_answering
+                .contains_key("c-f3")
+        },
+    )
+    .await;
+
+    // The released token is what admits the next answer: the follow-up
+    // event must reach the port instead of being swallowed forever.
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f3", "always"));
+    until(
+        "#2055 the next permission event after the panic reaches the port",
+        "f3 second call",
+        || port.calls.lock().expect("#2055 calls lock").len() >= 2,
+    )
+    .await;
+    let calls = port.calls.lock().expect("#2055 calls lock").clone();
+    crate::negative_assert_eq!(
+        calls,
+        vec!["yes".to_owned(), "always".to_owned()],
+        "#2055 the chat is not swallowed by the panicked answer's token"
+    );
+}
+
+/// F4: a panic that unwinds the drainer task must still un-claim the batch
+/// (TS `drainInboundBatch` is a try/finally), or the chat's later messages
+/// queue behind a claim nobody will ever release.
+#[tokio::test]
+async fn panicking_drainer_resets_batch_and_chat_recovers() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let panicked = Arc::new(tokio::sync::Notify::new());
+    let gateway = Arc::new(PanicFirstSubmit {
+        record: record.clone(),
+        panicked: panicked.clone(),
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let (channel, _slot) = case_channel(0);
+    let deps = case_deps(&record, gateway);
+    let _handle = bounded("f4 start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f4", "first"));
+    tokio::time::timeout(Duration::from_secs(5), panicked.notified())
+        .await
+        .expect("#2055 the injected drainer panic never fired");
+    until(
+        "#2055 a panicking drainer un-claims the batch",
+        "f4 batch released",
+        || {
+            channel
+                .runtime
+                .lock_state()
+                .batches
+                .get("c-f4")
+                .is_none_or(|batch| !batch.draining)
+        },
+    )
+    .await;
+
+    // The recovered chat takes the next message all the way to the gateway.
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-f4", "second"));
+    until(
+        "#2055 the chat recovers after the drainer panic",
+        "f4 second submit",
+        || record.lock().expect("#2055 record mutex").gateway.len() >= 2,
+    )
+    .await;
+    let submitted: Vec<String> = record
+        .lock()
+        .expect("#2055 record mutex")
+        .gateway
+        .iter()
+        .map(|entry| entry["message"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    crate::negative_assert_eq!(
+        submitted,
+        vec!["first".to_owned(), "second".to_owned()],
+        "#2055 both messages reach the gateway across the panic"
+    );
+}
+
+/// The `submit` fake for F4: the first turn panics inside the drainer task
+/// (standing in for any panic under `drain_inbound_batch`); the second
+/// returns an already-closed stream.
+struct PanicFirstSubmit {
+    record: Arc<Mutex<Record>>,
+    panicked: Arc<tokio::sync::Notify>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl TurnGateway for PanicFirstSubmit {
+    fn submit(
+        &self,
+        input: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.record
+            .lock()
+            .expect("#2055 record mutex")
+            .gateway
+            .push(json!({
+                "sessionKey": String::from_utf16_lossy(input.session_key.units()),
+                "channelKey": input.channel_key.to_string(),
+                "message": String::from_utf16_lossy(input.message.units()),
+            }));
+        if call == 0 {
+            self.panicked.notify_one();
+            panic!("#2055 injected drainer panic");
+        }
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        drop(sender);
+        Box::pin(async { Ok(Box::new(MockStream(receiver)) as Box<dyn TurnEventStream>) })
+    }
+}
+
+/// F5: the `/new` branch's resolve→reset→generation stretch is one critical
+/// section (#2055-4; TS keeps it in one synchronous block). The pin plants
+/// a racing reset in the `onStateChange` window — the callback runs between
+/// the session resolution and the branch's own reset, the spot a concurrent
+/// `/new` would land in — and asserts the follow-up turn still carries a
+/// generation the chat actually has, so it submits on the new session
+/// instead of being gated out as stale.
+#[tokio::test]
+async fn new_followup_survives_a_reset_racing_in_the_state_change_window() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gateway = MockInbound::new(
+        vec![TurnScript::default()],
+        record.clone(),
+        Gates::default(),
+    );
+    // The hook needs the runtime, which only exists after construction: a
+    // shared cell bridges the two halves.
+    let cell: Arc<Mutex<Option<Arc<Runtime>>>> = Arc::new(Mutex::new(None));
+    let hook_cell = cell.clone();
+    let (channel, slot) = {
+        let slot = Arc::new(FeishuWebhookSlot::new());
+        let channel = FeishuChannel::with_seams_and_state_change(
+            FeishuOptions {
+                app_id: APP_ID.to_owned(),
+                app_secret: APP_SECRET.to_owned(),
+                encrypt_key: None,
+                verify_token: Some(VERIFY_TOKEN.to_owned()),
+                connection_mode: "webhook".to_owned(),
+                domain_name: "feishu".to_owned(),
+                permission_mode: None,
+                base_url: "http://127.0.0.1:0".to_owned(),
+            },
+            no_interaction(),
+            Some(slot.clone()),
+            Arc::new(FixedClock),
+            Arc::new(|| JsString::from(FIXED_UUID)),
+            Some(Arc::new(move |_| {
+                if let Some(runtime) = hook_cell.lock().expect("#2055 runtime cell").as_ref() {
+                    runtime.reset_chat_interaction_state("c-race");
+                }
+            })),
+        );
+        (channel, slot)
+    };
+    *cell.lock().expect("#2055 runtime cell") = Some(channel.runtime.clone());
+    let deps = case_deps(&record, gateway);
+    let handle = bounded("f5 start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+    let handler = slot.handler().expect("#2055 webhook handler");
+
+    let (status, _) = bounded(
+        "f5 event",
+        handler(v2_event("ev-f5", "c-race", "/new 请总结", None)),
+    )
+    .await;
+    crate::negative_assert_eq!(status, 200, "#2055 the racing /new is accepted");
+    until(
+        "#2055 the /new follow-up submits despite the racing reset",
+        "f5 follow-up submit",
+        || {
+            !record
+                .lock()
+                .expect("#2055 record mutex")
+                .gateway
+                .is_empty()
+        },
+    )
+    .await;
+
+    let submitted = record.lock().expect("#2055 record mutex").gateway.clone();
+    crate::negative_assert_eq!(
+        submitted,
+        vec![json!({
+            "sessionKey": "feishu:chat=c-race:s_<uuid>",
+            "channelKey": "feishu",
+            "message": "请总结",
+        })],
+        "#2055 the follow-up carries the reset's generation, not the resolved one"
+    );
+    let _ = bounded("f5 stop", handle.stop("done")).await;
+}
+
+/// #2055-3's lock companion: a panic that unwound through a state-lock guard
+/// poisons the lock, and the channel must keep working anyway (TS has no
+/// poisoning; the weixin lane made the same call for #1780).
+#[tokio::test]
+async fn poisoned_state_lock_does_not_kill_the_channel() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gateway = MockInbound::new(Vec::new(), record.clone(), Gates::default());
+    let (channel, _slot) = case_channel(0);
+    let deps = case_deps(&record, gateway);
+    let _handle = bounded("poison start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+
+    let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _held = channel.runtime.lock_state();
+        panic!("#2055 poison the state lock");
+    }));
+    assert!(
+        poison.is_err() && channel.runtime.state.is_poisoned(),
+        "#2055 the injected panic poisons the state lock"
+    );
+    crate::negative_assert_eq!(
+        channel.runtime.generation("c-poison"),
+        0,
+        "#2055 a poisoned state lock does not kill the channel"
+    );
 }

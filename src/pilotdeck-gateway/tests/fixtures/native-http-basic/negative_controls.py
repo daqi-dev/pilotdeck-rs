@@ -219,6 +219,94 @@ switches = [
     # respondJson is close-delimited, so the pinned webhook reply turns red.
     ('native-http-http10-framing-off', SOURCE, 'http10_webhook_json_is_close_delimited',
      "#1947 pin pin-http10-webhook: the 1.0 webhook reply is close-delimited, no content-length"),
+    # #2153/#2776/#2789: the `content-length: 0` exemption is scoped to the
+    # registered bare parser-level 400s (PARSER_ADMISSION_CELLS, 11 of the 88
+    # cells) through `fn parser_admission`. The widening mutant fails the
+    # coverage guard's through-the-predicate comparison; the mask-always
+    # mutant makes `normalize` ignore its scope flag, so the injected-line
+    # unit test fails; the product mutant drops the registered wire line the
+    # raw pin holds; the served mutant grows the line on an unregistered cell
+    # (the sized empty body hyper adds the line to), which the replay must
+    # compare verbatim — the narrowing has teeth end to end.
+    ('native-http-cl0-wide', SOURCE_TESTS, 'parser_admission_cells_cover_exactly_the_oracle_bare_400s',
+     "#2153 the exemption predicate admits exactly the oracle's bare-400 cells"),
+    ('native-http-cl0-mask-always', SOURCE_TESTS, 'only_the_registered_cells_mask_a_content_length_zero',
+     '#2153 an injected content-length: 0 on the unregistered health cell must not normalize away'),
+    ('native-http-parser-400-cl0-off', SOURCE, 'content_length_zero_stays_scoped_to_the_registered_rejections',
+     '#2153 pin bad-method-foo: the registered bare 400 carries content-length: 0'),
+    ('native-http-served-head-cl0', SOURCE, 'health_head',
+     '#1209 cell health-head normalized response'),
+    # #1517: Node's response `finish` — the moment `_httpMessage` detaches and
+    # the 408 guard opens — needs the flush, not just the body's last frame
+    # handed to hyper (probe `probe-1517.out` T1: `end()` at +88 s with
+    # `writableLength` 2 097 167 still unflushed at the +90 s expiry; the
+    # destroy carries no 408, the client reads the flushed prefix then EOF).
+    # The mutant reverts the `_headerSent` mirror's clear to the in-flight
+    # slot alone — the pre-#1517 behavior — so the expiry arms the 408 ahead of
+    # the stuck tail and the cell reads its bytes behind the flushed prefix.
+    ('native-http-408-into-unflushed-tail', SOURCE_PROXY,
+     'unflushed_response_tail_headers_timeout_closes_silently_like_ts',
+     'the unflushed tail never carries the 51-byte 408 — Node destroys the started response instead'),
+    # #1517 fix-r1 (review concurrency #1/#2, the zero-writable-space quadrant):
+    # the tail hyper buffers after the body's end never reaches the gate's
+    # `poll_write`, so the gate's own write-side window never opens — Node's
+    # expiry guard still holds because `finish` needs the flush
+    # (`probe-1517-t3.out` T3a), so the late follow-up head must stay withheld
+    # for the parked deadline to fire at the +150 s grid. The mutant reverts
+    # withholding to the in-flight slot alone — the pre-fix-r1 behavior — so
+    # the half head parks hyper's read machinery on its non-empty buffer and
+    # the grid point goes quiet: the connection is still open past the idle
+    # deadline.
+    ('native-http-withholding-unflushed-tail', SOURCE_PROXY,
+     'unflushed_tail_never_at_gate_withholds_late_head_like_ts',
+     '#1517 the zero-space tail\'s close lands at the +150 s grid point: the connection is still open past the idle deadline'),
+    # #1517 fix-r1 (review boundary #1, the no-follow-up-head grid): with no
+    # next head anywhere on the wire, Node has no headersTimeout window at all
+    # (`probe-1517-t3.out` T3b: the +150 s grid passes open, the tail flushes
+    # only on the client's resume), so the stand-by re-arm waits for the
+    # flush. The mutant drops the flush condition — the re-arm generation is
+    # consumed at the first `poll_read` after the release (the pre-fix-r1
+    # shape, not at the frame hand-off) — so the stand-by deadline lands on
+    # the +150 s grid; there the release-latched `write_pending` keeps the
+    # `_headerSent` mirror set and the expiry closes the stuck connection
+    # silently (`timeout_408_closed`, no 408 is written): the probe at
+    # +150.5 s reads the latched EOF instead of the quiet window.
+    ('native-http-standby-rearm-ignores-unflushed', SOURCE_PROXY,
+     'unflushed_tail_no_follow_up_head_opens_no_window_like_ts',
+     '#1517 with no follow-up head, no window opens at the grid point while the tail is stuck'),
+    # #1517 fix-r1 (review sibling #2, the flush-clear half): the drained
+    # flush is the one transition that re-opens the post-response window —
+    # Node's `_httpMessage` detaches at `finish`, which is the flush, not the
+    # frame hand-off. The mutant never clears the hand-off flag, so a fully
+    # served and flushed previous response keeps its window held forever:
+    # the follow-up head's +90 s grid expiry destroys the connection
+    # silently instead of answering the 408 Node writes for a detached
+    # previous response.
+    ('native-http-flush-clear-off', SOURCE_PROXY,
+     'served_follow_up_head_dribble_408s_like_ts',
+     'dribbled follow-up head: EOF before the 408 arrived'),
+    # #1517 fix-r2 (review concurrency #1, the never-accepted head): Node
+    # sets `_headerSent` at `res.write` — the hand-off, before the wire
+    # accepts a byte (`probe-1517-c.json`: the pipelined second response
+    # whose head sits in the JS outputData queue reports `headersSent ===
+    # true` with zero client bytes) — so a response head parked behind a full
+    # transport still counts as started and the expiry destroys silently.
+    # The mutant reverts the mirror to the byte-accepted condition — the
+    # pre-fix-r2 behavior — so the grid expiry arms the 51-byte 408 into the
+    # never-accepted head's connection and the close never lands while the
+    # transport is parked.
+    # fix-r3 (rev2 条 1, the released-body corner): the held-body cell keeps
+    # the in-flight slot up forever, so the mutant's red face only pins the
+    # never-released corner; the released variant — body handed off at
+    # +88.4 s, in-flight slot gone, the follow-up half head withheld behind
+    # `write_pending` alone — is the same mirror semantics (the pre-fix-r2
+    # set condition) so the same mutant kills both cells, each at its own
+    # close-landing anchor.
+    ('native-http-headersent-needs-acceptance', SOURCE_PROXY,
+     ['unaccepted_head_grid_destroys_silently_like_ts',
+      'released_body_unaccepted_head_grid_destroys_silently_like_ts'],
+     ["#1517-f2 the never-accepted head's close lands at the +150 s grid point",
+      '#1517-f3 the released body\'s close lands at the +150 s grid point']),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

@@ -4524,10 +4524,10 @@ async fn dual_stack_probe_uses_the_assigned_port() {
                         fallback_address.is_ipv4() && fallback_address.ip().is_unspecified(),
                         "#1339 expected the IPv4 wildcard fallback, got {fallback_address}"
                     );
-                    eprintln!(
+                    crate::test_skip_line::stderr_skip_line(&format!(
                         "#1339 skipped: host has no IPv6 (`::` bind failed: {control_error}); \
-                         bind_listener fell back to {fallback_address}"
-                    );
+                         bind_listener fell back to {fallback_address}\n"
+                    ));
                     return;
                 }
             };
@@ -4576,7 +4576,9 @@ async fn dual_stack_probe_uses_the_assigned_port() {
                 !v4_bindable,
                 "#1339 this host binds IPv4 yet the v4 side of `::` refused: {v4_error}"
             );
-            eprintln!("#1339 skipped: host has no IPv4 (`127.0.0.1` connect failed: {v4_error})");
+            crate::test_skip_line::stderr_skip_line(&format!(
+                "#1339 skipped: host has no IPv4 (`127.0.0.1` connect failed: {v4_error})\n"
+            ));
         }
     }
 }
@@ -6160,14 +6162,18 @@ fn port_busy_on_ipv6_preflight_fails_fast() {
     let socket = match tokio::net::TcpSocket::new_v6() {
         Ok(socket) => socket,
         Err(error) if means_no_ipv6(&error) => {
-            eprintln!("#1339 skipped: host has no IPv6 ({error})");
+            crate::test_skip_line::stderr_skip_line(&format!(
+                "#1339 skipped: host has no IPv6 ({error})\n"
+            ));
             return;
         }
         Err(error) => panic!("#1339 cannot create an IPv6 socket to set up the busy port: {error}"),
     };
     if let Err(error) = socket.bind(std::net::SocketAddr::from(([0u16; 8], 0))) {
         if means_no_ipv6(&error) {
-            eprintln!("#1339 skipped: host has no IPv6 wildcard ({error})");
+            crate::test_skip_line::stderr_skip_line(&format!(
+                "#1339 skipped: host has no IPv6 wildcard ({error})\n"
+            ));
             return;
         }
         panic!("#1339 cannot bind the IPv6 wildcard to set up the busy port: {error}");
