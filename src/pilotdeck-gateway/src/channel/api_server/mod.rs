@@ -70,7 +70,7 @@ pub struct ApiServerOptions {
 struct Listener {
     address: SocketAddr,
     stop: watch::Sender<bool>,
-    task: JoinHandle<()>,
+    task: JoinHandle<std::io::Result<()>>,
 }
 
 pub(crate) struct Inner {
@@ -444,12 +444,11 @@ impl ChannelHandle for ApiServerHandle {
                 return Ok(());
             };
             listener.stop.send_replace(true);
-            if let Err(error) = listener.task.await {
-                return Err(ChannelError::error(format!(
-                    "api-server: stop failed: {error}"
-                )));
-            }
-            Ok(())
+            listener
+                .task
+                .await
+                .map_err(|error| ChannelError::error(format!("api-server: stop failed: {error}")))?
+                .map_err(|error| ChannelError::error(format!("api-server: stop failed: {error}")))
         })
     }
 }

@@ -89,7 +89,7 @@ pub(crate) async fn accept_loop(
     listener: TcpListener,
     shared: Arc<ServerShared>,
     mut stop: watch::Receiver<bool>,
-) {
+) -> io::Result<()> {
     let mut tasks = JoinSet::new();
     loop {
         tokio::select! {
@@ -129,8 +129,18 @@ pub(crate) async fn accept_loop(
             }
         }
     }
+    // CLOEXEC only closes a forked child's descriptor when it reaches exec.
+    // On Linux, closing our descriptor alone can leave that shared socket in
+    // LISTEN during a concurrent spawn. Shutdown disables the socket itself,
+    // including inherited/duplicated descriptors, without touching accepted
+    // connections. Other platforms retain their existing listener close path.
+    #[cfg(target_os = "linux")]
+    let shutdown = socket2::SockRef::from(&listener).shutdown(std::net::Shutdown::Both);
     drop(listener);
     while tasks.join_next().await.is_some() {}
+    #[cfg(target_os = "linux")]
+    shutdown?;
+    Ok(())
 }
 
 pub(crate) async fn resolve_address(host: &str, port: f64) -> io::Result<std::net::SocketAddr> {

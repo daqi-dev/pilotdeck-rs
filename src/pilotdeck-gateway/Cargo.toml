@@ -23,6 +23,10 @@ mupdf = { version = "=0.8.0", default-features = false, features = ["base14-font
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 base64 = "=0.22.1"
 libc = "=0.2.190"
+# The Linux listener stop must disable the shared socket before closing its
+# descriptor; a concurrent fork can retain a CLOEXEC duplicate until exec.
+# Also used by the test-only IPV6_V6ONLY preflight. Already locked via tokio.
+socket2 = "=0.6.5"
 sha2.workspace = true
 # FileMemoryStore hashText uses Node crypto SHA-1 (10 hex digits).
 sha1 = "=0.10.7"
@@ -99,11 +103,6 @@ tokio = { version = "=1.48.0", features = ["test-util"] }
 # hand-written tokenizer. Already locked at 1.0.107 as a transitive dependency,
 # so this adds no new download or version.
 proc-macro2 = "=1.0.107"
-# #2691: the v6-only preflight occupier (`IPV6_V6ONLY` before the bind) needs
-# `Socket::set_only_v6`; tokio 1.48's `TcpSocket` does not expose it and the
-# crate forbids `unsafe`. Already locked at 0.6.5 via tokio→mio, so this adds
-# no new download or version.
-socket2 = "=0.6.5"
 
 [build-dependencies]
 pilotdeck-image-native = { path = "../pilotdeck-image-native" }
