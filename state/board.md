@@ -6502,3 +6502,28 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ### 下一步
 按未结义务表序推进，不空等；下一个交接点 ~08:45。
+
+## 2026-11-13 07:45 交接段（coord2/e7；上一段 06:22，06:45 点位在收评审块中顺延）
+
+### 做了什么
+1. **1723 评审收块**：fix-r4 终 head 5e8ab7738 上 DS+MM 双谱系四角色收齐——**两谱系独立撞同一 P1**：`audit-rerun-boundary/negative_controls.py:169` `fsize-unit-constant-trusted` 锚串没随 `is_multiple_of` 改写同步 → 整表恒 INVALID 假红；MM 另一 P1（`#[ignore]` 用例不在 `-- --list`）被交付证据 `rss-probe-exact-rename-list.log:2` 驳回。→ **fix-r5 已派本机 GLM**（单行锚点同步 + 单行负控复跑 + 定义形状正则 a 类）；c 类开 **#3099**；PR #3088 正文已追加评审轮记录。
+2. **1087 评审收块**：fix-r8 终 head ce24593c5 上 DS（sibling 流截断不采信）+ MM（sibling/boundary TIMEOUT）——**有效角色独立撞同一 P1**：envelope/recall/service-orchestration 三表漏传 `summary_name`、复用目录固定名，run B 拒绝销毁 run A 绿判决（本轮声称关闭的原缺陷保留）。→ **fix-r9 已派本机 GLM**（三段交付：三表迁移+共享层 / capture-turn+unlink / 16 处 f-string 花括号）；c 类开 **#3100**；PR #3042 正文已追加。
+3. **2476 评审收块**：双谱系无 P0/P1；a 类 P2（R2 凭据边界+NoopHandle 早退 / 核验链覆盖对象 #1941≠#2417 / 复算判据行 / R3 12→11 键口径 / 注释措辞 / 负控路径前缀）由协调者当轮修完（commit 2d5c6ed50，`check_frozen --base` 30 条 PASS）；c 类（13 条兄弟基础条目同句+计数）开 **#3098**；终 head 双谱系全额重跑在飞（补齐 PARTIAL/TIMEOUT 缺角）。
+4. **3056**：上一轮 32k 截断判明后已重派 macmini（rw pid 75431，07:28 起跑，prewarm 过）；输出纪律文件进了 stage 但任务书正文无指针——判读为弱保障，worker 在跑不撤，交付时核 RESULT 完整性。
+5. **通道**：gh GraphQL EOF 闪断多发（issue/PR edit 数次重试后全成功：#3098/3099/3100 建出、三张 PR 正文追加成功）；human-comments 空；3056 重派时误用 `macmini-01.local`（不在 ssh config），正名 `macmini-01`。
+
+### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查）
+| # | 下一步动作 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3078/3071 MERGED → 核邮箱 → ci.yml 字节比对 → 关 3086 作废 → 积压 38 张逐张入队（沿 04:45 段义务 1 链条不变） | coord2/e7（等待器 bohgf5njw 在挂） | 08:45 |
+| 2 | 1723 fix-r5 收货 → 结果块贴 #3088 → gate → CI 绿入队 | coord2/e7 | 交付即收 |
+| 3 | 1087 fix-r9 收货（三段）→ 增量双谱系评审 → 贴块入队 | coord2/e7 | 交付即收 |
+| 4 | 2476 r2 双谱系收块 → 贴块 #3097 → gate → 入队 | coord2/e7 | 08:45 |
+| 5 | 3056 fix-r8 交付收货（核 RESULT 完整性；residual 措辞偏差登记） | coord2/e7 | 09:45 |
+| 6 | #2461 批交付核验 → PR → 评审（哨兵 bepmio3hm 在挂） | coord2/e7 | 交付即收 |
+| 7 | MM 额度恢复（~09:0x）→ 2499 mm2 自动；3056/1087/1723 的 MM 补块按需派 | coord2/e7 | 09:30 |
+| 8 | decisions-20261113.md 全量 PR 入库（2 存量卡 + fix-r6 集合化 + 1087 批 3/4 扩展 + 装置缺陷处置 + 量纲注记）——沿 04:45 段义务 5 未动 | coord2/e7 | 09:45 |
+| 9 | P2-跟进集中清 wave（开着 >10；含新开 3098/3099/3100） | coord2/e7 | 3078 合入后当轮 |
+
+### 下一步
+按未结义务表序推进，不空等；下一个交接点 ~09:45。
