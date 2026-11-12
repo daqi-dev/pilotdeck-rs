@@ -35,10 +35,9 @@ never-completing 408 cell) adds `native-http-headers-grid-off` — an existing
 shared names — bound to the never-completing cap cell: a next head parked at
 the cap behind a response that never completes is retired by its own
 deadline's +30 s grid landing, the 408 written straight onto the socket while
-the response is still in flight. The cell's still-open probe — observed at
-+29.52 s, the +29.46 s advance target plus the probe helper's own 60 ms —
-is the discriminator (the mutant's 408 lands at the +15 s deadline itself,
-so the probe reads its first byte); the sms twin also binds its 408-bytes-off and
+the response is still in flight. The cell's still-open probe — observed
+at +29.52 s — is the discriminator (the mutant's 408 lands at the +15 s
+deadline itself, so the probe reads its first byte); the sms twin also binds its 408-bytes-off and
 read-no-timeout switches, but this lane carries no byte-silent-408 switch and
 the never-arriving-408 shape is already pinned for its timeout switch by the
 first-head cell of the table that owns it — the grid landing is this cell's
@@ -73,9 +72,8 @@ switches = [
     # the cap behind a response that never completes is retired by its own
     # deadline's grid landing, the 408 written straight onto the socket while
     # the response is still in flight (Node leg-C/D: the 408 lands while
-    # `_headerSent` is false). The still-open probe — observed at +29.52 s,
-    # the +29.46 s advance target plus the probe helper's own 60 ms — is
-    # the discriminator: the mutant's 408 lands at the +15 s deadline
+    # `_headerSent` is false). The still-open probe — observed at +29.52 s —
+    # is the discriminator: the mutant's 408 lands at the +15 s deadline
     # itself, so the probe reads its first byte.
     ('native-http-headers-grid-off', PROXY,
      'a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing',

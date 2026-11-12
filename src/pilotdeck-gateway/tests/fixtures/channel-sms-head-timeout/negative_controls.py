@@ -57,7 +57,7 @@ parked request's own 404 still does; it never needed the re-feed). The
 never-completing-response 408 cell is not bound to *this* switch (the wake
 is not its discriminator) — it is bound to the three deadline switches its
 own doc names (`sms-headers-grid-off`: the mutant's 408 at the +15 s
-deadline itself fails the +29.46 s still-open probe;
+deadline itself fails the +29.52 s still-open probe;
 `sms-headers-408-bytes-off`: the landing answers with the silent close the
 EOF probe reads; `sms-header-read-no-timeout`: with the deadline gone the
 408 never comes at all), per the fix-r5 review's apparatus-vs-doc drift

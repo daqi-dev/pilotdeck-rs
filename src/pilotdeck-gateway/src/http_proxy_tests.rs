@@ -1306,10 +1306,10 @@ async fn headers_timeout_408_arrives(client: &mut DuplexStream, what: &str) {
 /// (`!_httpMessage._headerSent`), and destroys it. The withheld head's first
 /// byte armed its own deadline at the withholding (t ≈ 0), so the injected
 /// +15 s deadline on the 30 s grid lands at +30 s; the probes bracket it
-/// (observed +29.52 s still open with the response still unarrived — the
-/// +29.46 s advance target plus the probe helper's own 60 ms — and the
-/// 51-byte 408 read at +30.12~+30.18 s, the +30.06 s advance target plus
-/// the probe helper's own 60 ms). The +29.52 s still-open probe is the
+/// (observed +29.52 s still open with the response still unarrived, and
+/// the 51-byte 408 read at +30.12~+30.18 s — each observation lands at
+/// its advance target plus this probe family's own `PAUSED_PROBE_ADVANCE`,
+/// defined at `:1193-1205` above). The +29.52 s still-open probe is the
 /// `native-http-headers-grid-off`
 /// discriminator (the mutant's 408 lands at the +15 s deadline itself and the
 /// probe reads its first byte). The bounded divergence from Node — a parked
@@ -1381,10 +1381,9 @@ async fn a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_
             .await
             .expect("write the capped flood of next heads");
         yield_a_beat().await;
-        // t = +29.52 s (this +29.46 s advance plus the probe helper's own
-        // 60 ms): before the withheld head's +30 s landing, with the held
-        // response still unarrived — the connection open, nothing on the
-        // wire.
+        // t = +29.46 s advance: before the withheld head's +30 s landing,
+        // with the held response still unarrived — the connection open,
+        // nothing on the wire.
         tokio::time::advance(Duration::from_millis(29_460)).await;
         probe_still_open(
             &mut client,
@@ -1392,12 +1391,10 @@ async fn a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_
              deadline's +30 s grid landing",
         )
         .await;
-        // t = +30.12 s after this 600 ms advance (the +30 s landing fired
-        // inside it), the 408 read at +30.12~+30.18 s — the probe helper's
-        // own 60 ms included — and this head received bytes, so the answer
-        // is the 408, written straight onto the socket even though the
-        // response is still in flight (Node leg-C/D: the 408 lands while
-        // `_headerSent` is false).
+        // t = +30.06 s advance (the +30 s landing fired inside it): this
+        // head received bytes, so the answer is the 408, written straight
+        // onto the socket even though the response is still in flight
+        // (Node leg-C/D: the 408 lands while `_headerSent` is false).
         tokio::time::advance(Duration::from_millis(600)).await;
         headers_timeout_408_arrives(&mut client, "next head parked at the withholding cap").await;
         // The held handler is let go: the 408 already answered the connection,
