@@ -203,6 +203,10 @@ updated: 2026-11-12 02:58（01:3x–02:58 增记，两小时交接段见文末�
 - #2596 | impl | ready | P1-跟进 #996/#2589：GUARDED 声明链与 bake 输入缺口（rebase 轮 DS 定级 P1×2 + P2 簇，原 PR 既有非本轮引入）——20:0x 分诊：归 #996 r4 批（同模块集中清）；前置于 #996 关单
 - #2976 | impl | ready | P1-跟进 #2098: A7.2-ATTACH-HANDLE-BINDING-003 停在 fix-r2 口径 + >64MiB UPLOAD_TASK_TOO_LARGE 分叉未登记（修复轮上限 3 剩余项）——前置于 #2098 收口；处置走 gateway-parity 差异账本 append-only 路径（diffs/<ID>.md 或 <ID>-R<n>.md）；20:3x 开单
 - #2977 | impl | ready | P2-跟进 #2887: user-dialog-bus-observer stale_names 整文件字面量计数，锚点漂移下 --check 假绿——前置于 #2887 收口；修法=按实际生成物派生计数；20:3x 开单
+- #1054 | impl | ready | P2-跟进 #994（已关）重开遗留——兄弟套件仍原地变异共享执行器等三项；灯 8b 红存量单张簇，归批次 B 集中清；09:1x 并入（origin：ready-pending-2100 活性核验 86 条，无在开 PR）
+- #2070 | impl | ready | P2-跟进 #2052（PR 已 MERGED）：projection-cache 生成器两个注入截止变量未在 clean 路径清除（宿主残留 → 假 FAIL）——前置 #589 已关、无处置登记，到点按 P2 处置口径重判；09:1x 并入（origin 同上）
+- #2181 | impl | ready | P2-跟进 #1509（已关）：cron 时区 resolver 每次调用重建（按 zone 缓存）——解锁 READY 在等的 #2295；批次派后无新 PR 需 premise-check 重判重派；09:1x 并入（origin 同上）
+- #2122 | impl | ready | [P2-跟进] #1987 config watcher 判别力缺口 F1–F6——前置 #1792 已关（两条已进 main），04:5x premise-check + 09:0x 复核成立独立可派；只差树位（wt-1725 已回收，位已腾）；09:1x 并入（`_tmp/20261112-0800-coord/liveness-recheck-12.md`）
 <!-- READY:END -->
 
 ### 段末增记（18:4x–20:3x，coord2/e7）
@@ -6369,5 +6373,41 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | ready-pending-2100.md（240 行）并入 READY | e7 | 09:0x |
 | 12 张前置活性红重判 + #2122 premise-check 重判（04:31 段清单） | e7 | 09:0x |
 | 下次两小时交接 ~09:30 写段 | e7 | 09:4x |
+
+**待人工验收（AI 已实测部分）**：无新增；2499 宿主链原始记录在 macmini `~/ws/pdrs-runner-evidence/issue-2499/`（AI 已实测 KILLED=75，待人签字项不变）。
+
+### 09:30（两小时交接，接 07:30；本窗 07:30–09:30；下一段 11:30）
+
+**做了什么**：
+
+- **MM 配额 429（Token Plan 上限）贯穿全窗**：2983/2964/2957 三张 P1 修轮 PR 的第二家全挂 MM 重置（约 5h，不弃车，memory「minimax-quota-5h-reset」）；anthropic 停用、codex-mbp2 停用、zai 同谱系 → MM 是唯一第二家。mm-probe 15min 轮询等待器在飞（40 次封顶 10h）。回可用即跑：2983 三角色（@0ac5071f2）+ 2964 四角色（@fix-r10 后最终头）+ 2957 四角色（@fix-r4 收货后头）+ 3018 全量四角色。
+- **PR 2983（#2617）**：fix-r5–r8 README 对齐四连（:42 变异数 121 / :24 文件 16 / :32 transcript_locks 进扫描面 / provenance #1872→#1874——DS r10 sibling#1+boundary#1 两家独立撞条，夹具注释与产品侧均归 #1874，批次提交 578715ab7 一文带三单）+ DS r8–r11 四轮全 PASS P0/P1=0；body 正位（剥 eb52 旧块贴 r11 块）**gate PASS**；等 MM 三角色后入队。P2 三分：计数/清单三抄（DS r10 simplify）→ **#3030 条 3**（处置评论 issuecomment-6811107623）；P3×2 不在本轮范围。
+- **PR 2964（#2759）**：fix-r9（deploy-self-check pathname 守卫 P1）→ DS r9 又出 **P1×3**（5 个 fe-parity launcher + 2 个 Playwright config globalSetup 同反模式 + symlink 归一；boundary#1 最小实测钉死：`argv[1]` 保留 symlink 路径、`import.meta.url` 被 Node 归一 realpath，`fileURLToPath` 单侧仍失火，经 /tmp symlink 直跑零输出 rc=0）→ **fix-r10 家族统一收口**：8 文件（6 守卫改 `realpathSync` 双侧归一 + 2 config 改 `fileURLToPath`）+ T14 断言收紧（status=null 超时/信号面不当受控失败，DS r9 boundary#3 P2a）；冒烟 node --check 全过、直跑/symlink 双入口守卫点火、微测 T1–T16 全 PASS（`_tmp/20261112-2759-fixr10/smoke.log`）；DS r10 增量（9 路径）在飞。yaml 装置 3 点位（record_stress/recovery/depth，ENOENT 响亮失败）留 #3031 P2c。
+- **PR 2982（#1087）/ PR 2960（#2692）补收货**：两树 patch 已落本地提交但未推送（auto-receive 报「树无改动」）→ gitleaks 绿 → 补推 MATCH；DS r3（23 路径）/ DS r6（11 路径）增量在飞。
+- **PR 3018（#1833）**：fix-r1 子代理交付（discovery anchors 9 红全清：摘要计数 280/75/1480/1064 + KNOWN_BLIND 织入 + README 段同步；205 tests OK、negative_anchor_selfcheck 干净树 exit 0、fmt/clippy 净；`_tmp/20261112-0830-issue-1833-fixr1/RESULT.md`）→ 本机复跑验证 → 推送 031bae281 MATCH；DS r2 增量（2 文件）四角色 PASS P0/P1=0；**全量 DS 评审在飞**（PR body 尚无 marker，需贴块）；mutant-kill 宿主跑（13 mutants）仍在评审收敛后。
+- **3013（04:31 段）/ 3014（决策卡）双 MERGED 邮箱核平**（noreply）；**3017 MERGED → wt-1725 回收**（证据回拷 `_tmp/20261026-issue-1725/`+`20261111-issue-1725/` 归档 `_tmp/20261112-archive-wt-1725/`，释放 258 MiB，树 59/60）。
+- **PR 3021（07:30 段）发现未合**：pr-gate FAIL 缺豁免 → body 补 `pr-gate:waiver`（纯状态 PR 快路径）+ rerun 失败任务，等待器在飞；合并后再推本段（board-20261112-0930 已基于 77284b511）。
+- **登记**：#3030 处置评论（DS r10 三 P2 并入条 3 + provenance 第五例）；#3031 范围追加（pathname 家族 6 点位清单，其中 5 launcher 已由 fix-r10 修）；看板 project-mark：2617 +4 / 2759 +3 / 1623 +1 / 1833 +1。
+- **READY 并入（07:30 段义务）**：ready-pending-2100 活性核验 86 条（4 并入 / 48 过时 / 25 重复 / 9 挂起，子代理 97 次 gh 实核，`_tmp/20261112-0800-coord/ready-merge-draft.md`）→ 并入 #1054/#2070/#2181 + #2122（重判后）；#1446 经实核仍 OPEN 由批 1 复合行承载不重复加、#1441 行不删（复合行仍承载 #1446）；#1446 复合行待重判（PR #2423 是否已覆盖其残余）。
+- **12 张前置活性红重判 + #2122 premise-check（04:31 段义务）**：子代理报告 `_tmp/20261112-0800-coord/liveness-recheck-12.md`——可解锁仅 #2122；现役在跑 8 张（#1695/#1705/#1709/#1713 批车道 PR #3011、#1833 PR #3018、#2041 PR #3012、#2043+#2044 PR #3015、#1723 已派 cb8）；#1985 路线 A 维持；#1692 维持 blocked（卡自身收尾条件，READY 行措辞陈旧待修）；#1792 已关。两处口径出入登记待处置：#1792 关单评论「无下挂未处置」与 #2122 前置矛盾；#1632 关单时序。
+- **1623 fix-r4 在跑**（本机 GLM worker，pid 69142，任务书 `_tmp/20261112-0930-issue-1623-fixr4/`：P1 session_model_get 漏门 + 登记件范围更新 + busy×代理 key 边界用例 + 处置 #2992/#2998/#2993）；concurrency#1（sanitize 折叠别名互斥绕过）判 c 档待开跟进单。
+
+**巡场（09:0x 实测）**：盘 **162 GiB WARN**（>160，wt-1725 回收后仍 162）、树 **59/60**（wt-1725 回收）、失联 0、MM 429、DS 16/16 满（4 路评审在飞：2759-r10/2982-r3/2960-r6/3018-full）、human-comments 空、本机 cargo 0/2。3029（#3010 R4）metadata-observer FAILURE + negative-controls 在跑，待判读。
+
+**未结义务表**：
+
+| 下一步动作 | 唯一责任人 | 最迟复查 |
+|---|---|---|
+| MM 回可用即跑四组：2983 三角色（@0ac5071f2）/ 2964 四角色（@最终头）/ 2957 四角色（@fix-r4 后头）/ 3018 全量四角色 | e7 | 等待器通知后即跑 |
+| 1623 fix-r4 收货：glm.exit → DONE sha256 → final.patch → fmt/clippy → 提交推送 → DS+MM（P1 类两家） | e7 | worker 7200s 窗内 |
+| DS r10（2759）/ r3（2982）/ r6（2960）/ full（3018）收块 → P0/P1 处置 → 贴块 → gate → CI → MM 第二家 → 入队 | e7 | 各自完成即办 |
+| PR 3021 合并后推 board-20261112-0930（本段）走 state 快路径 | e7 | 3021 MERGED 后 |
+| 3029（#3010）metadata-observer FAILURE 判读 + negative-controls 结果 | e7 | 09:3x |
+| #2122 派单（F1–F6，树位已腾 59/60） | e7 | 09:4x |
+| 3003 CONFLICTING：worktree 内 rebase → marker 重生成 → CI → 入队 | e7 | 10:0x |
+| 2043 fix-r1 / 2795 fix-r7 / 2513 远端收货 → 推送 → 派评审 | e7 | 各自完成 |
+| #1446 复合行重判（PR #2423 覆盖面核对）+ #1692 READY 行措辞修 | e7 | 10:0x |
+| 1623 concurrency#1 跟进单（sanitize 折叠别名互斥绕过） | e7 | 10:0x |
+| 下次两小时交接 ~11:30 写段 | e7 | 11:4x |
 
 **待人工验收（AI 已实测部分）**：无新增；2499 宿主链原始记录在 macmini `~/ws/pdrs-runner-evidence/issue-2499/`（AI 已实测 KILLED=75，待人签字项不变）。
