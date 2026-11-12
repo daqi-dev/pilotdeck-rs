@@ -343,7 +343,7 @@ impl SmsShared {
 
 struct ServerEntry {
     shutdown: watch::Sender<bool>,
-    task: tokio::task::JoinHandle<()>,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
 struct SmsHandle {
@@ -366,7 +366,7 @@ impl ChannelHandle for SmsHandle {
                 reason
             };
             shared.log("info", format!("sms: stopping ({logged})"));
-            if let Some(server) = server {
+            let stopped = if let Some(server) = server {
                 let _ = server.shutdown.send(true);
                 // #2026 (decision C): `server.task` does not only run the
                 // accept loop — it also drains the connections it handed out,
@@ -375,10 +375,16 @@ impl ChannelHandle for SmsHandle {
                 // clearing below therefore lands *after* it, like the TS
                 // channel's `server.close()` callback ordering
                 // (`A8.3-CH-SMS-013-R1`).
-                let _ = server.task.await;
-            }
+                match server.task.await {
+                    Ok(result) => result
+                        .map_err(|error| ChannelError::error(format!("sms: stop failed: {error}"))),
+                    Err(error) => Err(ChannelError::error(format!("sms: stop failed: {error}"))),
+                }
+            } else {
+                Ok(())
+            };
             shared.runtime.lock().await.client = None;
-            Ok(())
+            stopped
         })
     }
 }
@@ -666,172 +672,186 @@ impl ChannelAdapter for SmsChannel {
             }
             shared.log("info", line);
 
-            let (shutdown, mut shutdown_rx) = watch::channel(false);
-            let server_shared = shared.clone();
-            let task = tokio::spawn(async move {
-                // #2026 (decision C): every connection this loop hands out
-                // lands in this set, so the drain below can wait for the
-                // in-flight ones — the `wecom_callback` lane's shape
-                // (`wecom_callback/http.rs`).
-                let mut connections = tokio::task::JoinSet::new();
-                // #2257: left the loop through the closed shutdown channel.
-                let mut sender_dropped = false;
-                loop {
-                    tokio::select! {
-                        changed = shutdown_rx.changed() => match changed {
-                            // A normal `stop()`: the `ServerEntry` holding the
-                            // sender stays alive until its task is awaited, so
-                            // the drain below runs while somebody observes it.
-                            Ok(()) => break,
-                            // #2257: every sender is gone. Two paths land here:
-                            // a `stop()` whose async block panicked at its
-                            // first log line (the #1339 logger-panic case —
-                            // `server.take()` already ran, so the entry, the
-                            // sender and the task handle drop together in the
-                            // unwind), or a handle dropped without `stop()` at
-                            // all. Nobody awaits this task, so the drain below
-                            // would run unobserved — and it holds the
-                            // listener's port for up to [`STOP_DRAIN_LIMIT`]
-                            // (idle keep-alive connections wait out their head
-                            // deadlines), so a same-port `start` fails its
-                            // bind and silently degrades to a [`NoopHandle`].
-                            // #2026's error-path release delay.
-                            Err(_) => {
-                                sender_dropped = true;
-                                break;
-                            }
-                        },
-                        accepted = listener.accept() => match accepted {
-                            Ok((stream, _)) => {
-                                let shared = server_shared.clone();
-                                // Taken before the spawn, so a task that is
-                                // queued but not polled yet is already counted.
-                                #[cfg(test)]
-                                let live = LiveConnection::track(&server_shared.live_connections);
-                                connections.spawn(async move {
-                                    #[cfg(test)]
-                                    let _live = live;
-                                    // Read before `shared` moves into the
-                                    // service closure below.
-                                    let headers_timeout = shared.headers_timeout;
-                                    let service = hyper::service::service_fn(
-                                        move |request: Request<Incoming>| {
-                                            let shared = shared.clone();
-                                            async move { handle_request(request, shared).await }
-                                        },
-                                    );
-                                    // #1955: Node's `headersTimeout` — see
-                                    // `DEFAULT_HEADERS_TIMEOUT` for why the
-                                    // `Timer` is required and what stays a TS
-                                    // residual. The mutation switch is what
-                                    // proves the deadline is load-bearing.
-                                    //
-                                    // #2020: registered in
-                                    // `tests/fixtures/channel-sms-head-timeout/negative_controls.py`
-                                    // (the `channel-sms` table's single
-                                    // `channel::sms::tests::` prefix cannot
-                                    // reach this module).
-                                    let mut builder =
-                                        hyper::server::conn::http1::Builder::new();
-                                    if !crate::mutants::on("sms-header-read-no-timeout") {
-                                        builder
-                                            .timer(TokioTimer::new())
-                                            .header_read_timeout(headers_timeout);
-                                    }
-                                    let _ = builder
-                                        .serve_connection(TokioIo::new(stream), service)
-                                        .await;
-                                });
-                                // Finished connections are only reaped by
-                                // `join_next`, so without this the set would
-                                // grow with every webhook the process served.
-                                while connections.try_join_next().is_some() {}
-                            }
-                            // #1339 fix-r1: a persistent accept error (fd
-                            // exhaustion) must not spin the worker hot — the
-                            // TS process would crash on the server 'error'
-                            // event; the port backs off one tick instead.
-                            Err(_) => {
-                                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                                continue;
-                            }
-                        }
-                    }
-                }
-                // #2026 (decision C): the drain. The TS channel blocks in
-                // `server.close()` until every connection ends — unbounded,
-                // and on a half-sent request head effectively forever
-                // (`A8.3-CH-SMS-012-R1`). This port waits for the in-flight
-                // connections, but no longer than [`STOP_DRAIN_LIMIT`]; when
-                // the bound fires, the set this task still owns is dropped
-                // and a dropped `JoinSet` **aborts** its remaining tasks, so
-                // the channel's sockets are all closed once `stop()`
-                // returns instead of outliving it. The mutation switches are
-                // what prove both halves load-bearing: `sms-stop-no-drain`
-                // restores the pre-#2026 detach shape (the set is forgotten,
-                // so its aborting drop never runs),
-                // `sms-stop-drain-unbounded` the TS unbounded shape, and
-                // #2269's `sms-stop-drain-predrain-count` the r1 counting
-                // shape (a pre-drain snapshot instead of the post-bound
-                // read).
-                if sender_dropped && !crate::mutants::on("sms-stop-drain-on-sender-drop") {
-                    // #2257: the closed-channel path — skip the drain. The
-                    // set's drop aborts the in-flight connection tasks and the
-                    // listener is released with the task's return, so the port
-                    // is free for a rebind immediately instead of after a
-                    // drain nobody observes. The mutation switch restores the
-                    // pre-#2257 shape (an unconditional drain on the Err path
-                    // too), which the port-rebind case in
-                    // `head_timeout_tests.rs` kills.
-                } else if crate::mutants::on("sms-stop-no-drain") {
-                    // The pre-#2026 shape: stop the accept loop and return
-                    // with the connections still running. Forgetting the set
-                    // leaks it, so the aborting `Drop` of a `JoinSet` never
-                    // runs and the connection tasks stay detached, like the
-                    // bare `tokio::spawn`s of the pre-#2026 code.
-                    std::mem::forget(connections);
-                } else {
-                    // #2269: the r1 shape (`deab130c0`) read the count
-                    // before the drain started, so every connection the
-                    // drain retired was still counted — the bound case in
-                    // `head_timeout_tests.rs` kills the mutant by its warn
-                    // text (3 where the aborted set holds 2).
-                    let pre_drain_count = crate::mutants::on("sms-stop-drain-predrain-count")
-                        .then(|| connections.len());
-                    let drain = async { while connections.join_next().await.is_some() {} };
-                    if crate::mutants::on("sms-stop-drain-unbounded") {
-                        drain.await;
-                    } else if tokio::time::timeout(STOP_DRAIN_LIMIT, drain).await.is_err() {
-                        // #2026 r2: read after the bound fired. Entries only
-                        // leave the set through `join_next`, so this is the
-                        // count the set's closing drop will abort — the
-                        // connections that finished during the drain were
-                        // reaped out of the set and are not counted. The
-                        // residual inaccuracy is the acceptable side: a task
-                        // that finished in the last poll before the timeout
-                        // may still be counted (an over-report bounded by one
-                        // poll window; dropping a finished task is a no-op),
-                        // whereas the pre-drain snapshot r1 used counts every
-                        // connection the whole drain retired. An
-                        // under-report cannot happen — a live task stays in
-                        // the set until it is reaped.
-                        let remaining = pre_drain_count.unwrap_or_else(|| connections.len());
-                        server_shared.log(
-                            "warn",
-                            format!(
-                                "sms: stop drain exceeded the {STOP_DRAIN_LIMIT:?} bound; \
-                                 {remaining} in-flight connection(s) aborted"
-                            ),
-                        );
-                    }
-                }
-            });
+            let server = start_server(listener, shared.clone());
             Ok(Arc::new(SmsHandle {
                 shared,
-                server: StdMutex::new(Some(ServerEntry { shutdown, task })),
+                server: StdMutex::new(Some(server)),
             }) as Arc<dyn ChannelHandle>)
         })
     }
+}
+
+fn start_server(listener: TcpListener, server_shared: Arc<SmsShared>) -> ServerEntry {
+    let (shutdown, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move {
+        // #2026 (decision C): every connection this loop hands out
+        // lands in this set, so the drain below can wait for the
+        // in-flight ones — the `wecom_callback` lane's shape
+        // (`wecom_callback/http.rs`).
+        let mut connections = tokio::task::JoinSet::new();
+        // #2257: left the loop through the closed shutdown channel.
+        let mut sender_dropped = false;
+        loop {
+            tokio::select! {
+                changed = shutdown_rx.changed() => match changed {
+                    // A normal `stop()`: the `ServerEntry` holding the
+                    // sender stays alive until its task is awaited, so
+                    // the drain below runs while somebody observes it.
+                    Ok(()) => break,
+                    // #2257: every sender is gone. Two paths land here:
+                    // a `stop()` whose async block panicked at its
+                    // first log line (the #1339 logger-panic case —
+                    // `server.take()` already ran, so the entry, the
+                    // sender and the task handle drop together in the
+                    // unwind), or a handle dropped without `stop()` at
+                    // all. Nobody awaits this task, so the drain below
+                    // would run unobserved — and it holds the
+                    // listener's port for up to [`STOP_DRAIN_LIMIT`]
+                    // (idle keep-alive connections wait out their head
+                    // deadlines), so a same-port `start` fails its
+                    // bind and silently degrades to a [`NoopHandle`].
+                    // #2026's error-path release delay.
+                    Err(_) => {
+                        sender_dropped = true;
+                        break;
+                    }
+                },
+                accepted = listener.accept() => match accepted {
+                    Ok((stream, _)) => {
+                        let shared = server_shared.clone();
+                        // Taken before the spawn, so a task that is
+                        // queued but not polled yet is already counted.
+                        #[cfg(test)]
+                        let live = LiveConnection::track(&server_shared.live_connections);
+                        connections.spawn(async move {
+                            #[cfg(test)]
+                            let _live = live;
+                            // Read before `shared` moves into the
+                            // service closure below.
+                            let headers_timeout = shared.headers_timeout;
+                            let service = hyper::service::service_fn(
+                                move |request: Request<Incoming>| {
+                                    let shared = shared.clone();
+                                    async move { handle_request(request, shared).await }
+                                },
+                            );
+                            // #1955: Node's `headersTimeout` — see
+                            // `DEFAULT_HEADERS_TIMEOUT` for why the
+                            // `Timer` is required and what stays a TS
+                            // residual. The mutation switch is what
+                            // proves the deadline is load-bearing.
+                            //
+                            // #2020: registered in
+                            // `tests/fixtures/channel-sms-head-timeout/negative_controls.py`
+                            // (the `channel-sms` table's single
+                            // `channel::sms::tests::` prefix cannot
+                            // reach this module).
+                            let mut builder =
+                                hyper::server::conn::http1::Builder::new();
+                            if !crate::mutants::on("sms-header-read-no-timeout") {
+                                builder
+                                    .timer(TokioTimer::new())
+                                    .header_read_timeout(headers_timeout);
+                            }
+                            let _ = builder
+                                .serve_connection(TokioIo::new(stream), service)
+                                .await;
+                        });
+                        // Finished connections are only reaped by
+                        // `join_next`, so without this the set would
+                        // grow with every webhook the process served.
+                        while connections.try_join_next().is_some() {}
+                    }
+                    // #1339 fix-r1: a persistent accept error (fd
+                    // exhaustion) must not spin the worker hot — the
+                    // TS process would crash on the server 'error'
+                    // event; the port backs off one tick instead.
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        continue;
+                    }
+                }
+            }
+        }
+        // #2026 (decision C): the drain. The TS channel blocks in
+        // `server.close()` until every connection ends — unbounded,
+        // and on a half-sent request head effectively forever
+        // (`A8.3-CH-SMS-012-R1`). This port waits for the in-flight
+        // connections, but no longer than [`STOP_DRAIN_LIMIT`]; when
+        // the bound fires, the set this task still owns is dropped
+        // and a dropped `JoinSet` **aborts** its remaining tasks, so
+        // the channel's sockets are all closed once `stop()`
+        // returns instead of outliving it. The mutation switches are
+        // what prove both halves load-bearing: `sms-stop-no-drain`
+        // restores the pre-#2026 detach shape (the set is forgotten,
+        // so its aborting drop never runs),
+        // `sms-stop-drain-unbounded` the TS unbounded shape, and
+        // #2269's `sms-stop-drain-predrain-count` the r1 counting
+        // shape (a pre-drain snapshot instead of the post-bound
+        // read).
+        if sender_dropped && !crate::mutants::on("sms-stop-drain-on-sender-drop") {
+            // #2257: the closed-channel path — skip the drain. The
+            // set's drop aborts the in-flight connection tasks and the
+            // listener is released with the task's return, so the port
+            // is free for a rebind immediately instead of after a
+            // drain nobody observes. The mutation switch restores the
+            // pre-#2257 shape (an unconditional drain on the Err path
+            // too), which the port-rebind case in
+            // `head_timeout_tests.rs` kills.
+        } else if crate::mutants::on("sms-stop-no-drain") {
+            // The pre-#2026 shape: stop the accept loop and return
+            // with the connections still running. Forgetting the set
+            // leaks it, so the aborting `Drop` of a `JoinSet` never
+            // runs and the connection tasks stay detached, like the
+            // bare `tokio::spawn`s of the pre-#2026 code.
+            std::mem::forget(connections);
+        } else {
+            // #2269: the r1 shape (`deab130c0`) read the count
+            // before the drain started, so every connection the
+            // drain retired was still counted — the bound case in
+            // `head_timeout_tests.rs` kills the mutant by its warn
+            // text (3 where the aborted set holds 2).
+            let pre_drain_count = crate::mutants::on("sms-stop-drain-predrain-count")
+                .then(|| connections.len());
+            let drain = async { while connections.join_next().await.is_some() {} };
+            if crate::mutants::on("sms-stop-drain-unbounded") {
+                drain.await;
+            } else if tokio::time::timeout(STOP_DRAIN_LIMIT, drain).await.is_err() {
+                // #2026 r2: read after the bound fired. Entries only
+                // leave the set through `join_next`, so this is the
+                // count the set's closing drop will abort — the
+                // connections that finished during the drain were
+                // reaped out of the set and are not counted. The
+                // residual inaccuracy is the acceptable side: a task
+                // that finished in the last poll before the timeout
+                // may still be counted (an over-report bounded by one
+                // poll window; dropping a finished task is a no-op),
+                // whereas the pre-drain snapshot r1 used counts every
+                // connection the whole drain retired. An
+                // under-report cannot happen — a live task stays in
+                // the set until it is reaped.
+                let remaining = pre_drain_count.unwrap_or_else(|| connections.len());
+                server_shared.log(
+                    "warn",
+                    format!(
+                        "sms: stop drain exceeded the {STOP_DRAIN_LIMIT:?} bound; \
+                         {remaining} in-flight connection(s) aborted"
+                    ),
+                );
+            }
+        }
+        // CLOEXEC closes an inherited descriptor only when the child reaches
+        // exec. On Linux, dropping this listener alone can therefore leave its
+        // shared socket listening after stop returns. Keep the existing drain
+        // ordering, then disable the socket itself before dropping our fd.
+        #[cfg(target_os = "linux")]
+        let shutdown = socket2::SockRef::from(&listener).shutdown(std::net::Shutdown::Both);
+        drop(listener);
+        #[cfg(target_os = "linux")]
+        shutdown?;
+        Ok(())
+    });
+    ServerEntry { shutdown, task }
 }
 
 /// Node `listen(port, host)` with the empty host: `""` is falsy for Node's

@@ -446,6 +446,51 @@ async fn the_default_head_deadline_is_nodes_sixty_seconds() {
     handle.stop("test").await.expect("#1955 stop");
 }
 
+/// Keep a real duplicate of the listening socket alive across the production
+/// stop path. This models a concurrent fork's descriptor before CLOEXEC runs:
+/// dropping only the accept task's fd must not leave a connectable listener.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let duplicate = socket2::SockRef::from(&listener).try_clone().unwrap();
+    let channel = SmsChannel::new(options(address.port(), None));
+    let shared = channel.shared.clone();
+    shared.runtime.lock().await.client = Some(Arc::new(NullSender) as Arc<dyn SmsSender>);
+    let server = start_server(listener, shared.clone());
+    let handle = SmsHandle {
+        shared: shared.clone(),
+        server: StdMutex::new(Some(server)),
+    };
+
+    // A complete response proves that this listener's real accept/HTTP path
+    // ran before stop; Connection: close leaves no unrelated drain delay.
+    let mut socket = TcpStream::connect(address).await.unwrap();
+    socket
+        .write_all(b"GET /not-the-sms-path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(READ_LIMIT, socket.read_to_end(&mut response))
+        .await
+        .expect("the SMS listener answers before stop")
+        .unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 404 "));
+
+    tokio::time::timeout(READ_LIMIT, handle.stop("duplicate-listener"))
+        .await
+        .expect("the listener and accepted connections stop")
+        .expect("the listener shutdown succeeds");
+    assert!(
+        TcpStream::connect(address).await.is_err(),
+        "stop must disable the listening socket, not only drop one descriptor"
+    );
+    assert!(shared.runtime.lock().await.client.is_none());
+    assert!(duplicate.local_addr().is_ok(), "the duplicate is still owned");
+    drop(duplicate);
+}
+
 /// #2026 (decision C): `SmsHandle::stop()` drains the connections the accept
 /// loop already handed out — the `wecom_callback` lane's
 /// `stop_drains_a_half_sent_header_once_the_header_timeout_fires` shape. A
