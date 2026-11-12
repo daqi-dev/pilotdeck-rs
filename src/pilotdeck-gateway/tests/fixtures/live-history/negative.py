@@ -24,7 +24,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                             write_source_atomic)
 from negative_selection import verdict_exit
 from negative_suite import passed
 
@@ -108,11 +109,22 @@ with mutating_sources(root, list(dict.fromkeys(c[1] for c in chosen)), baseline=
                                       f'stale anchor: {source.count(old)} matches')
                 else:
                     try:
-                        path.write_text(source.replace(old, new, 1))
+                        # #1087 fix-r2: every guarded-source write in the
+                        # window is one atomic rename (#1903 rule, shared with
+                        # ``mutating_sources``) — a truncating ``write_text``
+                        # killed mid-write leaves an empty or half-written
+                        # product source.
+                        write_source_atomic(
+                            root, path, source.replace(old, new, 1).encode(),
+                            mode=path.stat().st_mode & 0o7777)
                         result = run(name, test)
                         status, reason = classify(result, test, anchor)
                     finally:
-                        path.write_bytes(originals[path])
+                        # Same #1087 fix-r2 window: the in-loop restore is also
+                        # one rename, never a truncating write_bytes.
+                        write_source_atomic(
+                            root, path, originals[path],
+                            mode=path.stat().st_mode & 0o7777)
                     restored = run(name+'-restored', test)
                     if restored.returncode != 0:
                         status, reason = 'INVALID', reason + '; restored run not green'

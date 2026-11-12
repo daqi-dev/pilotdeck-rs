@@ -21,6 +21,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -158,107 +159,116 @@ fragments = {
         '#771 surrogate-escape planDreamClusters#9 must be rejected',
 }
 
-if '--check-anchors' in sys.argv:
-    paths = {path for _name, path, _before, _after, _test in mutations}
-    sources = {path: path.read_text() for path in paths}
-    bad = [(name, sources[path].count(before), path)
-           for name, path, before, _after, _test in mutations
-           if sources[path].count(before) != 1]
-    for name, count, path in bad:
-        print(f'STALE ANCHOR {name}: {count} matches in {path.relative_to(root)}')
-    if bad:
-        sys.exit(2)
-    labels = ', '.join(path.relative_to(root).as_posix() for path in sorted(paths))
-    print(f'OK {len(mutations)} anchors in {labels}')
-    sys.exit(0)
-
-out = Path(sys.argv[1]).resolve()
-target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
-baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
-out.mkdir(parents=True, exist_ok=True)
-env = dict(os.environ)
-env['CARGO_TARGET_DIR'] = target
-only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
-unknown = only - {case[0] for case in mutations}
-assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
-
-
-def run_suite(test):
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-               '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_dream',
-               test, '--', '--exact']
-    run = run_owned(command, cwd=root, env=env, timeout=600)
-    return slots, run, run.stdout + run.stderr
-
-
 def failure_is_bound(log, fragment, test):
+    # #1087: only the named test's own FAILED status line plus the bound
+    # fragment inside that test's own panic payload kills (negative_panic
+    # judges both). The old whole-log `fragment in log` also matched a
+    # sibling test's panic, captured stdout and build output — the
+    # false-kill shapes the twin controls in test_negative.py pin.
     if 'could not compile' in log:
         return False
-    if f'test {test} ... FAILED' not in log and 'panicked at' not in log:
-        return False
-    return fragment in log
+    return named_test_killed(log, test, fragment)
 
 
-killed, survived, invalid = [], [], []
-with mutating_sources(root, [dream, text], baseline=baseline) as originals:
-    stale = []
-    for name, path, before, _after, _test in mutations:
-        count = originals[path].decode().count(before)
-        if count != 1:
-            stale.append((name, path.relative_to(root).as_posix(), count))
-    if stale:
-        report = '\n'.join(f'STALE ANCHOR {name}: {count} matches in {relative}'
-                           for name, relative, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='')
-        print('STALE ANCHORS: negative.py is out of sync with the product source; refusing to run')
-        sys.exit(2)
 
-    baseline_logs = []
-    for test in ('wire_matrix', 'timeout_matrix', 'surrogate_escape_matrix'):
-        slots, run, log = run_suite(test)
-        baseline_logs.append(slots.stdout + slots.stderr + log)
-        if run.returncode != 0:
-            (out / 'baseline.log').write_text(''.join(baseline_logs))
-            print(f'BASELINE FAILED: unmutated {test} must pass before mutations')
-            sys.exit(1)
-    (out / 'baseline.log').write_text(''.join(baseline_logs))
+def main(argv=None):
+    argv = list(sys.argv if argv is None else argv)
+    if '--check-anchors' in argv:
+        paths = {path for _name, path, _before, _after, _test in mutations}
+        sources = {path: path.read_text() for path in paths}
+        bad = [(name, sources[path].count(before), path)
+               for name, path, before, _after, _test in mutations
+               if sources[path].count(before) != 1]
+        for name, count, path in bad:
+            print(f'STALE ANCHOR {name}: {count} matches in {path.relative_to(root)}')
+        if bad:
+            sys.exit(2)
+        labels = ', '.join(path.relative_to(root).as_posix() for path in sorted(paths))
+        print(f'OK {len(mutations)} anchors in {labels}')
+        sys.exit(0)
 
-    for name, path, before, after, test in mutations:
-        if only and name not in only:
-            continue
-        try:
-            source = originals[path].decode()
-            path.write_text(source.replace(before, after))
+    out = Path(argv[1]).resolve()
+    target = os.environ.get('CARGO_TARGET_DIR')
+    assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+    baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
+    out.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env['CARGO_TARGET_DIR'] = target
+    only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
+    unknown = only - {case[0] for case in mutations}
+    assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
+
+
+    def run_suite(test):
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+        command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+                   '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_dream',
+                   test, '--', '--exact']
+        run = run_owned(command, cwd=root, env=env, timeout=600)
+        return slots, run, run.stdout + run.stderr
+
+    killed, survived, invalid = [], [], []
+    with mutating_sources(root, [dream, text], baseline=baseline) as originals:
+        stale = []
+        for name, path, before, _after, _test in mutations:
+            count = originals[path].decode().count(before)
+            if count != 1:
+                stale.append((name, path.relative_to(root).as_posix(), count))
+        if stale:
+            report = '\n'.join(f'STALE ANCHOR {name}: {count} matches in {relative}'
+                               for name, relative, count in stale) + '\n'
+            (out / 'stale-anchors.log').write_text(report)
+            print(report, end='')
+            print('STALE ANCHORS: negative.py is out of sync with the product source; refusing to run')
+            sys.exit(2)
+
+        baseline_logs = []
+        for test in ('wire_matrix', 'timeout_matrix', 'surrogate_escape_matrix'):
             slots, run, log = run_suite(test)
-            (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-            if 'could not compile' in log:
-                invalid.append((name, 'compile failure'))
-            elif run.returncode == 0:
-                survived.append((name, 'test passed'))
-            elif not failure_is_bound(log, fragments[name], test):
-                invalid.append((name, 'failed without the bound assertion message'))
-            else:
-                killed.append(name)
-        except Exception as error:
-            invalid.append((name, f'{type(error).__name__}: {error}'))
-        finally:
-            path.write_bytes(originals[path])
-        if killed and killed[-1] == name:
-            print(f'KILLED   {name}: {fragments[name]}', flush=True)
-        elif survived and survived[-1][0] == name:
-            print(f'SURVIVED {name}: {survived[-1][1]}', flush=True)
-        elif invalid and invalid[-1][0] == name:
-            print(f'INVALID  {name}: {invalid[-1][1]}', flush=True)
+            baseline_logs.append(slots.stdout + slots.stderr + log)
+            if run.returncode != 0:
+                (out / 'baseline.log').write_text(''.join(baseline_logs))
+                print(f'BASELINE FAILED: unmutated {test} must pass before mutations')
+                sys.exit(1)
+        (out / 'baseline.log').write_text(''.join(baseline_logs))
 
-    for path, data in originals.items():
-        path.write_bytes(data)
-        assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+        for name, path, before, after, test in mutations:
+            if only and name not in only:
+                continue
+            try:
+                source = originals[path].decode()
+                path.write_text(source.replace(before, after))
+                slots, run, log = run_suite(test)
+                (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
+                if 'could not compile' in log:
+                    invalid.append((name, 'compile failure'))
+                elif run.returncode == 0:
+                    survived.append((name, 'test passed'))
+                elif not failure_is_bound(log, fragments[name], test):
+                    invalid.append((name, 'failed without the bound assertion message'))
+                else:
+                    killed.append(name)
+            except Exception as error:
+                invalid.append((name, f'{type(error).__name__}: {error}'))
+            finally:
+                path.write_bytes(originals[path])
+            if killed and killed[-1] == name:
+                print(f'KILLED   {name}: {fragments[name]}', flush=True)
+            elif survived and survived[-1][0] == name:
+                print(f'SURVIVED {name}: {survived[-1][1]}', flush=True)
+            elif invalid and invalid[-1][0] == name:
+                print(f'INVALID  {name}: {invalid[-1][1]}', flush=True)
 
-print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
-print(f'SURVIVED {len(survived)}: ' + ', '.join(f'{name} ({reason})' for name, reason in survived))
-print(f'INVALID  {len(invalid)}: ' + ', '.join(f'{name} ({reason})' for name, reason in invalid))
-if survived or invalid:
-    sys.exit(1)
+        for path, data in originals.items():
+            path.write_bytes(data)
+            assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+
+    print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
+    print(f'SURVIVED {len(survived)}: ' + ', '.join(f'{name} ({reason})' for name, reason in survived))
+    print(f'INVALID  {len(invalid)}: ' + ', '.join(f'{name} ({reason})' for name, reason in invalid))
+    if survived or invalid:
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
