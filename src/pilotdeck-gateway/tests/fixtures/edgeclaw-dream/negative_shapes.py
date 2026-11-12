@@ -54,7 +54,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
@@ -466,7 +467,13 @@ def main(argv=None):
             try:
                 source = originals[helpers].decode()
                 slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-                helpers.write_text(source.replace(before, after))
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_text`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(root, helpers,
+                                     source.replace(before, after).encode(),
+                                     mode=helpers.stat().st_mode & 0o7777)
                 try:
                     cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers',
@@ -478,7 +485,10 @@ def main(argv=None):
                             and assertion_failure(log, test, case_ids[name])):
                         reason = f'did not fail case={case_ids[name]} in {test}'
                 finally:
-                    helpers.write_bytes(originals[helpers])
+                    # Same #1087 fix-r2 window: the in-loop restore is also one
+                    # rename, never a truncating write_bytes.
+                    write_source_atomic(root, helpers, originals[helpers],
+                                        mode=helpers.stat().st_mode & 0o7777)
             except Exception as error:
                 reason = f'{type(error).__name__}: {error}'
             if reason is None:
@@ -487,7 +497,10 @@ def main(argv=None):
             else:
                 survived.append((name, reason))
                 print(f'SURVIVED {name}: {reason}', flush=True)
-        helpers.write_bytes(originals[helpers])
+        # Same #1087 fix-r2 window: the final restore is also one rename,
+        # never a truncating write_bytes.
+        write_source_atomic(root, helpers, originals[helpers],
+                            mode=helpers.stat().st_mode & 0o7777)
         assert helpers.read_bytes() == originals[helpers], 'restoration failed'
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))

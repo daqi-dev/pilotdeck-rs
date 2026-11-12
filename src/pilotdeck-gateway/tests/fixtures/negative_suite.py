@@ -11,7 +11,8 @@ import subprocess
 import pending_reanchor as pending
 
 from negative_panic import named_test_failed, panic_evidence
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target)
 
@@ -389,7 +390,13 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                             reason = 'positive control did not pass the bound test'
                         else:
                             stage = 'negative'
-                            case.path.write_text(changed)
+                            # #1087 fix-r2: every guarded-source write in the
+                            # window is one atomic rename (#1903 rule, shared
+                            # with ``mutating_sources``) — a truncating
+                            # ``write_text`` killed mid-write leaves an empty
+                            # or half-written product source.
+                            write_source_atomic(root, case.path, changed.encode(),
+                                                mode=case.path.stat().st_mode & 0o7777)
                             status, reason = classify(run(stem(case) + '-negative', case.test), case)
                     except Exception as error:
                         status, reason = 'INVALID', f'{stage}: {type(error).__name__}: {error}'
@@ -397,7 +404,10 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                         # Restore before every successor, also on timeout or bad anchors.
                         # The enclosing guard independently restores and verifies on exit.
                         phase = 'restore'
-                        case.path.write_bytes(originals[case.path])
+                        # Same #1087 fix-r2 window: the in-loop restore is
+                        # also one rename, never a truncating write_bytes.
+                        write_source_atomic(root, case.path, originals[case.path],
+                                            mode=case.path.stat().st_mode & 0o7777)
                         if case.path.read_bytes() != originals[case.path]:
                             raise RuntimeError(f'byte restoration failed: {case.path}')
                         phase = 'body'
@@ -763,7 +773,12 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
             _write_new(out / f'{name}.patch', ''.join(difflib.unified_diff(
                 original.splitlines(True), changed.splitlines(True),
                 fromfile=str(source.relative_to(root)), tofile=str(source.relative_to(root)))))
-            source.write_text(changed)
+            # #1087 fix-r2: the guarded-source write in the window is one
+            # atomic rename (#1903 rule, shared with ``mutating_sources``) — a
+            # truncating ``write_text`` killed mid-write leaves an empty or
+            # half-written product source.
+            write_source_atomic(root, source, changed.encode(),
+                                mode=source.stat().st_mode & 0o7777)
             if run(name + '-compile', row, env, compile=True).returncode != 0:
                 raise RuntimeError('mutant did not compile; never a kill')
             item['compiled'] = True
@@ -784,7 +799,10 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         finally:
             # Restore inside the guard before the positive check. The
             # guard also verifies every protected byte on context exit.
-            source.write_bytes(originals[source])
+            # Same #1087 fix-r2 window: one rename, never a truncating
+            # write_bytes.
+            write_source_atomic(root, source, originals[source],
+                                mode=source.stat().st_mode & 0o7777)
             if source.read_bytes() != originals[source]:
                 raise RuntimeError('source restoration failed')
         if not compile_only:

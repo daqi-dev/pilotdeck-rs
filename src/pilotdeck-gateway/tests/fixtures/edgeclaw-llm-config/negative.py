@@ -33,17 +33,25 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
 
 
-def classify(log, returncode):
+def classify(log, returncode, expected, test):
     """Three-way outcome for one mutant run.
 
     Every KILLED/SURVIVED verdict must prove that exactly one test actually
     ran. A renamed or filtered-out test prints ``running 0 tests`` and exits 0;
     without this guard it would be reported as SURVIVED (a false negative).
+    #1087 fix-r2 (b-tier P1, review P2#5): a KILLED verdict additionally
+    requires the shared strict #813 judge — the named test's own FAILED
+    status line plus the bound anchor inside that test's own panic payload
+    (negative_panic judges both). The old shape accepted any failure,
+    including an unrelated panic in the same binary — the false-kill shapes
+    ``--self-test`` and the twin controls in test_negative.py pin.
     """
     if returncode is None:
         return 'INVALID'
@@ -53,24 +61,48 @@ def classify(log, returncode):
     if ran is None or int(ran.group(1)) != 1:
         return 'INVALID'
     if returncode != 0 and 'test result: FAILED.' in log:
-        return 'KILLED'
+        if named_test_killed(log, test, expected):
+            return 'KILLED'
+        return 'INVALID'
     if returncode == 0 and 'test result: ok.' in log:
         return 'SURVIVED'
     return 'INVALID'
 
 
 def self_test():
+    anchor = '$'
+    test = 't_selftest'
+    killed_log = (
+        'running 1 test\n'
+        f'test {test} ... FAILED\n\n'
+        'failures:\n\n'
+        f'---- {test} stdout ----\n'
+        f"thread '{test}' panicked at tests/edgeclaw_llm_config.rs:90:13:\n"
+        '$.provider: expected Some("p"), actual None\n'
+        'note: run with `RUST_BACKTRACE=1` environment variable to display '
+        'a backtrace\n\n'
+        'failures:\n'
+        f'    {test}\n\n'
+        'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+        '0 filtered out\n'
+    )
+    # The same FAILED shape on an unrelated unwrap: the anchor is nowhere in
+    # the test's own panic payload, so it is not a kill.
+    unrelated_log = killed_log.replace(
+        '$.provider: expected Some("p"), actual None',
+        'called `Option::unwrap()` on a None value')
     samples = [
         ('running 0 tests\n\ntest result: ok. 0 passed; 0 failed;', 0, 'INVALID'),
         ('running 1 test\n\ntest result: ok. 1 passed; 0 failed;', 0, 'SURVIVED'),
         ('running 2 tests\n\ntest result: ok. 2 passed; 0 failed;', 0, 'INVALID'),
-        ('running 1 test\n\ntest result: FAILED. 0 passed; 1 failed;', 101, 'KILLED'),
-        ('running 1 test\n\ntest result: FAILED. 0 passed; 1 failed;', 0, 'INVALID'),
+        (killed_log, 101, 'KILLED'),
+        (unrelated_log, 101, 'INVALID'),
+        (killed_log, 0, 'INVALID'),
         ('error: could not compile `pilotdeck-gateway`', 101, 'INVALID'),
         ('running 0 tests\n\ntest result: FAILED.', 101, 'INVALID'),
     ]
     for log, returncode, expected in samples:
-        actual = classify(log, returncode)
+        actual = classify(log, returncode, anchor, test)
         if actual != expected:
             raise RuntimeError((log, returncode, expected, actual))
     print('classify self-test: PASS')
@@ -293,12 +325,36 @@ cases = [
      'open_claw_cache_bad_first_read_stays_null_without_reprobe'),
 ]
 
-# A kill must be the named test failing on its own assertion. Cases listed
-# here additionally pin the failure text, so an unrelated panic in the same
-# binary (or a harness fault) cannot pass for a kill.
-KILL_FAILURE_TEXT = {
-    'openclaw-null-retry': '#836: cached bad-file null must not re-probe home',
+# #1087 fix-r2 (b-tier P1, review P2#5): a kill must be the named test
+# failing on its own assertion. Every ``llm_config_matches_ts`` comparison
+# goes through ``assert_same``/``assert_number``, whose failure messages all
+# carry the ``$``-rooted JSON path of the first mismatch (the root call is
+# ``assert_same(actual, expected, "$")``), so ``$`` is the shared class
+# marker for that oracle replay. The three dedicated cells pin their own
+# issue-specific panic messages instead. This table replaces the old
+# ``KILL_FAILURE_TEXT`` whole-log pin: the anchors are now judged inside the
+# named test's own panic payload by ``named_test_killed``.
+EXPECTED = {
+    'provider-default': '$',
+    'openclaw-cache-null': '$',
+    'model-name-match': '$',
+    'env-model-ref': '$',
+    'selection-trailing-slash': '$',
+    'api-key-env': '$',
+    'merge-floor': '$',
     'merge-negative-zero': '$.autoIndexIntervalMinutes: number bits',
+    'sanitize-header-value': '$',
+    'headers-model-wins': '$',
+    'api-type-default': '$',
+    'merge-nan': '$',
+    'provider-key-order': '$',
+    'headers-array-accepted': '$',
+    'memory-model-trim': '$',
+    'lock-held-io': 'second resolve blocked: the cache lock covers I/O',
+    'sanitize-proto-kept': '$',
+    'api-key-unchecked-string': '$',
+    'to-string-record-drops-proto': '$',
+    'openclaw-null-retry': '#836: cached bad-file null must not re-probe home',
 }
 
 names = [case[0] for case in cases]
@@ -410,7 +466,13 @@ with mutating_sources(root, [config]) as originals:
                 slots_text = slots.stdout + slots.stderr
                 # Snapshot bytes come only from mutating_sources; the mutation
                 # itself is a single exact anchor replacement.
-                path.write_bytes(original.replace(before, after).encode())
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_bytes`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(root, path,
+                                     original.replace(before, after).encode(),
+                                     mode=path.stat().st_mode & 0o7777)
                 try:
                     run = run_owned(
                         command + [test, '--', '--exact'],
@@ -418,22 +480,19 @@ with mutating_sources(root, [config]) as originals:
                     log = run.stdout + run.stderr
                     returncode = run.returncode
                 finally:
-                    path.write_bytes(originals[path])
+                    # Same #1087 fix-r2 window: the in-loop restore is also
+                    # one rename, never a truncating write_bytes.
+                    write_source_atomic(root, path, originals[path],
+                                        mode=path.stat().st_mode & 0o7777)
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
             except Exception as error:  # noqa: BLE001 - report, never hide a cell
                 log = f'{type(error).__name__}: {error}\n'
                 returncode = None
-            outcome = classify(log, returncode)
+            outcome = classify(log, returncode, EXPECTED[name], test)
             # A red baseline makes every mutation's "failure" untrustworthy.
             if outcome == 'KILLED' and not baseline_ok:
-                outcome = 'INVALID'
-            # A pinned kill must show its own failure text: the #836 message is
-            # what the panicking home closure emits, so anything else is an
-            # unrelated fault wearing this test's name.
-            required = KILL_FAILURE_TEXT.get(name)
-            if outcome == 'KILLED' and required is not None and required not in log:
                 outcome = 'INVALID'
             (out / f'{name}.log').write_text(
                 'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
@@ -444,7 +503,10 @@ with mutating_sources(root, [config]) as originals:
             print(f'{name}: {outcome} exit={returncode}', flush=True)
     finally:
         for path, data in originals.items():
-            path.write_bytes(data)
+            # Same #1087 fix-r2 window: the final restore is also one rename,
+            # never a truncating write_bytes.
+            write_source_atomic(root, path, data,
+                                mode=path.stat().st_mode & 0o7777)
             if path.read_bytes() != data:
                 raise RuntimeError('restoration failed: ' + str(path))
 

@@ -23,7 +23,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 runner = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/runner.rs'
@@ -338,7 +339,13 @@ def main(argv=None):
         for name, path, before, after, test in selected:
             try:
                 source = originals[path].decode()
-                path.write_text(source.replace(before, after))
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_text`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(root, path,
+                                     source.replace(before, after).encode(),
+                                     mode=path.stat().st_mode & 0o7777)
                 slots, run, log = run_suite(test)
                 (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
                 if 'could not compile' in log:
@@ -352,7 +359,10 @@ def main(argv=None):
             except Exception as error:
                 invalid.append((name, f'{type(error).__name__}: {error}'))
             finally:
-                path.write_bytes(originals[path])
+                # Same #1087 fix-r2 window: the in-loop restore is also one
+                # rename, never a truncating write_bytes.
+                write_source_atomic(root, path, originals[path],
+                                     mode=path.stat().st_mode & 0o7777)
             if killed and killed[-1] == name:
                 print(f'KILLED   {name}: {fragments[name]}', flush=True)
             elif survived and survived[-1][0] == name:
@@ -361,7 +371,10 @@ def main(argv=None):
                 print(f'INVALID  {name}: {invalid[-1][1]}', flush=True)
 
         for path, data in originals.items():
-            path.write_bytes(data)
+            # Same #1087 fix-r2 window: the final restore is also one rename,
+            # never a truncating write_bytes.
+            write_source_atomic(root, path, data,
+                                 mode=path.stat().st_mode & 0o7777)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
 
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))

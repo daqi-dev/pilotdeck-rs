@@ -18,6 +18,7 @@ import time
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import (CARGO_SLOTS_CALL_SECONDS, CARGO_SLOTS_WAIT_SECONDS,
                              mutating_sources, run_owned, wait_for_slot)
 from negative_selection import (missing_target, refuse,
@@ -79,7 +80,7 @@ def environment(root):
     return env
 
 
-def run(name, command, env, cwd=SRC, diagnostic=None):
+def run(name, command, env, cwd=SRC, diagnostic=None, test=None):
     if command[0] == 'cargo':
         # 等待预算 / 单次调用上限都取共享常量（#1843 E，见 negative_process 的同名常量）：
         # 预算若只够一次冷调用，冷缓存 + 名额已满时第一次调用就把预算吃光，
@@ -131,13 +132,20 @@ def run(name, command, env, cwd=SRC, diagnostic=None):
         # measuring anything.
         if 'running 1 test' not in output:
             raise RuntimeError('compilation or zero-test failure is not evidence')
-        expected = 'test result: FAILED' if diagnostic else 'test result: ok. 1 passed'
-        if expected not in output:
+        if diagnostic is None and 'test result: ok. 1 passed' not in output:
+            expected = 'test result: ok. 1 passed'
             raise RuntimeError(f'{name}: expected {expected!r} in the output')
     if diagnostic:
-        if code == 0 or diagnostic not in output:
-            raise RuntimeError(f'{name}: the bound test did not fail with the expected '
-                               f'diagnostic {diagnostic!r} (exit={code})')
+        # #1087 fix-r2: the kill criterion is the shared strict #813 judge --
+        # the named test's own FAILED status line plus the diagnostic inside
+        # that test's own panic payload (negative_panic judges both). The old
+        # whole-log `expected` / `diagnostic in output` checks also matched a
+        # sibling test's panic, captured stdout and build output.
+        if test is None:
+            raise RuntimeError(f'{name}: a diagnostic run must name the bound test')
+        if code == 0 or not named_test_killed(output, test, diagnostic):
+            raise RuntimeError(f'{name}: the bound test {test} did not fail with the '
+                               f'expected diagnostic {diagnostic!r} (exit={code})')
         print(f'{name}: KILLED', flush=True)
     else:
         if code != 0:

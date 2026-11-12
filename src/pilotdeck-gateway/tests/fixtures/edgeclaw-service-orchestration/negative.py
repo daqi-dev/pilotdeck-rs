@@ -57,11 +57,13 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import (
     SourceBaselineError,
     mutating_sources,
     run_owned,
     wait_for_slot,
+    write_source_atomic,
 )
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -538,15 +540,17 @@ def classify(result, mutant):
         return 'SURVIVED', 'bound test still passed'
     if 'could not compile' in log:
         return 'INVALID', 'mutation did not compile'
+    # #1087 fix-r2: the kill criterion is the shared strict #813 judge — the
+    # named test's own FAILED status line plus the bound anchor inside that
+    # test's own panic payload (negative_panic judges both). The old
+    # whole-log `anchor in log` plus a `panicked at`-line filename scan also
+    # matched a sibling test's panic, captured stdout and build output —
+    # the false-kill shapes the twin controls in test_negative.py pin.
+    # Each run is one exact test, so `named_test_killed`'s `<unnamed>`
+    # widening covers assertions on threads the test spawned itself.
     if (
         result.returncode != 0
-        and 'test result: FAILED' in log
-        and f"test {mutant['test']} ... FAILED" in log
-        and any(
-            'panicked at ' in line and mutant['test_file'] in line
-            for line in log.splitlines()
-        )
-        and mutant['anchor'] in log
+        and named_test_killed(log, mutant['test'], mutant['anchor'])
     ):
         return 'KILLED', 'bound test failed at its named assertion'
     return 'INVALID', 'missing bound runtime failure (wrong panic or missing test)'
@@ -644,7 +648,14 @@ def main():
                         reason = 'positive control did not pass the bound test'
                     else:
                         mutated = original.replace(mutant['old'], mutant['new'], 1)
-                        path.write_text(mutated)
+                        # #1087 fix-r2: every guarded-source write in the
+                        # window is one atomic rename (#1903 rule, shared
+                        # with ``mutating_sources``) — a truncating
+                        # ``write_text`` killed mid-write leaves an empty or
+                        # half-written product source.
+                        write_source_atomic(
+                            ROOT, path, mutated.encode(),
+                            mode=path.stat().st_mode & 0o7777)
                         # Force Cargo to observe the write even on a filesystem
                         # with coarse mtimes; a cached binary would fake SURVIVED.
                         time.sleep(1.1)
@@ -654,7 +665,11 @@ def main():
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    path.write_text(original)
+                    # Same #1087 fix-r2 window: the in-loop restore is also
+                    # one rename, never a truncating write_text.
+                    write_source_atomic(
+                        ROOT, path, original.encode(),
+                        mode=path.stat().st_mode & 0o7777)
                     time.sleep(1.1)
                     if path.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {path}')
