@@ -55,11 +55,18 @@ close/delete/rename/tag 五调用方）与 `config.rs:69`（session_model_set/
 clear、permission/thinking/style 族写路径）的家族包装全部委托该共享守卫
 （`:66`/`:69` 为包装 doc 首行；fn 定义行在 `session_dir.rs:76` /
 `config.rs:81`，行号口径统一由跟进单 #2993 承接）。
-fix-r2 追加三个入口：`runtime/turn/submit.rs` `validate()` 顶部（主写路径：
+fix-r2 追加三个入口：`runtime/turn/submit.rs` `validate()`（主写路径：
 wire sessionKey 原样进 `RunRef`，经生产 `assembly.rs` create_storage 链落盘；
 错误走该入口既有 error-event 通道
 `{type:"error",code,message,recoverable:true}`，registry 与 session factory
-之前短路）；`methods/tools.rs` `tools_rewind_files` 的 sessionKey 门改委托
+之前短路。fix-r8 次序口径：该门位于 mode/basePermissionMode 与 runId 校验
+之后、busy 拒绝之前——组合非法输入（如 `{mode:"bogus",sessionKey:"\ud800"}`）
+保持 TS 的产码次序（TS 先答 INVALID_PERMISSION_MODE，`probe_ts_gates.log`
+实测无 sessionKey 门），与同批 config 族的入口次序一致（mode → busy →
+sessionKey 门）；先序钉
+`submit_turn_surrogate_gate_precedes_the_busy_refusal` 不受影响（busy 在
+validate 之后），另有 `submit_turn_combined_invalid_keeps_the_ts_mode_code`
+钉组合次序）；`methods/tools.rs` `tools_rewind_files` 的 sessionKey 门改委托
 共享 `require_session_key`（原 `required_trimmed` 门不拒代理，而 rewind 经
 `create_session_storage` 读对方 transcript、把 `FileHistoryStore::rewind`
 的快照还原进项目工作树）；`native_archive.rs` `session()` 在 blank 分支后
