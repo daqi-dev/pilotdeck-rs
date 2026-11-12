@@ -84,6 +84,13 @@ class DriftTests(unittest.TestCase):
         # #2795 fix-r6（评审 concurrency#2）：本桩只覆盖实例方法（setUp 之后）；
         # setUpClass 的锁面见 _meta_class_setup（元控入口）与
         # SetupClassReadSurface（真入口机检）。
+        # #2795 fix-r8（评审 concurrency#1，登记处置）：fix-r7 只把 setUpClass
+        # 的类建面收进真装置；本桩仍在，--negative 变体循环经
+        # DriftTests(method).run() 走到这里，16 个变体驱动的 gate.main() /
+        # gate.check_anchors() 读 PANEL/SESSION 因此都在无锁窗口（不是已
+        # 收口）——登记进续跑表「二（续）」，登记不修；判定理由（可达后果
+        # 为 fail-closed 假红/INVALID，未见可达假 KILLED；只读审计钩子对
+        # 锁文件 O_CREAT 的拦截是装置设计取舍）见 fix-r8 RESULT。
         self.lock_events = []
         self.lock = _RecordingTreeLock(self.lock_events)
         patcher = patch.object(gate, 'tree_lock', self.lock)
@@ -440,7 +447,9 @@ class SetupClassReadSurface(unittest.TestCase):
     fix-r7 起元控入口同保真装置（锁忙 = SystemExit(2) fail-closed，
     实测 unittest 对 setUpClass 的 SystemExit 不出报告、整进程退出），
     钉在 test_negative_entry_keeps_the_real_tree_lock /
-    test_negative_entry_refuses_when_the_tree_lock_is_busy。
+    test_negative_entry_refuses_when_the_tree_lock_is_busy
+    （fix-r8 勘误：两钉只覆盖类建面；变体循环读面为登记盲区，见
+    setUp 注释与续跑表「二（续）」）。
     """
 
     def test_setup_class_reads_panels_inside_the_tree_lock(self):
@@ -486,10 +495,12 @@ class SetupClassReadSurface(unittest.TestCase):
         fix-r6 的 ``_meta_class_setup`` 曾在 --negative 生产路径默认把真
         ``tree_lock`` 换成记录桩：setUpClass 的 ``panel_table`` 读 PANEL
         （gateway-entry-guard 变异的同一 controls/session_domain.py）变无锁
-        读——兄弟 runner 的 write/restore 窗口内，18 个变体的
+        读——兄弟 runner 的 write/restore 窗口内，16 个变体的
         KILLED/SURVIVED/INVALID 可基于不拥有的字节。生产路径必须保真装置：
         这里外层换成记录桩并驱动真实 ``_meta_class_setup()``——若入口又
         在内部自换桩（fix-r6 形态），外层桩收不到调用、判读红。
+        （fix-r8 勘误，评审 concurrency#1：此钉只覆盖类建面一半；变体
+        循环的读面经 setUp 记录桩仍无锁，是登记的盲区，见 setUp 注释。）
         """
         events = []
         lock = _RecordingTreeLock(events)
@@ -512,11 +523,12 @@ class SetupClassReadSurface(unittest.TestCase):
         """#2795 fix-r7（评审 concurrency#1 + sibling#4）：锁忙拒跑在元控入口。
 
         生产 --negative 路径保真装置：锁忙 → ``anchor_read_window`` 的
-        SystemExit(2) + 统一拒跑文案（fail-closed 拒跑，不是 18 行变体
+        SystemExit(2) + 统一拒跑文案（fail-closed 拒跑，不是 16 行变体
         照跑，也不是逃出逐项 try 的 traceback rc 1——与「拒跑=rc 2」的
-        相位分界一致）。这里驱动真实 ``negative_checks()``（:584 调用点，
-        ``--negative`` 分支本体）：若 ``_meta_class_setup`` 退回内部换桩，
-        busy 真锁被绕过、类建面照常完成、无 SystemExit，判读红。
+        相位分界一致）。这里驱动真实 ``negative_checks()``（其变体循环
+        起点处对 ``_meta_class_setup`` 的调用，``--negative`` 分支本体）：
+        若 ``_meta_class_setup`` 退回内部换桩，busy 真锁被绕过、类建面
+        照常完成、无 SystemExit，判读红。
         """
         busy = _RecordingTreeLock([], busy=True)
         errors = io.StringIO()
@@ -554,18 +566,26 @@ def _meta_class_setup():
     ``negative_process.tree_lock`` 换成记录桩——生产 --negative 路径的
     ``panel_table`` 读因此无锁：兄弟变异轮（gateway-entry-guard 写
     ``scripts/gateway-parity/controls/session_domain.py``，PANEL 本体）的
-    write/restore 窗口内，18 个变体的判杀可基于不拥有的字节；锁忙也走
+    write/restore 窗口内，16 个变体的判杀可基于不拥有的字节；锁忙也走
     不到装置的 SystemExit(2)，类建面失败以 traceback rc 1 逃出，与
     「拒跑=rc 2」的相位混淆。生产路径保真装置（锁忙即拒跑 rc 2）；
     测试需要记录桩（不落锁文件、不依赖锁空闲）时在调用点外层 patch
     ``negative_process.tree_lock``（SetupClassReadSurface 同形），入口
-    不得自换。
+    不得自换。fix-r8 勘误（评审 concurrency#1）：本保真只覆盖类建面
+    （setUpClass）这一半；其后变体循环经 setUp 记录桩的读面是登记的
+    盲区，见 setUp 注释与续跑表「二（续）」。
     """
     DriftTests.setUpClass()
 
 
 def negative_checks():
-    """Compile each function variant, run the bound test, restore, then summarize all."""
+    """Compile each function variant, run the bound test, restore, then summarize all.
+
+    #2795 fix-r8（评审 concurrency#1，登记处置）：循环里的 DriftTests
+    实例经 setUp 换记录桩，16 个变体驱动的 gate.main() / check_anchors()
+    读 PANEL/SESSION 因此无锁（fix-r7 只收 setUpClass 类建面）——登记进
+    续跑表「二（续）」，登记不修；判定理由见 fix-r8 RESULT。
+    """
     variants = (
         ('skip-binding-checks', 'check_bindings', '    errors = []', '    return []',
          'test_binding_corruptions_are_rejected',

@@ -1327,7 +1327,9 @@ def _anchor_read_window_alias_call(tree):
 # 纪律（旧三拼写 55 站的形态），又不在续跑表豁免清单里 → 红。豁免清单 =
 # legacy-migration-backlog.txt 本身（单一真相源，测试不复制清单）。已知
 # 盲区（登记不修）：test_* 前缀文件、门内经本文件 helper 或跨模块 helper
-# 裸读且文件另处持 tree_lock 的站（人工登记进续跑表「盲区登记」节）。
+# 裸读且文件另处持 tree_lock 的站（人工登记进续跑表「盲区登记」节）、
+# 门经中间布尔变量拼写的站（谓词只看 If/IfExp 的 test，该拼写的 Compare
+# 在 Assign 里——fix-r8 boundary#3 登记进续跑表「二（续三）」节）。
 # ---------------------------------------------------------------------------
 LEGACY_MIGRATION_BACKLOG = FIXTURES / 'legacy-migration-backlog.txt'
 
@@ -1394,7 +1396,7 @@ def _names_check_mode(node):
 def _has_check_mode_gate(tree):
     """A check-mode gate: a compare or attribute test naming the mode.
 
-    Every spelling the tree actually uses, each pinned by a review round:
+    Every spelling the scan covers, each pinned by a review round:
     ``<argv-ish> == ['--check']`` (single-element constant sequence — the
     fix-r6 predicate's only compare shape), the argparse
     ``if args.check:`` attribute gate, the membership tests
@@ -1405,6 +1407,11 @@ def _has_check_mode_gate(tree):
     sailed past the scan). The gate matches at any ``if`` /
     conditional-expression position and through BoolOp / UnaryOp nesting:
     the compare walk covers the whole test expression, not just its top.
+    The one live spelling outside this predicate — a gate through an
+    intermediate boolean variable (``check_anchors = '--check-anchors' in
+    sys.argv`` then ``if check_anchors:``) — is a registered blind spot
+    (#2795 fix-r8, boundary#3: legacy-migration-backlog.txt「二（续三）」,
+    pinned in test_intermediate_boolean_gate_spelling_is_a_registered_blind_spot).
     """
     for node in ast.walk(tree):
         if not isinstance(node, (ast.If, ast.IfExp)):
@@ -1445,11 +1452,14 @@ def bare_check_preflight_signature(text):
 
 
 def _has_gate_literal(text):
-    # The regex half of the gate detector for sources ast cannot parse: the
-    # literal compare (constant sequence or bare string, either order), the
-    # membership test and the argparse attribute spelling, all fail-closed
-    # (#2795 fix-r7: the first two shapes only — the membership spelling
-    # needs no AST to spot, and an unparseable gate file must not sail past).
+    # The regex half of the gate detector for sources ast cannot parse —
+    # every shape the AST half sees, all fail-closed: the literal compare
+    # (constant sequence or bare string, either order), the membership test
+    # (flag before or after the ``in``), and the argparse attribute spelling.
+    # An unparseable gate file must not sail past (#2795 fix-r7 widened the
+    # two literal-compare shapes to the membership spellings; fix-r8
+    # boundary#2 pins this half with an unparseable synthetic fixture — until
+    # then no test reached the SyntaxError branch at all).
     check = r'''['"]--check(?:-anchors)?['"]'''
     return bool(re.search(r'''==\s*\[\s*''' + check + r'''\s*\]''', text)
                 or re.search(r'''==\s*''' + check, text)
@@ -1956,15 +1966,24 @@ class BareCheckPreflightBacklog(unittest.TestCase):
     def test_the_bare_scan_detects_each_kill_shape(self):
         # The scan predicate's every half, demonstrated on a synthetic tree
         # (never the real one): a bare gate+read entry is flagged — in every
-        # gate spelling the tree actually uses (literal compare, the argparse
+        # gate spelling the scan covers (literal compare, the argparse
         # ``if args.check:`` form, the ``'--check-anchors' in sys.argv``
         # membership test, the bare ``mode == '--check-anchors'`` string
         # compare and the ``args in (["--check"], ["--check-anchors"])``
         # alias-tuple membership — #2795 fix-r7, boundary#1 + sibling#1: the
         # fix-r6 predicate only saw the first two shapes and four live
-        # stations sailed past); the same entry behind an aliased device
-        # import, behind the legacy message, behind a matrix_main dispatch,
-        # and a file whose gate is bare but which holds a tree_lock elsewhere
+        # stations sailed past; the one spelling outside the predicate — the
+        # intermediate-boolean gate — is a registered blind spot, fix-r8
+        # boundary#3, pinned in its own test below); an unparseable source
+        # with the gate literal is flagged through _has_gate_literal, the
+        # regex half for sources ast cannot parse (fix-r8, boundary#2: no
+        # test reached the SyntaxError branch before); and a bare entry whose
+        # code merely uses plausible-sounding identifiers (out /
+        # registrations / selected) stays flagged (fix-r8, boundary#1:
+        # those names joining _COVERED_CODE_NAMES would silently exempt real
+        # tree files). The same entry behind an aliased device import,
+        # behind the legacy message, behind a matrix_main dispatch, and a
+        # file whose gate is bare but which holds a tree_lock elsewhere
         # (the 「二（续）」manual-registration shape — fix-r7, sibling#2) are
         # not.
         with tempfile.TemporaryDirectory(prefix='negctl-2795r6-scan-') as base:
@@ -2032,6 +2051,34 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                                    "        check_anchor(row, row[1].read_text())\n"
                                    "with tree_lock(ROOT, timeout=900):\n"
                                    "    pass\n")
+            # #2795 fix-r8（boundary#1）：parseable matrix_main dispatch —
+            # 共享 runner 持装置窗口，dispatch 入口本身不该被点名；旧夹具
+            # （fix-r6 带模块级 return）被 fix-r7 删掉后，此豁免名不再有
+            # 夹具钉。
+            dispatched = base / 'new-dispatched' / 'negative_controls.py'
+            dispatched.parent.mkdir()
+            dispatched.write_text("from negative_suite import matrix_main\n"
+                                 "if args == ['--check']:\n"
+                                 "    matrix_main(ROOT, __file__, 'demo', rows)\n")
+            # #2795 fix-r8（boundary#1）：常用标识符（out / registrations /
+            # selected）在裸站代码里出现不构成任何纪律——这些名字若进
+            # _COVERED_CODE_NAMES，真实树大批文件会被静默豁免。
+            common_named = base / 'new-common-named-bare' / 'negative_controls.py'
+            common_named.parent.mkdir()
+            common_named.write_text("if args == ['--check']:\n"
+                                    "    out = {}\n"
+                                    "    registrations = []\n"
+                                    "    for row in rows:\n"
+                                    "        selected = row[1].read_text()\n"
+                                    "        out[row[0]] = selected\n"
+                                    "        registrations.append(row[0])\n")
+            # #2795 fix-r8（boundary#2）：语法残缺但含门字面——ast 半边不可
+            # 达，必须由 _has_gate_literal 正则半边标出。
+            unparseable = base / 'new-unparseable-bare' / 'negative_controls.py'
+            unparseable.parent.mkdir()
+            unparseable.write_text("import sys\n"
+                                   "if '--check-anchors' in sys.argv:\n"
+                                   "    sources = {path: path.read_text()\n")
             found = _bare_check_entries(base)
         self.assertTrue(found == {'new-bare/negative_controls.py',
                                   'new-argparse-bare/negative_controls.py',
@@ -2039,17 +2086,93 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                                   'new-mode-compare-bare/negative_controls.py',
                                   'new-tuple-membership-bare/'
                                   'negative_controls.py',
-                                  'new-boolop-bare/negative_controls.py'},
+                                  'new-boolop-bare/negative_controls.py',
+                                  'new-common-named-bare/negative_controls.py',
+                                  'new-unparseable-bare/'
+                                  'negative_controls.py'},
                         '#2795 fix-r6: the bare-check scan must flag the '
                         'gate+read entry with no discipline of its own in '
-                        'every gate spelling (literal compare, argparse '
-                        'attribute, argv membership, bare string compare, '
-                        'alias-tuple membership, BoolOp nesting), and only '
-                        'those — an entry behind a device import (aliased or '
-                        'not), the legacy message, a matrix_main dispatch, or '
-                        'a tree_lock held elsewhere in the file is the '
-                        'registered manual-exemption shape: '
-                        f'{sorted(found)}')
+                        'every gate spelling the scan covers (literal '
+                        'compare, argparse attribute, argv membership, '
+                        'bare string compare, '
+                        'alias-tuple membership, BoolOp nesting), plus the '
+                        'unparseable source with the gate literal (regex '
+                        'half, fix-r8 boundary#2) and the entry whose code '
+                        'merely uses plausible identifiers — out / '
+                        'registrations / selected exempt nothing (fix-r8 '
+                        'boundary#1) — and only those: an entry behind a '
+                        'device import (aliased or not), the legacy message, '
+                        'a matrix_main dispatch, or a tree_lock held '
+                        'elsewhere in the file is the registered '
+                        f'manual-exemption shape: {sorted(found)}')
+
+    def test_intermediate_boolean_gate_spelling_is_a_registered_blind_spot(self):
+        """#2795 fix-r8（boundary#3，登记不修）：中间布尔变量门是登记的谓词盲区。
+
+        门经 ``check_anchors = '--check-anchors' in sys.argv`` 后接
+        ``if check_anchors:`` 拼写时，_has_check_mode_gate 扫不到：该
+        Compare 在 ``ast.Assign`` 里、``if`` 的 test 是裸 Name，谓词三分支
+        都不命中。树内活体 output-schema/negative.py 靠 tree_lock import
+        与续跑表一节行多重豁免，非现存假 PASS；同形新裸站扫描不会点名，
+        只能人工核对后登记（续跑表「二（续三）」节）。本钉两面：合成
+        同形裸站不被点名（盲区如实——把谓词扩到 Assign 形状必须连全树
+        重扫、登记迁移与本钉一起交，不许静默改覆盖面）；同树里可检测
+        形的新裸站仍被点名（盲区不得解除扫描对可见形状的武装）；登记
+        节本身必须留在续跑表（删节没有任何功能后果，只有本钉红）。
+        """
+        with tempfile.TemporaryDirectory(prefix='negctl-2795r8-blind-') as base:
+            base = Path(base)
+            intermediate = \
+                base / 'new-intermediate-bool-bare' / 'negative_controls.py'
+            intermediate.parent.mkdir()
+            intermediate.write_text("import sys\n"
+                                    "check_anchors = '--check-anchors' in sys.argv\n"
+                                    "if check_anchors:\n"
+                                    "    sources = {path: path.read_text()\n"
+                                    "               for path in paths}\n")
+            detectable = base / 'new-detectable-bare' / 'negative_controls.py'
+            detectable.parent.mkdir()
+            detectable.write_text("if args == ['--check']:\n"
+                                 "    for row in rows:\n"
+                                 "        check_anchor(row, row[1].read_text())\n")
+            found = _bare_check_entries(base)
+        self.assertTrue(found == {'new-detectable-bare/negative_controls.py'},
+                        '#2795 fix-r8: the intermediate-boolean gate spelling '
+                        '(check_anchors = ... in sys.argv; if check_anchors:) '
+                        'is a registered scan blind spot, so the synthetic '
+                        'same-shape bare station must sail past while the '
+                        'detectable new bare station in the same tree is '
+                        'still flagged — extending _has_check_mode_gate to '
+                        'the Assign shape must rescan the tree, move the '
+                        'backlog registration and update this pin together, '
+                        f'never silently change coverage: {sorted(found)}')
+        backlog = LEGACY_MIGRATION_BACKLOG.read_text(encoding='utf-8')
+        self.assertTrue('中间布尔变量' in backlog,
+                        '#2795 fix-r8: the intermediate-boolean gate '
+                        'blind-spot registration must stay in '
+                        'legacy-migration-backlog.txt（「二（续三）」节）： '
+                        'deleting the note has no functional consequence, '
+                        'only this pin goes red')
+
+    def test_known_blind_spot_registrations_stay_in_the_backlog(self):
+        """#2795 fix-r8（concurrency#1，登记处置）：登记的盲区行是交付物本体。
+
+        test_* 前缀文件不进裸读扫描，--negative 元控的变体循环读面
+        （DriftTests.setUp 把 gate.tree_lock 换记录桩，16 个变体的
+        gate.main()/check_anchors() 读 PANEL/SESSION 无锁）因此扫描根本
+        看不见——登记行删掉没有任何功能后果，只有本钉红。迁移
+        （变体循环包进 anchor_read_window）完成时随登记行删本断言。
+        """
+        held = backlog_exempted_entries()
+        self.assertTrue(
+            'session-domain-expectations/test_meta_controls.py' in held,
+            '#2795 fix-r8: the --negative meta-control variant-loop read '
+            'face (16 variants reading PANEL/SESSION under the setUp '
+            'recording stub) is registered-only — the bare-check scan '
+            'excludes test_* files, so deleting the backlog row has no '
+            'functional consequence and only this pin goes red; if the '
+            'variant loop has been migrated onto anchor_read_window, drop '
+            'the row and this assertion together')
 
 
 class BackgroundPanicRunRefusal(unittest.TestCase):

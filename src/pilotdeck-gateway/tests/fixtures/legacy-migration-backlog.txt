@@ -18,8 +18,9 @@
 #       每行字段：行=检查门行号；形状=门的字面形状；时序=兄弟变异
 #       write/restore 窗口可命中（无锁核对会把窗口内盘上的变异体当
 #       权威 → stale-anchor 假红 / 假拒跑）；目标=anchor_read_window
-#       迁移。另有「二（续）」扫描盲区登记 5 站（门内/门前经 helper
-#       裸读、文件另处持 tree_lock，谓词放行的形态）。
+#       迁移。另有「二（续）」扫描盲区登记 6 站（门内/门前经 helper
+#       裸读、文件另处持 tree_lock，谓词放行的形态；fix-r8 增登一条
+#       test_* 前缀文件的元控变体循环读面）。
 #
 # 修复记录：fix-r5 已迁 frozen-reinsert-guard、background-panic、
 # channel-slack（--check 两段 + 本轮 fix-r6 再收 run 分支 preflight）、
@@ -144,6 +145,7 @@
   native-witness/negative_authentication.py  行=488 形状=门前 if not preflight(): return 2（本文件 helper 逐项 read_text 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
   native-witness/negative_boundary.py  行=118 形状=门内 preflight()（本文件 helper：test_file/cases 逐项 read_text 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
   session-lease/negative.py  行=147 形状=门内 preflight()（本文件 helper 逐项 read_text 无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+  session-domain-expectations/test_meta_controls.py  行=650 形状=--negative 元控变体循环（DriftTests.setUp 把 gate.tree_lock 换记录桩，16 个变体驱动的 gate.main()/check_anchors() 读 PANEL/SESSION 无锁；fix-r7 只收 setUpClass 类建面；fix-r8 concurrency#1 登记不修——只读审计钩子对锁文件 O_CREAT 的拦截是装置设计取舍，可达后果为 fail-closed 假红/INVALID；test_* 前缀文件本就不进扫描，此行是台账登记） 时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
 
 ## 二（续二）、argparse 形态检查门站（fix-r6 同族跟改，40 站；扫描按
 ## if args.check / if args.check_anchors 属性门形状命中）。评审 11 站取样
@@ -191,3 +193,14 @@
   turn-submit/negative.py  行=183 形状=argparse --check 门；门前 build()（oracle read_text + target.read_bytes()，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
   user-dialog-http-store/negative_controls_1947.py  行=53 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
   webhook-channel/negative_controls.py  行=197 形状=argparse --check 门；门前 mutant_switch.preflight(rows)（读面在 _shared/mutant_switch.py，无锁）时序=兄弟变异 write/restore 窗口可命中 目标=anchor_read_window 迁移
+
+## 二（续三）、扫描谓词盲区（fix-r8 boundary#3 登记，登记不修）：
+## 门经中间布尔变量拼写——「check_anchors = '--check-anchors' in
+## sys.argv」后接「if check_anchors:」——_has_check_mode_gate 扫不到：
+## 该 Compare 在 ast.Assign 里、if 的 test 是裸 Name，谓词三分支都不
+## 命中（_has_gate_literal 正则半边只在不可解析源上生效，管不到这里）。
+## 树内活体 output-schema/negative.py:33（另有 tree_lock import 与一节
+## 行多重豁免，非现存假 PASS）。同形新裸站不会被扫描点名，只能人工
+## 核对后在本表登记；谓词补形（Assign→Name 数据流）时重扫全树并删本节，
+## 机检钉见 test_negative_roster_guards.py 的
+## test_intermediate_boolean_gate_spelling_is_a_registered_blind_spot。

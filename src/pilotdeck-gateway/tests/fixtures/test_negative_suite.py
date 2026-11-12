@@ -1430,10 +1430,14 @@ class MatrixMainStartupTests(unittest.TestCase):
         # 被改动（吞掉锁异常继续读）不会有人红。这里驱动真实 matrix_main 的
         # --check 分支：忙锁 → SystemExit(2) + 装置统一拒跑文案 + 点名锁
         # 等待异常。fix-r7（评审 boundary#3）：--check 分支没有 mkdir 面
-        # （连输出目录参数都不收），「拒跑不占证据目录」那半边的契约由
+        # （连输出目录参数都不收），此前收尾的 out.exists() 断言恒真，
+        # 已删。「拒跑不占证据目录」的契约在 matrix_main run 分支由同模块
+        # test_usage_and_unknown_selection_are_never_started /
+        # test_unusable_target_is_never_started 钉（usage/unknown/
+        # missing target/unusable target 的 refuse 都发生在 claim_dir
+        # 之前）；真实会建目录的另一入口（background-panic）由
         # test_negative_roster_guards.py 的 BackgroundPanicRunRefusal 钉
-        # （真实会建目录的 run 分支）；此前收尾的 out.exists() 断言恒真，
-        # 已删。
+        # （fix-r8 boundary#6 改归属：此前错归给 background-panic 一家）。
         class BusyLock:
             def __call__(self, *args, **kwargs):
                 return self

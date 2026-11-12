@@ -65,5 +65,11 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/nega
 `derived counts: …` 再打印 `N anchors: ok`，返回 0；组合调用（第 3 行）先跑
 同一预检再列 JSON 清单，预检失败时返回 2 且不输出清单。
 
+`--negative` 与 `test_meta_controls.py` 的 unittest 入口都经共享
+`anchor_read_window` 装置取真树锁（#2795 fix-r7 起）：需要仓库根可写——
+装置会在仓根创建 `.negative-source.lock`；锁被其他进程持有时等待 60 s 后
+以 rc 2 拒跑且无报告行（fail-closed，与「模块被掏空」在输出上不可区分）。
+这两条不得与同树的变异轮并发跑（#2795 fix-r8，评审 concurrency#2/#3）。
+
 `--source` 包含 `raw/` 下的观测与 preregistration / manifest、launch。
 原地源码负控要求 HEAD 与输入一致；不创建副本仓库或构建目录。

@@ -61,6 +61,21 @@ class EnvironmentControls(unittest.TestCase):
     copy_manifest_step_budget = 300
     isolation_step_budget = 900
     driver_step_budget = 1800
+    # #2795 fix-r8（评审 simplify#1）：-O 自测步的模块清单单一来源——
+    # minimums（真跑钉）与 commands（CI 接线钉）此前两处手抄同一组八条，
+    # fix-r6→fix-r7 间已实际漂移过一次（ci.yml 加了第七条而 commands 没跟，
+    # 删那条无人红）。commands 从本清单派生后漏抄由构造消除；接新模块只
+    # 改这里与 ci.yml。
+    optimize_guards_self_tests = (
+        ('test_negative_optimize_guards', 10),
+        ('settings-gateway/test_negative_controls.py', 13),
+        ('test_negative_run_guards', 8),
+        ('network-timing/test_negative_controls.py', 10),
+        ('test_negative_roster_guards', 6),
+        ('issue-2495/test_negative_controls.py', 30),
+        ('session-domain-expectations/test_meta_controls.py', 16),
+        ('test_negative_suite', 69),
+    )
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
     doctest_command = 'cargo test --workspace --doc'
@@ -1580,16 +1595,15 @@ class EnvironmentControls(unittest.TestCase):
         # negative_suite.py 的机检，69 例约 0.4 s，无 cargo）从「仅宿主
         # 清单」接进 CI，两条新命令一并钉进 commands 与下限（改后实测
         # Ran 16 / Ran 69）。
-        minimums = (
-            ('test_negative_optimize_guards', 10),
-            ('settings-gateway/test_negative_controls.py', 13),
-            ('test_negative_run_guards', 8),
-            ('network-timing/test_negative_controls.py', 10),
-            ('test_negative_roster_guards', 6),
-            ('issue-2495/test_negative_controls.py', 30),
-            ('session-domain-expectations/test_meta_controls.py', 16),
-            ('test_negative_suite', 69),
-        )
+        # #2795 fix-r8（评审 simplify#1）：minimums 从类常量
+        # optimize_guards_self_tests 取单一清单，不再与 commands 两处手抄。
+        # #2795 fix-r8（评审 concurrency#2）：本钉以子进程真跑
+        # session-domain-expectations/test_meta_controls.py，其 unittest.main
+        # 路径的 setUpClass 经共享装置取真 .negative-source.lock（60 s 有界
+        # 等待，忙则 SystemExit(2) 且无报告行）——锁忙时「Ran N」缺失与本
+        # 钉的「模块被掏空」判读不可区分（CI 各 job 独立 checkout 不撞；
+        # 宿主同树并发会假红）。此步不得与变异轮同树并发。
+        minimums = self.optimize_guards_self_tests
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
         # CAP_DAC_OVERRIDE 宿主读得了 mode-000 文件，#1922 的拒绝路径无法钉；
@@ -1677,14 +1691,11 @@ class EnvironmentControls(unittest.TestCase):
         # #2795 fix-r7（评审 sibling#3）：fix-r6 的第七条
         # （session-domain-expectations/test_meta_controls.py）与本轮接入的
         # 第八条（test_negative_suite）同样钉入——删掉任一条必须红。
-        commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
-                    'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
-                    'python3 -B -m unittest -v test_negative_run_guards',
-                    'python3 -B -m unittest -v network-timing/test_negative_controls.py',
-                    'python3 -B -m unittest -v test_negative_roster_guards',
-                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
-                    'python3 -B -m unittest -v session-domain-expectations/test_meta_controls.py',
-                    'python3 -B -m unittest -v test_negative_suite')
+        # #2795 fix-r8（评审 simplify#1）：commands 从类常量
+        # optimize_guards_self_tests 的同一清单派生，不再与 minimums 两处
+        # 手抄（fix-r6→fix-r7 曾漂移过一次）；对照语义不变。
+        commands = tuple('python3 -B -m unittest -v ' + module
+                         for module, _minimum in self.optimize_guards_self_tests)
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
