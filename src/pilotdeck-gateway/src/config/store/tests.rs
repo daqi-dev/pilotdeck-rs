@@ -1160,9 +1160,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     let big = vec![b'#'; CONTENT_SAMPLE_LIMIT as usize + 1];
     std::fs::write(&path, &big).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, None, true);
+    hash_entry(&path, &mut with_content, None, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, None, false);
+    hash_entry(&path, &mut metadata_only, None, None, false);
     assert_eq!(with_content.finish(), metadata_only.finish());
     let mut watched = WatchedPath::new(path.clone()).expect("file watched");
     std::fs::write(&path, &big).unwrap();
@@ -1170,9 +1170,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     // Negative control: at the limit the content is part of the sample.
     std::fs::write(&path, &big[..CONTENT_SAMPLE_LIMIT as usize]).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, None, true);
+    hash_entry(&path, &mut with_content, None, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, None, false);
+    hash_entry(&path, &mut metadata_only, None, None, false);
     assert_ne!(with_content.finish(), metadata_only.finish());
 }
 
@@ -2118,6 +2118,200 @@ fn a_mixed_tick_whose_folded_content_read_fails_reports_nothing() {
     assert!(
         watched.changed(),
         "#2122 F5 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1 (review P1): the uncovered grid cell — the first tick after
+/// startup with a failing content read and an untouched disk. #1987 A2
+/// guarantees the startup sample commits no metadata shortcut, so the first
+/// tick re-samples in full; a transient content-read failure (EMFILE-class)
+/// there used to fall through the between-samples guard (`== Obscured`),
+/// commit its `read = None` fold into `fingerprint` — differing from the
+/// startup's complete fold — and false-report the untouched config once, then
+/// once more at recovery (F5's shape on the other path).
+#[test]
+fn an_untouched_config_with_a_failing_first_content_read_reports_nothing() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    let complete = watched.fingerprint;
+    assert!(
+        complete.is_some(),
+        "#2122 fix-r1 the startup sample is complete"
+    );
+    let before = content_reads(&path);
+    // Nothing changes on disk; only the content read fails, once.
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the first content-unknown tick with no change reports nothing"
+    );
+    assert_eq!(
+        watched.fingerprint, complete,
+        "#2122 fix-r1 the content-unknown tick commits no fingerprint"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#2122 fix-r1 the content-unknown tick commits no metadata shortcut"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before,
+        "#2122 fix-r1 the failed read is not counted"
+    );
+    // Recovery with no change in between: quiet against the untouched
+    // baseline, not a second false report.
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 an unchanged recovery after the content-unknown tick reports nothing"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before + 1,
+        "#2122 fix-r1 the read is retried after recovery"
+    );
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1 (review concurrency#2): the obscured chain must never mix
+/// fold shapes. An obscured fold hashes a failed stat as `false`; a
+/// content-unknown fold hashes the observed metadata plus `read = None` —
+/// the two are never equal, so routing a content-unknown tick into the
+/// obscured handling (what the first F5 cut did by widening the mixed-tick
+/// guard to `!= Complete`) false-reports on every shape flip in the chain.
+#[test]
+fn an_obscured_chain_never_compares_content_unknown_folds() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    assert!(
+        watched.fingerprint.is_some(),
+        "#2122 fix-r1 the startup sample is complete"
+    );
+    // Tick 1: obscured — the type probe's, the metadata sample's and the
+    // folded sample's stat each fail, so the folded sample is obscured and
+    // seeds the chain (a file watch stats itself three times per tick).
+    arm_read_failures(&path, ReadOp::Stat, 3);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the obscured tick reports nothing"
+    );
+    // Tick 2: a mixed tick whose folded sample is content-unknown — the
+    // type probe's and the metadata sample's stat fail while the folded
+    // sample's stat succeeds and its content read fails. Disk unchanged:
+    // the shape flip alone must not report.
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 a content-unknown fold is not compared against the obscured chain"
+    );
+    // Recovery with no change in between stays quiet against the untouched
+    // complete baseline.
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 an unchanged recovery reports nothing"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1: the unknown-read twin is committed by every complete
+/// sample, a reported one included — not only by the startup sample. A
+/// content-unknown tick after a reported rewrite, with nothing further
+/// changing, must stay quiet against the twin of the new state.
+#[test]
+fn a_content_unknown_tick_after_a_reported_change_stays_quiet() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    // A real change, reported by a complete tick — which also commits the
+    // unknown-read twin of the new state.
+    root.write(&other_model());
+    assert!(watched.changed(), "#2122 fix-r1 the rewrite is reported");
+    // Nothing further changes; only the content read fails.
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the content-unknown tick after the reported change reports nothing"
+    );
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 an unchanged recovery after the content-unknown tick reports nothing"
+    );
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(BASE);
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1: a quiet content-unknown tick clears the metadata shortcut —
+/// the sample was incomplete, so the next tick must retry the read instead
+/// of short-circuiting on identical metadata (#1792's retry contract, which
+/// the obscured handling keeps by the same rule).
+#[test]
+fn a_content_unknown_tick_clears_the_shortcut_so_the_read_is_retried() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    // One quiet complete tick commits the metadata shortcut (#1739).
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the first tick after startup is quiet"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#2122 fix-r1 the quiet tick commits the metadata shortcut"
+    );
+    let committed = content_reads(&path);
+    // A mixed tick whose folded sample is content-unknown: the metadata
+    // sample is obscured (the type probe's and its stat fail) while the
+    // folded sample's stat succeeds and its content read fails. Nothing
+    // changes on disk.
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the content-unknown mixed tick reports nothing"
+    );
+    // The next tick's metadata matches the committed shortcut — the
+    // content-unknown tick must have cleared it, so the read is retried
+    // despite the identical metadata.
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the retry tick after the content-unknown tick is quiet"
+    );
+    assert_eq!(
+        content_reads(&path),
+        committed + 1,
+        "#2122 fix-r1 the retry tick re-reads the content despite identical metadata"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
     );
 }
 

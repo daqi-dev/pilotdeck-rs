@@ -84,7 +84,13 @@
 //! sample reports splits by what failed. A failed content read still
 //! observed the metadata, so the change — content folded to unknown — is
 //! reported once while the read keeps failing and once more when it
-//! recovers. A failed `stat` or `read_dir` (*obscured* sample, #1792 r2)
+//! recovers, but only when something observable moved: the unknown-read fold
+//! is first compared against the unknown-read twin of the last complete
+//! sample (folded from the same reads, at the same time, #2122 fix-r1), and
+//! a match — nothing observable changed — reports nothing and commits
+//! nothing, neither on the failing tick nor at recovery (the committed
+//! complete baseline stays, so recovery compares equal and stays quiet).
+//! A failed `stat` or `read_dir` (*obscured* sample, #1792 r2)
 //! observed nothing trustworthy: it commits nothing, is compared only
 //! against the previous obscured sample — a change among the entries that
 //! *are* observable is real even while one entry stays unreadable, and the
@@ -125,9 +131,13 @@
 //! the change a tick and leave a complete folded value as the obscured
 //! chain's baseline, false-reporting on a later readability flap); a folded
 //! sample that is itself incomplete — its content read failed — is not
-//! complete evidence either and takes the obscured handling (#2122 F5: it
-//! used to fall through, committing a content-unknown fold and false-reporting
-//! an untouched config twice). And the startup
+//! complete evidence either, and is gated by the same unknown-read twin as
+//! the between-samples failure (#2122 F5 / fix-r1: it used to fall through
+//! on the between-samples path, committing a content-unknown fold and
+//! false-reporting an untouched config twice; the first F5 cut routed it
+//! into the obscured handling instead, mixing fold shapes in the obscured
+//! chain — an observed-metadata fold is never equal to an obscured one, so
+//! every shape flip false-reported). And the startup
 //! takes one full sample, content included, committing no metadata
 //! shortcut: the first tick re-samples in full (one extra bounded content
 //! read per watched path) so a write landing between the startup samples —
@@ -1153,6 +1163,19 @@ struct WatchedPath {
     /// every other entry from failed reads and is not comparable against the
     /// complete one. Later obscured ticks are covered by the folded chain.
     complete_target_fingerprint: Option<u64>,
+    /// #2122 fix-r1: the unknown-read twin of the last complete sample — the
+    /// fold that sample would have produced had its content read failed
+    /// (folded in parallel, from the same reads at the same time, by
+    /// [`fingerprint`]). A content-unknown sample — metadata observed, content
+    /// read failed — folds to exactly this when nothing observable changed, so
+    /// comparing against this slot tells "nothing moved" from "the state
+    /// changed" without ever committing the unknown fold into
+    /// [`Self::fingerprint`] (where it would false-report the untouched
+    /// config once and its recovery once more) and without routing it into
+    /// [`Self::obscured_fingerprint`] (whose shape — a failed stat hashed as
+    /// absence — never matches an observed-metadata fold, so mixing the two
+    /// false-reports on every shape flip).
+    content_unknown_twin: Option<u64>,
 }
 
 impl WatchedPath {
@@ -1200,7 +1223,7 @@ impl WatchedPath {
         // window open (the write between them would land in the trailing
         // metadata, and the next tick short-circuits on it), so the commit
         // has to go regardless — and with it the #1819 double stat.
-        let (fingerprint, status, target_sample) =
+        let (fingerprint, status, target_sample, twin) =
             fingerprint(&path, directory, target.as_deref(), true);
         // #1987 A2 test hook: fires right after the startup sample. Pre-fix
         // it fired between the metadata-only and the full sample; the
@@ -1232,6 +1255,16 @@ impl WatchedPath {
             } else {
                 None
             },
+            // #2122 fix-r1: seed the unknown-read twin the same way — only a
+            // complete startup sample has one (an obscured startup commits
+            // to the obscured chain, a content-unknown one *is* its own twin
+            // shape and commits to `fingerprint`, the #1792 startup retry
+            // contract).
+            content_unknown_twin: if status == SampleStatus::Complete {
+                Some(twin)
+            } else {
+                None
+            },
         }
     }
 
@@ -1246,6 +1279,7 @@ impl WatchedPath {
             metadata_fingerprint: None,
             obscured_fingerprint: None,
             complete_target_fingerprint: None,
+            content_unknown_twin: None,
         }
     }
 
@@ -1280,14 +1314,19 @@ impl WatchedPath {
 
     /// #1792 r2 / #1987 A1: the obscured tick's own handling, shared by its
     /// two call sites in [`Self::changed`] — the tick whose metadata sample
-    /// was already obscured (#2122 F5: any folded sample short of `Complete`
-    /// takes this path), and the tick whose failure landed between the two
-    /// samples. The bodies used to be duplicated verbatim; the copy between
-    /// the samples has no test of its own (the failure hook counts reads
-    /// from the first one, so no arming can make only the second sample
-    /// fail), so a regression there was indistinguishable from one here —
-    /// one body, one set of negative controls (`recovery-trusts-folded-
-    /// fingerprint`, `obscured-transition-target-not-compared`).
+    /// was already obscured, and the tick whose failure landed between the
+    /// two samples. Only an *obscured* folded sample takes this path: a
+    /// content-unknown one (metadata observed, content read failed) is gated
+    /// by the unknown-read twin further down in [`Self::changed`] instead
+    /// (#2122 fix-r1), because its fold shape — observed metadata plus
+    /// `read = None` — is never equal to an obscured one (a failed stat
+    /// hashed as absence), so the chain must never hold both. The bodies
+    /// used to be duplicated verbatim; the copy between the samples has no
+    /// test of its own (the failure hook counts reads from the first one, so
+    /// no arming can make only the second sample fail), so a regression
+    /// there was indistinguishable from one here — one body, one set of
+    /// negative controls (`recovery-trusts-folded-fingerprint`,
+    /// `obscured-transition-target-not-compared`).
     fn observe_obscured_tick(&mut self, next: u64, target_sample: Option<u64>) -> bool {
         self.metadata_fingerprint = None;
         // #1987 A1: the transition tick — no folded obscured predecessor —
@@ -1313,8 +1352,11 @@ impl WatchedPath {
             self.directory = Some(meta.is_dir());
             self.metadata_fingerprint = None;
             // #1987 A1: the mode flip changes what the target's fingerprint
-            // covers; a seed sampled in the other mode is not comparable.
+            // covers; a seed sampled in the other mode is not comparable. The
+            // unknown-read twin (#2122 fix-r1) is folded over the same
+            // mode-shaped fields, so it goes with it.
             self.complete_target_fingerprint = None;
+            self.content_unknown_twin = None;
         }
         // #1792 r2: a startup probe that failed leaves the mode unknown;
         // re-probe every tick until one classifies it. A `NotFound` here is
@@ -1345,32 +1387,37 @@ impl WatchedPath {
         // gap — a write that leaves every hashed field, ctime included, on
         // the values already sampled — is spelled out in the module note and
         // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
-        let (next_metadata, metadata_status, _) =
+        let (next_metadata, metadata_status, _, _) =
             fingerprint(&self.path, directory, self.target.as_deref(), false);
-        let (next, status, target_sample) = if metadata_status == SampleStatus::Obscured {
+        let (next, status, target_sample, twin) = if metadata_status == SampleStatus::Obscured {
             // #1792 r2: a failed `stat` or `read_dir` observed nothing
             // trustworthy, so this folded sample is not evidence by itself —
             // but the folded sample of the previous obscured tick is the only
             // thing there is to compare against while the obstruction
             // persists (D16). Never commit it into `fingerprint`: it hashes a
             // failed stat exactly like a missing entry (D9).
-            let (next, status, target_sample) =
+            let (next, status, target_sample, twin) =
                 fingerprint(&self.path, directory, self.target.as_deref(), true);
-            // #1987 A4 / #2122 F5: a mixed tick is a complete observation
-            // only when the folded sample was *fully* observed. The comment
-            // used to say "the folded one succeeded" while the guard below
-            // accepted any non-obscured status: a folded sample whose content
-            // read failed (`ContentUnknown`) fell through to the complete
-            // path too, committing its `read = None` fold into `fingerprint`
-            // and false-reporting an untouched config twice — once on the
-            // mixed tick, once more at recovery. Only a `Complete` folded
-            // sample is compared against [`Self::fingerprint`] and committed
-            // like any other complete sample; anything less observed goes
-            // through the obscured handling instead (which commits nothing).
-            if status != SampleStatus::Complete {
+            // #1987 A4 / #2122 F5 / fix-r1: a mixed tick is a complete
+            // observation only when the folded sample was *fully* observed.
+            // The guard used to accept any non-obscured status: a folded
+            // sample whose content read failed (`ContentUnknown`) fell
+            // through to the complete path, committing its `read = None`
+            // fold into `fingerprint` and false-reporting an untouched config
+            // twice — once on the mixed tick, once more at recovery. The
+            // first cut closed that by routing every non-`Complete` fold
+            // through the obscured handling; this takes it back to `==`
+            // `Obscured` because a content-unknown fold must not enter the
+            // obscured chain either (its shape — observed metadata plus
+            // `read = None` — never equals an obscured one, so the chain
+            // would false-report on every shape flip). It continues to the
+            // unknown-read twin gate below, shared with the between-samples
+            // failure, which is what actually keeps both false-report paths
+            // closed.
+            if status == SampleStatus::Obscured {
                 return self.observe_obscured_tick(next, target_sample);
             }
-            (next, status, target_sample)
+            (next, status, target_sample, twin)
         } else {
             if !unclassified
                 && metadata_status == SampleStatus::Complete
@@ -1384,6 +1431,23 @@ impl WatchedPath {
             // Same rule as the metadata branch above, reached when the
             // failure landed between the two samples.
             return self.observe_obscured_tick(next, target_sample);
+        }
+        // #2122 fix-r1: a content-unknown sample — its metadata observed, its
+        // content read failed — folds to exactly the unknown-read twin of the
+        // last complete sample when nothing observable changed (same reads,
+        // same time; see [`Self::content_unknown_twin`]). That fold is not
+        // comparable against the committed complete one (it hashes `read` as
+        // `None`), so committing or comparing it would false-report the
+        // untouched config twice — once here, once at recovery — the F5 shape
+        // on this, the between-samples, path. Quiet instead, committing
+        // nothing: the complete baseline stays, so the recovery tick compares
+        // equal and stays quiet too.
+        if status == SampleStatus::ContentUnknown && self.content_unknown_twin == Some(next) {
+            // #1792 keeps applying to an incomplete sample: the shortcut
+            // cannot survive it, or identical metadata on the next tick would
+            // short-circuit around the read that has to be retried.
+            self.metadata_fingerprint = None;
+            return false;
         }
         // #1792 r2: the config may have changed while the startup probe (and
         // every sample) was failing, so the first complete sample with no
@@ -1402,6 +1466,15 @@ impl WatchedPath {
         // keeps the last fully observed baseline instead.
         if status == SampleStatus::Complete {
             self.complete_target_fingerprint = target_sample;
+            // #2122 fix-r1: seed the unknown-read twin the same way — from
+            // every complete sample, reported or quiet, so the gate above
+            // keeps tracking the state the content was last known to be in.
+            // A content-unknown fall-through (the twin did not match: the
+            // state moved) deliberately does not update it — the committed
+            // unknown fold takes over the quiet-while-persisting and
+            // recovery comparisons (#1792), and a fresh twin arrives with
+            // the next complete sample.
+            self.content_unknown_twin = Some(twin);
         }
         // #1792 r2: a sample that reports a change must not also commit the
         // short-circuit metadata — the two samples are taken at different
@@ -1455,25 +1528,34 @@ impl SampleStatus {
 /// Hashes one path's metadata (and, when asked, content) into `hasher`.
 /// Returns how much of this entry's sample was observed; an incomplete
 /// return makes the whole sample incomplete, which [`WatchedPath::changed`]
-/// turns into a next-tick retry (#1792) instead of a committed fingerprint.
+/// turns into a next-tick retry or — when the state did move — a single
+/// report whose recovery re-reports (#1792), never a quiet commit.
 ///
 /// #1987 A1: when `target_hasher` is set (the watched config file itself),
 /// the same fields — and content, when read — are folded into it in
 /// parallel, building the target's own fingerprint for
 /// [`WatchedPath::observe_target_on_transition`]. A failed stat hashes into
 /// the folded `hasher` only: nothing about the target was observed.
+///
+/// #2122 fix-r1: when `twin_hasher` is set, the same fields are folded into
+/// it too, except that a read attempt folds as the unknown read (`None`) —
+/// exactly what this entry hashed when the read failed. The whole-sample
+/// twin built that way is what a later content-unknown sample is compared
+/// against in [`WatchedPath::changed`].
 fn hash_entry(
     path: &Path,
     hasher: &mut DefaultHasher,
     target_hasher: Option<&mut DefaultHasher>,
+    twin_hasher: Option<&mut DefaultHasher>,
     read_content: bool,
 ) -> SampleStatus {
     use std::{io::Read, os::unix::fs::MetadataExt};
     match stat_path(path) {
         Ok(meta) => {
-            // The content read happens before any hashing so both hashers —
-            // the folded one and, when set, the target's own (#1987 A1) — can
-            // be fed the very same fields from the same read.
+            // The content read happens before any hashing so every hasher —
+            // the folded one, the target's own when set (#1987 A1), and the
+            // unknown-read twin (#2122 fix-r1) — can be fed the very same
+            // fields from the same read.
             let mut read: Option<Vec<u8>> = None;
             let read_attempted =
                 read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT;
@@ -1500,7 +1582,9 @@ fn hash_entry(
                     }
                 }
             }
-            let hash_fields = |hasher: &mut DefaultHasher| {
+            // `None` folds the read as unknown — the twin's shape, identical
+            // to what a failed read hashed into `hasher`.
+            let hash_fields = |hasher: &mut DefaultHasher, read: Option<&Option<Vec<u8>>>| {
                 true.hash(hasher);
                 meta.len().hash(hasher);
                 meta.is_dir().hash(hasher);
@@ -1513,12 +1597,18 @@ fn hash_entry(
                 // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
                 (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
                 if read_attempted {
-                    read.hash(hasher);
+                    match read {
+                        Some(read) => read.hash(hasher),
+                        None => None::<Vec<u8>>.hash(hasher),
+                    }
                 }
             };
-            hash_fields(hasher);
+            hash_fields(hasher, Some(&read));
             if let Some(target_hasher) = target_hasher {
-                hash_fields(target_hasher);
+                hash_fields(target_hasher, Some(&read));
+            }
+            if let Some(twin_hasher) = twin_hasher {
+                hash_fields(twin_hasher, None);
             }
             if read_attempted && read.is_none() {
                 SampleStatus::ContentUnknown
@@ -1528,6 +1618,9 @@ fn hash_entry(
         }
         Err(error) => {
             false.hash(hasher);
+            if let Some(twin_hasher) = twin_hasher {
+                false.hash(twin_hasher);
+            }
             // #1792 r1: a missing entry is a complete observation — it is not
             // there, and its appearance changes the hashed name list. Only a
             // failure that can hide content (permission, descriptor, I/O)
@@ -1543,30 +1636,45 @@ fn hash_entry(
 
 /// One sample of a watched path. Returns the fingerprint, how much of the
 /// sample was observed (an incomplete sample must not commit a metadata
-/// fingerprint, #1792), and — for a directory watch whose content is sampled
-/// — the watched config file's own fingerprint (#1987 A1). `None` for that
-/// third element when the target was not observed (its read failed, or the
-/// listing itself failed before reaching it) or when only metadata was
-/// sampled; a target absent from a successfully read listing hashes as the
-/// absence it is (a complete observation, like a vanished directory, D17).
+/// fingerprint, #1792), — for a directory watch whose content is sampled —
+/// the watched config file's own fingerprint (#1987 A1), and the sample's
+/// unknown-read twin (#2122 fix-r1). `None` for that third element when the
+/// target was not observed (its read failed, or the listing itself failed
+/// before reaching it) or when only metadata was sampled; a target absent from
+/// a successfully read listing hashes as the absence it is (a complete
+/// observation, like a vanished directory, D17). The fourth element is the
+/// fold this sample would have produced with every content read failed —
+/// computed in parallel from the same reads, so a later content-unknown
+/// sample of an unchanged state folds to exactly it; when only metadata is
+/// sampled no read is ever hashed, so the twin is the main fold itself.
 fn fingerprint(
     path: &Path,
     directory: bool,
     target: Option<&std::ffi::OsStr>,
     sample_content: bool,
-) -> (u64, SampleStatus, Option<u64>) {
+) -> (u64, SampleStatus, Option<u64>, u64) {
     let mut hasher = DefaultHasher::new();
     let mut status = SampleStatus::Complete;
     // #1987 A1: the target's own fingerprint is folded in parallel with the
     // whole-directory one, by the same fields, so the two are comparable.
     let mut target_hasher = DefaultHasher::new();
+    // #2122 fix-r1: the unknown-read twin, folded in parallel the same way.
+    // Only the full/folded samples (`sample_content`) need it; a fresh
+    // mutable borrow is taken per `hash_entry` call.
+    let mut twin_hasher = DefaultHasher::new();
     // `Some` once the target entry itself was sampled — its status decides
     // whether the parallel fold observed anything trustworthy.
     let mut target_status: Option<SampleStatus> = None;
     let mut listing_obscured = false;
     if directory {
         // The directory's own metadata changes on every entry create/delete.
-        status = status.merge(hash_entry(path, &mut hasher, None, false));
+        status = status.merge(hash_entry(
+            path,
+            &mut hasher,
+            None,
+            sample_content.then_some(&mut twin_hasher),
+            false,
+        ));
         let mut names = Vec::new();
         match read_dir_path(path) {
             Ok(entries) => {
@@ -1592,23 +1700,43 @@ fn fingerprint(
         names.sort();
         for name in names {
             name.hash(&mut hasher);
+            if sample_content {
+                name.hash(&mut twin_hasher);
+            }
             let read_content = sample_content && target == Some(name.as_os_str());
+            // #2122 fix-r1 (sibling#4): one join per entry, shared by both
+            // branches — the read-attempted twin used to join twice in the
+            // two arms.
+            let entry_path = path.join(&name);
             let entry_status = if read_content {
                 let status = hash_entry(
-                    &path.join(&name),
+                    &entry_path,
                     &mut hasher,
                     Some(&mut target_hasher),
+                    sample_content.then_some(&mut twin_hasher),
                     true,
                 );
                 target_status = Some(status);
                 status
             } else {
-                hash_entry(&path.join(&name), &mut hasher, None, false)
+                hash_entry(
+                    &entry_path,
+                    &mut hasher,
+                    None,
+                    sample_content.then_some(&mut twin_hasher),
+                    false,
+                )
             };
             status = status.merge(entry_status);
         }
     } else {
-        status = status.merge(hash_entry(path, &mut hasher, None, sample_content));
+        status = status.merge(hash_entry(
+            path,
+            &mut hasher,
+            None,
+            sample_content.then_some(&mut twin_hasher),
+            sample_content,
+        ));
     }
     // #1987 A1: only a fully observed target — or a fully read listing that
     // does not contain it — yields a comparable fingerprint. A partial
@@ -1624,7 +1752,16 @@ fn fingerprint(
     } else {
         None
     };
-    (hasher.finish(), status, target_sample)
+    (
+        hasher.finish(),
+        status,
+        target_sample,
+        if sample_content {
+            twin_hasher.finish()
+        } else {
+            hasher.finish()
+        },
+    )
 }
 
 async fn watch_loop(

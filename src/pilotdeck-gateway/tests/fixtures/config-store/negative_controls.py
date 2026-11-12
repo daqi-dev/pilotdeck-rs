@@ -44,7 +44,14 @@ gaps (the second obscured tick re-reporting the same state — the B6 test's
 armed entry budget used to run out one tick early; the startup committing a
 shortcut again — the A2 assertion only binds before the first ``changed()``;
 a mixed tick whose folded content read failed routed as complete again; a
-truncated listing that never reached the target read as vanished); fourteen
+truncated listing that never reached the target read as vanished) and seven
+pin its fix-r1 (the unknown-read twin gate disabled — the content-unknown
+fold falling through to the complete path again — and widened — the one
+report a changed config is owed while the read keeps failing swallowed; both
+obscured guards widened back to the F5 first cut, on the between-samples
+path and on the mixed one; the twin not committed by a reported complete
+sample; the metadata shortcut surviving a quiet content-unknown tick, so
+the read is never retried; the startup sample not seeding the twin); fourteen
 pin the #1899/#1920
 watcher-stop evidence (the
 join-based check reverted to ``JoinHandle::is_finished()``, which tokio also
@@ -240,7 +247,7 @@ mutations = [
     # metadata-only sample is taken before the full one's `fingerprint`
     # binding shadows the function, and its value lands in the shortcut slot.
     ('startup-incomplete-committed', source,
-     '        let (fingerprint, status, target_sample) =\n'
+     '        let (fingerprint, status, target_sample, twin) =\n'
      '            fingerprint(&path, directory, target.as_deref(), true);\n'
      '        // #1987 A2 test hook: fires right after the startup sample. Pre-fix\n'
      '        // it fired between the metadata-only and the full sample; the\n'
@@ -266,7 +273,7 @@ mutations = [
      '            metadata_fingerprint: None,\n'
      '            obscured_fingerprint,\n',
      '        let metadata = fingerprint(&path, directory, target.as_deref(), false).0;\n'
-     '        let (fingerprint, status, target_sample) =\n'
+     '        let (fingerprint, status, target_sample, twin) =\n'
      '            fingerprint(&path, directory, target.as_deref(), true);\n'
      '        // #1987 A2 test hook: fires right after the startup sample. Pre-fix\n'
      '        // it fired between the metadata-only and the full sample; the\n'
@@ -343,11 +350,13 @@ mutations = [
     # is never reported. #2122 F6: the obscured-tick body the mutation
     # corrupts is now the one shared helper; the anchor is the two code lines
     # of the first call site (12-space indent — the between-samples twin sits
-    # at 8), no comment text, so a comment edit cannot expire it.
+    # at 8), no comment text, so a comment edit cannot expire it. #2122 fix-r1:
+    # the guard is `== Obscured` now (a content-unknown fold must not enter
+    # the obscured chain); the mutant keeps routing obscured ticks there.
     ('recovery-trusts-folded-fingerprint', source,
-     '            if status != SampleStatus::Complete {\n'
+     '            if status == SampleStatus::Obscured {\n'
      '                return self.observe_obscured_tick(next, target_sample);\n',
-     '            if status != SampleStatus::Complete {\n'
+     '            if status == SampleStatus::Obscured {\n'
      '                let changed = self.observe_obscured_tick(next, target_sample);\n'
      '                self.fingerprint = Some(next_metadata);\n'
      '                return changed;\n',
@@ -384,8 +393,11 @@ mutations = [
      '            self.directory = Some(meta.is_dir());\n'
      '            self.metadata_fingerprint = None;\n'
      '            // #1987 A1: the mode flip changes what the target\'s fingerprint\n'
-     '            // covers; a seed sampled in the other mode is not comparable.\n'
+     '            // covers; a seed sampled in the other mode is not comparable. The\n'
+     '            // unknown-read twin (#2122 fix-r1) is folded over the same\n'
+     '            // mode-shaped fields, so it goes with it.\n'
      '            self.complete_target_fingerprint = None;\n'
+     '            self.content_unknown_twin = None;\n'
      '        }\n',
      '',
      TESTS + 'a_directory_replaced_by_a_file_is_seen',
@@ -698,15 +710,15 @@ mutations = [
     # replacement only restores the two-sample window, the tail still commits
     # no shortcut. Renamed to what it is.
     ('startup-two-sample-window', source,
-     '        let (fingerprint, status, target_sample) =\n'
+     '        let (fingerprint, status, target_sample, twin) =\n'
      '            fingerprint(&path, directory, target.as_deref(), true);\n'
      '        // #1987 A2 test hook: fires right after the startup sample. Pre-fix\n'
      '        // it fired between the metadata-only and the full sample; the\n'
      '        // negative control restores that order around it.\n'
      '        startup_sample_gate(&path);\n',
-     '        let (_, _, _) = fingerprint(&path, directory, target.as_deref(), false);\n'
+     '        let (_, _, _, _) = fingerprint(&path, directory, target.as_deref(), false);\n'
      '        startup_sample_gate(&path);\n'
-     '        let (fingerprint, status, target_sample) =\n'
+     '        let (fingerprint, status, target_sample, twin) =\n'
      '            fingerprint(&path, directory, target.as_deref(), true);\n',
      TESTS + 'a_write_between_the_startup_samples_is_reported',
      '#1987 A2 a write between the startup samples is reported'),
@@ -714,11 +726,12 @@ mutations = [
     # succeeded — is routed through the obscured path again, so the change is
     # deferred a tick and the complete folded value pollutes the obscured
     # chain's baseline (false reports on a later readability flap).
-    # #2122 F5/P3: the guard is `!= Complete` now (a content-unknown fold is
-    # no complete observation either); the anchor is the two code lines of
-    # the first call site, comment-free.
+    # #2122 F5/P3: the anchor is the two code lines of the first call site,
+    # comment-free. #2122 fix-r1: the guard is `== Obscured` now (a
+    # content-unknown fold must not enter the obscured chain either); the
+    # `if true` mutant still routes every mixed tick into it.
     ('mixed-tick-routed-obscured', source,
-     '            if status != SampleStatus::Complete {\n'
+     '            if status == SampleStatus::Obscured {\n'
      '                return self.observe_obscured_tick(next, target_sample);\n',
      '            if true {\n'
      '                return self.observe_obscured_tick(next, target_sample);\n',
@@ -786,18 +799,77 @@ mutations = [
      '            obscured_fingerprint,',
      TESTS + 'a_write_between_the_startup_samples_is_reported',
      '#1987 A2 the startup sample commits no metadata shortcut'),
-    # #2122 F5: the mixed-tick guard accepts any non-obscured folded sample
-    # again, so a folded sample whose content read failed (`ContentUnknown`)
-    # falls through to the complete path, commits its `read = None` fold and
-    # false-reports an untouched config — once on the mixed tick, once more at
-    # recovery.
+    # #2122 F5: the mixed-tick guard used to accept any non-obscured folded
+    # sample, so a folded sample whose content read failed (`ContentUnknown`)
+    # fell through to the complete path, committed its `read = None` fold and
+    # false-reported an untouched config — once on the mixed tick, once more
+    # at recovery. #2122 fix-r1: the guard is `== Obscured` in the source now
+    # and the content-unknown fold is gated by the unknown-read twin instead;
+    # this row anchors that gate — the mutant disables it, restoring the F5
+    # fall-through on the mixed path.
     ('mixed-content-tick-committed', source,
-     '            if status != SampleStatus::Complete {\n'
-     '                return self.observe_obscured_tick(next, target_sample);\n',
-     '            if status == SampleStatus::Obscured {\n'
-     '                return self.observe_obscured_tick(next, target_sample);\n',
+     '        if status == SampleStatus::ContentUnknown && self.content_unknown_twin == Some(next) {\n',
+     '        if status == SampleStatus::ContentUnknown && false {\n',
      TESTS + 'a_mixed_tick_whose_folded_content_read_fails_reports_nothing',
      '#2122 F5 a mixed tick with an unknown fold reports nothing'),
+    # #2122 fix-r1: the twin gate must not fire on a content-unknown sample
+    # whose observable state DID move — widened, it swallows the one report a
+    # genuinely changed config is owed while the read keeps failing (#1792's
+    # contract: the failing tick after a real write reports once).
+    ('content-unknown-twin-gate-widened', source,
+     '        if status == SampleStatus::ContentUnknown && self.content_unknown_twin == Some(next) {\n',
+     '        if status == SampleStatus::ContentUnknown && true {\n',
+     TESTS + 'transient_read_failure_is_retried_until_the_content_is_seen',
+     '#1792 the first (incomplete) sample still reports the change once'),
+    # #2122 fix-r1 (MM boundary#1's sibling): the second call site — the
+    # failure landed between the two samples, so the metadata one is clean —
+    # had no anchor of its own. Its guard widened back to the F5 first cut,
+    # a between-samples content-unknown fold enters the obscured handling,
+    # commits its `read = None` shape into the chain and goes quiet on a
+    # change it owed a report for.
+    ('between-samples-obscured-guard-widened', source,
+     '        };\n        if status == SampleStatus::Obscured {\n',
+     '        };\n        if status != SampleStatus::Complete {\n',
+     TESTS + 'transient_read_failure_is_retried_until_the_content_is_seen',
+     '#1792 the first (incomplete) sample still reports the change once'),
+    # #2122 fix-r1 (MM concurrency#2): the first call site's guard widened
+    # back to the F5 first cut, a mixed content-unknown fold enters the
+    # obscured chain, and the next shape flip in that chain false-reports —
+    # the two fold shapes are never equal, so they must never be compared.
+    ('obscured-chain-mixes-fold-shapes', source,
+     '            if status == SampleStatus::Obscured {\n'
+     '                return self.observe_obscured_tick(next, target_sample);\n',
+     '            if status != SampleStatus::Complete {\n'
+     '                return self.observe_obscured_tick(next, target_sample);\n',
+     TESTS + 'an_obscured_chain_never_compares_content_unknown_folds',
+     '#2122 fix-r1 a content-unknown fold is not compared against the obscured chain'),
+    # #2122 fix-r1: every complete sample — a reported one included — commits
+    # the unknown-read twin of the state it saw. Without the commit, the first
+    # content-unknown tick after a reported change has no baseline to compare
+    # against and false-reports the state it just reported.
+    ('content-unknown-twin-not-committed', source,
+     '            self.content_unknown_twin = Some(twin);\n',
+     '            self.content_unknown_twin = None;\n',
+     TESTS + 'a_content_unknown_tick_after_a_reported_change_stays_quiet',
+     '#2122 fix-r1 the content-unknown tick after the reported change reports nothing'),
+    # #2122 fix-r1: a quiet content-unknown tick must still clear the metadata
+    # shortcut — otherwise the next tick's identical metadata short-circuits
+    # around the read that has to be retried (#1792's retry contract).
+    ('content-unknown-shortcut-not-cleared', source,
+     '            self.metadata_fingerprint = None;\n'
+     '            return false;\n',
+     '            return false;\n',
+     TESTS + 'a_content_unknown_tick_clears_the_shortcut_so_the_read_is_retried',
+     '#2122 fix-r1 the retry tick re-reads the content despite identical metadata'),
+    # #2122 fix-r1: the startup sample must seed the twin like any other
+    # complete one. Without the seed, the first content-unknown tick after
+    # startup has no baseline and false-reports the untouched config — the
+    # review's missing grid cell.
+    ('startup-unknown-twin-not-seeded', source,
+     '            content_unknown_twin: if status == SampleStatus::Complete {\n',
+     '            content_unknown_twin: if false {\n',
+     TESTS + 'an_untouched_config_with_a_failing_first_content_read_reports_nothing',
+     '#2122 fix-r1 the first content-unknown tick with no change reports nothing'),
     # #2122 F4: a truncated listing that never reached the target is read as
     # "the target vanished" — the unobserved arm returns the (empty) target
     # fold instead of `None`, so the transition tick false-reports an
@@ -865,6 +937,12 @@ EXPECTED_NAMES = (
     'obscured-chain-rereports',
     'startup-shortcut-committed-again',
     'mixed-content-tick-committed',
+    'content-unknown-twin-gate-widened',
+    'between-samples-obscured-guard-widened',
+    'obscured-chain-mixes-fold-shapes',
+    'content-unknown-twin-not-committed',
+    'content-unknown-shortcut-not-cleared',
+    'startup-unknown-twin-not-seeded',
     'truncated-listing-target-vanished',
 )
 
