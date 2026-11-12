@@ -137,5 +137,15 @@
     },
     "url_verified": true,
     "url_verification_status": "matching SHA256"
+  },
+  "proxy-libintl-33934de0.tar.gz": {
+    "upstream_url_candidate": "https://codeload.github.com/frida/proxy-libintl/tar.gz/33934de09af6a6627eb44e310a8079df009abdbb",
+    "sha256": "4ab5af85ec6124cb526a15c58bbc0877d241807e30855779808dbf9292d861aa",
+    "bytes": 13064,
+    "license_files_sha256": {
+      "proxy-libintl-33934de09af6a6627eb44e310a8079df009abdbb/COPYING": "d245807f90032872d1438d741ed21e2490e1175dc8aa3afa5ddb6c8e529b58e5"
+    },
+    "url_verified": true,
+    "url_verification_status": "matching SHA256; fixed GLib proxy-libintl.wrap revision"
   }
 }

@@ -5940,3 +5940,11 @@ mbp2 已复用归属明确的 automation 树并同步 clean e5f9f58a4，68/22/26
 ### 2026-11-12 22:5x CST · 修复 Darwin 产品源码闭包，继续真实回归
 
 43f10已推且r10两家八角色完成，channel窄增量无P0/P1；跨standard-http的P1推论与原P2保留，audit正在完整入口事实核验，不据局部相等直接报最终假PASS。#3072已按独立issue收GLib固定33934de0 proxy-libintl五路径修复，精确库存14/两SHA同步，Linux选择/nodownload/平台guard不变。macmini独占5f17+候选五路径真实fmt和四包all-targets严格Clippy exit0（191.62秒）；52个staged库/别名、profile重算与otool全依赖闭包通过，无Homebrew或临时绝对依赖。实际库存unit、GIF/PDF和生命周期用例正在编译，未冒通过；先前5f17 intl FAIL与一次上传未结束的启动前exit2原件保留。root持正式源码，remote_setup持实际构建与回存，ts_reference持新头双审，audit持事实仲裁；下一步固定提交#3072、受影响实际回归与两家窄审并行。本机仅编辑/Git/审查，cb8禁用、mbp2仍挂起；无Git导出与Darwin成绩均不能替代Linux正式retirement合同，用户服务未切换。证据本树_tmp/20261112-wave1-validation/{darwin-libintl-source-candidate,wire-bindings-facts,review-r10-comparison-followup-preparation}。
+
+### 2026-11-12 23:07 CST · 两小时交接点，持有人接续不停工
+
+正式HEAD为已gitleaks推送的1ea5f86d5（#3072五路径与候选逐SHA相同），root唯一写入；本段仅追加board，不改HEAD或在审五产品路径。remote_setup持macmini独占Darwin验证：fmt/严格Clippy/52库闭包通过，29项调用的成功阶段合计37个Rust测试通过，原SMS因缺真实sidecar的ENOENT失败保留，补正常sidecar后原入口通过；终端footer审计与认证回存尚在收尾，不替代Linux验收。negative_anchor_selfcheck确认需要真实Git index，无Git导出不能运行；已安排新独占真实1ea浅Git源与独立target，只编译/执行这3项所需内容，不伪造身份、不重复37项或重跑纯文档。ts_reference持#3072 GLM/MiniMax四角色与两条争议GLM裁定，GLM前者无P0/P1、有来源JSON遗漏/PROVENANCE计数两P2，待同批最小补齐；五路径源锁持续。audit持事实与UTF8负控候选：HTTP↔WS强制共socket前提已被规范与完整pair四反控否证；standard helper局部折叠实有，但原valid_http前置在404/static例为False/True，原P1待独立裁定；不把局部PASS算最终假PASS。下一就绪顺序是收齐37项原件与三个Rust真实入口、两处来源登记、有限UTF8控制与增量非作者复核，然后按现判据继续冻结/渠道与退役；所有旧FAIL/PARTIAL保留。资源约束仍本机仅协调、macmini每台cargo≤2/每导出独立target；本机最近预算实测153540104KiB，本段未重测不当当前值。cb8禁用、mbp2三次SSH超时仍挂起，Linux /proc/dupFD与正式retirement未跑，用户服务未切。证据索引本树_tmp/20261112-wave1-validation/validation-latest.json，持有人按上述队列继续。
+
+### 2026-11-12 23:2x CST · 37项Rust回归核准，补齐P2来源登记与编码负控
+
+#3072的GLM和替代DeepSeek各四角色均无P0/P1，MiniMax全组额度429保留；两条P2同批补来源JSON第14归档/COPYING SHA与PROVENANCE计数，不重编不变产品源码。Darwin原候选29调用/37测试已完整footer审计，293构建闭包原件和266测试原件逐SHA回存，全部源码8278/mode/工具/52库稳定；SMS首次缺sidecar的FAIL不覆盖。audit新增UTF8 HTTP/文本WS完整pair正反控已macmini唯一80套件PASS，consumer2cc6不改、test2f1，只收测试补丁，原22/26及19/16不重复。root收这批P2代码/元数据与状态，ts_reference做一次原F1/F2明确事实答疑后接仅P2增量非作者复核；四角色事实审阅未明确逐条撤销，原高等级仍保留。remote_setup在新独占真实1ea Git源已完成8278对象/index/clean认证，正在只编译negative_anchor_selfcheck三项所需目标；该源与旧无Git验证目录分离，Darwin不替代Linux合同。audit另只读调查新冻结compare.py P1的最终可达性，不改尺子。cb8禁用、mbp2仍挂起，用户服务未切换；下一步收真实3项与小增量审查，再继续产品侧对拍缺口。

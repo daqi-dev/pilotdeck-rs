@@ -1065,6 +1065,100 @@ def full_wire_fixture(channel='qq', *, nonce=b'the sample nonce', mask_key=b'\x1
 
 
 class WireProjectionControls(unittest.TestCase):
+    def test_complete_pair_rejects_invalid_utf8_requests_and_text_frames(self):
+        # A malformed HTTP body is observable: the producer keeps the bytes
+        # and uses Buffer.toString() replacement characters in its raw row.
+        # An invalid text WS frame must not invent a receive API event: the
+        # real ws receiver validates UTF-8 before emitting a text message.
+        def request(raw, records, body):
+            raw, records = copy.deepcopy((raw, records))
+            socket = {'id': 4, 'localHost': '127.0.0.1', 'localPort': 28690,
+                      'remoteHost': '127.0.0.1', 'remotePort': 41002}
+            value = {'raw': body.decode('utf-8', errors='replace')}
+            raw['http'].append({'generation': 1, 'method': 'POST', 'path': '/v1/probe',
+                                'body': value, 'authorization': 'Bearer fixture'})
+            raw['models'].append(copy.deepcopy(value))
+            identity = max(row['id'] for row in records if row['kind'] == 'mock-http-request') + 1
+            headers = {'host': '127.0.0.1:28690', 'authorization': 'Bearer fixture',
+                       'content-length': str(len(body))}
+            head = ('POST /v1/probe HTTP/1.1\r\n'
+                    + ''.join(f'{key}: {value}\r\n' for key, value in headers.items()) + '\r\n')
+            reply = 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n'
+            records.extend([
+                {'kind': 'fixture-tcp-data', 'socket': socket, 'payload': blob(head.encode() + body)},
+                {'kind': 'mock-http-request', 'id': identity, 'socket': socket, 'method': 'POST',
+                 'url': '/v1/probe', 'headers': headers,
+                 'rawHeaders': [item for pair in headers.items() for item in pair], 'body': blob(body)},
+                {'kind': 'fixture-tcp-write', 'socket': socket, 'payload': blob(reply.encode() + b'{}')},
+                {'kind': 'mock-http-response', 'id': identity, 'status': 200, 'finished': True,
+                 'headers': {'content-type': 'application/json', 'content-length': '2'},
+                 'actualHeaderText': reply, 'body': blob(b'{}')},
+            ])
+            for sequence, row in enumerate(records):
+                row['sequence'] = sequence
+            return raw, records
+
+        def text_frame(raw, records, body, received):
+            raw, records = copy.deepcopy((raw, records))
+            sockets = [row['socket'] for row in records if row['kind'] == 'fixture-tcp-data'
+                       and isinstance(row.get('socket'), dict)
+                       and type(row['socket'].get('id')) is int and row['socket']['id'] == 2
+                       and row['socket'].get('localPort') == raw['runtime']['mockPort']]
+            self.assertTrue(sockets, 'the complete fixture must contain the real mock TCP connection')
+            self.assertTrue(all(socket == sockets[0] for socket in sockets))
+            socket = copy.deepcopy(sockets[0])
+            records.append({'kind': 'fixture-tcp-data', 'socket': socket,
+                            'payload': blob(ws_wire_frame(body, masked=True, opcode=1))})
+            if received:
+                raw['wire'].append(json.loads(body))
+                records.append({'kind': 'fixture-ws-receive', 'socket': socket,
+                                'payload': blob(body), 'binary': False})
+            for sequence, row in enumerate(records):
+                row['sequence'] = sequence
+            return raw, records
+
+        left_raw, left_records, files = full_wire_fixture()
+        left_raw['engine'] = 'ts'
+        right_raw, right_records, right_files = full_wire_fixture(
+            nonce=b'another nonce 16', mask_key=b'abcd')
+        self.assertEqual(files, right_files)
+        originals = copy.deepcopy((left_raw, left_records, right_raw, right_records, files))
+        with tempfile.TemporaryDirectory() as temp:
+            roots = [Path(temp) / side for side in ('ts', 'native')]
+            for root in roots:
+                for original, data in files.items():
+                    path = root / Path(original).relative_to('/test/cur')
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+            for domain in ('request', 'text-frame'):
+                with self.subTest(domain=domain):
+                    if domain == 'request':
+                        left = request(left_raw, left_records, b'Xb')
+                        right = request(right_raw, right_records, b'Xb')
+                        invalid = request(right_raw, right_records, b'\xffb')
+                    else:
+                        left = text_frame(left_raw, left_records, b'{"probe":"valid"}', True)
+                        right = text_frame(right_raw, right_records, b'{"probe":"valid"}', True)
+                        invalid = text_frame(right_raw, right_records, b'\xffb', False)
+                    inputs = copy.deepcopy((left, right, invalid))
+                    def compare(pair):
+                        return v2.compare_pair(left[0], pair[0], left[1], pair[1], files, files,
+                                               ts_root=roots[0], native_root=roots[1])
+                    positive = compare(right)
+                    self.assertTrue(positive['equal'])
+                    self.assertEqual(positive['differentFields'], [])
+                    self.assertFalse(positive['formalAcceptance'])
+                    # No successful pair/receipt may be returned. An unrelated
+                    # framing, binding or business failure must not satisfy this.
+                    if domain == 'request':
+                        with self.assertRaises(UnicodeDecodeError):
+                            compare(invalid)
+                    else:
+                        with self.assertRaisesRegex(ValueError, '^CHANNEL_V2_WS_WIRE_TEXT_UTF8$'):
+                            compare(invalid)
+                    self.assertEqual(inputs, (left, right, invalid))
+        self.assertEqual(originals, (left_raw, left_records, right_raw, right_records, files))
+
     def test_http_text_sentinel_reaches_final_comparison(self):
         self._compare_http_payloads([(b'{"raw":"X"}', b'X', True, False)])
 

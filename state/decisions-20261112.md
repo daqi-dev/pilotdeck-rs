@@ -39,3 +39,5 @@
 受影响的是产品图片原生库的源码闭包和精确source-profile登记：库存13→14，守卫只更新source-build/source-hashes两SHA，不放宽范围，不改变比较语义、意向或#3062授权。macmini候选五路径逐SHA相同，真实fmt/严格Clippy通过；52个staged库/别名、profile与otool闭包实核通过。真实库存正负控、GIF/PDF及生命周期定向用例和两家非作者终审仍须完成，Linux完整guard保持NOT_RUN。原件见本树_tmp/20261112-wave1-validation/darwin-libintl-source-candidate/，独立issue #3072。
 
 可复用原则：平台缺依赖时先补其上游锁定的最小源码闭包，精确登记和实际动态库来源必须一致；不能以本机恰好装有的库或解除禁下载来替代。断言复用现有image_archive_pin_rejects_mutation_extra_file_and_symlink，并以真实构建/profile重算和逐库依赖核验约束。
+
+#3072两家非作者终审均无P0/P1，P2来源登记按原件补齐：image-source-provenance.json增加同一13,064-byte归档和COPYING SHA，PROVENANCE计数14；其余13项逐值保持，构建源/profile规则不变，不为纯来源文档重复编译。#3068本轮只补非法UTF8全路径控制：HTTP合法原帧与producer替换字符raw同步，WS只保留非法文本原帧、不虚构库会拒绝的message事件；两域有效完整pair须先相等，非法输入须精确拒绝，输入前后不变。80项实际PASS，未新增相等规则或改变oracle；原件在_tmp/20261112-wave1-validation/utf8-full-pair-controls/RESULT.md。

@@ -506,4 +506,4 @@ execute_code 的搜索配置及 sandbox 模式文案按实际运行状态生成�
 
 ## Gateway 图片原生源依赖（2026-11-11）
 
-固定 libvips Rust 绑定与 13 项编解码源码归档的来源、许可和哈希见 [vendor/image-sources.md](vendor/image-sources.md)、[vendor/libvips-source.json](vendor/libvips-source.json) 与 [vendor/image-source-provenance.json](vendor/image-source-provenance.json)。
+固定 libvips Rust 绑定与 14 项编解码源码归档的来源、许可和哈希见 [vendor/image-sources.md](vendor/image-sources.md)、[vendor/libvips-source.json](vendor/libvips-source.json) 与 [vendor/image-source-provenance.json](vendor/image-source-provenance.json)。
