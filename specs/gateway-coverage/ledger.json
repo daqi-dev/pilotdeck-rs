@@ -4527,7 +4527,6 @@
 "order": [37,35,36,3,4,5,6,0,31,33,32,34,15,16,17,18,19,20,21,10,8,12,14,9,11,22,13,23,24,7,25,26,27,28,29,30,1,38,2],
 "specific": [
 {"code":"gateway_request_failed","refs":["B/src/gateway/server/GatewayWsConnection.ts:223","B/src/gateway/server/GatewayWsConnection.ts:251"],"summary":"record_agent_status_message 的普通异常若不带 string code，由 WS 映射 gateway_request_failed；带 string code 的 provider/Node errno 异常由 hasStructuredErrorCode 保留。该兜底不替代本项领域分支。"},
-{"code":"INVALID_SESSION_KEY","refs":["src/pilotdeck-gateway/src/native_process/methods/session_dir.rs"],"summary":"Rust 侧 #1623 fix-r5（#2998）入口守卫分支：含孤立代理（unpaired surrogate）的 sessionKey 直接拒绝，经 sanitize_session_id 有损渲染的 fence 路径 / 冷路径 append_metadata_with_lease / 活路径 live_recorder 全部别名到 U+FFFD 拼写会话，故在 as_string 门后拒绝（A7-W5-SESSION-KEY-SURROGATE-REJECT-001，比 TS 严的有意改进）。TS 基线该入口无此分支（InProcessGateway.ts:2068 对 input.sessionKey 原样转发，无 trim 门），本条登记 Rust 侧行为映射，非 TS 对齐。"},
 {"code":"<dyn_Yufvlw>","dynamic":true,"origin":{"expression":"error.code","refs":["B/src/gateway/server/GatewayWsConnection.ts:201","B/src/gateway/server/GatewayWsConnection.ts:216","B/src/gateway/server/GatewayWsConnection.ts:233"]},"refs":["B/src/gateway/server/GatewayWsConnection.ts:201","B/src/gateway/server/GatewayWsConnection.ts:216","B/src/gateway/server/GatewayWsConnection.ts:233"],"summary":{"template":"k7tN9w"}}
 ]
 },

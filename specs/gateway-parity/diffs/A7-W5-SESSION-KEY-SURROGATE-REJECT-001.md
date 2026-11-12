@@ -85,7 +85,12 @@ fix-r5 追加第五个入口（#2998）：`session_dir.rs` `session_record_statu
 （fix-r5 修前探针 `_tmp/20261026-issue-1623/fix-r5/probe_prefix_e2e.log`：
 代理拼写 recorded:true 且条目落 FFFD 会话 transcript、两拼写同一文件）。
 账本 `ledger.json` 该入口错误分支补 `INVALID_SESSION_KEY` 条目（fix-r5，
-如实标注为 Rust 侧本条登记差异，TS 基线无此分支）。
+如实标注为 Rust 侧本条登记差异，TS 基线无此分支）。fix-r6 更正：该账本
+登记已撤销——`record_agent_status_message` / `submit_turn` /
+`tools_rewind_files` 三入口的 Rust 侧孤立代理门均不入 TS 基线账本（无
+`B/` 锚点、无 TS 侧产码，schema 无法表达 Rust-only 分支，fix-r5 补登记
+即被 `check_ledger.py` 四项拒：error_group_order / refs 与 summary 的
+reference_format / invented_error_code），正本在本 diff——防后人再犯。
 成对代理（astral 字符，如 U+10000 = D800 DC00）与显式 U+FFFD 仍是合法
 key；存储层 `sanitize_session_id`（`transcript_adapter.rs:2162`）保持有损
 别名不动（方案 B 残余：防线是入口守卫，非磁盘身份单射化，
