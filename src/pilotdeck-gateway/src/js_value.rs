@@ -269,11 +269,17 @@ pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
 /// Inside the fold band (≤ the registry's `TS_KEY_FOLD_DEPTH`, measured at
 /// the load call shape) TS's own template spelling folds a deep container to
 /// `""` or `"1"`; beyond the band the same template literal throws
-/// `Maximum call stack size exceeded` just like `structuredClone` does — the
-/// spelling and the clone ride the same V8 recursion bound (the #2692 fix-r6
-/// load-point probe folded and threw at identical levels for both leaf
-/// shapes). Rust's spelling walks with a depth bound instead, so the overflow
-/// surfaces here — with the same message the clone reports.
+/// `Maximum call stack size exceeded` just like `structuredClone` does — but
+/// the spelling and the clone do not ride the same recursion bound: the
+/// spelling folds across the whole band, while a `structuredClone` of the
+/// deep record exhausts its budget earlier. fix-r7 measured the read face
+/// boundary at 2560/2561, yet a folded-spelling `get` returns the record
+/// through the clone only up to 2557 levels, the clone throwing the same
+/// RangeError from 2558 (see `run_registry.rs`'s in-band comment and
+/// `_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-inband-reads.out`,
+/// which supersedes the fix-r6 "identical levels" wording). Rust's spelling
+/// walks with a depth bound instead, so the overflow surfaces here — with
+/// the same message the clone reports.
 pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {
     // Same walk as `property_key` — `String()`'s coercion — under a different
     // semantic hat: this is a template-literal slot, that is a property-key

@@ -957,7 +957,10 @@ def check_literal_anchors(cases, pins=None, bound_rows=None):
 def mutate(case, original):
     count = original.count(case.old)
     if count != 1 or case.old == case.new:
-        raise ValueError(f'#1457 {case.mutation}: stale anchor (expected 1, got {count})')
+        # fix-r8 (concurrency#2): no `#1457` here -- the --check envelope
+        # prefixes it once; the run path prints this via
+        # `f'{type(error).__name__}: {error}'` and keeps its own tagging.
+        raise ValueError(f'{case.mutation}: stale anchor (expected 1, got {count})')
     return original.replace(case.old, case.new, 1)
 
 

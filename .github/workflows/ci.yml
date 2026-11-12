@@ -254,6 +254,11 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/turn-submit/negative.py --check
           python3 -I src/pilotdeck-gateway/tests/fixtures/turn-read/negative.py --check
           python3 -I src/pilotdeck-gateway/tests/fixtures/turn-publish/negative.py --check
+          # #2692 fix-r8（评审 sibling#1，同上四家形态）：failure-guard 的 --check
+          # 也进 CI——fix-r7 给它接的 declares_test 绑定门禁原先只在变更轮的
+          # build() 里跑，缺这条接线时绑定改名 CI 会假绿（树内红侧由
+          # _negkit/test_submit_migration.py 的改名用例钉住）。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/failure-guard/negative.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

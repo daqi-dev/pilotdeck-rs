@@ -48,13 +48,18 @@ class LiteralAnchorGuard(unittest.TestCase):
         for needle in needles:
             self.assertIn(needle, str(caught.exception))
 
-    def test_check_passes_and_reports_both_counts(self):
+    def test_check_passes_and_reports_all_three_counts(self):
         done = subprocess.run(
             [sys.executable, '-I', str(HERE.with_name('negative_controls.py')), '--check'],
             cwd=nc.ROOT, capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn(f'#1457 {len(ROWS)} mutation anchors OK', done.stdout)
         self.assertIn(f'#2065 {len(nc.LITERAL_ANCHORS)} literal anchors OK', done.stdout)
+        # #2692 fix-r8 (review sibling#2): pin the third count too -- without
+        # it the bound-test gate could be deleted outright and this positive
+        # stayed green.
+        self.assertIn(f'{len(ROWS)} bound tests declared', done.stdout,
+                      '#2692 fix-r8: the bound-test declaration count must be reported')
 
     def test_rejects_the_regression(self):
         # The exact #2065 shape: the row goes back to the invented suffix while
@@ -126,6 +131,52 @@ class LiteralAnchorGuard(unittest.TestCase):
                 os.environ['CARGO_TARGET_DIR'] = saved_target
         self.assertEqual([case.mutation for case in seen['cases']], [BAD_ROW])
         self.assertEqual(len(seen['bound']), len(ROWS))
+
+    def test_main_check_rejects_a_renamed_bound_test(self):
+        # #2692 fix-r8 (review sibling#2): the --check bound-test gate's
+        # in-tree red side. Renaming the short name simulates the fn being
+        # renamed in the tests file (the roster keeps the old spelling), so
+        # the real declares_test matching runs and must come back empty.
+        real = nc.bind_module_file
+
+        def renamed(test, modules):
+            path, short = real(test, modules)
+            return path, short + '_renamed'
+
+        saved_argv = sys.argv
+        nc.bind_module_file = renamed
+        try:
+            sys.argv = ['negative_controls.py', '--check']
+            with self.assertRaises(SystemExit,
+                                   msg='#2692 a renamed bound test must fail --check') as caught:
+                nc.main()
+        finally:
+            nc.bind_module_file = real
+            sys.argv = saved_argv
+        self.assertIn('#1457 bound test not declared', str(caught.exception),
+                      '#2692 fix-r8: the rename refusal message names the drifted binding')
+
+    def test_main_check_prefixes_a_stale_anchor_once(self):
+        # fix-r8 (concurrency#2): the --check envelope owns the `#1457` tag;
+        # the stale-anchor ValueError used to carry its own and the refusal
+        # printed the tag twice.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][2] = 'anchor nobody ships in config.rs'
+        saved_argv, saved_rows = sys.argv, nc.mutations
+        nc.mutations = rows
+        try:
+            sys.argv = ['negative_controls.py', '--check']
+            with self.assertRaises(SystemExit,
+                                   msg='#2692 a stale anchor must refuse --check') as caught:
+                nc.main()
+        finally:
+            nc.mutations = saved_rows
+            sys.argv = saved_argv
+        message = str(caught.exception)
+        self.assertIn('set-stub-revert: stale anchor (expected 1, got 0)', message,
+                      '#2692 fix-r8: the stale-anchor refusal shape is unchanged')
+        self.assertEqual(message.count('#1457'), 1,
+                         f'concurrency#2: the tag must appear exactly once: {message!r}')
 
 
 if __name__ == '__main__':

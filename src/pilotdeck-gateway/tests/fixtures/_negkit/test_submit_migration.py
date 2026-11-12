@@ -197,6 +197,27 @@ class MigrationTests(unittest.TestCase):
                 rejected = True
             self.assertTrue(rejected, '#1110 stale mutation anchors refuse before execution')
 
+    def test_module_table_gate_rejects_renamed_bound_test(self):
+        # #2692 fix-r8 (review sibling#2): the fix-r7 module-table gate needs
+        # an in-tree red side -- a renamed binding used to go red only in the
+        # host's out-of-tree negative round (negative-gates.py), so deleting
+        # the `modules` argument or breaking the gate kept every tree test
+        # green. The rename keeps the module prefix, so the binding still
+        # resolves to the same file and only the declared fn name drifts.
+        module = runner('failure-guard')
+        entries, oracle = module.build()
+        self.assertEqual(A.check(entries, oracle, module.AUDITED_MODULES), len(entries),
+                         '#1110 the module table passes the unmodified bindings')
+        target = next(entry for entry in entries if entry.binding.kind != 'positive')
+        renamed = [replace(entry, binding=replace(entry.binding,
+                                                  test=entry.binding.test + '_renamed'))
+                   if entry is target else entry for entry in entries]
+        with self.assertRaises(ValueError,
+                               msg='#2692 a renamed bound test must fail the module gate') as caught:
+            A.check(renamed, oracle, module.AUDITED_MODULES)
+        self.assertIn('bound test not declared', str(caught.exception),
+                      '#2692 the refusal names the drifted binding')
+
     def test_real_raw_summary_adapters(self):
         for name, count in [('turn-submit', 58), ('failure-guard', 24)]:
             path = FIXTURES / '_negkit/testdata' / (name + '.json')
