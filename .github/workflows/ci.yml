@@ -570,8 +570,10 @@ jobs:
       # fix-r4（#3078 MM P1）：镜像守卫集合放宽后「两 job 同绿 ⟺ 同一镜像构建」不再
       # 由守卫单独成立——本步比对 rust 与 negative-controls 各自上报的实际构建号，
       # 不一致或任一缺失即红（fail-closed）。滚动窗口内两 job 落在集合内不同构建
-      # 时这里会红：重跑两 job 对齐，或值班协调者当轮把新值收进集合后再跑。docs_only
-      # 时两 job 被跳过，本步同跳。
+      # 时这里会红（正确代码也会周期性红，fail-closed 方向）：恢复手段是 Re-run all
+      # jobs（只重跑 failed jobs 会沿用旧上报值），持续失配则把集合收窄到实际在服
+      # 的那一个值（删旧成员）——往集合里加新值救不了本步的红。docs_only 时两 job
+      # 被跳过，本步同跳。
       - name: Require same runner image build for rust and negative controls
         if: ${{ always() && needs.scope.outputs.docs_only != 'true' }}
         working-directory: .
