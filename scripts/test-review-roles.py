@@ -111,10 +111,16 @@ if api_err:
 if mode != "no_assistant":
     resp = "wrong-model-x" if mode in ("wrong_resp", "wrong_resp_quotes") else {"glm-5.3-mb": "GLM-5.3",  # 真网关回显展示名
                                                                                 "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}.get(model, model)
+    if mode in ("canonical", "mixed", "mixed_unknown"):
+        resp = model
     # 评审本仓 scripts 时正文必然引用这些字样：真换模型不得因为正文提到 API Error/ECONNRESET 就被判成通道错误
     blocks = [{"type": "text", "text": "我先读 run-review-roles.py，它会把 API Error: Connection dropped (ECONNRESET) 写成 detail。"}] \
         if mode == "wrong_resp_quotes" else []
     print(json.dumps({"type": "assistant", "message": {"model": resp, "content": blocks}}), flush=True)
+    if mode in ("mixed", "mixed_unknown"):
+        second = ({"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}.get(model, model)
+                  if mode == "mixed" else "wrong-model-x")
+        print(json.dumps({"type": "assistant", "message": {"model": second, "content": []}}), flush=True)
 final = "只有半截" if mode == "noverdict" else conf["final"]
 usage = {("wrong-model-x" if mode == "wrong_usage" else model): {}}
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final, "total_cost_usd": 0,
@@ -277,7 +283,28 @@ def _run(gate, rrr, out_base: Path) -> int:
         if any(ds_secret in p.read_text(errors="replace") for p in (out_base / "deepseek-ok").rglob("*") if p.is_file()):
             fails.append("deepseek-ok：密钥不得落盘")
 
-        # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
+        # 同一个声明模型允许 canonical、登记 alias 或两者混合；任意未知响应都必须拒绝。
+        for runner_, model_, alias in (("zai", "glm-5.3-mb", "GLM-5.3"),
+                                        ("deepseek", "deepseek-v4.1-flash-mb", "DeepSeek-V4.1-Flash")):
+            for mode, expected in (("canonical", {model_}), ("alias", {alias}),
+                                   ("mixed", {model_, alias}), ("mixed_unknown", {model_, "wrong-model-x"})):
+                name = f"response-model-{runner_}-{mode}"
+                rc, s = run(name, mode, runner=runner_)
+                statuses = json.loads((out_base / name / "status.json").read_text())
+                observed = {}
+                for role in ROLES.split(","):
+                    events = [json.loads(line) for line in (out_base / name / f"{role}.jsonl").read_text().splitlines()]
+                    observed[role] = {event["message"]["model"] for event in events if event.get("type") == "assistant"}
+                expected_status = "ERROR" if mode == "mixed_unknown" else "PASS"
+                if set(statuses) != set(ROLES.split(",")) or any(value != expected for value in observed.values()) or any(
+                        status["status"] != expected_status for status in statuses.values()):
+                    fails.append(f"{name}：响应集合必须实测为 {sorted(expected)} 且四角色均 {expected_status}")
+                if (rc == 0) != (expected_status == "PASS") or bool(gate_errs(s)) != (expected_status == "ERROR"):
+                    fails.append(f"{name}：退出码和闸门必须与 {expected_status} 一致（rc={rc}）")
+                print(f"response-model: runner={runner_} mode={mode} rc={rc} expected={expected_status} "
+                      f"observed={ {role: sorted(value) for role, value in observed.items()} }")
+
+        # 已有工具/init/响应/用量/final守卫继续逐通道校验。
         for name, mode, want, runner in [("extra-tool", "extra_tool", "TOOLS_VIOLATION", "zai"), ("wrong-init", "wrong_init", "ERROR", "zai"),
                                          ("wrong-resp", "wrong_resp", "ERROR", "zai"), ("wrong-usage", "wrong_usage", "ERROR", "zai"),
                                          ("wrong-init-anth", "wrong_init", "ERROR", "anthropic"),

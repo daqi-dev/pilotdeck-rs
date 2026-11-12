@@ -75,7 +75,7 @@ ROLES = {
 }
 ALLOWED_TOOLS = ["Read", "Grep", "Glob"]
 LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走 llm-center；Claude Code 自行拼 /v1/messages，基址须为主机根（带 /v1 会 404）
-# 网关对 GLM 在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
+# 网关响应可回显请求名或该模型已登记的展示名（modelUsage 仍须是请求名）；不接受其他模型名
 # （10-25 实测 claude-opus-5-5 / claude-sonnet-5-5 经 llm-center 原样回显，原件 _tmp/20261025-anth-runner/smoke-*；
 # 11-05 实测 MiniMax-M3.1-Flash 原样回显、deepseek-v4.1-flash-mb 回显 DeepSeek-V4.1-Flash，原件 _tmp/20261105-minimax-runner/）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
@@ -414,7 +414,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     # 防静默换模型：init 只是本地选择值，还要核后端每条响应的 model 与 modelUsage（审的不是声明的那家，结论不计）
     resp = result.get("resp_models") or set()
     usage = set((result.get("modelUsage") or {}).keys()) if isinstance(result.get("modelUsage"), dict) else set()
-    expect = RESP_MODEL_ALIAS.get(model, model)
+    allowed_resp = {model, RESP_MODEL_ALIAS.get(model, model)}
     rec["cost_usd"] = result.get("total_cost_usd")  # 先取：下面每条早退分支都别再漏记花费（重试要合计两次）
     if model and result.get("init_model") != model:
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
@@ -447,7 +447,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["api_error_text"] = one_line(err_text)
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
-    if model and (real_resp != {expect} or not usage or usage != {model}):
+    if model and (not real_resp or not real_resp.issubset(allowed_resp) or not usage or usage != {model}):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
     text = result.get("result") if isinstance(result.get("result"), str) else ""
