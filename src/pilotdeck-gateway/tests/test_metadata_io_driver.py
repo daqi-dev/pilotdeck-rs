@@ -530,7 +530,7 @@ class EnvironmentControls(unittest.TestCase):
             # `exit 0` 都是「真实 PR 上比对永不执行 / 失配照绿」的假通过面（该步
             # 是 #3078 唯一新增不变量的执法点，防护强度不得低于旁边六条拒绝步；
             # run 体的行为由 test_same_build_comparison_step_logic_self_check 真
-            # 跑三场景兜住）。
+            # 跑五场景兜住）。
             if (step.get('name', None) is not None
                     and step['name'].value
                     == 'Require same runner image build for rust and negative controls'):
@@ -2405,7 +2405,7 @@ class EnvironmentControls(unittest.TestCase):
                                           '${{ needs.rust.outputs.image_version }}'),
                          '#3078 the comparison step env wires each side to its own '
                          'job output verbatim (parsed)'))
-        # run 体插桩 `exit 0`（set -euo pipefail 之后）：行为自测的三场景全数存活面
+        # run 体插桩 `exit 0`（set -euo pipefail 之后）：行为自测的五场景全数存活面
         # ——钉在 test_same_build_comparison_step_logic_self_check 的红上。
         neutered = workflow.replace(
             compare_step + compare_if_line
@@ -2441,8 +2441,8 @@ class EnvironmentControls(unittest.TestCase):
                          workflow.replace(missing_exit,
                                          missing_exit.replace('exit 1', 'exit 0')),
                          '#3078 the comparison script must behave as pinned'))
-        mismatch_exit = ('重跑两 job 或当轮收窄集合（#3078 MM P1）" >&2\n'
-                         '            exit 1\n')
+        mismatch_exit = ('需严格同构建结论时收窄集合到实际在服值（#3078 MM P1）" >&2\n'
+                        '            exit 1\n')
         self.assertIn(mismatch_exit, workflow)
         ci_cases.append(('check-comparison-mismatch-exit-neutered',
                          workflow.replace(mismatch_exit,
@@ -2463,6 +2463,34 @@ class EnvironmentControls(unittest.TestCase):
                                           '${{ needs.rust.outputs.image_version }}'),
                          '#3078 the comparison step runs from the repository root '
                          '(parsed)'))
+        # fix-r7（DS boundary#1 / MM sibling#2 双撞 P2）：run 标量样式钉配对变异——
+        # 折成 `>` 单字符漂移在生产侧整块折一行、bash syntax error 假红（先例：
+        # B2 的 literal-form 钉配 B2-folded-run）。
+        folded = workflow.replace(
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n',
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: >\n')
+        self.assertNotEqual(folded, workflow,
+                            '#3078 the folded-run mutation must actually apply')
+        ci_cases.append(('check-comparison-run-folded', folded,
+                         '#3078 the comparison step run body must stay a literal '
+                         'block scalar (folding it onto one line breaks bash '
+                         'parsing on every PR)'))
         ci_cases.append(('guard-duplicated',
                          workflow.replace(shift_anchor, step + shift_anchor, 1),
                          '#2780 exactly two runner image guard steps exist'))
@@ -2475,7 +2503,8 @@ class EnvironmentControls(unittest.TestCase):
         fix_r5_parsed_cases = ('check-comparison-if-inverted',
                                'check-comparison-if-dropped',
                                'check-comparison-env-both-rust',
-                               'check-comparison-working-directory-drift')
+                               'check-comparison-working-directory-drift',
+                               'check-comparison-run-folded')
         fix_r5_behavior_cases = ('check-comparison-run-neutered',
                                  'check-comparison-missing-exit-neutered',
                                  'check-comparison-mismatch-exit-neutered')
