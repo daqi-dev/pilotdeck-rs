@@ -105,6 +105,10 @@ import pending_reanchor as pending
 
 FIXTURES = Path(__file__).resolve().parent
 FULL_ROSTER = 36
+# mode-routing's EXPECTED_NAMES literal (that fixture's negative_controls
+# :164-175): the roster count pinned independently of module.EXPECTED_NAMES,
+# the same shape as FULL_ROSTER for manager-gateway (#1666 family).
+MODE_ROSTER = 10
 TERMINATE_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGQUIT')
 MANAGER_SCRIPT = 'manager-gateway/negative_controls.py'
 ENTRY = FIXTURES / MANAGER_SCRIPT
@@ -1126,6 +1130,16 @@ class ModeRoutingGuard(unittest.TestCase):
                         f'stderr={stderr!r}')
         summary = json.loads((out / 'summary.json').read_text())
         rows = summary['controls']
+        # Denominator pinned to the source literal, not derived from
+        # module.EXPECTED_NAMES (DS r8 + MM r8 sibling P1, hit independently
+        # by both families -- #1666 family): deleting a mutations row
+        # together with its EXPECTED_NAMES entry would otherwise shrink
+        # every count below while the run publishes a (N-1)/(N-1) PASS.
+        self.assertTrue(len(module.EXPECTED_NAMES) == MODE_ROSTER,
+                        '#2743 the mode-routing roster must carry its '
+                        'literal 10 names; truncating or emptying '
+                        'EXPECTED_NAMES must fail here instead of '
+                        'shrinking the denominator')
         self.assertTrue(len(rows) == len(module.EXPECTED_NAMES),
                         f'#2743 the full run must record every row, got '
                         f'{len(rows)}')
@@ -1269,10 +1283,12 @@ class SessionDomainCleanupGuard(unittest.TestCase):
         # module.MUTATIONS (MM boundary P1, #1666 family): an emptied or
         # row-deleted table would otherwise make every assertion below
         # vacuously green while the run publishes a 0/0 PASS.
-        self.assertTrue(len(module.MUTATIONS) == 331,
+        names = [row[0] for row in module.MUTATIONS]
+        self.assertTrue(len(set(names)) == len(names) == 331,
                         '#2743 the session-domain table must carry its '
-                        'literal 331 rows; truncating or emptying MUTATIONS '
-                        'must fail here instead of shrinking the denominator')
+                        'literal 331 distinct rows; truncating, emptying, '
+                        'or duplicating MUTATIONS must fail here instead '
+                        'of shrinking or faking the denominator')
         self.assertTrue(len(report['mutations']) > 0,
                         '#2743 the full run must record a non-empty batch')
         selected = [row['mutation'] for row in report['mutations']]
