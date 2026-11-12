@@ -419,10 +419,14 @@ class PlanTests(unittest.TestCase):
                 # #2795 fix-r13（评审修 2）：不再 mock preflight——旧桩把唯一能
                 # 观测到「多取一次 60 s 锁」的代码路径 patch 掉，双锁回归下该
                 # 契约假绿；现在 --memory 路径的预检折进 900 s 锁窗，尺子直读。
+                # #2795 fix-r14（DS concurrency#2）：tree_lock 已被桩成空操作，
+                # 真 _anchor_errors 读会发生在假锁之下——本用例只断言锁序，
+                # 真锚点读交给 preflights/stale 两条。
                 with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory',
                                                    '--case', 'memory-rehearsal-without-lock']), \
                         mock.patch.object(runner, 'execution_environment', return_value={}), \
                         mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
+                        mock.patch.object(runner, '_anchor_errors', return_value=[]), \
                         mock.patch.object(runner, 'run_owned', fake_run_owned), \
                         mock.patch('sys.stdout', new_callable=io.StringIO):
                     runner.main()
@@ -582,6 +586,50 @@ class PlanTests(unittest.TestCase):
                                 and 'tree lock or anchor read failed: TimeoutError' in stderr.getvalue()
                                 and not (output / 'summary.json').exists()
                                 and not output.exists(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_publishes_invalid_after_began(self):
+        # #2795 fix-r14（DS sibling#2「配对缺一半」）：启动期拒跑（忙锁/stale
+        # 锚点 → rc 2、不发布 summary）只钉了「未开始」一侧；本条钉 began 翻转
+        # 之后的守卫失败仍是既有形状——作废行 + 发布 INVALID summary + 退 1，
+        # 不冒充拒跑。若把 main 的拒跑分支放宽到 began 之后（把「if memory
+        # and not began」改成「if memory」），本测试转红。
+        marker = '#2795 memory rehearsal publishes an INVALID summary (rc 1) when the guard fails after it began'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('plan_memory_began', path)
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+
+            class recording_lock:
+                def __enter__(self):
+                    pass
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def failing_run_owned(command, **_keywords):
+                raise RuntimeError('probe: guard failure after began')
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-2795-plan-began-') as tmp:
+                output = Path(tmp) / 'results'
+                with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory',
+                                                     '--case', 'missing-cell']), \
+                        mock.patch.object(runner, 'execution_environment', return_value={}), \
+                        mock.patch.object(runner, 'tree_lock',
+                                          lambda *_a, **_k: recording_lock()), \
+                        mock.patch.object(runner, '_anchor_errors', return_value=[]), \
+                        mock.patch.object(runner, 'run_owned', failing_run_owned), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO), \
+                        mock.patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                    code = runner.main()
+                summary = json.loads((output / 'summary.json').read_text())
+                rows = summary['controls'] if isinstance(summary, dict) else summary
+                self.assertTrue(code == 1
+                                and len(rows) == 1 and rows[0]['status'] == 'INVALID'
+                                and 'refused to start' not in stderr.getvalue()
+                                and 'tree lock or anchor read failed' not in stderr.getvalue(), marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

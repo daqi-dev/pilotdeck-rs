@@ -985,6 +985,56 @@ class E2ETests(unittest.TestCase):
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
+    def test_memory_rehearsal_publishes_invalid_after_began(self):
+        # #2795 fix-r14（DS sibling#2「配对缺一半」，与 plan 同形）：启动期拒跑
+        # （忙锁/stale 锚点 → rc 2、不发布 summary）只钉了「未开始」一侧；本条
+        # 钉 began 翻转之后的守卫失败仍是既有形状——作废行 + 发布 INVALID
+        # summary + 退 1，不冒充拒跑。若把 main 的拒跑分支放宽到 began 之后
+        # （把「if memory and not began」改成「if memory」），本测试转红。
+        marker = '#2795 memory rehearsal publishes an INVALID summary (rc 1) when the guard fails after it began'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_memory_began', path)
+            runner = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), runner.__dict__)
+
+            class recording_lock:
+                def __enter__(self):
+                    pass
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def failing_run_owned(command, **_keywords):
+                raise RuntimeError('probe: guard failure after began')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-e2e-began-') as folder:
+                    out = Path(folder) / 'out'
+                    with mock.patch.object(runner, 'tree_lock',
+                                           lambda *_a, **_k: recording_lock()), \
+                            mock.patch.object(runner, 'run_owned', failing_run_owned), \
+                            mock.patch.object(runner, '_anchor_errors', return_value=[]), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                            mock.patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                           '--case', 'memory-rehearsal-without-lock']):
+                        code = runner.main()
+                    summary = json.loads((out / 'summary.json').read_text())
+                    rows = summary['controls'] if isinstance(summary, dict) else summary
+                    self.assertTrue(code == 1
+                                    and len(rows) == 1 and rows[0]['status'] == 'INVALID'
+                                    and 'refused to start' not in stderr.getvalue()
+                                    and 'tree lock or anchor read failed' not in stderr.getvalue(), marker)
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
 
 class LifecycleTests(unittest.TestCase):
     def _collector_profile(self, field, expected, marker):

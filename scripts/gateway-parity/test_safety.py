@@ -2911,9 +2911,13 @@ class SameJsonSurfaces(unittest.TestCase):
         # #2431: a startup-phase failure (the tree lock becoming unavailable
         # before the first mutation) must be a refusal, not a red run -- rc 2,
         # the claimed directory withdrawn, no summary.json that reads like a
-        # finished run.  preflight is stubbed so the kill lands on the rc2
-        # semantics itself, not on anchor bookkeeping; the case never runs,
-        # the guard refuses before it.
+        # finished run.  The case never runs, the guard refuses before it.
+        # #2795 fix-r14 (DS sibling#1 = boundary#1 = MM sibling#2): the old
+        # `patch.object(module, 'preflight', lambda: True)` stub here was dead
+        # -- the memory branch's preflight sits inside one(), *after* the lock
+        # below, so this refusal fires before any preflight call could happen
+        # and the stub asserted nothing while normalizing the exact "dead stub
+        # masks the moved preflight" shape the plan runner deleted in r13.
         import io
         marker = '#2431 the memory branch refuses a startup failure with rc 2'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
@@ -2931,8 +2935,7 @@ class SameJsonSurfaces(unittest.TestCase):
                     def __exit__(self, *_exc):
                         return None
 
-                with patch.object(module, 'preflight', lambda: True), \
-                        patch.object(module, 'tree_lock', lambda *_a, **_k: refusing_lock()), \
+                with patch.object(module, 'tree_lock', lambda *_a, **_k: refusing_lock()), \
                         patch('sys.stdout', new_callable=io.StringIO), \
                         patch('sys.stderr', new_callable=io.StringIO) as stderr, \
                         patch.object(sys, 'argv', [str(path), str(out), '--memory',
@@ -2946,6 +2949,194 @@ class SameJsonSurfaces(unittest.TestCase):
                                 and not out.exists()
                                 and not (out / 'summary.json').exists()
                                 and 'guard refused to start' in stderr.getvalue(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_preflights_anchors_inside_the_lock(self):
+        # #2795 fix-r14 (DS sibling#1 = DS boundary#1 = MM sibling#2, three
+        # reviewers hit the same point): the r13 change folded the whole-table
+        # anchor preflight into the memory rehearsal's 900 s lock window in
+        # same-json too, but added zero pins for it -- deleting the
+        # ``if memory and not table_checked:`` block in one() kept every
+        # existing test green.  This pin gives the preflight an observable
+        # event; same-json's preflight is the single preflight() call (no
+        # _anchor_errors/_anchor_report split like the plan runner), so the
+        # mirror observes one 'precheck' event: exactly once, inside the
+        # lock, before any child.
+        import io
+        marker = ('#2795 same-json memory rehearsal preflights the whole anchor table '
+                  'inside the lock, before any child')
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            spec = importlib.util.spec_from_file_location('samejson_memory_precheck', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def recording_preflight():
+                order.append('precheck')
+                return True
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(common.ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-samejson-precheck-') as folder:
+                    with patch.object(module, 'tree_lock', recording_tree_lock), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch.object(module, 'preflight', recording_preflight), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
+                                                       'memory-rehearsal-without-lock']):
+                        module.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((module.root,), {'timeout': 900})]
+                            and order[:2] == ['lock', 'precheck']
+                            and order.count('precheck') == 1
+                            and order.index('precheck') < order.index('child'), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_refuses_stale_anchor_table(self):
+        # #2795 fix-r14 (same three-reviewer hit): a stale anchor table at
+        # memory-rehearsal startup is a refusal -- rc 2, no summary.json, the
+        # claimed directory withdrawn, no child launched -- never rc 1 plus an
+        # all-INVALID summary that reads like a finished run.  Deleting the
+        # precheck block turns this red (the stale row becomes an INVALID row
+        # and the summary is published).  same-json's main() gates on
+        # registered(cases, EXPECTED_NAMES) before the memory branch, so the
+        # probe row replaces EXPECTED_NAMES too (the plan twin has no such
+        # gate).
+        import io
+        marker = '#2795 same-json memory rehearsal refuses a stale anchor table before any child runs'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            spec = importlib.util.spec_from_file_location('samejson_memory_stale', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            # The stale bytes are built by concatenation so the literal never
+            # appears in this file (a self-anchoring row would count 1 and the
+            # precheck would pass); the target is a GUARDED_PATHS member, so
+            # the "case target outside GUARDED_PATHS" guard stays quiet and
+            # the only preflight error is the stale anchor itself.
+            stale = [('stale-anchor-probe', module.session,
+                      'r13 stale anchor probe bytes ' + 'that appear nowhere', 'x',
+                      'test_memory_rehearsal_holds_tree_lock')]
+            launched = []
+
+            class recording_lock:
+                def __enter__(self):
+                    pass
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def fake_run_owned(command, **_keywords):
+                launched.append(list(command))
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(common.ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-samejson-stale-') as folder:
+                    out = Path(folder) / 'out'
+                    with patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                    'stale-anchor-probe']), \
+                            patch.object(module, 'cases', stale), \
+                            patch.object(module, 'EXPECTED_NAMES', ('stale-anchor-probe',)), \
+                            patch.object(module, 'messages', {'stale-anchor-probe': 'unused'}), \
+                            patch.object(module, 'tree_lock',
+                                         lambda *_a, **_k: recording_lock()), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                        try:
+                            module.main()
+                            raised = None
+                        except SystemExit as exit_code:
+                            raised = exit_code
+                    self.assertTrue(raised is not None and raised.code == 2
+                                    and not launched
+                                    and 'guard refused to start' in stderr.getvalue()
+                                    and not (out / 'summary.json').exists()
+                                    and not out.exists(), marker)
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_refuses_a_busy_tree_lock(self):
+        # #2795 fix-r14 (same three-reviewer hit): a sibling mutation runner
+        # holding the source lock longer than the 900 s acquire bound makes a
+        # busy lock a refusal (rc 2, family message, no summary, the claimed
+        # directory withdrawn).  The #2431 pin above covers the OSError
+        # refusal shape at the same acquire; this one adds the busy-lock
+        # TimeoutError shape the plan/e2e twins pinned in r13.
+        import io
+        marker = '#2795 same-json memory rehearsal refuses a busy tree lock with rc 2 and no evidence'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            spec = importlib.util.spec_from_file_location('samejson_memory_busy', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            launched = []
+
+            class refusing_lock:
+                def __enter__(self):
+                    raise TimeoutError('probe: source lock busy')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def fake_run_owned(command, **_keywords):
+                launched.append(list(command))
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(common.ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-samejson-busy-') as folder:
+                    out = Path(folder) / 'out'
+                    with patch.object(module, 'tree_lock',
+                                      lambda *_a, **_k: refusing_lock()), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                            patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                       'memory-rehearsal-without-lock']):
+                        try:
+                            module.main()
+                            raised = None
+                        except SystemExit as exit_code:
+                            raised = exit_code
+                    self.assertTrue(raised is not None and raised.code == 2
+                                    and not launched
+                                    and 'guard refused to start: TimeoutError' in stderr.getvalue()
+                                    and not (out / 'summary.json').exists()
+                                    and not out.exists(), marker)
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

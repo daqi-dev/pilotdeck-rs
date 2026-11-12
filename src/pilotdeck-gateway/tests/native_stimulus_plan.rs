@@ -88,6 +88,21 @@ fn native_stimulus_plan_controls() {
         "PlanTests.test_unknown_and_detached_plan",
         "PlanTests.test_unwitnessed_is_not_run",
         "PlanTests.test_memory_rehearsal_holds_tree_lock",
+        // #2795 fix-r14 (DS concurrency#1 = MM sibling#1, two reviewers hit
+        // the same P1): the three memory-rehearsal pins r13 added to the
+        // fixture were never listed here, so `cargo test` never ran them and
+        // the "preflight folded into the 900 s lock window / startup-phase
+        // rc 2 refusal" contracts had no CI evidence (deleting the
+        // implementation stayed green). New fixture pins MUST be registered
+        // here in the same change: this list is the only selective entry for
+        // the plan-side fixture (#2396 precedent, comment above).
+        "PlanTests.test_memory_rehearsal_preflights_anchors_inside_the_lock",
+        "PlanTests.test_memory_rehearsal_refuses_stale_anchor_table",
+        "PlanTests.test_memory_rehearsal_refuses_a_busy_tree_lock",
+        // #2795 fix-r14 (DS sibling#2, the paired other half): a guard
+        // failure *after* `began` flips must stay a red run (rc 1 + INVALID
+        // summary), pinned together with the "never started" refusals above.
+        "PlanTests.test_memory_rehearsal_publishes_invalid_after_began",
         "AdapterTests.test_storage_arms_match_the_arming_table",
         "AdapterTests.test_driver_slow_status_choreography",
         "AdapterTests.test_driver_slow_append_two_barriers",
