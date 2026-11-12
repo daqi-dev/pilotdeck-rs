@@ -15,9 +15,12 @@
      不必重审（同 Gerrit trivial rebase 保留评审）；任何一行不同、上下文变了、或算不出指纹，都按旧提交拒收。
 
   4. 修复轮字段（#3056，长尾收口卡「机检落点」）：正文第一个非空行含 `fix-r<N>`、或其后首个
-     标题回显形态（行首 `fix(...) #N fix-rM：…` 的提交标题形）的行含 `fix-r<N>`，即判为修复轮 PR
-     （提交标题回显；首行是 badge / `## 概述` / 结果块时靠标题回显行兜住——只认行首标题形态，
-     不误扫正文中间的普通提及；再没有则漏判——fail-open，与「防漏跑不防伪造」同一威胁模型）。
+     标题回显形态（行首完整提交标题形：类型词 + 可选 (scope) + 可选 `!` + 冒号〔半/全角〕或空白
+     分隔 + `#<issue 号>` + `fix-r<N>`，即 `fix(gateway) #1 fix-r5：…`、`fix(scripts): #3074 fix-r3：…`、
+     `fix: #1 fix-r5 …`）的行含 `fix-r<N>`，即判为修复轮 PR（提交标题回显；首行是 badge /
+     `## 概述` / 结果块时靠标题回显行兜住——只认行首完整标题形态，不误扫正文中间的普通提及；
+     #N 与 fix-r<N> 之间非直连的变体（如 CJK 紧贴「修复fix-r5」）不触发，再没有则漏判——
+     fail-open，与「防漏跑不防伪造」同一威胁模型）。
      修复轮 PR 的每个结果块须带 `fixtype=<枚举式|结构性|不适用>`
      （字面三值，子类字样一律写「结构性」）；N≥4 另须正文恰一个 `<!-- pdrs-residual: <非空> -->`
      （无上一轮写字面值「无上一轮」，空白与占位符不算，围栏 / 引用块里的示例不算声明——口径与任务书侧
@@ -65,12 +68,16 @@ FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
 # \w 边界把整轮判没 → fixtype/residual/N≥4 全跳、闸门假 PASS（DS boundary P0，Python 3.14 实测
 # re.match(r"\w", "复") 为 True）。中文不是 fix-r 的词组成部分，ASCII 边界足够。
 FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d+)(?![A-Za-z0-9_-])")
-# 修 9（MM2 boundary#2）：首行不是标题回显（badge / `## 概述` / 结果块）时，修复轮识别放宽为
-# 继续扫首个**标题回显形态**的行——行首提交标题形（类型词 + 可选 (scope) + 空白/结尾），如
-# `fix(gateway) #1 fix-r5：停泊补 waker`；「上轮 fix-r5 评审指出」「fix-r5 任务书在 _tmp」这类
-# 普通提及没有标题形态，不触发（只认标题形态，不误扫正文中间的提及）。
+# 修 9（MM2 boundary#2）+ fix-r3 收紧（DS boundary#1 P0 / DS boundary#2）：首行不是标题回显
+# （badge / `## 概述` / 结果块）时，扫首个**完整标题形态**的行——类型词 + 可选 (scope) + 可选 `!`
+# + 冒号（半/全角）或空白分隔，随后 `#<issue 号>` 与 `fix-r<轮号>`：`fix(gateway) #1 fix-r5：…`
+# （仓内提交形）、`fix(scripts): #3074 fix-r3：…` / `fix: #1 fix-r5 …`（冒号形）都进修复轮判读。
+# 旧口径只认「行首类型词 + 空白/结尾」两向都歪：冒号形标题的 fixtype / pdrs-residual 整套被跳过
+# （假 PASS），而「test 覆盖了 fix-r5 的场景」这类类型词开头的散文行反被判成修复轮（假 FAIL）。
+# 分隔符消费一个字符，`fixed #1 fix-r5` 不是行首类型词；#N 与 fix-rN 非直连的变体（CJK 紧贴等）
+# 不认，漏判 fail-open（docstring 规则 4 同一威胁模型）。
 TITLE_ECHO = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert|hotfix)"
-                        r"(\([^)\n]{0,80}\))?!?(?=\s|$)")
+                        r"(\([^)\n]{0,80}\))?!?(?:[:：]|\s)\s*#\d+(?![A-Za-z0-9_])\s+fix-r\d+(?![A-Za-z0-9_-])")
 RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
 # 值域 = 字面三值的字符集：紧贴的中文标点/后续文字不并进值（DS boundary#3）——
 # 「fixtype=结构性，纯文档」里值停在 结构性，「，纯文档」由 check() 的值后终止检查拒收（判缺/非法）。
@@ -78,8 +85,8 @@ WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) +
 
 
 def fix_round_from_body(body: str):
-    """正文第一个非空行里的 fix-r<N>；首行没有则继续扫首个标题回显形态（TITLE_ECHO）的行；
-    都没有则 None。首行与正文都不回显标题会漏判（fail-open，见 docstring 规则 4）。"""
+    """正文第一个非空行里的 fix-r<N>；首行没有则继续扫首个完整标题形态（TITLE_ECHO，见其
+    注释）的行；都没有则 None。首行与正文都不回显标题会漏判（fail-open，见 docstring 规则 4）。"""
     first = True
     for line in body.split("\n"):
         s = line.strip()

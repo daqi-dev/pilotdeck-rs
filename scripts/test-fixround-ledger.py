@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -89,13 +91,26 @@ def main() -> int:
         run("register", str(led), "#2692/glm/r13", "--status", "PASS")
         run("register", str(led), "#2692/glm/r14", "--status", "ERROR")
         cp = run("judge", str(led))
-        for key, want in (("#2692/ds/r11", "contention_first"), ("#2692/ds/r11", "contention_counted"),
-                          ("#2692/ds/r11", "superseded"), ("#2692/ds/r12", "available"),
-                          ("#2692/ds/r13", "unavailable_other"),
+        jlines = [ln for ln in cp.stdout.splitlines() if ln.startswith("#")]
+        # 修 3（MM sibling#1 P2）：judge 与 count 同一键归并——每键恰一行，不再逐条输出同键多行；
+        # ds/r11 三条（首登争抢 + 补跑争抢 + 重复补跑）归并成 contention_counted（计入类最严 + 补跑），
+        # superseded 行不再出现
+        if len(jlines) != len({ln.split(":", 1)[0] for ln in jlines}):
+            fails.append(f"judge：按键归并后同键不得多行（{jlines}）")
+        if any(ln.startswith("#2692/ds/r11:") and ("contention_first" in ln or "superseded" in ln) for ln in jlines):
+            fails.append(f"judge：ds/r11 归并后不应再出现 contention_first / superseded 行（{jlines}）")
+        for key, want in (("#2692/ds/r11", "contention_counted"), ("#2692/ds/r12", "available"),
+                          ("#2692/ds/r13", "unavailable_other"), ("#2692/mm/r11", "unavailable_other"),
+                          ("#1953/ds/r40", "unavailable_other"),
                           ("#2692/glm/r11", "contention_first"), ("#2692/glm/r12", "contention_counted"),
                           ("#2692/glm/r13", "available"), ("#2692/glm/r14", "unavailable_other")):
-            if not any(ln.startswith(key + ":") and want in ln for ln in cp.stdout.splitlines()):
+            if not any(ln.startswith(key + ":") and want in ln for ln in jlines):
                 fails.append(f"judge：{key} 应有分类 {want} 的行（输出：{cp.stdout}）")
+        # 归并行标注补跑 / 首登（钉「·键归并取最严」标记本身，不与分类文案里的「补跑」词混淆）
+        if not any(ln.startswith("#2692/ds/r11:") and "补跑·键归并" in ln for ln in jlines):
+            fails.append(f"judge：ds/r11 归并行应标注补跑形态（{jlines}）")
+        if not any(ln.startswith("#2692/glm/r11:") and "首登·键归并" in ln for ln in jlines):
+            fails.append(f"judge：glm/r11 行应标注首登形态（{jlines}）")
 
         # 坏行 fail-closed：count / judge / register 遇无法解析的行一律 rc 2，绝不跳过
         bad = tmp / "bad.jsonl"
@@ -165,6 +180,32 @@ def main() -> int:
         if cp.returncode != 1 or "#7/ds: 2" not in cp.stdout or "停手" not in cp.stdout:
             fails.append(f"count：不同键各一次失败应计 2 触发停手 rc=1（rc={cp.returncode}、{cp.stdout}）")
 
+        # 修 2（MM concurrency#1 P1 = DS boundary#3 + MM sibling#2 三撞）交错序列：同键
+        # 「首登 unavailable_other（计入类失败）+ 补跑 PASS」→ 归并按计入类取最严，仍计 1——
+        # 补跑翻绿不得抹掉已计入的失败（判据 5 停手信号漏报）。负控口径：归并若改回
+        # 「补跑无条件优先」，本断言即红（count 变 0 行、#8/ds 无输出）。
+        led5 = tmp / "interleave" / "ledger.jsonl"
+        run("register", str(led5), "#8/ds/r1", "--status", "ERROR", "--note", "首登失败")
+        run("register", str(led5), "#8/ds/r1", "--status", "PASS", "--rerun", "--note", "补跑 PASS")
+        cp = run("count", str(led5))
+        if cp.returncode != 0 or "#8/ds: 1" not in cp.stdout:
+            fails.append(f"count：同键首登计入类失败 + 补跑 PASS 归并后仍计 1（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("judge", str(led5))
+        if not any(ln.startswith("#8/ds/r1:") and "unavailable_other" in ln and "首登·键归并" in ln
+                   for ln in cp.stdout.splitlines()):
+            fails.append(f"judge：同键首登失败 + 补跑 PASS 应归并到 unavailable_other（首登形态）：{cp.stdout}")
+        # 对照组：首登是排除段（contention_first）+ 补跑 PASS → 同档内补跑优先，不计入
+        led6 = tmp / "interleave2" / "ledger.jsonl"
+        run("register", str(led6), "#8/mm/r1", "--status", "ERROR", "--contention", "--note", "首登争抢")
+        run("register", str(led6), "#8/mm/r1", "--status", "PASS", "--rerun", "--note", "补跑成功")
+        cp = run("count", str(led6))
+        if cp.returncode != 0 or "#8/mm" in cp.stdout:
+            fails.append(f"count：首登排除段 + 补跑 PASS 应不计入（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("judge", str(led6))
+        if not any(ln.startswith("#8/mm/r1:") and "available" in ln and "补跑·键归并" in ln
+                   for ln in cp.stdout.splitlines()):
+            fails.append(f"judge：首登争抢 + 补跑 PASS 应归并到 available（补跑形态）：{cp.stdout}")
+
         # 修 5 负控：落盘失败 fail-closed（rc 2、干净文案不崩栈），短写/异常回滚不留半行
         blocker = tmp / "blocker"
         blocker.write_text("x", encoding="utf-8")
@@ -205,6 +246,79 @@ def main() -> int:
         cp = run("count", str(led4))
         if cp.returncode != 0 or "#2/ds: 1" not in cp.stdout or "fail-closed" in cp.stderr:
             fails.append(f"count：短写补写后台账应是整行可解析（rc={cp.returncode}、{cp.stdout}、{cp.stderr.strip()[:60]}）")
+
+        # 修 4（DS boundary#4）：register 的 flock / fstat OSError 收进干净文案 rc 2——
+        # 留在 try 外会以 traceback rc 1 逃出，冒充「count 触发阈值」（rc 1 是停手专属信号）
+        led7 = tmp / "oserr" / "ledger.jsonl"
+        led7.parent.mkdir(parents=True, exist_ok=True)
+        real_flock = flg.fcntl.flock
+
+        def _flock_boom(fd: int, op: int) -> None:
+            raise OSError("EWOULDBLOCK（模拟）")
+
+        try:
+            flg.fcntl.flock = _flock_boom
+            rc = flg.register(str(led7), "#3/ds/r1", "ERROR", False, False, "")
+        finally:
+            flg.fcntl.flock = real_flock
+        if rc != 2 or led7.exists() and led7.read_bytes():
+            fails.append(f"register：flock OSError 应 rc=2 干净拒跑不落半行（rc={rc}、剩 {led7.read_bytes()!r}）")
+        # 写前长度的 fstat 抬错（第 2 次调用：第 1 次是 register 持锁内读快照的 fstat）
+        led8 = tmp / "oserr2" / "ledger.jsonl"
+        led8.parent.mkdir(parents=True, exist_ok=True)
+        real_fstat = os.fstat
+        calls = {"n": 0}
+
+        def _fstat_nth_boom(fd: int):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise OSError("EIO（模拟）")
+            return real_fstat(fd)
+
+        try:
+            flg.os.fstat = _fstat_nth_boom
+            rc = flg.register(str(led8), "#3/ds/r2", "ERROR", False, False, "")
+        finally:
+            flg.os.fstat = real_fstat
+        if rc != 2 or led8.read_bytes():
+            fails.append(f"register：写前 fstat OSError 应 rc=2 不落半行（rc={rc}、剩 {led8.read_bytes()!r}）")
+
+        # 修 5（MM concurrency#2）：count / judge 读路径共享锁——静态断言 + 慢写者冒烟。
+        # 真并发负控的构造：写者子进程持 LOCK_EX 写半行后睡 3 s 再补写整行；读者（count 子进程）
+        # 必须在共享锁上等写者放锁再快照——不取锁会立刻读到残行，坏行 fail-closed 连坐 rc 2。
+        rsrc = inspect.getsource(flg.read_lines)
+        if "fcntl.flock" not in rsrc or "LOCK_SH" not in rsrc:
+            fails.append("修5：read_lines 读路径须取共享锁（LOCK_SH）与写者互斥")
+        led9 = tmp / "readerlock" / "ledger.jsonl"
+        led9.parent.mkdir(parents=True, exist_ok=True)
+        ready = tmp / "half-done"
+        slow = tmp / "slowwriter.py"
+        slow.write_text(
+            "import fcntl, os, sys, time\n"
+            "fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)\n"
+            "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+            "os.write(fd, b'{\"key\": \"#9/ds/r1\", \"sta')\n"
+            "open(sys.argv[2], 'w').close()\n"
+            "time.sleep(3)\n"
+            "os.write(fd, b'tus\": \"ERROR\"}\\n')\n"
+            "fcntl.flock(fd, fcntl.LOCK_UN)\n"
+            "os.close(fd)\n", encoding="utf-8")
+        pw = subprocess.Popen([sys.executable, "-I", str(slow), str(led9), str(ready)],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ))
+        try:
+            for _ in range(200):
+                if ready.exists():
+                    break
+                time.sleep(0.05)
+            if not ready.exists():
+                fails.append("修5：慢写者未就绪（ready 标记 10 s 内未出现）")
+            else:
+                cp = run("count", str(led9))
+                if cp.returncode != 0 or "#9/ds: 1" not in cp.stdout:
+                    fails.append(f"修5：写者持锁补写期间 count 应等锁读整行（rc={cp.returncode}、"
+                                 f"{cp.stdout.strip()[:60]}、{cp.stderr.strip()[:60]}）")
+        finally:
+            pw.wait(timeout=60)
 
     for f in fails:
         print("FAIL", f)
