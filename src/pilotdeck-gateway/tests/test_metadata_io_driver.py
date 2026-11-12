@@ -1694,13 +1694,20 @@ class EnvironmentControls(unittest.TestCase):
         # #2795 fix-r8（评审 simplify#1）：commands 从类常量
         # optimize_guards_self_tests 的同一清单派生，不再与 minimums 两处
         # 手抄（fix-r6→fix-r7 曾漂移过一次）；对照语义不变。
+        # #2795 fix-r9（评审 sibling#1）：对照从单向子集改集合等价——旧
+        # ``all(command in ci_run_commands(step))`` 只钉「常量 ⊆ ci.yml」：
+        # ci.yml 加第九条命令（常量不跟）时八条仍全在 → 绿，删常量任一
+        # 元组（ci.yml 不跟）也仍绿，与上面「删掉任一条必须红」的双向
+        # 宣称不符。run 块里的注释行不计入对照（同
+        # test_each_npm_job_sets_up_its_own_node 的既有惯例）。
         commands = tuple('python3 -B -m unittest -v ' + module
                          for module, _minimum in self.optimize_guards_self_tests)
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
-                    if all(command in self.ci_run_commands(step, '#1666')
-                           for command in commands)]
+                    if sorted(commands) == sorted(
+                        command for command in self.ci_run_commands(step, '#1666')
+                        if not command.lstrip().startswith('#'))]
         self.assertEqual(len(matching), 1,
                          '#1666 required CI job must run the -O invariance self-tests')
         fields = self.ci_step_fields(matching[0], '#1666')
@@ -2506,29 +2513,32 @@ class EnvironmentControls(unittest.TestCase):
         # 与 #994 / #2133 同形。该步是 run 块（命令逐轮增补，fix-r7 起八条），
         # 删掉其中任一条（以 #2309 roster-guards 为代表）必须杀在「必须跑全部
         # 命令」的断言上；if / continue-on-error / 错 cwd 按步名锚定插入或改值。
+        # #2795 fix-r9（评审 sibling#1）：removed/commented 逐条从类常量
+        # optimize_guards_self_tests 派生（fix-r8 负控只手抄 roster/meta/
+        # suite 三条命令字面——其余五条删行无负控）；并补两个单向子集断言
+        # 下静默的方向：ci.yml 加常量外第九条命令、常量删任一元组（后者
+        # 是 patch.object 原地负控，见本方法下半段）。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
-        command = 'python3 -B -m unittest -v test_negative_roster_guards'
-        meta_command = ('python3 -B -m unittest -v '
-                        'session-domain-expectations/test_meta_controls.py')
-        suite_command = 'python3 -B -m unittest -v test_negative_suite'
         required = '#1666 required CI job must run the -O invariance self-tests'
-        cases = [(name_, workflow.replace(old, new, 1), message)
-                 for name_, old, new, message in (
-            ('optimize-self-test-removed', command + '\n', '',
-             required),
-            ('optimize-self-test-commented', command, '# ' + command,
-             required),
-            # #2795 fix-r7（评审 sibling#3）：两条新命令的删行/注释形——
-            # fix-r6 接线时 commands 没跟上，删掉第七条曾不红。
-            ('meta-controls-self-test-removed', meta_command + '\n', '',
-             required),
-            ('meta-controls-self-test-commented', meta_command,
-             '# ' + meta_command, required),
-            ('suite-self-test-removed', suite_command + '\n', '',
-             required),
-            ('suite-self-test-commented', suite_command,
-             '# ' + suite_command, required),
+        cases = []
+        for module, _minimum in self.optimize_guards_self_tests:
+            command = 'python3 -B -m unittest -v ' + module
+            cases.append((f'optimize-self-test-removed-{module}',
+                          workflow.replace(command + '\n', '', 1), required))
+            cases.append((f'optimize-self-test-commented-{module}',
+                          workflow.replace(command, '# ' + command, 1), required))
+        # ci.yml 加常量外的第九条命令（常量不跟）：子集断言下仍绿。
+        last_command = ('python3 -B -m unittest -v '
+                        + self.optimize_guards_self_tests[-1][0])
+        extra_command = 'python3 -B -m unittest -v test_negative_untracked_module'
+        cases.append(('optimize-self-test-extra-command',
+                      workflow.replace(last_command + '\n',
+                                       last_command + '\n          '
+                                       + extra_command + '\n', 1),
+                      required))
+        cases.extend((name_, workflow.replace(old, new, 1), message)
+                     for name_, old, new, message in (
             ('optimize-self-test-skipped', name_line,
              name_line + '        if: false\n',
              '#1666 the -O self-test step must be unconditional and required'),
@@ -2548,9 +2558,45 @@ class EnvironmentControls(unittest.TestCase):
              '#1666 the -O self-test step must declare timeout-minutes: 5'),
             ('optimize-self-test-timeout-inflated',
              'timeout-minutes: 5\n        run: |', 'timeout-minutes: 360\n        run: |',
-             '#1666 the -O self-test step must declare timeout-minutes: 5'))]
+             '#1666 the -O self-test step must declare timeout-minutes: 5')))
         self.check_ci_mutations(
             cases, 'test_required_job_runs_the_optimize_guards_self_tests', '#1666')
+        # #2795 fix-r9（评审 sibling#1 反向）：常量删任一元组（ci.yml 不跟）
+        # ——子集断言下命令钉与下限一起静默消失；集合等价后必须红。逐项
+        # patch.object 原地施加，全部跑完再汇总（与 check_ci_mutations 同
+        # 口径：正控先绿、变异必须杀在专属消息上、恢复后再绿；任一非
+        # KILLED 即红）。
+        constant_results = []
+        for dropped, _minimum in self.optimize_guards_self_tests:
+            trimmed = tuple(entry for entry in self.optimize_guards_self_tests
+                            if entry[0] != dropped)
+            name = f'optimize-self-test-constant-dropped-{dropped}'
+            status, reason = 'INVALID', 'positive control did not complete'
+            try:
+                self.test_required_job_runs_the_optimize_guards_self_tests()
+                with patch.object(type(self), 'optimize_guards_self_tests', trimmed):
+                    try:
+                        self.test_required_job_runs_the_optimize_guards_self_tests()
+                    except AssertionError as error:
+                        status = 'KILLED' if required in str(error) else 'INVALID'
+                        reason = str(error)
+                    else:
+                        status, reason = ('SURVIVED',
+                                          'wiring pin passed with a dropped tuple')
+                self.test_required_job_runs_the_optimize_guards_self_tests()
+            except Exception as error:  # noqa: BLE001 - recorded, never fatal
+                status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+            constant_results.append((name, status))
+            print(f'{name}: {status}: {reason}', flush=True)
+        counts = {state: sum(result == state for _, result in constant_results)
+                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        print(f'#1666 constant-drop negative summary: {counts}', flush=True)
+        self.assertTrue(
+            constant_results
+            and all(status == 'KILLED' for _, status in constant_results),
+            '#1666 dropping any tuple from optimize_guards_self_tests must '
+            'fail the wiring pin (the ci.yml command that tuple tracked is '
+            f'still on disk): {constant_results}')
 
     def test_environment_controls_step_ci_regressions_are_rejected(self):
         # r39（DS sibling#1 P2）：driver 步（跑 EnvironmentControls 全套）的

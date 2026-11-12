@@ -1327,7 +1327,9 @@ def _anchor_read_window_alias_call(tree):
 # 纪律（旧三拼写 55 站的形态），又不在续跑表豁免清单里 → 红。豁免清单 =
 # legacy-migration-backlog.txt 本身（单一真相源，测试不复制清单）。已知
 # 盲区（登记不修）：test_* 前缀文件、门内经本文件 helper 或跨模块 helper
-# 裸读且文件另处持 tree_lock 的站（人工登记进续跑表「盲区登记」节）、
+# 裸读且文件另处持 tree_lock 的站（人工登记进续跑表
+# 「二（续）、扫描盲区登记」节——fix-r9 勘误：此前写作「盲区登记」节，
+# 仓内无此节名）、
 # 门经中间布尔变量拼写的站（谓词只看 If/IfExp 的 test，该拼写的 Compare
 # 在 Assign 里——fix-r8 boundary#3 登记进续跑表「二（续三）」节）。
 # ---------------------------------------------------------------------------
@@ -1452,21 +1454,28 @@ def bare_check_preflight_signature(text):
 
 
 def _has_gate_literal(text):
-    # The regex half of the gate detector for sources ast cannot parse —
-    # every shape the AST half sees, all fail-closed: the literal compare
-    # (constant sequence or bare string, either order), the membership test
-    # (flag before or after the ``in``), and the argparse attribute spelling.
-    # An unparseable gate file must not sail past (#2795 fix-r7 widened the
-    # two literal-compare shapes to the membership spellings; fix-r8
-    # boundary#2 pins this half with an unparseable synthetic fixture — until
-    # then no test reached the SyntaxError branch at all).
+    # The regex half of the gate detector for sources ast cannot parse, all
+    # fail-closed: the literal compare (constant sequence or bare string,
+    # either side of the ``==``), the membership test (flag before or after
+    # the ``in``), and the argparse attribute spelling anywhere between
+    # ``if`` and the branch colon — ``if args.check:`` but also ``if not
+    # args.check:`` / ``if (args.check):`` / ``if flags.args.check:``.
+    # #2795 fix-r9（评审 boundary#1）：fix-r8 的属性替代式
+    # ``if\s+\w+\.check`` 只认 if 与属性之间一个裸名（not / 括号 / 多级
+    # 属性全漏），``['--check'] == args`` 则不命中任何比较替代式——两个
+    # 方向都由 test_the_bare_scan_detects_each_kill_shape 的参数化不可
+    # 解析夹具钉住。比 AST 半边宽一个角（有意为之）：if 测试里带引号的
+    # ``"x.check"`` 在这半边命中、AST 半边不命中——对已经残缺到不可
+    # 解析的源，多点名是 fail-closed 方向；且 fixtures 树内没有不可
+    # 解析的 *.py（fix-r8 验证、fix-r9 复验：411 个全可解析）。
     check = r'''['"]--check(?:-anchors)?['"]'''
     return bool(re.search(r'''==\s*\[\s*''' + check + r'''\s*\]''', text)
                 or re.search(r'''==\s*''' + check, text)
                 or re.search(check + r'''\s*==''', text)
+                or re.search(r'''\[\s*''' + check + r'''\s*\]\s*(?:==|\bin\b)''', text)
                 or re.search(check + r'''\s+in\s+''', text)
                 or re.search(r'''\bin\b[^\n]*''' + check, text)
-                or re.search(r'''if\s+\w+\.check(?:_anchors)?\b''', text))
+                or re.search(r'''if\s+[^:\n]*\.check(?:_anchors)?\b''', text))
 
 
 def _bare_check_entries(root):
@@ -1974,10 +1983,13 @@ class BareCheckPreflightBacklog(unittest.TestCase):
         # fix-r6 predicate only saw the first two shapes and four live
         # stations sailed past; the one spelling outside the predicate — the
         # intermediate-boolean gate — is a registered blind spot, fix-r8
-        # boundary#3, pinned in its own test below); an unparseable source
-        # with the gate literal is flagged through _has_gate_literal, the
+        # boundary#3, pinned in its own test below); unparseable sources
+        # with the gate literal are flagged through _has_gate_literal, the
         # regex half for sources ast cannot parse (fix-r8, boundary#2: no
-        # test reached the SyntaxError branch before); and a bare entry whose
+        # test reached the SyntaxError branch before; fix-r9, boundary#1:
+        # parameterized over the membership / not-prefixed attribute /
+        # multi-level attribute / sequence-on-left spellings the widened
+        # alternatives now cover); and a bare entry whose
         # code merely uses plausible-sounding identifiers (out /
         # registrations / selected) stays flagged (fix-r8, boundary#1:
         # those names joining _COVERED_CODE_NAMES would silently exempt real
@@ -2073,12 +2085,41 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                                     "        out[row[0]] = selected\n"
                                     "        registrations.append(row[0])\n")
             # #2795 fix-r8（boundary#2）：语法残缺但含门字面——ast 半边不可
-            # 达，必须由 _has_gate_literal 正则半边标出。
-            unparseable = base / 'new-unparseable-bare' / 'negative_controls.py'
-            unparseable.parent.mkdir()
-            unparseable.write_text("import sys\n"
-                                   "if '--check-anchors' in sys.argv:\n"
-                                   "    sources = {path: path.read_text()\n")
+            # 达，必须由 _has_gate_literal 正则半边标出。fix-r9（boundary#1）
+            # 参数化门拼写：成员测试之外，钉「if not args.check:」与多级
+            # 「if flags.args.check:」（fix-r8 属性替代式 \w+\.check 只认 if
+            # 后单个裸名）及序列在左的 == / in（fix-r8 比较替代式只认
+            # 旗标在左）——全部实测为 SyntaxError（'{' was never closed）。
+            unparseable_gate_spellings = (
+                ('new-unparseable-bare',
+                 "import sys\n"
+                 "if '--check-anchors' in sys.argv:\n"
+                 "    sources = {path: path.read_text()\n"),
+                ('new-unparseable-not-bare',
+                 "import argparse\n"
+                 "if not args.check:\n"
+                 "    sources = {path: path.read_text()\n"),
+                ('new-unparseable-paren-bare',
+                 "import argparse\n"
+                 "if (args.check):\n"
+                 "    sources = {path: path.read_text()\n"),
+                ('new-unparseable-multi-attr-bare',
+                 "import argparse\n"
+                 "if flags.args.check:\n"
+                 "    sources = {path: path.read_text()\n"),
+                ('new-unparseable-seq-left-eq-bare',
+                 "import sys\n"
+                 "if ['--check'] == sys.argv[1:]:\n"
+                 "    sources = {path: path.read_text()\n"),
+                ('new-unparseable-seq-left-in-bare',
+                 "import sys\n"
+                 "if ['--check'] in sys.argv:\n"
+                 "    sources = {path: path.read_text()\n"),
+            )
+            for station, unparseable_source in unparseable_gate_spellings:
+                unparseable = base / station / 'negative_controls.py'
+                unparseable.parent.mkdir()
+                unparseable.write_text(unparseable_source)
             found = _bare_check_entries(base)
         self.assertTrue(found == {'new-bare/negative_controls.py',
                                   'new-argparse-bare/negative_controls.py',
@@ -2089,15 +2130,28 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                                   'new-boolop-bare/negative_controls.py',
                                   'new-common-named-bare/negative_controls.py',
                                   'new-unparseable-bare/'
+                                  'negative_controls.py',
+                                  'new-unparseable-not-bare/'
+                                  'negative_controls.py',
+                                  'new-unparseable-paren-bare/'
+                                  'negative_controls.py',
+                                  'new-unparseable-multi-attr-bare/'
+                                  'negative_controls.py',
+                                  'new-unparseable-seq-left-eq-bare/'
+                                  'negative_controls.py',
+                                  'new-unparseable-seq-left-in-bare/'
                                   'negative_controls.py'},
                         '#2795 fix-r6: the bare-check scan must flag the '
                         'gate+read entry with no discipline of its own in '
                         'every gate spelling the scan covers (literal '
                         'compare, argparse attribute, argv membership, '
                         'bare string compare, '
-                        'alias-tuple membership, BoolOp nesting), plus the '
-                        'unparseable source with the gate literal (regex '
-                        'half, fix-r8 boundary#2) and the entry whose code '
+                        'alias-tuple membership, BoolOp nesting), plus every '
+                        'unparseable gate spelling the regex half covers '
+                        '(membership, if not args.check / multi-level '
+                        'attribute, sequence-on-left == / in — fix-r8 '
+                        'boundary#2, widened and parameterized in fix-r9 '
+                        'boundary#1) and the entry whose code '
                         'merely uses plausible identifiers — out / '
                         'registrations / selected exempt nothing (fix-r8 '
                         'boundary#1) — and only those: an entry behind a '
@@ -2162,6 +2216,14 @@ class BareCheckPreflightBacklog(unittest.TestCase):
         gate.main()/check_anchors() 读 PANEL/SESSION 无锁）因此扫描根本
         看不见——登记行删掉没有任何功能后果，只有本钉红。迁移
         （变体循环包进 anchor_read_window）完成时随登记行删本断言。
+        #2795 fix-r9（评审 boundary#2）：豁免集只认「任意非注释行首
+        token」，登记行被挪到别的节、或 行= 窗口随上方代码移动而失真，
+        上面的集合断言看不见——补钉登记行原文前缀（路径 + 行窗口 +
+        形状头），台账漂移必须先过本钉。
+        #2795 fix-r9（评审 concurrency#1 改写判定依据）：登记不修的前提
+        是 README「不得与同树变异轮并发跑」为规范约束；该约束被违反时
+        KILLED 归因不独占，真 SURVIVED 变体可被记成假 KILLED（评审
+        五步交错序列成立）——依据见登记行本身，不再指向 fix-r8 RESULT。
         """
         held = backlog_exempted_entries()
         self.assertTrue(
@@ -2173,6 +2235,16 @@ class BareCheckPreflightBacklog(unittest.TestCase):
             'functional consequence and only this pin goes red; if the '
             'variant loop has been migrated onto anchor_read_window, drop '
             'the row and this assertion together')
+        backlog_text = LEGACY_MIGRATION_BACKLOG.read_text(encoding='utf-8')
+        row_prefix = ('  session-domain-expectations/test_meta_controls.py'
+                      '  行=652-688 形状=--negative 元控变体循环')
+        self.assertTrue(any(line.startswith(row_prefix)
+                           for line in backlog_text.split('\n')),
+                        '#2795 fix-r9: the variant-loop blind-spot row must '
+                        'keep its real text (path, 行= window and shape '
+                        'head): a row moved to another section or a stale '
+                        '行= window is invisible to the exemption-set '
+                        'assertion above, only this prefix pin goes red')
 
 
 class BackgroundPanicRunRefusal(unittest.TestCase):

@@ -88,9 +88,13 @@ class DriftTests(unittest.TestCase):
         # 的类建面收进真装置；本桩仍在，--negative 变体循环经
         # DriftTests(method).run() 走到这里，16 个变体驱动的 gate.main() /
         # gate.check_anchors() 读 PANEL/SESSION 因此都在无锁窗口（不是已
-        # 收口）——登记进续跑表「二（续）」，登记不修；判定理由（可达后果
-        # 为 fail-closed 假红/INVALID，未见可达假 KILLED；只读审计钩子对
-        # 锁文件 O_CREAT 的拦截是装置设计取舍）见 fix-r8 RESULT。
+        # 收口）——登记进续跑表「二（续）」行=652-688，登记不修。
+        # #2795 fix-r9（评审 concurrency#1 改写判定依据）：登记不修的前提
+        # 是 README「不得与同树变异轮并发跑」为规范约束——该约束被违反时
+        # KILLED 归因不独占，真 SURVIVED 变体可被兄弟 write/restore 窗口
+        # 内的变异 PANEL/SESSION 记成假 KILLED（评审五步交错序列成立；
+        # fix-r8 的「未见可达假 KILLED」撤回）；只读审计钩子对锁文件
+        # O_CREAT 的拦截仍是装置设计取舍。依据见续跑表该行。
         self.lock_events = []
         self.lock = _RecordingTreeLock(self.lock_events)
         patcher = patch.object(gate, 'tree_lock', self.lock)
@@ -583,8 +587,15 @@ def negative_checks():
 
     #2795 fix-r8（评审 concurrency#1，登记处置）：循环里的 DriftTests
     实例经 setUp 换记录桩，16 个变体驱动的 gate.main() / check_anchors()
-    读 PANEL/SESSION 因此无锁（fix-r7 只收 setUpClass 类建面）——登记进
-    续跑表「二（续）」，登记不修；判定理由见 fix-r8 RESULT。
+    读 PANEL/SESSION 因此无锁（fix-r7 只收 setUpClass 类建面；fix-r9
+    concurrency#2 勘误：真正无锁的读面是本函数 :652-688 的变体循环，
+    不是已持真锁的 _meta_class_setup :650）——登记进续跑表「二（续）」
+    行=652-688，登记不修。登记不修的前提（#2795 fix-r9，评审
+    concurrency#1 改写）：README「不得与同树变异轮并发跑」为规范约束
+    ——该约束被违反时 KILLED 归因不独占，真 SURVIVED 变体可被兄弟
+    write/restore 窗口内的变异 PANEL/SESSION 记成假 KILLED（评审五步
+    交错序列成立，fix-r8 的「未见可达假 KILLED」撤回）；只读审计钩子
+    对锁文件 O_CREAT 的拦截仍是装置设计取舍。依据见续跑表该行。
     """
     variants = (
         ('skip-binding-checks', 'check_bindings', '    errors = []', '    return []',

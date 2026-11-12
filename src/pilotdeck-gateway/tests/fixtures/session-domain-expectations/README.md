@@ -65,11 +65,17 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/nega
 `derived counts: …` 再打印 `N anchors: ok`，返回 0；组合调用（第 3 行）先跑
 同一预检再列 JSON 清单，预检失败时返回 2 且不输出清单。
 
-`--negative` 与 `test_meta_controls.py` 的 unittest 入口都经共享
-`anchor_read_window` 装置取真树锁（#2795 fix-r7 起）：需要仓库根可写——
-装置会在仓根创建 `.negative-source.lock`；锁被其他进程持有时等待 60 s 后
-以 rc 2 拒跑且无报告行（fail-closed，与「模块被掏空」在输出上不可区分）。
-这两条不得与同树的变异轮并发跑（#2795 fix-r8，评审 concurrency#2/#3）。
+`--negative` 与 `test_meta_controls.py` 的 unittest 入口的类建面
+（setUpClass / `_meta_class_setup`）都经共享 `anchor_read_window` 装置取
+真树锁（#2795 fix-r7 起）：需要仓库根可写——装置会在仓根创建
+`.negative-source.lock`；锁被其他进程持有时等待 60 s 后以 rc 2 拒跑且
+无报告行（fail-closed，与「模块被掏空」在输出上不可区分）。锁只覆盖
+类建面：`--negative` 其后的变体循环读面经 setUp 记录桩、无锁，是登记
+盲区（#2795 fix-r9，见 legacy-migration-backlog.txt「二（续）」行=652-688）。
+这两条不得与同树的变异轮并发跑（#2795 fix-r8，评审 concurrency#2/#3）；
+该并发禁令也是变体循环盲区「登记不修」的前提——被违反时 KILLED 归因
+不独占，真 SURVIVED 变体可被记成假 KILLED（#2795 fix-r9，评审
+concurrency#1）。
 
 `--source` 包含 `raw/` 下的观测与 preregistration / manifest、launch。
 原地源码负控要求 HEAD 与输入一致；不创建副本仓库或构建目录。
