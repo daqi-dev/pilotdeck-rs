@@ -450,7 +450,9 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["api_error_text"] = one_line(err_text)
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
-    if model and (not real_resp.issubset(allowed) or not usage or not usage.issubset(allowed)):
+    # real_resp 为空（只有 <synthetic>/None 占位）时 issubset 恒真，守卫退化为只靠 usage 一条证据——
+    # 拒：成功 result 必须至少带一条真实 assistant 响应名，否则谱系无从证明（边界 #1）。
+    if model and (not real_resp or not real_resp.issubset(allowed) or not usage or not usage.issubset(allowed)):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}（合法形 {sorted(allowed)}）"
         return rec
     text = result.get("result") if isinstance(result.get("result"), str) else ""

@@ -170,6 +170,11 @@ def main() -> int:
          expect_msg="缺等级计数")
     case("响应模型与请求不一致 → 不落盘", (200, ok_body(good, model="other-model")), 1,
          expect_msg="响应模型", not_msg=("Traceback",))
+    # llm-center 同一后端两种回显形（2026-11-12 实测）：原样回请求名也算同一家；别家的规范名仍拒
+    case("响应原样回显请求名 → 照常落盘", (200, ok_body(good, model="deepseek-v4.1-flash-mb")), 0,
+         expect_out=good, contract=True)
+    case("响应是别家规范名 → 不落盘", (200, ok_body(good, model="GLM-5.3")), 1,
+         expect_msg="响应模型")
     case("响应缺 stop_reason → 判形状异常", (200, b'{"model": "%s", "content": [{"type": "text", "text": "OK"}]}' % MODEL.encode()),
          1, expect_msg="缺 stop_reason")
     case("stop_reason=null → 判形状异常", (200, ok_body("OK", finish=None)), 1, expect_msg="null")
