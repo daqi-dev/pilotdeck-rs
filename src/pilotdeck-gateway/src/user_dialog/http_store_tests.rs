@@ -1158,7 +1158,10 @@ async fn close_closes_listener_with_a_duplicate_descriptor() {
     let successor = TcpListener::bind(address)
         .await
         .expect("a successor can bind while the duplicate survives");
-    assert!(duplicate.local_addr().is_ok(), "the duplicate remains owned");
+    assert!(
+        duplicate.local_addr().is_ok(),
+        "the duplicate remains owned"
+    );
     drop(successor);
     drop(duplicate);
     let _ = std::fs::remove_dir_all(directory);

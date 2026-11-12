@@ -3023,7 +3023,10 @@ async fn phased_drain_closes_listener_with_a_duplicate_descriptor() {
         .await
         .expect("S4 completes")
         .expect("S4 reports successful cleanup");
-    assert!(duplicate.local_addr().is_ok(), "the duplicate remains owned");
+    assert!(
+        duplicate.local_addr().is_ok(),
+        "the duplicate remains owned"
+    );
     drop(successor);
     drop(duplicate);
 }

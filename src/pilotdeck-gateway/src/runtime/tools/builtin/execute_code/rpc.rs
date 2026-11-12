@@ -371,7 +371,9 @@ impl Server {
             let result: std::io::Result<()> = Ok(());
             drop(listener);
             result.map_err(|error| {
-                ToolError::failed(format!("execute_code RPC listener shutdown failed: {error}"))
+                ToolError::failed(format!(
+                    "execute_code RPC listener shutdown failed: {error}"
+                ))
             })
         } else {
             Ok(())
@@ -445,8 +447,14 @@ mod bounds_tests {
         let successor = TcpListener::bind(address)
             .await
             .expect("shutdown permits rebinding while the duplicate survives");
-        assert!(duplicate.local_addr().is_ok(), "the duplicate remains owned");
-        server.shutdown().await.expect("repeated shutdown is harmless");
+        assert!(
+            duplicate.local_addr().is_ok(),
+            "the duplicate remains owned"
+        );
+        server
+            .shutdown()
+            .await
+            .expect("repeated shutdown is harmless");
         assert!(
             server.serve().await.is_err(),
             "a stopped server cannot accept again"

@@ -1502,7 +1502,10 @@ async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
         let replacement = TcpListener::bind(bound)
             .await
             .expect("the stopped listener's exact address can be rebound with its duplicate alive");
-        assert!(duplicate.local_addr().is_ok(), "the duplicate is still owned");
+        assert!(
+            duplicate.local_addr().is_ok(),
+            "the duplicate is still owned"
+        );
         drop(replacement);
         drop(duplicate);
     }
