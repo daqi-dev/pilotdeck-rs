@@ -8,7 +8,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 #[cfg(test)]
 use crate::config::Env;
 #[cfg(test)]
-use std::{net::Ipv4Addr, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 mod options;
 use options::{capture_environment, validate_environment};

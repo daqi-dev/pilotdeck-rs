@@ -2134,18 +2134,21 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
         "#2301 the apiServer config constructs exactly one channel"
     );
     channels.server().start_channels(startup);
-    // Readiness: the TS anchor startup line (`api-server: listening on …`,
-    // pilotdeckServer.ts's `consoleLogger` shape) lands after the bind.
+    // The listener log lands before adapter.start returns its handle. Wait
+    // for the lifecycle task as well: close intentionally does not wait for
+    // pending starts, so a bound socket alone cannot prove its handle has
+    // entered ChannelServer's running set yet.
     let listening = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let seen = log_lines
-                .lock()
-                .expect("#2301 log sink mutex")
-                .iter()
-                .any(|message| {
+            let seen = {
+                let lines = log_lines.lock().expect("#2301 log sink mutex");
+                lines.iter().any(|message| {
                     *message
                         == format!("api-server: listening on http://127.0.0.1:{API_SERVER_PORT}")
-                });
+                }) && lines.iter().any(|message| {
+                    message == "[adapters] channel api_server startup task completed"
+                })
+            };
             if seen {
                 return;
             }
@@ -2155,7 +2158,7 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     .await;
     crate::test_negative_receipt::expect_ok(
         listening,
-        "#2301 the loader-built api-server listener logs its startup line",
+        "#2301 the loader-built api-server listener binds and registers its live handle",
     );
     // The real entry: one OpenAI-style chat completion against the channel's
     // own HTTP server. The response itself is not the oracle here — the

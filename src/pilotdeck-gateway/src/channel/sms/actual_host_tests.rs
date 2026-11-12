@@ -57,6 +57,25 @@ async fn until(state: &Wire, label: &str, mut test: impl FnMut() -> bool) {
         )
     });
 }
+fn sms_lifecycle_is(home: &std::path::Path, state: &str, message: &str) -> bool {
+    use pilotdeck_protocol::JsValue;
+    let snapshot = JsValue::Object(crate::channel::runtime_status::read_snapshot(home));
+    let Some(entry) = snapshot.get("channels").and_then(|channels| channels.get("sms")) else {
+        return false;
+    };
+    entry
+        .get("state")
+        .and_then(JsValue::as_string)
+        .and_then(|value| value.to_utf8().ok())
+        .as_deref()
+        == Some(state)
+        && entry
+            .get("message")
+            .and_then(JsValue::as_string)
+            .and_then(|value| value.to_utf8().ok())
+            .as_deref()
+            == Some(message)
+}
 async fn peer(approved: std::path::PathBuf) -> Peer {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -189,6 +208,13 @@ async fn sms_actual_server_a7_permission_elicitation_public_reload_shutdown() {
     )
     .await
     .unwrap();
+    // A bound listener can answer before adapter.start's handle is registered.
+    // The lifecycle report is published after insertion into the running set
+    // that shutdown owns; close deliberately does not wait for pending starts.
+    until(&peer.state, "initial SMS handle registered", || {
+        sms_lifecycle_is(&options.home, "connected", "sms: started")
+    })
+    .await;
     assert_eq!(incoming(port, "permission-start").await["status"], 200);
     until(&peer.state, "actual A7 permission request -> SMS", || {
         peer.state.contains("回复 1 允许一次")
@@ -257,6 +283,12 @@ async fn sms_actual_server_a7_permission_elicitation_public_reload_shutdown() {
     })
     .await
     .expect("disabled SMS listener closes");
+    // Observe the stopped generation before looking for a fresh connected
+    // report, so the pre-reload status cannot satisfy the readiness check.
+    until(&peer.state, "disabled SMS handle stopped", || {
+        sms_lifecycle_is(&options.home, "stopped", "sms: stopped (config-disabled)")
+    })
+    .await;
     let count = peer.state.sent.lock().unwrap().len();
     tokio::time::sleep(Duration::from_millis(250)).await;
     assert_eq!(count, peer.state.sent.lock().unwrap().len());
@@ -269,6 +301,10 @@ async fn sms_actual_server_a7_permission_elicitation_public_reload_shutdown() {
         )
         .await
         .unwrap();
+    until(&peer.state, "reloaded SMS handle registered", || {
+        sms_lifecycle_is(&options.home, "connected", "sms: started")
+    })
+    .await;
     assert_eq!(incoming(port, "reload-start").await["status"], 200);
     until(&peer.state, "fresh SMS adapter still uses real A7", || {
         peer.state.contains("sms-actual-final-1-4")
