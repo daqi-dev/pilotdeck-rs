@@ -21,7 +21,7 @@ CARGO_TARGET_DIR=<本树独立 target> \
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
 ```
 
-正跑也会在起 cargo 之前无条件跑同一条守卫（只读 16 个文件、秒级；#2617 fix-r6 对齐 SOURCE_TEXTS 现为 16 项，DS r8 sibling P2 处置），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
+正跑也会在起 cargo 之前无条件跑同一条守卫（只读 23 个文件、秒级；SOURCE_TEXTS 现为 23 项——#2617 fix-r6 对齐为 16 项后，#1623 链 rebase 并入 `submit.rs` / `native_archive.rs` / `methods/tools.rs` / `submit_tests.rs` / `native_archive/tests.rs` / `session_model.rs` / `session_model/tests.rs` 共 7 项），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
 
 这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出两串计数；十条负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」）：
 
@@ -39,4 +39,4 @@ python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_l
 
 脚本复用 `negative_process`（`mutating_sources` / `run_owned` / `wait_for_slot`）与 `negative_suite`（`Case` / `classify` / `invalidate_completed` / `passed` / `publish_summary`），但自管逐案流程：每个变异前要插一次 `cargo test --no-run` 编译门，`negative_suite.run_cases` 当前没有该钩子。
 
-三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前条数以 `--check` 报的锚点数为准（写死数字随登记漂移，以该报数为准；main 侧 #2617 fix-r5 按 head 上实跑 `#1457 121 mutation anchors OK` 对齐，#1623 链 rebase 合入后由计数对齐提交按 `--check` 实报重写；负控脚本顶部注释同源）。
+三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前 131 条变异（以 `--check` 报的锚点数为准，写死数字随登记漂移，以该报数为准；main 侧 #2617 fix-r5 实跑 121 后，#1623 链 rebase 合入按当前 head 实跑 `#1457 131 mutation anchors OK` 对齐；负控脚本顶部注释同源）。

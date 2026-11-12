@@ -1465,10 +1465,11 @@ mutations = [
 # re-bind of the old #1455 row, five new rows, one row re-pointed from
 # config.rs to the shared guard in methods/mod.rs); the later fix-r2/r4/r5
 # commits add their own rows above. The pre-rebase figures (123 rows / 77
-# literal-anchor entries, then 126/80 after fix-r2) rode the stale
-# #2207/#2199 chain this rebase replaced, so the counts are re-derived
-# against the post-rebase table by the count-alignment commit on top
-# (real `--check` output).
+# literal-anchor entries, then 126/80 after fix-r2, 127/81 after fix-r4,
+# 128/82 after fix-r5) rode the stale #2207/#2199 chain this rebase
+# replaced; against the post-rebase table the head reads #1457 131 mutation
+# anchors / #2065 85 literal anchors (2026-11-12 rebase-time `--check` run,
+# which also absorbed the three #2617 rows main added).
 # #1623 fix-r2: the three fix-r2 entry gates (submit_turn validate,
 # rewind_files request gate, native_archive session gate) joined with one
 # row and one literal anchor each.
