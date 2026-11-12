@@ -10,7 +10,7 @@ coordinator / busy 门预检）按原始值本身索引（`router_key`：字符�
 `RunAcceptInput.session_key_raw` 保持原始值；读取面把请求自己的 `sessionKey` 回显进
 snapshot（miss 也回显）。
 
-## 变异名册（13 行，逐行绑死测试）
+## 变异名册（15 行，逐行绑死测试）
 
 - `submit-owner-uses-template-key` —— owner 各 Map 回退模板拼法，null 回合对
   router 域查找不可见（admit 截止期先死）；
@@ -32,7 +32,14 @@ snapshot（miss 也回显）。
 - `registry-skip-silent`（fix-r5，评审 boundary#3 P0）—— 生产信号面（累计计数器
   增量 + 每读 stderr 行）被整体去掉，带内跳过回到只有 `#[cfg(test)]` 访问器可见
   的静默形状；
+- `registry-band-leaf-depth`（fix-r6，评审 sibling#2）—— 带判据变异回旧的最深
+  叶/节点深口径（container_depth），空内叶形状恰少计 1，带外第一层空内叶记录
+  （2561）被跳过而不是 load 失败；旧口径代码下该变异是恒等（SURVIVED），杀灭即
+  证明 `array_nesting` 口径咬得住；
 - `echo-drops-raw-key` —— 读取面回显固定 null 而不是请求自己的值；
+- `echo-capped-serializer`（fix-r6，评审 sibling#1）—— 带上限 provider-body
+  序列化器的深度界抬高越过回显深度，两口径分工坍缩，深键回显测试的「有上限
+  序列化器拒绝同一值」腿先死；
 - `session-id-uses-router-key`（fix-r3 条1）—— SessionContext 交接把路径/持久身份域
   折叠回 router 键，非字符串 sessionKey 回合死在生产工厂的 `create_storage`
   （`std::fs` 拒绝 raw 值标签里的 NUL 字节，到不了模型解析），null.jsonl 不落盘。
@@ -45,14 +52,17 @@ snapshot（miss 也回显）。
 （记录体）、`storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
 （折叠带）、`storage::run_registry_tests::unrekeyable_skips_advances_in_production_on_every_read`
 （生产信号面，fix-r5）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
-（回显）、`native_process::methods::config::tests::real_services_null_session_key_turn_dies_at_model_resolution`
+（回显）、`runtime::turn::read::tests::deep_session_key_echo_survives_the_response_serializer`
+（深键回显两口径分工，fix-r6 评审 sibling#1）、`native_process::methods::config::tests::real_services_null_session_key_turn_dies_at_model_resolution`
 （SessionContext 双域键，fix-r3 条1）。
 
 扫描面（fix-r5，评审 P3#5）：SOURCE_TEXTS 除五个被变异源码（submit / config /
 run_registry / js_value / read）外，纳入断言所在的两个测试模块
 （`run_registry_tests.rs`、`read_tests.rs`）——先前只住在测试文件里的断言不在
-字面锚覆盖内，纳入后按「断言逐字出现于被扫源 → 必须有 pin」规则补齐（13 个
-字面锚）。
+字面锚覆盖内，纳入后按「断言逐字出现于被扫源 → 必须有 pin」规则补齐（14 个
+字面锚；fix-r6 增 read_tests 的两口径 pin）。`--check` 除锚点/名册外还核每行
+绑定测试名仍在声明它的那个文件里（`negative_suite.bind_module_file` +
+`declares_test`，fix-r6 评审 boundary#5）。
 
 ## 启动契约（#2391 迁移）
 

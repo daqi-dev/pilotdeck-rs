@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#2692 fix-r1/fix-r2/fix-r3/fix-r5: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
+"""#2692 fix-r1/fix-r2/fix-r3/fix-r5/fix-r6: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
 
 The submit chain keeps TS's two key domains apart (`ts-prodkey-probe.out`):
 the composite run key spells `String(sessionKey)` (null → "null", absent →
@@ -33,8 +33,18 @@ test that must die:
   cumulative counter and the per-read stderr line — is removed, so the
   in-band skip goes back to being observable only through the
   `#[cfg(test)]` accessor (review boundary#3's P0 shape).
+- `registry-band-leaf-depth` (fix-r6, review sibling#2): the band criterion
+  reverts to the old leaf/node-depth caliber, which under-reports the
+  empty-innermost-array shape by exactly one, so the band's first
+  out-of-band empty-leaf record (2561) is skipped instead of failing the
+  load — under the old caliber this mutation is an identity, so a kill
+  proves the array_nesting caliber bites.
 - `echo-drops-raw-key`: the read face echoes a fixed null instead of the
   request's own value (probe cell b echo shape).
+- `echo-capped-serializer` (fix-r6, review sibling#1): the capped
+  provider-body serializer's bound rises past the echo depth, so the
+  two-caliber split the deep-echo test pins collapses — the response face
+  can no longer be told from the capped one by depth.
 - `session-id-uses-router-key` (fix-r3 条1): the SessionContext handoff folds
   the path/persistent-identity domain back onto the router key, so a
   non-string sessionKey turn dies inside the production factory's
@@ -57,7 +67,8 @@ from negative_process import (mutating_sources, run_owned, wait_for_slot,
                                write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
-from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
+from negative_suite import (Case, bind_module_file, classify, declares_test,
+                            invalidate_completed, passed, publish_summary)
 
 ROOT = Path(__file__).resolve().parents[5]
 # The five sources the rows mutate; the assertion messages also live in the
@@ -73,6 +84,17 @@ READ = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/read.rs'
 REGISTRY_TESTS = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry_tests.rs'
 READ_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/read_tests.rs'
 SOURCE_TEXTS = (SUBMIT, GATES, REGISTRY, JS_VALUE, READ, REGISTRY_TESTS, READ_TESTS)
+# fix-r6 (review boundary#5): --check also proves every bound test still
+# exists — a renamed test used to leave the roster's string constant green
+# until the host's cargo round. The full module path binds to the one file
+# that declares it (negative_suite.bind_module_file), then declares_test
+# matches the fn / table / scenario! form with comments and literals blanked.
+AUDITED_MODULES = (
+    ('native_process::methods::config::tests::', GATES),
+    ('js_value::tests::', JS_VALUE),
+    ('storage::run_registry_tests::', REGISTRY_TESTS),
+    ('runtime::turn::read::tests::', READ_TESTS),
+)
 
 CFG = 'native_process::methods::config::tests::'
 null_test = (CFG + 'session_model_set_null_key_turn_from_the_submit_chain_'
@@ -87,6 +109,8 @@ signal_test = ('storage::run_registry_tests::'
                'unrekeyable_skips_advances_in_production_on_every_read')
 echo_test = ('runtime::turn::read::tests::'
              'read_session_messages_reads_the_router_domain_and_echoes_the_raw_key')
+deep_echo_test = ('runtime::turn::read::tests::'
+                  'deep_session_key_echo_survives_the_response_serializer')
 mutations = [
     # The owner maps (admission here, then every fence/coordinator call below)
     # go back to the template spelling, so the null-born turn parks on "null"
@@ -243,6 +267,31 @@ mutations = [
      '    }\n',
      signal_test,
      '#2692 the production counter moved — the skip is not a test-only observable'),
+    # fix-r6 (review sibling#2): the band criterion mutates back to the old
+    # leaf/node-depth caliber (container_depth), which counts the deepest
+    # NODE depth — the empty-innermost-array shape under-reports by exactly
+    # one, so the band's first out-of-band empty-leaf record (2561 arrays)
+    # counts 2560, lands inside the band, and is skipped instead of failing
+    # the load. Under the pre-fix-r5 caliber this mutation is an identity
+    # (SURVIVED there), so a kill on the empty-leaf leg proves the
+    # array_nesting caliber bites; the scalar leg counts the same under both
+    # calibers and keeps passing.
+    ('registry-band-leaf-depth', REGISTRY,
+     '                    .map(array_nesting)\n',
+     '                    .map(|value| {\n'
+     '                        let mut max = 0;\n'
+     '                        let mut pending = vec![(value, 0usize)];\n'
+     '                        while let Some((value, depth)) = pending.pop() {\n'
+     '                            max = max.max(depth);\n'
+     '                            if let JsValue::Array(items) = value {\n'
+     '                                pending.extend(\n'
+     '                                    items.iter().map(|item| (item, depth + 1)),\n'
+     '                                );\n'
+     '                            }\n'
+     '                        }\n'
+     '                        max\n'
+     '                    })\n',
+     reopen_test, "past V8's fold band and must fail the load"),
     # The read face echoes a fixed null instead of the request's own value,
     # so a string request's miss stops echoing its own spelling.
     ('echo-drops-raw-key', READ,
@@ -258,6 +307,16 @@ mutations = [
      '            }\n'
      '        }',
      echo_test, '#2692 the miss echoes the raw request value'),
+    # fix-r6 (review sibling#1): the capped provider-body serializer's bound
+    # rises past the echo depth, so the deep-key miss echo survives BOTH
+    # serializers — the two-caliber split the deep-echo test pins (response
+    # face iterative/uncapped vs provider body capped) collapses, and the
+    # response face could drift onto the capped one without this row.
+    ('echo-capped-serializer', JS_VALUE,
+     'pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;',
+     'pub(crate) const MAX_ARRAY_DEPTH: usize = 5000;',
+     deep_echo_test,
+     '#2692 the capped provider-body serializer refuses the same value'),
     # fix-r3 条1: the SessionContext handoff folds the path/identity domain
     # back onto the router key (the fix-r1 single-domain shape), so the
     # null-keyed turn dies inside the production factory's create_storage
@@ -294,6 +353,8 @@ LITERAL_ANCHORS = [
     (REGISTRY_TESTS,
      '#2692 the production counter moved — the skip is not a test-only observable'),
     (READ_TESTS, '#2692 the miss echoes the raw request value'),
+    # fix-r6 (review sibling#1): the deep-echo test's caliber pin.
+    (READ_TESTS, '#2692 the capped provider-body serializer refuses the same value'),
 ]
 
 # The denominator is this literal, never `len(mutations)` (#2391 fix-r1,
@@ -313,7 +374,9 @@ EXPECTED_NAMES = (
     'submit-raw-spelling',
     'registry-skip-reverted',
     'registry-skip-silent',
+    'registry-band-leaf-depth',
     'echo-drops-raw-key',
+    'echo-capped-serializer',
     'session-id-uses-router-key',
 )
 
@@ -386,10 +449,17 @@ def main():
             check_literal_anchors(selected_rows, bound_rows=every_row)
             for case in selected_rows:
                 mutate(case, case.path.read_text())
+                # fix-r6 (review boundary#5): the bound test must still be
+                # declared in the one file its module path names.
+                tests_path, short = bind_module_file(case.test, AUDITED_MODULES)
+                if not declares_test(tests_path.read_text(), short):
+                    refuse('#2692 bound test not declared: '
+                           f'{case.mutation} -> {case.test}')
         except (ValueError, OSError) as error:
             refuse(str(error))
         print(f'#2692 {len(selected_rows)} mutation anchors OK; '
-              f'{len(LITERAL_ANCHORS)} literal anchors OK')
+              f'{len(LITERAL_ANCHORS)} literal anchors OK; '
+              f'{len(selected_rows)} bound tests declared')
         return 0
     if not args:
         refuse('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')

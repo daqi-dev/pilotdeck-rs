@@ -1052,12 +1052,16 @@ async fn read_session_messages_reads_the_router_domain_and_echoes_the_raw_key() 
 /// unspellable sessionKey rides the response face, which serializes through
 /// `pilotdeck_protocol::stringify_json` — iterative, no depth cap — not the
 /// 2000-level-capped `js_value::json_stringify` (that one serves provider
-/// bodies only). Node 22.22.0 measured `structuredClone` throwing from 2100
-/// levels while `JSON.stringify` stays fine past 3000
-/// (`fix-r5/node-probe/fold-band.out`), so a 3000-level key is the band
-/// where TS's read face fails on the response clone while this side answers
-/// the miss shape with the full raw echo — the answer-shape divergence R17
-/// registers (TS-side mechanism inferred from cell e; exact band unprobed).
+/// bodies only). Node 22.22.0 (v8 12.4.254.21-node.33) measured
+/// `structuredClone` succeeding at 1999/2000/2100 levels (both leaf shapes)
+/// and throwing from 2621 while `JSON.stringify` stays fine past 3000
+/// (`fix-r6/node-probe/clone-band.out`; the fix-r5 probe's "throws from
+/// 2100" was its own deeper caller stack — the clone band drifts with the
+/// stack like every V8 recursion bound, and the gap between 2100 and 2621
+/// is unprobed). So a 3000-level key is the band where TS's read face fails
+/// on the response clone while this side answers the miss shape with the
+/// full raw echo — the answer-shape divergence R17 registers (TS-side
+/// mechanism inferred from cell e).
 #[tokio::test]
 async fn deep_session_key_echo_survives_the_response_serializer() {
     struct PlainHistory;

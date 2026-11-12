@@ -717,17 +717,19 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
                 // each loaded record by the same template literal (RunRegistry
                 // .ts:70) and V8's recursive array join folds a nested
                 // container to `""` while it has stack left and throws
-                // "Maximum call stack size exceeded" when it does not (Node
-                // 22.22.0 on the probe machine: 2621 levels fold, 2622
-                // throws; `JSON.parse` itself is iterative and loads any
-                // depth). A record past the shared 2000-level spelling bound
-                // but inside that fold band is skipped here — TS keeps it
-                // under the folded `""` key, but every read of it throws on
-                // the record clone, so "single record invisible, the rest
-                // readable" is the aligned shape (registered divergence). At
-                // or beyond the throw band the load fails like TS's does
-                // (#251 boundary oracle: TS `get` rejects with the same
-                // RangeError).
+                // "Maximum call stack size exceeded" when it does not. At the
+                // registry's own load call shape (fix-r6 probe, Node 22.22.0
+                // / v8 12.4.254.21-node.33: constructor → initialize →
+                // withFileLock → refreshFromDisk → the key template) the
+                // boundary is 2560 levels fold, 2561 throws; `JSON.parse`
+                // itself is iterative and loads any depth. A record past the
+                // shared 2000-level spelling bound but inside that fold band
+                // is skipped here — TS keeps it under the folded `""` key,
+                // but every read of it throws on the record clone, so
+                // "single record invisible, the rest readable" is the aligned
+                // shape (registered divergence). At or beyond the throw band
+                // the load fails like TS's does (#251 boundary oracle: TS
+                // `get` rejects with the same RangeError).
                 if [project, session, run_id]
                     .into_iter()
                     .map(array_nesting)
@@ -811,20 +813,31 @@ fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsStri
 }
 
 /// The deepest array nesting V8's recursive array join folds before it
-/// throws (measured on the #2692 probe machine, Node 22.22.0: 2621 folds,
-/// 2622 throws — stack-dependent, like every V8 recursion bound; the
-/// #251 boundary fixture ran 10,000, far past it). `read_snapshot` bands an
-/// un-rekeyable record on this: inside the band it skips the record, beyond
-/// the band the load fails the way TS's load does.
+/// throws at the registry's own load call shape (fix-r6, review boundary#1:
+/// the previous 2621 was a probe-harness artifact — a bare `String()` call
+/// on a shallower stack). Measured on the #2692 probe machine, Node 22.22.0
+/// (v8 12.4.254.21-node.33), by driving the baseline's real `FileRunRegistry`
+/// — constructor → initialize → withFileLock → refreshFromDisk → the key
+/// template — over snapshots with the deep record on disk
+/// (`_tmp/20261026-issue-2692/fix-r6/node-probe/fold-band-loadpoint.out` and
+/// `fold-band-bisect.out`): 2560 levels fold, 2561 throws, identical for a
+/// scalar leaf and an empty innermost array. Stack-dependent, like every V8
+/// recursion bound — a shallower caller measures higher (2621), so the
+/// constant deliberately tracks the load path, the deepest real caller; the
+/// #251 boundary fixture ran 10,000, far past it either way.
+/// `read_snapshot` bands an un-rekeyable record on this: inside the band it
+/// skips the record, beyond the band the load fails the way TS's load does.
 ///
 /// The band counts array nesting levels — one per joined array, the same
 /// caliber as `to_string_units`' frames — not the depth of the deepest leaf
 /// node: fix-r5 measured the throw boundary identical for a scalar leaf and
 /// an empty innermost array at one fixed caller stack depth
 /// (`_tmp/20261026-issue-2692/fix-r5/node-probe/fold-band-stackdep.out`),
-/// so a leaf-depth count under-reports the empty-leaf shape by exactly one
-/// and let one extra band edge past. [`array_nesting`] holds the caliber.
-const TS_KEY_FOLD_DEPTH: usize = 2621;
+/// and fix-r6 re-measured both shapes sharing the boundary at the real load
+/// call shape too, so a leaf-depth count under-reports the empty-leaf shape
+/// by exactly one and lets one band edge past. [`array_nesting`] holds the
+/// caliber.
+const TS_KEY_FOLD_DEPTH: usize = 2560;
 
 /// The nesting level of the deepest array under `value`, counted the way
 /// `to_string_units` joins: one level per array being joined, with objects

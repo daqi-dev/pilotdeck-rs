@@ -957,8 +957,13 @@ fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
 // #2692 fix-r1 matrix row 15 (ts-prodkey-probe e): a submit accept can land
 // a deep-array sessionKey record (TS persists it before the result clone
 // throws), so one can sit on disk when the registry reopens. V8's key
-// template join folds 2621 levels of nesting to "" and throws past that
-// (Node 22.22.0 on the probe machine); Rust cannot re-spell past the shared
+// template join folds 2560 levels of nesting (array_nesting caliber) to ""
+// and throws past that, measured at the registry's real load call shape —
+// constructor → initialize → withFileLock → refreshFromDisk → the key
+// template — on the baseline's own FileRunRegistry, Node 22.22.0
+// (`_tmp/20261026-issue-2692/fix-r6/node-probe/fold-band-loadpoint.out`,
+// `fold-band-bisect.out`; the previous 2621 was a shallower-stack probe
+// artifact, fix-r6 review boundary#1); Rust cannot re-spell past the shared
 // 2000-level bound at all. Inside the fold band the record is skipped — TS
 // keeps it under the folded "" key but every read of it throws on the record
 // clone, so "single record invisible, the rest readable" is the aligned
@@ -966,8 +971,9 @@ fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
 // does (#251 boundary oracle). fix-r5 calibrates the band to the join's own
 // frame count (one per array, `array_nesting`): a scalar leaf and an empty
 // innermost array throw at the same level on a fixed caller stack
-// (`fix-r5/node-probe/fold-band-stackdep.out`), so both leaf shapes share
-// every boundary below.
+// (`fix-r5/node-probe/fold-band-stackdep.out`), and fix-r6 re-measured both
+// shapes sharing the boundary at the real load call shape too, so both leaf
+// shapes share every boundary below.
 #[test]
 fn deep_session_key_record_reopens_without_bricking_the_other_records() {
     let scratch = Scratch::new();
@@ -985,8 +991,8 @@ fn deep_session_key_record_reopens_without_bricking_the_other_records() {
     };
     // Inside the fold band, both leaf shapes: the null record stays readable,
     // the deep record is invisible under every spelling, and the skip is
-    // counted.
-    for (depth, empty_leaf) in [(2001, false), (2621, false), (2621, true)] {
+    // counted. 2560 is the band's in-edge at the real load call shape.
+    for (depth, empty_leaf) in [(2001, false), (2560, false), (2560, true)] {
         let text = snapshot_with(depth, empty_leaf);
         fs::write(&path, &text).unwrap();
         let registry = FileRunRegistry::open(&path).unwrap();
@@ -1029,12 +1035,15 @@ fn deep_session_key_record_reopens_without_bricking_the_other_records() {
     }
     // Past the fold band the load fails like TS's get (the #251 oracle's
     // RangeError) for either leaf shape, with the snapshot and the lock left
-    // as they were.
+    // as they were. 2561 is exactly one past the band's in-edge, so the
+    // empty-leaf case is the one a leaf-depth caliber under-counts (the old
+    // container_depth shape) — the discriminator the registry-band-leaf-depth
+    // negative-control row mutates back.
     for empty_leaf in [false, true] {
-        let text = snapshot_with(2622, empty_leaf);
+        let text = snapshot_with(2561, empty_leaf);
         fs::write(&path, &text).unwrap();
         let Err(RunRegistryError::Invalid(message)) = FileRunRegistry::open(&path) else {
-            panic!("#2692 depth 2622 is past V8's fold band and must fail the load");
+            panic!("#2692 depth 2561 is past V8's fold band and must fail the load");
         };
         assert_eq!(
             message, "Maximum call stack size exceeded",
@@ -1056,7 +1065,9 @@ fn deep_session_key_record_reopens_without_bricking_the_other_records() {
 fn unrekeyable_skips_advances_in_production_on_every_read() {
     let scratch = Scratch::new();
     let path = scratch.path();
-    let deep = format!("{}[]{}", "[".repeat(2620), "]".repeat(2620));
+    // In-band at the real load call shape: 2560 arrays (fix-r6; 2621 was
+    // in-band only under the old shallow-probe constant).
+    let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
     fs::write(
         &path,
         format!(

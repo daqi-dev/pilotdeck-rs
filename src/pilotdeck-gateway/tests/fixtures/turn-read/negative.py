@@ -20,12 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
 from negative_selection import baseline_passed, refuse
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import declares_test
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
 repo = rust.parent
 source = rust / 'pilotdeck-gateway/src/runtime/turn/read.rs'
 registry_source = rust / 'pilotdeck-gateway/src/storage/run_registry.rs'
+tests_source = rust / 'pilotdeck-gateway/src/runtime/turn/read_tests.rs'
 
 mutants = [
     ('attempts-3-to-2', source,
@@ -173,19 +175,30 @@ mutants = [
 args = sys.argv[1:]
 # fix-r5 (review sibling#3): read-only --check — anchor uniqueness per
 # target file, unique roster names, zero cargo. The mutating run below is
-# unchanged.
+# unchanged. fix-r6 (review boundary#5) adds two more static gates: a no-op
+# mutation (before == after) used to stay green until the host's cargo round
+# reported SURVIVED, and a bound test name that is no longer declared in
+# read_tests.rs (plain fn, `=>` table row, or scenario! macro form) used to
+# keep the roster green with the name living only in this string table.
 if args and args[0] == '--check':
     if len(args) != 1:
         refuse('turn-read --check takes no output directory and no mutation names')
     texts = {path: path.read_text() for path in (source, registry_source)}
-    for name, path, before, _after, _test in mutants:
+    tests_text = tests_source.read_text()
+    for name, path, before, after, test in mutants:
         count = texts[path].count(before)
         if count != 1:
             refuse(f'turn-read {name}: stale anchor (expected 1, got {count})')
+        if before == after:
+            refuse(f'turn-read {name}: no-op mutation (before == after)')
+        if not (declares_test(tests_text, test)
+                or declares_test(tests_text, test, macro='scenario!')):
+            refuse(f'turn-read {name}: bound test not declared in read_tests.rs: {test}')
     names = [name for name, *_ in mutants]
     if len(set(names)) != len(names):
         refuse('turn-read roster has duplicate mutation names')
-    print(f'turn-read: {len(mutants)} mutation anchors OK')
+    print(f'turn-read: {len(mutants)} mutation anchors OK; '
+          f'{len(mutants)} bound tests declared')
     raise SystemExit(0)
 if len(args) != 1:
     print('usage: negative.py --check | NEW_OUTPUT', file=sys.stderr)

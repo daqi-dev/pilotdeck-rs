@@ -8,12 +8,18 @@
 //! iterative and reports [`StackOverflow`] past [`MAX_ARRAY_DEPTH`] instead of
 //! exhausting the Rust stack.
 //!
-//! Measured (A6.8-pr4 review, Node 22): `String(a)` throws from depth 2516,
-//! both at top level and one call deeper; the A6-JSVALUE-DEPTH-001 oracle
-//! (#1550) has 2100 converting and 3000 throwing, and nested objects trip it
-//! as early as 1887. Known divergence: Rust's limit is a fixed constant, while
-//! V8's varies with the caller's stack shape, so the constant sits low and
-//! depths between it and V8's real limit throw here but convert in TS.
+//! Measured (A6.8-pr4 review, Node 22, `String(a)` called at module top
+//! level and one call deeper — that stack prefix, not a bare number, is the
+//! record): `String(a)` throws from depth 2516; the A6-JSVALUE-DEPTH-001
+//! oracle (#1550) has 2100 converting and 3000 throwing, and nested objects
+//! trip it as early as 1887. The same V8 recursion bound measured at the run
+//! registry's own load call shape folds one level deeper
+//! (`storage::run_registry::TS_KEY_FOLD_DEPTH`, #2692 fix-r6 probe on Node
+//! v22.22.0 / v8 12.4.254.21-node.33: 2560 folds, 2561 throws) — two stack
+//! prefixes, two boundaries, not a contradiction. Known divergence: Rust's
+//! limit is a fixed constant, while V8's varies with the caller's stack
+//! shape, so the constant sits low and depths between it and V8's real limit
+//! throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
@@ -259,12 +265,14 @@ pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
 /// fold-to-`""` here used to admit them and brick the registry on reopen,
 /// because `to_string_units` reports the same overflow on the way back).
 ///
-/// TS's own template spelling never throws (V8's `Array.prototype.join` is
-/// iterative, so `String(deep)` folds to `""`); the record becomes unreadable
-/// later, when `structuredClone` returns it (`ts-prodkey-probe.out`, cell e).
-/// Rust's spelling walks with a depth bound instead, so the overflow surfaces
-/// here — with the same `Maximum call stack size exceeded` message the clone
-/// reports.
+/// Inside the fold band (≤ the registry's `TS_KEY_FOLD_DEPTH`, measured at
+/// the load call shape) TS's own template spelling folds a deep container to
+/// `""` or `"1"`; beyond the band the same template literal throws
+/// `Maximum call stack size exceeded` just like `structuredClone` does — the
+/// spelling and the clone ride the same V8 recursion bound (the #2692 fix-r6
+/// load-point probe folded and threw at identical levels for both leaf
+/// shapes). Rust's spelling walks with a depth bound instead, so the overflow
+/// surfaces here — with the same message the clone reports.
 pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {
     // Same walk as `property_key` — `String()`'s coercion — under a different
     // semantic hat: this is a template-literal slot, that is a property-key
