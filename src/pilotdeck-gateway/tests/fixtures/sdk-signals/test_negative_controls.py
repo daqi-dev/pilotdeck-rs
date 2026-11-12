@@ -59,7 +59,39 @@ issue-2495 / close-order-pin precedents:
   of the abort modes can reach: every row is SURVIVED and the run exits 1;
 - invalid-verdict: the negative run fails *without* the bound assertion —
   the shape a stale anchor produces on real hardware — so the row is
-  INVALID through the verdict path, not the abort path.
+  INVALID through the verdict path, not the abort path;
+- exit-ledger-drift: the real exit-side ``assert_frozen_ledgers_match_head``
+  (the ``phase = "exit"`` proof after the last control) fails — every
+  completed row must still land in the abort accounting, its diagnostic
+  kept as a prefix, rc 2. This is the use case for those lines: deleting
+  the exit-side proof turns this test green, and no earlier case can
+  (the ledger-drift case faults the entry-side proof only, and
+  guard-exit-fault raises from the guard's cleanup, not from the proof).
+
+The three verdict-delivery legs of an otherwise healthy run are pinned
+as they behave today (fix-r2, MM concurrency + DS sibling both flagged the
+missing coverage — the close-order pin has had the same three since its
+fix-r2/r3/r4). This runner has no exit handling of its own at any of them:
+the prints write straight through, ``publish_summary`` is called bare, and
+an escaping exception is finished by the interpreter. Each leg therefore
+pins the current behavior, with the exit-code contract collection
+registered as #1866 (a deliberate change there changes this class):
+
+- stdout-pipe-fault: the run is read through a real ``... | head -1``
+  subprocess; the reader takes the first record() line and exits, and the
+  next record() print raises BrokenPipeError — ``results.append`` precedes
+  that print, so the row is already recorded and the abort accounting still
+  revokes it and publishes the all-INVALID summary; only the final counts
+  line's own BrokenPipeError escapes ``main``, leaving a nonzero rc chosen
+  by the interpreter and no counts line delivered;
+- stdout-write-fault: the final counts line fails with the measured
+  /dev/full shape (OSError ENOSPC, never a pipe error). The summary is
+  already on disk at that point (the publish precedes the counts print),
+  so the verdict survives on disk while the stdout delivery fails;
+- summary-publish-fault: the summary rename itself fails (the
+  ``Path.replace`` injection over the publish temp file) after the rows
+  completed: no summary.json, no leftover temp, and the record lines
+  still on stdout.
 
 Both non-abort verdict edges pin this runner's current exit contract
 (``return int(any(row != KILLED))``): the verdict path's rc 1, distinct from
@@ -102,8 +134,8 @@ ENTRY_DRIFT = (ABORT_PREFIX + 'FrozenLedgerDrift: #1885 #1382 baseline proof'
                ' failed: ' + CLOSE_ORDER_RELATIVE)
 
 
-def _catalog_targets():
-    """The files the catalog's anchor preflight reads, from its own table.
+def _load_catalog():
+    """The runner's own module, loaded for its table and constants.
 
     Loading the real script (its module level is constants and functions
     only — ``check_catalog`` runs inside ``main``) keeps the temporary tree's
@@ -117,13 +149,27 @@ def _catalog_targets():
         'pdrs_2981_sdk_signals_catalog', str(RUNNER_SCRIPT))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return tuple(sorted(
-        path.relative_to(module.root).as_posix()
-        for path in {row[1] for row in module.mutations}
-        | {module.close_order_ledger}))
+    return module
 
 
-RELATIVE_TARGETS = _catalog_targets()
+_CATALOG = _load_catalog()
+
+RELATIVE_TARGETS = tuple(sorted(
+    path.relative_to(_CATALOG.root).as_posix()
+    for path in {row[1] for row in _CATALOG.mutations}
+    | {_CATALOG.close_order_ledger}))
+
+# fix-r2（DS sibling#3）：把故障注入前提钉在表上——SELECTION 的每一行都必须
+# 指向同一份回放 harness（REPLAY_RELATIVE）。mid-restore-fault 只跳过最后
+# 一个控件对该文件的第 len(names) 次恢复写；每个用例的还原断言也只对这份
+# 字节采样。表里哪一行改指到别的文件，注入不再触发 / 断言采错对象，而
+# 本文件其余部分照绿——先在这里红，把漂移挡在选择处。
+_BY_NAME = {row[0]: row for row in _CATALOG.mutations}
+assert all(
+    _BY_NAME[name][1].relative_to(_CATALOG.root).as_posix() == REPLAY_RELATIVE
+    for name in SELECTION), (
+    '#2981 every selected row must target the shared replay harness '
+    + REPLAY_RELATIVE)
 
 # The subprocess driver. It execs the real runner source with ``__file__``
 # inside the temporary tree and patches only the negative_process boundaries
@@ -132,6 +178,7 @@ HARNESS_SOURCE = """\
 import contextlib
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 mode = sys.argv[1]
@@ -237,6 +284,12 @@ else:
         # from the runner's own deterministic order: positive, compile,
         # negative and restored per selected control (the SessionRunnerTests
         # stage-queue shape).
+        if mode == 'stdout-pipe':
+            # The real ``... | head -1`` reader exits as soon as it has the
+            # first record() line; give it time to close the pipe before
+            # the next print, so the BrokenPipeError lands deterministically
+            # during the run (never at the final counts line).
+            time.sleep(0.2)
         index = calls['run']
         calls['run'] += 1
         row = _row(index // 4)
@@ -270,6 +323,15 @@ else:
             # 'body' and only the FrozenLedgerDrift term of the
             # guard-failure predicate can route the run to rc 2.
             raise OSError('#2981 injected ledger drift')
+        if mode == 'exit-ledger-drift' and index >= 3:
+            # Calls 0-2 stay with check_catalog and the entry-side proof
+            # (the ledger-drift case's territory); calls 3-4 are the
+            # exit-side proof after the last control, where `phase` is
+            # 'exit' and the raise comes out of the runner's own
+            # assert_frozen_ledgers_match_head() on its way out of the
+            # guard. Failing there and nowhere else is what makes this the
+            # use case for that proof: delete it and this case goes green.
+            raise OSError('#2981 injected exit ledger drift')
         return (Path(actual_root) / relative).read_bytes()
 
     negative_process.mutating_sources = fake_guard
@@ -292,6 +354,46 @@ else:
             return raw_write_bytes(self, data)
 
         Path.write_bytes = skip_last_restore
+
+    if mode == 'summary-publish-fault':
+        # The publish step itself: publish_summary writes its temp file
+        # (`.summary.json.<pid>.<serial>.tmp`) and renames it onto
+        # summary.json, so fail exactly that rename after an otherwise
+        # healthy run. The guard's restore goes through
+        # write_source_atomic (os.replace) and is untouched.
+        raw_replace = Path.replace
+
+        def fail_summary_publish(self, target):
+            if self.name.startswith('.summary.json.'):
+                raise OSError('#2981 injected summary publish failure')
+            return raw_replace(self, target)
+
+        Path.replace = fail_summary_publish
+
+    if mode == 'stdout-write-fault':
+        # The final counts line fails with the measured /dev/full shape —
+        # OSError(ENOSPC), never a pipe error (the sibling's host
+        # evidence). Only that one line fails: the per-control record
+        # lines still reach the reader, so the run itself completed and
+        # only the stdout delivery broke. The swap is in-process (nothing
+        # inherited from the environment is consulted) and stderr keeps
+        # its real stream, so the traceback the interpreter prints for the
+        # escape stays observable.
+        real_stdout = sys.stdout
+
+        class FullDiskStdout:
+            def write(self, text):
+                if '"counts"' in text:
+                    raise OSError(28, 'No space left on device')
+                return real_stdout.write(text)
+
+            def flush(self):
+                return real_stdout.flush()
+
+            def close(self):
+                return real_stdout.close()
+
+        sys.stdout = FullDiskStdout()
 
     runner_globals = {'__file__': str(runner_path), '__name__': '__main__'}
 
@@ -323,18 +425,20 @@ class _RunnerDriver:
     tests.
     """
 
-    def run_runner(self, mode, names=SELECTION, base=None):
-        """Drive the real runner source in a subprocess over a temporary tree.
+    @staticmethod
+    def _new_base(prefix):
+        base = Path(tempfile.mkdtemp(prefix=prefix))
+        _BASES.append(base)
+        return base
 
-        Returns ``(process, summary-or-None, tree, target_before, out)``; the
-        replay-harness copy is taken before the run so every case can also
-        prove the tree was restored whatever the abort did. ``base`` lets a
-        caller reuse a tree it prepared (the busy-lock case must lock the
-        very tree the runner then runs over).
+    @staticmethod
+    def _stage(base):
+        """Stage the temporary tree, the redirected runner and the harness.
+
+        Returns ``(tree, tree_runner, out, target_before, env)``; the
+        replay-harness copy is taken before any run so every case can also
+        prove the tree was restored whatever the abort did.
         """
-        if base is None:
-            base = Path(tempfile.mkdtemp(prefix='pdrs-2981-pin-'))
-            _BASES.append(base)
         tree = base / 'tree'
         for relative in RELATIVE_TARGETS:
             path = tree / relative
@@ -357,14 +461,53 @@ class _RunnerDriver:
         env = {**os.environ,
                'CARGO_TARGET_DIR': str(base / 'unused-target'),
                'PDRS_BASELINE': str(base / 'unused-baseline')}
+        return tree, tree_runner, out, before, env
+
+    def run_runner(self, mode, names=SELECTION, base=None):
+        """Drive the real runner source in a subprocess over a temporary tree.
+
+        Returns ``(process, summary-or-None, tree, target_before, out)``.
+        ``base`` lets a caller reuse a tree it prepared (the busy-lock case
+        must lock the very tree the runner then runs over).
+        """
+        if base is None:
+            base = self._new_base('pdrs-2981-pin-')
+        tree, tree_runner, out, before, env = self._stage(base)
         process = subprocess.run(
-            [sys.executable, '-I', '-B', str(harness), mode, str(tree_runner),
-             str(FIXTURES), str(tree), str(out), *names],
+            [sys.executable, '-I', '-B', str(base / 'harness.py'), mode,
+             str(tree_runner), str(FIXTURES), str(tree), str(out), *names],
             capture_output=True, text=True, timeout=120, env=env)
         summary = None
         if (out / 'summary.json').is_file():
             summary = json.loads((out / 'summary.json').read_text(encoding='utf-8'))
         return process, summary, tree, before, out
+
+    def run_runner_piped(self, mode, names=SELECTION):
+        """Drive the runner with its stdout feeding a real ``head -1`` reader.
+
+        The measured ``... | head -1`` delivery shape: the reader takes the
+        first record() line and exits, so the run's next print hits a closed
+        pipe instead of a captured buffer. Returns ``(process, head_stdout,
+        stderr_text, tree, target_before, out)``; the runner's stdout belongs
+        to the reader (nothing to capture on the process itself), its stderr
+        is drained into ``stderr_text``, and the process is fully waited
+        before returning.
+        """
+        base = self._new_base('pdrs-2981-pipe-')
+        tree, tree_runner, out, before, env = self._stage(base)
+        reader = subprocess.Popen(
+            ['head', '-1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            text=True)
+        process = subprocess.Popen(
+            [sys.executable, '-I', '-B', str(base / 'harness.py'), mode,
+             str(tree_runner), str(FIXTURES), str(tree), str(out), *names],
+            stdout=reader.stdin, stderr=subprocess.PIPE, text=True, env=env)
+        reader.stdin.close()
+        head_stdout, _reader_stderr = reader.communicate(timeout=120)
+        stderr_text = process.stderr.read()
+        process.stderr.close()
+        process.wait(timeout=120)
+        return process, head_stdout, stderr_text, tree, before, out
 
     @staticmethod
     def counts_line(stdout):
@@ -534,6 +677,29 @@ class AbortAccountingTests(_RunnerDriver, unittest.TestCase):
                         '#2981 a body-phase ledger drift never wrote the'
                         ' mutation target')
 
+    def test_exit_ledger_drift_revokes_every_row_on_the_exit_phase(self):
+        # fix-r2（MM boundary#2）：runner 自己的出场侧证明——最后一个控制
+        # 完成后的 assert_frozen_ledgers_match_head()（phase = "exit"）——
+        # 此前无用例：ledger-drift 只打断 entry 侧（相位 body，靠
+        # isinstance 项路由），guard-exit-fault 的异常来自守卫清理而非
+        # 这条证明。本例让真正的出场侧证明失败（_head_bytes 第 4 次调用
+        # 起抛，即出场侧读）：删掉那两行本用例转绿，正是它要钉的洞。
+        process, summary, tree, before, _out = self.run_runner(
+            'exit-ledger-drift')
+        self.assertEqual(process.returncode, 2,
+                         '#2981 an exit-phase ledger drift must exit 2: '
+                         f'{process.stderr!r}{process.stdout!r}')
+        self.assert_rows(summary, [HEALTHY_REASON + '; ' + ENTRY_DRIFT,
+                                   HEALTHY_REASON + '; ' + ENTRY_DRIFT])
+        self.assertTrue(self.counts_line(process.stdout)['counts']['INVALID']
+                        == len(SELECTION),
+                        '#2981 the final stdout counts line must agree with'
+                        ' the INVALID summary, got '
+                        + repr(self.counts_line(process.stdout)))
+        self.assertTrue((tree / REPLAY_RELATIVE).read_bytes() == before,
+                        '#2981 an exit-phase ledger drift happens after every'
+                        ' control restored its own target')
+
     def test_cancellation_voids_recorded_kills_and_unrun_rows(self):
         # KeyboardInterrupt is a BaseException the per-control ``except
         # Exception`` must not swallow: the accounting sees it as a
@@ -619,6 +785,149 @@ class VerdictEdgeTests(_RunnerDriver, unittest.TestCase):
                         + repr([row['reason'] for row in rows]))
         self.assertTrue((tree / REPLAY_RELATIVE).read_bytes() == before,
                         '#2981 an INVALID-verdict run must still restore the'
+                        ' tree')
+
+
+class VerdictDeliveryTests(_RunnerDriver, unittest.TestCase):
+    """The three output legs of a healthy run, pinned as they behave today.
+
+    fix-r2（MM concurrency#2 + DS sibling#2 两家同撞，取高 P1）：每控
+    record() 行、summary 落盘、最终 counts 行三条出口腿此前零仓内覆盖
+    （close-order pin 自其 fix-r2/r3/r4 起三形齐备）。本 runner 三处都
+    无自身出口处理——print 直写、publish_summary 裸调、异常一律逃出
+    main 由解释器收尾；本类钉**现状**，出口契约的收口归 #1866，契约
+    变更时本类随之改。
+    """
+
+    def test_closed_pipe_after_the_first_record_loses_the_verdict(self):
+        # ``... | head -1`` 真子进程读端：第一条 record() 行被取走后
+        # reader 退出，第二条 record() 的 print 抛 BrokenPipeError——
+        # results.append 先于该 print，行已入账，异常落进 except
+        # BaseException 的中止记账：撤销成全 INVALID（诊断作前缀）、
+        # summary 照常发布；随后 counts 行自己的 BrokenPipeError 从
+        # main 逃出，rc 由解释器自选（本机 3.14 实测 120——关闭管道上的
+        # 终局 flush 失败）。钉现状：非零 rc + 无 counts 行送达 +
+        # summary 为中止记账形态；契约收口归 #1866。
+        process, head_stdout, stderr_text, tree, before, out = (
+            self.run_runner_piped('stdout-pipe'))
+        self.assertNotEqual(process.returncode, 0,
+                            '#2981 a run whose stdout pipe closes mid-run'
+                            ' must not exit 0 (a coordinator would read a'
+                            ' half-delivered run as a clean verdict): rc='
+                            f'{process.returncode}, stderr={stderr_text!r}')
+        self.assertIn('BrokenPipeError', stderr_text,
+                      '#2981 the pipe error must escape the runner by name,'
+                      ' not be swallowed by the abort accounting')
+        self.assertIn(': KILLED: ', head_stdout,
+                      '#2981 the reader must really have taken the first'
+                      ' record line, or the pipe fault fired too early'
+                      ' (before any verdict existed) and pins nothing')
+        self.assertNotIn('"counts"', head_stdout,
+                         '#2981 the counts line must never reach the'
+                         ' reader: the pipe closed at the second record'
+                         ' line')
+        summary = None
+        if (out / 'summary.json').is_file():
+            summary = json.loads((out / 'summary.json').read_text(
+                encoding='utf-8'))
+        self.assertIsNotNone(
+            summary,
+            '#2981 the abort accounting runs before the escaping counts'
+            ' print: the summary must still be published')
+        rows = summary['controls']
+        self.assertTrue([row['mutation'] for row in rows] == list(SELECTION),
+                        '#2981 every selected control must stay accounted'
+                        ' for, got ' + repr([row['mutation'] for row in rows]))
+        self.assertTrue([row['status'] for row in rows]
+                        == ['INVALID'] * len(SELECTION),
+                        '#2981 the pipe fault lands in the abort accounting:'
+                        ' every recorded kill must be revoked, got '
+                        + repr([row['status'] for row in rows]))
+        pipe_failure = ABORT_PREFIX + 'BrokenPipeError: [Errno 32] Broken pipe'
+        self.assertTrue([row['reason'] for row in rows]
+                        == [HEALTHY_REASON + '; ' + pipe_failure]
+                        * len(SELECTION),
+                        '#2981 the revoked rows keep their diagnostics as'
+                        ' prefixes and name the pipe error, got '
+                        + repr([row['reason'] for row in rows]))
+        self.assertTrue(summary['counts']
+                        == {'KILLED': 0, 'SURVIVED': 0,
+                            'INVALID': len(SELECTION)},
+                        '#2981 the pipe-fault run counts every row INVALID,'
+                        ' got ' + repr(summary['counts']))
+        self.assertTrue((tree / REPLAY_RELATIVE).read_bytes() == before,
+                        '#2981 a pipe-fault run must still restore the tree')
+
+    def test_counts_line_write_failure_keeps_the_summary_on_disk(self):
+        # 最终 counts 行写失败——/dev/full 实测形态 OSError(ENOSPC)，非
+        # 管道错误。publish 在 counts 打印之前（negative_controls.py 的
+        # publish_summary 先于最终 print），所以判决已在盘上、只有 stdout
+        # 送达失败：钉现状——rc 1（未处理异常）+ stderr traceback 点名
+        # OSError + summary 完整保留 KILLED 行。
+        process, summary, tree, before, _out = self.run_runner(
+            'stdout-write-fault')
+        self.assertEqual(process.returncode, 1,
+                         '#2981 an escaped stdout write failure is an'
+                         ' unhandled exception: the interpreter exits 1,'
+                         f' got {process.returncode}: {process.stderr!r}'
+                         f'{process.stdout!r}')
+        self.assertIn('OSError: [Errno 28] No space left on device',
+                      process.stderr,
+                      '#2981 the escaped write failure must name itself on'
+                      ' stderr (a silent nonzero rc is unauditable)')
+        self.assertIsNotNone(summary,
+                             '#2981 only the stdout line failed: the'
+                             ' summary must still be published')
+        rows = summary['controls']
+        self.assertTrue([row['status'] for row in rows]
+                        == ['KILLED'] * len(SELECTION),
+                        '#2981 the rows completed and were recorded: only'
+                        ' the stdout delivery failed, got '
+                        + repr([row['status'] for row in rows]))
+        self.assertTrue([row['reason'] for row in rows]
+                        == [HEALTHY_REASON] * len(SELECTION),
+                        '#2981 a write-fault kill keeps its classify reason,'
+                        ' got ' + repr([row['reason'] for row in rows]))
+        self.assertNotIn('"counts"', process.stdout,
+                         '#2981 the counts line never reached the reader:'
+                         ' the write failed at it')
+        self.assertTrue((tree / REPLAY_RELATIVE).read_bytes() == before,
+                        '#2981 a write-fault run must still restore the tree')
+
+    def test_summary_publish_failure_leaves_no_summary(self):
+        # summary 发布失败（publish 的 temp rename 注入，close-order pin
+        # fix-r2 的 Path.replace 形态）：行已跑完并打到 stdout，publish
+        # 失败后 counts 打印到不了——钉现状：rc 1 + 无 summary.json +
+        # 无残留 temp + stdout 仍带完整 KILLED 行（rc 只可能来自发布
+        # 分支，绝不是中止）。
+        process, summary, tree, before, out = self.run_runner(
+            'summary-publish-fault')
+        self.assertEqual(process.returncode, 1,
+                         '#2981 an escaped publish failure is an unhandled'
+                         ' exception: the interpreter exits 1, got '
+                         f'{process.returncode}: {process.stderr!r}'
+                         f'{process.stdout!r}')
+        self.assertIn(': KILLED: ', process.stdout,
+                      '#2981 the publish-fault run must have completed its'
+                      ' rows: only the summary rename fails, so the rc can'
+                      ' only come from the publish branch, never an abort')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#2981 the counts print never ran past the failed'
+                          ' publish')
+        self.assertIn('#2981 injected summary publish failure',
+                      process.stderr,
+                      '#2981 the escaped publish failure must name itself'
+                      ' on stderr')
+        self.assertIsNone(summary,
+                           '#2981 an unpublished summary must leave no'
+                           ' summary.json behind')
+        self.assertEqual(list(out.glob('summary.json*')), [],
+                         '#2981 a failed publish must not leave a summary'
+                         ' file a later reader could mistake for evidence')
+        self.assertEqual(list(out.glob('.summary.json.*')), [],
+                         '#2981 a failed publish must drop its temp file')
+        self.assertTrue((tree / REPLAY_RELATIVE).read_bytes() == before,
+                        '#2981 a publish-fault run must still restore the'
                         ' tree')
 
 

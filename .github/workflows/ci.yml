@@ -126,12 +126,13 @@ jobs:
         # r41（合并 main）：#2590 fix-r2 增第六模块（issue-2495，实测
         # Ran 30、约 4 s），真跑钉与守卫当时同步扩到六模块。
         # #1800 fix-r1（PR #2979）：增第七模块（sdk-signals-close-order-pin），
-        # 真跑钉与守卫已同步扩到七模块；fix-r2 判决路径补两用例后 Ran 10，
+        # 真跑钉与守卫当时同步扩到七模块；fix-r2 判决路径补两用例后 Ran 10，
         # fix-r3 stdout 写失败 Ran 11、fix-r4 管道配对用例 Ran 12、fix-r5
         # 判决+管道三态第三腿 Ran 13、fix-r6 三态×管道矩阵末格 Ran 14。
         # #2981：增第八模块（sdk-signals，close-order pin 的同型最近兄弟），
         # 其手写 abort 记账此前同样无仓内测试；12 例全子进程驱动临时树，
-        # 不需要 cargo。
+        # 不需要 cargo；fix-r2 三出口腿 + exit 相位补四用例后 Ran 16，
+        # 真跑钉与守卫同步扩到八模块。
         timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
