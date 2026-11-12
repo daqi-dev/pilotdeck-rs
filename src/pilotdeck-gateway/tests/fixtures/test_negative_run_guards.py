@@ -3,8 +3,8 @@
 """#1922: the shared runner's verdict guards must raise, not assert.
 
 ``_shared/negative_control.py`` decides KILLED vs PASS inside ``run()`` with
-four ``raise`` guards (``running 1 test``, ``test result: FAILED`` /
-``test result: ok. 1 passed``, the bound diagnostic, and the exit code).
+``raise`` guards (``running 1 test``, ``test result: ok. 1 passed``, the
+``negative_panic.named_test_killed`` kill criterion, and the exit code).
 Before #1666 they were ``assert`` statements, and ``python3 -O`` strips every
 ``assert``: a mutant that never compiled or never ran the bound test was then
 recorded KILLED -- a ruler passing without measuring anything. The static
@@ -18,6 +18,13 @@ gate is stubbed with ``PDRS_CARGO_SLOT_BIN`` pointing at a non-executable
 path, which ``scripts/cargo-slots.sh`` documents as "this host has no shared
 quota to wait for" (exit 69) -- the one outcome ``run()`` accepts without
 waiting.
+
+#1087 fix-r2: the diagnostic branch judges through the shared strict #813
+criterion, so a kill transcript is only a real libtest shape -- the bound
+test's own ``... FAILED`` status line plus the diagnostic inside that test's
+own panic payload. The false-kill shapes the old whole-log substring check
+accepted (the diagnostic echoed by the test's own stdout, a sibling thread's
+panic) are pinned as refusal cases here.
 
 Every refusal case's input lets all *other* guards pass, so reverting one
 guard to ``assert`` leaves exactly that case with no exception under ``-O``
@@ -44,7 +51,30 @@ FIXTURES = Path(__file__).resolve().parent
 SHARED = FIXTURES / '_shared' / 'negative_control.py'
 DRIVE_FLAG = '--drive-run-guard'
 DIAGNOSTIC = 'boom-1922'
+TEST = 'guard_case_1922'
 LABEL = 'case-1922'
+
+
+def kill_transcript(payload):
+    """A realistic one-test FAILED transcript whose panic body is `payload`."""
+    return (
+        'running 1 test\n'
+        f'test {TEST} ... FAILED\n'
+        '\n'
+        'failures:\n'
+        '\n'
+        f'---- {TEST} stdout ----\n'
+        f'thread \'{TEST}\' panicked at src/gateway.rs:10:5:\n'
+        f'{payload}\n'
+        'note: run with `RUST_BACKTRACE=1` environment variable to display '
+        'a backtrace\n'
+        '\n'
+        'failures:\n'
+        f'    {TEST}\n'
+        '\n'
+        'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+        '0 filtered out; finished in 0.01s\n'
+    )
 
 
 def drive_run_guard():
@@ -61,7 +91,7 @@ def drive_run_guard():
                  'FAKE_CODE': str(case['code'])}
     try:
         namespace['run'](LABEL, ['cargo', 'test', '--no-run'], child_env,
-                         diagnostic=case['diagnostic'])
+                         diagnostic=case['diagnostic'], test=case['test'])
     except RuntimeError as error:
         print(f'VERDICT RAISED RuntimeError: {error}')
     except BaseException as error:
@@ -97,7 +127,8 @@ class SharedRunnerVerdictGuards(unittest.TestCase):
             cargo.write_text('#!/bin/sh\nprintf \'%s\' "$FAKE_OUTPUT"\nexit "$FAKE_CODE"\n')
             os.chmod(cargo, 0o755)
             case = dict(label=LABEL, output=output, code=code,
-                        diagnostic=diagnostic, bin=str(bin_dir), tmp=base)
+                        diagnostic=diagnostic, test=TEST,
+                        bin=str(bin_dir), tmp=base)
             env = dict(os.environ)
             # An explicit non-executable gate means "no shared quota on this
             # host" to cargo-slots.sh (exit 69): the real gate is never queried.
@@ -139,21 +170,59 @@ class SharedRunnerVerdictGuards(unittest.TestCase):
         result = self.drive('running 1 test\n', 0, None)
         self.assertGuardRaised(result, "expected 'test result: ok. 1 passed' in the output")
 
-    def test_missing_failed_summary_is_not_a_kill(self):
-        # The diagnostic branch of the summary guard: the output names the
-        # diagnostic but never prints the FAILED summary, so the expected
-        # `test result: FAILED` line is what must refuse the verdict.
-        result = self.drive(f'running 1 test\n{DIAGNOSTIC}\n', 101, DIAGNOSTIC)
-        self.assertGuardRaised(result, "expected 'test result: FAILED' in the output")
-
     def test_zero_exit_with_diagnostic_is_not_a_kill(self):
-        result = self.drive(f'running 1 test\ntest result: FAILED\n{DIAGNOSTIC}\n',
-                            0, DIAGNOSTIC)
-        self.assertGuardRaised(result, 'the bound test did not fail with the expected diagnostic')
+        result = self.drive(kill_transcript(f'{DIAGNOSTIC} bound assertion message'), 0,
+                            DIAGNOSTIC)
+        self.assertGuardRaised(result, 'did not fail with the expected diagnostic')
 
     def test_missing_diagnostic_is_not_a_kill(self):
-        result = self.drive('running 1 test\ntest result: FAILED\n', 101, DIAGNOSTIC)
-        self.assertGuardRaised(result, 'the bound test did not fail with the expected diagnostic')
+        # The bound test fails, but on an unrelated assertion whose payload
+        # does not carry the diagnostic.
+        result = self.drive(kill_transcript('assertion `left == right` failed'), 101,
+                            DIAGNOSTIC)
+        self.assertGuardRaised(result, 'did not fail with the expected diagnostic')
+
+    def test_sibling_panic_is_not_a_kill(self):
+        # #1087 fix-r2 false-kill shape: the diagnostic appears in a sibling
+        # thread's panic while the bound test itself passes. The old
+        # whole-log `diagnostic in output` recorded this KILLED.
+        result = self.drive(
+            'running 1 test\n'
+            f'test {TEST} ... ok\n'
+            "thread 'sibling-1922' panicked at src/gateway.rs:20:9:\n"
+            f'{DIAGNOSTIC} leaked from a sibling thread\n'
+            'note: run with `RUST_BACKTRACE=1` environment variable to display '
+            'a backtrace\n'
+            'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+            '0 filtered out; finished in 0.01s\n',
+            101, DIAGNOSTIC)
+        self.assertGuardRaised(result, 'did not fail with the expected diagnostic')
+
+    def test_captured_stdout_is_not_a_kill(self):
+        # #1087 fix-r2 false-kill shape: the test echoes the diagnostic on its
+        # own stdout and then fails an unrelated assertion. The diagnostic is
+        # in the whole log, but not in the bound test's own panic payload.
+        result = self.drive(
+            'running 1 test\n'
+            f'test {TEST} ... FAILED\n'
+            '\n'
+            'failures:\n'
+            '\n'
+            f'---- {TEST} stdout ----\n'
+            f'{DIAGNOSTIC} echoed by the test\'s own stdout\n'
+            '\n'
+            f"thread '{TEST}' panicked at src/gateway.rs:10:5:\n"
+            'assertion `left == right` failed\n'
+            'note: run with `RUST_BACKTRACE=1` environment variable to display '
+            'a backtrace\n'
+            '\n'
+            'failures:\n'
+            f'    {TEST}\n'
+            '\n'
+            'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+            '0 filtered out; finished in 0.01s\n',
+            101, DIAGNOSTIC)
+        self.assertGuardRaised(result, 'did not fail with the expected diagnostic')
 
     def test_nonzero_exit_is_not_a_pass(self):
         result = self.drive('running 1 test\ntest result: ok. 1 passed\n', 3, None)
@@ -165,7 +234,7 @@ class SharedRunnerVerdictGuards(unittest.TestCase):
         # harness that cannot run the shared code at all.
         result = self.drive('running 1 test\ntest result: ok. 1 passed\n', 0, None)
         self.assertPassedThrough(result, 'PASS')
-        result = self.drive(f'running 1 test\ntest result: FAILED\n{DIAGNOSTIC}\n',
+        result = self.drive(kill_transcript(f'{DIAGNOSTIC} bound assertion message'),
                             101, DIAGNOSTIC)
         self.assertPassedThrough(result, 'KILLED')
 

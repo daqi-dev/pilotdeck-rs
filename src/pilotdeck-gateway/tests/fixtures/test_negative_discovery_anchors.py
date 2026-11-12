@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 75 in both; 1512 keys: 416 bare-filename joins and 1096 shared-helper import keys.
+# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 75 in both; 1526 keys: 416 bare-filename joins and 1110 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -149,7 +149,7 @@ KNOWN_BLIND = {
     '_negkit/negative_contract.py': '4 keys',
     '_negkit/negative_non_head.py': '5 keys',
     '_negkit/negative_submit_migration.py': '10 keys',
-    '_shared/negative_control.py': '4 keys + 6 unresolvable',
+    '_shared/negative_control.py': '6 keys + 6 unresolvable',
     '_shared/negative_sqlite_header.py': '6 keys',
     '_shared/regeneration-negative.py': '6 keys',
     'agent-event-projector/negative.py': '5 keys',
@@ -203,11 +203,11 @@ KNOWN_BLIND = {
     'edgeclaw-heartbeat-indexer/negative.py': '4 keys',
     'edgeclaw-heartbeat-isolation/negative.py': '10 keys',
     'edgeclaw-heartbeat/negative.py': '4 keys',
-    'edgeclaw-llm-config/negative.py': '2 keys',
+    'edgeclaw-llm-config/negative.py': '4 keys',
     'edgeclaw-llm-dream/negative.py': '3 keys',
-    'edgeclaw-llm-envelope/negative.py': '1 key',
+    'edgeclaw-llm-envelope/negative.py': '3 keys',
     'edgeclaw-llm-index/negative.py': '1 key',
-    'edgeclaw-llm-recall/negative.py': '1 key',
+    'edgeclaw-llm-recall/negative.py': '3 keys',
     'edgeclaw-llm-telemetry/negative.py': '6 keys',
     'edgeclaw-llm/negative.py': '1 key',
     'edgeclaw-messages/negative.py': '4 keys',
@@ -215,11 +215,11 @@ KNOWN_BLIND = {
     'edgeclaw-provider/negative.py': '11 keys',
     'edgeclaw-real-provider/negative.py': '2 keys',
     'edgeclaw-retrieval-helpers/negative.py': '3 keys',
-    'edgeclaw-retriever/negative.py': '2 keys',
+    'edgeclaw-retriever/negative.py': '4 keys',
     'edgeclaw-same-root-generation/negative.py': '12 keys',
     'edgeclaw-service-facade/negative.py': '6 keys',
     'edgeclaw-service-facade/switch_negative.py': '8 keys',
-    'edgeclaw-service-orchestration/negative.py': '1 key',
+    'edgeclaw-service-orchestration/negative.py': '3 keys',
     'edgeclaw-service-orchestration/switch_negative.py': '7 keys',
     'edgeclaw-text/negative.py': '4 keys',
     'exact-receipt-yaml/negative_controls.py': '1 key',
@@ -236,7 +236,7 @@ KNOWN_BLIND = {
     'handle-path-macos/negative_controls.py': '6 keys',
     'hooks-output/negative.py': '1 key',
     'host-event-pump/negative_controls.py': '1 key',
-    'html-timing/negative_controls.py': '3 keys + 1 unresolvable',
+    'html-timing/negative_controls.py': '5 keys + 1 unresolvable',
     'http-store-park/negative_controls.py': '6 keys + 1 unresolvable',
     'interaction-bus/negative_controls.py': '4 keys + 1 unresolvable',
     'interaction-values/negative_controls.py': '4 keys',

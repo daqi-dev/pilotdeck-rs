@@ -48,6 +48,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _negkit import non_head
+from negative_panic import named_test_killed, panic_evidence
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
                               write_source_atomic)
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
@@ -192,18 +193,26 @@ def outcome(result, test, expects=None):
     INVALID, never KILLED: the mutant must bind to the assertion under test.
     ``expects`` is a mapping with ``all`` tokens (required) and optional ``any``
     alternatives (exactly one dedicated line is enough).
+
+    #1087 fix-r2 (boundary P1): the failure line is taken from the tested
+    test's own panic payload (``panic_evidence``), and the kill additionally
+    requires the shared strict #813 judge — that test's own line-anchored
+    FAILED status line. The old whole-log scan also matched a sibling test's
+    panic, captured stdout and build output — the false-kill shapes the twin
+    controls in test_negative_controls.py pin.
     """
     expects = expects or {}
     required = expects.get('all', ())
     alternatives = expects.get('any', ())
     log = result.stdout + result.stderr
-    failed_line = f'{test} ... FAILED'
-    failure = next((line.strip() for line in log.splitlines()
+    evidence = panic_evidence(log, test)
+    failure = next((line.strip() for line in evidence.split('\n')
                     if any(marker in line for marker in TIMING_MARKERS)), '')
     matched = (all(token in failure for token in required)
                and (not alternatives
                     or any(token in failure for token in alternatives)))
-    killed = failed_line in log and bool(failure) and matched
+    killed = (bool(failure) and matched
+              and named_test_killed(log, test, failure))
     return log, killed, failure
 
 

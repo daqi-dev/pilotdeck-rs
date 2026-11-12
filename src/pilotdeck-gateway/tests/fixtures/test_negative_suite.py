@@ -54,11 +54,16 @@ class SuiteTests(unittest.TestCase):
                                 name, TEST, ANCHOR) for name in ('first', 'second')]
             calls = []
             write_bytes = Path.write_bytes
+            publish_source = suite.write_source_atomic
 
-            def restore(path, data):
+            def publish(root, path, data, *, mode=None):
+                # #1087 fix-r2: run_cases publishes every guarded-source write
+                # through write_source_atomic (one rename, #1903), so the
+                # fault injection wraps that entry point — the byte level under
+                # it never runs a truncating write anymore.
                 if restore_failure and path == source and path.read_text() == 'first':
                     raise OSError('injected restoration failure')
-                return write_bytes(path, data)
+                return publish_source(root, path, data, mode=mode)
 
             def leave_guard(*args):
                 write_bytes(source, b'original')
@@ -91,7 +96,7 @@ class SuiteTests(unittest.TestCase):
             with patch.object(suite, 'mutating_sources') as sources, \
                     patch.object(suite, 'wait_for_slot', return_value=output('pass')), \
                     patch.object(suite, 'run_owned', side_effect=run), \
-                    patch.object(Path, 'write_bytes', new=restore), \
+                    patch.object(suite, 'write_source_atomic', new=publish), \
                     contextlib.redirect_stdout(io.StringIO()) as stdout:
                 sources.return_value.__enter__.return_value = {source: b'original'}
                 sources.return_value.__enter__.side_effect = guard
@@ -1174,12 +1179,15 @@ class MatrixRunnerTests(unittest.TestCase):
             original = b'original'
             guards = []
             restores = []
-            write_bytes = Path.write_bytes
-            def restore(path, data):
+            publish_source = suite.write_source_atomic
+            def publish(root, path, data, *, mode=None):
+                # Same #1087 fix-r2 re-anchoring as SuiteTests: matrix_main
+                # publishes through write_source_atomic, so the injected
+                # restore failure must come from that entry point.
                 if fault == 'restore' and path == source and path.read_text() == 'first' and not restores:
                     restores.append(True)
                     raise OSError('injected matrix restore failure')
-                return write_bytes(path, data)
+                return publish_source(root, path, data, mode=mode)
             @contextlib.contextmanager
             def guard(*args, **kwargs):
                 self.assertNotIn('baseline', kwargs, 'must use HEAD')
@@ -1210,7 +1218,7 @@ class MatrixRunnerTests(unittest.TestCase):
                 return subprocess.CompletedProcess([], 101, 'test prefix::bound ... FAILED\n', '')
             with patch.object(suite, 'mutating_sources', side_effect=guard), \
                     patch.object(suite, 'run_owned', side_effect=run), \
-                    patch.object(Path, 'write_bytes', new=restore), \
+                    patch.object(suite, 'write_source_atomic', new=publish), \
                     patch.object(suite, 'wait_for_slot', return_value=output('pass')), \
                     patch.dict('os.environ', {'CARGO_TARGET_DIR': str(root / 'target')}), \
                     contextlib.redirect_stdout(io.StringIO()):

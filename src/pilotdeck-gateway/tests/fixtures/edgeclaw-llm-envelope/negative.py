@@ -30,7 +30,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/envelope.rs'
@@ -219,6 +221,68 @@ cases = [
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
 all_cases = list(cases)
+
+# #1087 fix-r2 (b-tier P1, review P2#5): every kill is now bound to the
+# failing oracle case's own assertion. The replay driver prints
+# ``{fn} args={:?} clock={clock_ms}`` (or ``{fn} args={:?}`` on the throw
+# shape) as the assert_eq! custom message, so the TS function name that
+# opens the message is the anchor. Groups whose oracle mixes several
+# functions (arrays / truncate / route) carry the alternatives of that
+# group; named_test_killed accepts an iterable of alternatives.
+EXPECTED = {
+    'object-shortcut': 'extractFirstJsonObject args=',
+    'object-escape': 'extractFirstJsonObject args=',
+    'envelope-slice': 'extractLooseJsonEnvelope args=',
+    'decode-final-unescape': 'extractLooseJsonStringProperty args=',
+    'decode-crlf': 'extractLooseJsonStringProperty args=',
+    'string-lazy-capture': 'extractLooseJsonStringProperty args=',
+    'slice-negative': ('truncate args=', 'normalizeWhitespace args=',
+                       'truncateForPrompt args='),
+    'unique-dedupe': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'route-case': ('normalizeMemoryRoute args=', 'normalizeBoolean args='),
+    'boolean-case': ('normalizeMemoryRoute args=', 'normalizeBoolean args='),
+    'payload-required': 'tryParseLooseMemoryCreatePayload args=',
+    'payload-error': 'tryParseLooseMemoryCreatePayload args=',
+    'string-greedy-gap': 'extractLooseJsonStringProperty args=',
+    'string-greedy-trailing': 'extractLooseJsonStringProperty args=',
+    'prompt-normalize': ('truncate args=', 'normalizeWhitespace args=',
+                         'truncateForPrompt args='),
+    'boolean-ascii-fold': 'extractLooseJsonBooleanProperty args=',
+    'boolean-nonascii-fold': 'extractLooseJsonBooleanProperty args=',
+    'array-single-string': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'array-single-blank': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'array-nonstring-filter': ('normalizeStringArray args=',
+                               'uniqueStrings args='),
+    'array-blank-filter': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'array-non-array': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'string-empty-capture': 'extractLooseJsonStringProperty args=',
+    'boolean-false-literal': 'extractLooseJsonBooleanProperty args=',
+    'key-case-fold': 'extractLooseJsonBooleanProperty args=',
+    'comma-next-key-filter': 'extractLooseJsonStringProperty args=',
+}
+
+
+def classify(log, returncode, expected, test):
+    # #1087 fix-r2: the kill criterion is the shared strict #813 judge — the
+    # named test's own FAILED status line plus the bound ``<fn> args=`` anchor
+    # inside that test's own panic payload (negative_panic judges both). The
+    # old shape only checked ``test result: FAILED.`` plus ``running 1
+    # test``: any failure (an unrelated panic, a fixture defect) read as
+    # KILLED. Defined before the argv dispatch so the twin controls in
+    # test_negative.py can import the module and drive it directly.
+    if returncode is None:
+        return 'INVALID'
+    if 'could not compile' in log:
+        return 'INVALID'
+    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
+        if named_test_killed(log, test, expected):
+            return 'KILLED'
+        return 'INVALID'
+    if returncode == 0 and 'test result: ok.' in log:
+        return 'SURVIVED'
+    return 'INVALID'
+
+
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
@@ -240,18 +304,6 @@ env['CARGO_TARGET_DIR'] = target
 command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_envelope']
 results = []
-
-
-def classify(log, returncode):
-    if returncode is None:
-        return 'INVALID'
-    if 'could not compile' in log:
-        return 'INVALID'
-    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
-        return 'KILLED'
-    if returncode == 0 and 'test result: ok.' in log:
-        return 'SURVIVED'
-    return 'INVALID'
 
 
 def write_summary(baseline):
@@ -311,7 +363,13 @@ with mutating_sources(root, [source]) as originals:
                 slots_text = slots.stdout + slots.stderr
                 # Snapshot bytes come only from mutating_sources; the mutation
                 # itself is a single exact anchor replacement.
-                path.write_bytes(original.replace(before, after).encode())
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_bytes`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(root, path,
+                                     original.replace(before, after).encode(),
+                                     mode=path.stat().st_mode & 0o7777)
                 try:
                     run = run_owned(
                         command + [test, '--', '--exact'],
@@ -319,14 +377,17 @@ with mutating_sources(root, [source]) as originals:
                     log = run.stdout + run.stderr
                     returncode = run.returncode
                 finally:
-                    path.write_bytes(originals[path])
+                    # Same #1087 fix-r2 window: the in-loop restore is also
+                    # one rename, never a truncating write_bytes.
+                    write_source_atomic(root, path, originals[path],
+                                        mode=path.stat().st_mode & 0o7777)
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
             except Exception as error:  # noqa: BLE001 - report, never hide a cell
                 log = f'{type(error).__name__}: {error}\n'
                 returncode = None
-            outcome = classify(log, returncode)
+            outcome = classify(log, returncode, EXPECTED[name], test)
             # A red baseline makes every mutation's "failure" untrustworthy.
             if outcome == 'KILLED' and not baseline_ok:
                 outcome = 'INVALID'
@@ -339,7 +400,10 @@ with mutating_sources(root, [source]) as originals:
             print(f'{name}: {outcome} exit={returncode}', flush=True)
     finally:
         for path, data in originals.items():
-            path.write_bytes(data)
+            # Same #1087 fix-r2 window: the final restore is also one rename,
+            # never a truncating write_bytes.
+            write_source_atomic(root, path, data,
+                                mode=path.stat().st_mode & 0o7777)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']

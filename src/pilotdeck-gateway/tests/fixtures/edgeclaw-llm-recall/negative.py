@@ -27,7 +27,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 recall = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs'
@@ -276,6 +278,28 @@ EXPECTED = {
     'sort-reachable-order': '#765 reachable-domain sort first mismatch',
 }
 
+
+def classify(log, returncode, expected, test):
+    # #1087 fix-r2: the kill criterion is the shared strict #813 judge — the
+    # named test's own FAILED status line plus the bound assertion inside
+    # that test's own panic payload (negative_panic judges both). The old
+    # whole-log `expected in log` also matched a sibling test's panic,
+    # captured stdout and build output — the false-kill shapes the twin
+    # controls in test_negative.py pin. Defined before the argv dispatch so
+    # the twin controls can import the module and drive it directly.
+    if returncode is None:
+        return 'INVALID', 'no exit code'
+    if 'could not compile' in log:
+        return 'INVALID', 'compiler failure'
+    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
+        if named_test_killed(log, test, expected):
+            return 'KILLED', expected
+        return 'INVALID', f'failed without the bound assertion {expected}'
+    if returncode == 0 and 'test result: ok.' in log:
+        return 'SURVIVED', 'test stayed green'
+    return 'INVALID', 'unclassified output'
+
+
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
 all_cases = list(cases)
@@ -316,20 +340,6 @@ env['CARGO_TARGET_DIR'] = target
 command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_recall']
 results = []
-
-
-def classify(log, returncode, expected):
-    if returncode is None:
-        return 'INVALID', 'no exit code'
-    if 'could not compile' in log:
-        return 'INVALID', 'compiler failure'
-    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
-        if expected in log:
-            return 'KILLED', expected
-        return 'INVALID', f'failed without the bound assertion {expected}'
-    if returncode == 0 and 'test result: ok.' in log:
-        return 'SURVIVED', 'test stayed green'
-    return 'INVALID', 'unclassified output'
 
 
 def write_summary(baseline):
@@ -389,7 +399,13 @@ with mutating_sources(root, paths) as originals:
                 # Snapshot bytes come only from mutating_sources; the mutation
                 # itself is a single exact anchor replacement.
                 original = originals[path].decode()
-                path.write_bytes(original.replace(before, after).encode())
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_bytes`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(root, path,
+                                     original.replace(before, after).encode(),
+                                     mode=path.stat().st_mode & 0o7777)
                 try:
                     run = run_owned(
                         command + [test, '--', '--exact'],
@@ -397,14 +413,17 @@ with mutating_sources(root, paths) as originals:
                     log = run.stdout + run.stderr
                     returncode = run.returncode
                 finally:
-                    path.write_bytes(originals[path])
+                    # Same #1087 fix-r2 window: the in-loop restore is also
+                    # one rename, never a truncating write_bytes.
+                    write_source_atomic(root, path, originals[path],
+                                        mode=path.stat().st_mode & 0o7777)
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
             except Exception as error:  # noqa: BLE001 - report, never hide a cell
                 log = f'{type(error).__name__}: {error}\n'
                 returncode = None
-            outcome, reason = classify(log, returncode, EXPECTED[name])
+            outcome, reason = classify(log, returncode, EXPECTED[name], test)
             if outcome == 'KILLED' and not baseline_ok:
                 outcome, reason = 'INVALID', 'baseline was not green'
             (out / f'{name}.log').write_text(
@@ -417,7 +436,10 @@ with mutating_sources(root, paths) as originals:
             print(f'{name}: {outcome} ({reason}) exit={returncode}', flush=True)
     finally:
         for path, data in originals.items():
-            path.write_bytes(data)
+            # Same #1087 fix-r2 window: the final restore is also one rename,
+            # never a truncating write_bytes.
+            write_source_atomic(root, path, data,
+                                mode=path.stat().st_mode & 0o7777)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']

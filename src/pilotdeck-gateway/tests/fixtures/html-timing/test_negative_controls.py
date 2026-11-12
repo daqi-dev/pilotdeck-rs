@@ -14,6 +14,12 @@ source (#1087 fix-r1 / #1061). The controls below pin the contract:
 * a guard failure voids the recorded rows and exits 1;
 * every guarded-source write in the window is one atomic rename (#1903 rule).
 
+#1087 fix-r2 (boundary P1): ``outcome()`` takes the failure line from the
+tested test's own panic payload and requires the shared strict #813 judge.
+The outcome controls below pin the false-kill shapes the old whole-log scan
+accepted: the timing marker echoed by the test's own captured stdout, a
+sibling test's panic and an unrelated unwrap.
+
 Only the cargo timing runs and the source guard are mocked; the row
 bookkeeping under test is the delivered code.
 
@@ -80,8 +86,16 @@ class TimingRunnerControls(unittest.TestCase):
             if state['calls'] % 3 == 2:
                 return subprocess.CompletedProcess(
                     [], 1, '',
-                    'running 1 test\nt_one ... FAILED\n'
-                    'did not scale from 1 MiB to 2 MiB #978\nfailures:\n')
+                    'running 1 test\ntest t_one ... FAILED\n\n'
+                    'failures:\n\n---- t_one stdout ----\n'
+                    "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                    '#978 8 MiB rewrite did not scale from 8x-smaller '
+                    'to 2x-larger input\n'
+                    'note: run with `RUST_BACKTRACE=1` environment variable to '
+                    'display a backtrace\n\n'
+                    'failures:\n    t_one\n\n'
+                    'test result: FAILED. 0 passed; 1 failed; 0 ignored; '
+                    '0 measured; 0 filtered out\n')
             return subprocess.CompletedProcess([], 0, '',
                                               'running 1 test\nt_one ... ok\n')
 
@@ -256,6 +270,125 @@ class TimingRunnerControls(unittest.TestCase):
                         message + ' (each write must keep the source path and mode)')
         self.assertTrue(self.source.read_text() == 'fn a() {}\n',
                         message + ' (the tree must end restored)')
+
+
+class OutcomeJudgeControls(unittest.TestCase):
+    """#1087 fix-r2: the failure line must come from the test's own panic."""
+
+    TEST = 't_one'
+    EXPECTS = dict(all=('did not scale from',))
+    MARKER_LINE = ('#978 8 MiB rewrite did not scale from 8x-smaller '
+                   'to 2x-larger input')
+
+    def setUp(self):
+        entry = str(Path(__file__).resolve().parent)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            self.addCleanup(sys.path.remove, entry)
+        import negative_controls
+        self.runner = negative_controls
+
+    def result(self, output, code=101):
+        return subprocess.CompletedProcess([], code, '', output)
+
+    def test_own_panic_payload_kills(self):
+        log, killed, failure = self.runner.outcome(
+            self.result(
+                'running 1 test\ntest t_one ... FAILED\n\n'
+                'failures:\n\n---- t_one stdout ----\n'
+                "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                f'{self.MARKER_LINE}\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n\n'
+                'failures:\n    t_one\n\n'
+                'test result: FAILED. 0 passed; 1 failed; 0 ignored; '
+                '0 measured; 0 filtered out\n'),
+            self.TEST, self.EXPECTS)
+        message = '#1087 the bound test\'s own panic payload must kill'
+        self.assertTrue(killed, message)
+        self.assertTrue(failure == self.MARKER_LINE, message + ' (failure line)')
+
+    def test_captured_stdout_is_not_a_kill(self):
+        # The marker is echoed by the test's own captured stdout; the panic
+        # payload is an unrelated assertion. The old whole-log scan recorded
+        # this KILLED.
+        log, killed, failure = self.runner.outcome(
+            self.result(
+                'running 1 test\ntest t_one ... FAILED\n\n'
+                'failures:\n\n---- t_one stdout ----\n'
+                f'{self.MARKER_LINE}\n\n'
+                "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                'assertion `left == right` failed\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n\n'
+                'failures:\n    t_one\n\n'
+                'test result: FAILED. 0 passed; 1 failed; 0 ignored; '
+                '0 measured; 0 filtered out\n'),
+            self.TEST, self.EXPECTS)
+        message = '#1087 captured stdout is not the bound panic payload'
+        self.assertTrue(not killed, message)
+        self.assertTrue(failure == '', message + ' (no failure must be found)')
+
+    def test_sibling_panic_is_not_a_kill(self):
+        # The marker line sits in the sibling test's panic payload; the bound
+        # test fails on an unrelated assertion. The old whole-log scan
+        # recorded this KILLED.
+        log, killed, failure = self.runner.outcome(
+            self.result(
+                'running 2 tests\ntest t_one ... FAILED\ntest t_two ... FAILED\n\n'
+                'failures:\n\n---- t_two stdout ----\n'
+                "thread 't_two' panicked at src/other.rs:1:1:\n"
+                f'{self.MARKER_LINE}\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n\n'
+                '---- t_one stdout ----\n'
+                "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                'assertion `left == right` failed\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n\n'
+                'failures:\n    t_one\n    t_two\n\n'
+                'test result: FAILED. 0 passed; 2 failed; 0 ignored; '
+                '0 measured; 0 filtered out\n'),
+            self.TEST, self.EXPECTS)
+        message = '#1087 a sibling test\'s panic is not a kill'
+        self.assertTrue(not killed, message)
+        self.assertTrue(failure == '', message + ' (no failure must be found)')
+
+    def test_unrelated_unwrap_is_not_a_kill(self):
+        log, killed, failure = self.runner.outcome(
+            self.result(
+                'running 1 test\ntest t_one ... FAILED\n\n'
+                'failures:\n\n---- t_one stdout ----\n'
+                "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                'called `Option::unwrap()` on a None value\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n\n'
+                'failures:\n    t_one\n\n'
+                'test result: FAILED. 0 passed; 1 failed; 0 ignored; '
+                '0 measured; 0 filtered out\n'),
+            self.TEST, self.EXPECTS)
+        message = '#1087 an unrelated unwrap panic is not a kill'
+        self.assertTrue(not killed, message)
+        self.assertTrue(failure == '', message + ' (no failure must be found)')
+
+    def test_missing_required_token_is_not_a_kill(self):
+        # The payload carries a timing line, but not this row's required
+        # ``all`` token: a different timing guard fired.
+        log, killed, failure = self.runner.outcome(
+            self.result(
+                'running 1 test\ntest t_one ... FAILED\n\n'
+                'failures:\n\n---- t_one stdout ----\n'
+                "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                '#873 8 MiB rewrite exceeded the per-sample budget\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n\n'
+                'failures:\n    t_one\n\n'
+                'test result: FAILED. 0 passed; 1 failed; 0 ignored; '
+                '0 measured; 0 filtered out\n'),
+            self.TEST, self.EXPECTS)
+        message = '#1087 a payload without the required token is not a kill'
+        self.assertTrue(not killed, message)
+        self.assertTrue(failure != '', message + ' (the failure line is found)')
 
 
 if __name__ == '__main__':
