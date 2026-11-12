@@ -68,8 +68,11 @@ wire sessionKey 原样进 `RunRef`，经生产 `assembly.rs` create_storage 链�
 `probe_ts_gates.log` 无 sessionKey 门）。注意这与 `set_permission_mode`
 **不同序**：后者是 mode → busy → sessionKey 门（`methods/config.rs`，
 busy 会话上答 SESSION_BUSY——#3033 记录的正是该差异），而 submit_turn 的
-门先于 busy 拒绝（「代理 key + busy 别名属主」组合下答 INVALID_SESSION_KEY）；
-其余 config 入口的代理分支次序见跟进单 #3051 口径。先序钉
+门先于 busy 拒绝（同一代理拼写的 turn 在飞时仍答 INVALID_SESSION_KEY——
+夹具以同一拼写 `begin_turn` 直留 turn 槽，`admission.rs` 的 turn 预留按
+UTF-16 单元精确 `JsString` 查表，别名折叠是 `session_model_set` 的 #1872
+口径、submit_turn 不折叠）；其余 config 入口的代理分支次序见跟进单 #3051
+口径。先序钉
 `submit_turn_surrogate_gate_precedes_the_busy_refusal` 不受影响（busy 在
 validate 之后），`submit_turn_combined_invalid_keeps_the_ts_mode_code` 与
 `submit_turn_combined_invalid_keeps_the_ts_field_codes`（runId /
