@@ -2192,7 +2192,12 @@ class EnvironmentControls(unittest.TestCase):
                              'label'))
         # fix-r3（#2780 P2-a 主题 2/3）：钉值集合与守卫 env 的配对负控。集合类变异
         # 两副本同改（保持逐字全等，让红落在绑定断言上而不是分叉断言上）。
-        pin_line = '          expected_image_versions="20261101.360.1"\n'
+        # 2026-11-12 滚动窗口加值（#3078 DS 评审 P1 三路同撞）：锚点从工作流实文本
+        # 派生（:2417 同款写法），不再手抄钉值字面量——满足 runner_image_guard_pins
+        # 「钉值的单一来源就是守卫脚本本身」约定，滚动窗口加/删成员只改 ci.yml
+        # 两副本，本测试零改动。
+        pin_line = (re.search(r'^ {10}expected_image_versions="[^"]*"$',
+                              workflow, re.M)[0] + '\n')
         self.assertEqual(workflow.count(pin_line), 2,
                          '#2780 both copies carry the image-version pin')
         for label, new, message in (
