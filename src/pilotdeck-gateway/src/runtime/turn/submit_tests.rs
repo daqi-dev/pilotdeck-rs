@@ -2086,3 +2086,63 @@ async fn submit_turn_keeps_fffd_and_paired_surrogate_keys() {
         );
     }
 }
+
+// #1623 fix-r4 (boundary #2): the entry gate fires before the busy refusal.
+// The turn-submit oracle's third validation probe is exactly a lone-surrogate
+// `sessionKey` on a busy session (`validationProbes` `{sessionKey:"\ud800",
+// busy:true}`, tests/fixtures/turn-submit/oracle.json), and the recorded TS
+// answer there is `session_busy` — TS has no sessionKey gate at all. The
+// registered divergence must answer the gate first, so hold the session's
+// turn reservation, submit with the same surrogate key, and require the
+// INVALID_SESSION_KEY error-event with no `session_busy` event beside it.
+// Moving the gate after the busy branch turns this red: the busy answer
+// would then be the only event. The raw wire strings are scanned (not the
+// `collect` helper's serde round-trip) because the busy answer's message
+// echoes the raw surrogate units, which JSON parsers reject.
+#[tokio::test]
+async fn submit_turn_surrogate_gate_precedes_the_busy_refusal() {
+    use crate::negative_assert;
+    let (submitter, factory, _log) = counting_factory_submitter();
+    let key = JsString::from_utf16(vec![0x73, 0xd800]);
+    let _held = submitter
+        .owner
+        .begin_turn(&key, &"busy-run".into())
+        .expect("#1623 the busy fixture reserves the session's turn slot");
+    negative_assert!(
+        submitter.owner.has_active_turn(&key),
+        "#1623 the busy fixture marks the session busy before the submit"
+    );
+    let mut stream = submitter.submit(submit_turn_input(key));
+    let mut wire = Vec::new();
+    while let Some(event) = stream
+        .next()
+        .await
+        .expect("#1623 the busy-boundary submission drains")
+    {
+        wire.push(
+            stringify_json(&event)
+                .expect("#1623 the busy-boundary event stringifies")
+                .expect("#1623 the busy-boundary event stringifies"),
+        );
+    }
+    let gate = wire
+        .iter()
+        .find(|line| line.contains("\"code\":\"INVALID_SESSION_KEY\""))
+        .expect("#1623 the surrogate key answers the entry gate before the busy refusal");
+    negative_assert!(
+        gate.contains(crate::native_process::SESSION_KEY_SURROGATE_MESSAGE),
+        "#1623 the busy-session rejection keeps the entry gate's message"
+    );
+    negative_assert!(
+        wire.iter().all(|line| !line.contains("session_busy")),
+        "#1623 the busy session never answers before the entry gate"
+    );
+    negative_assert!(
+        factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .is_empty(),
+        "#1623 the gate fires before the session factory even on a busy session"
+    );
+}
