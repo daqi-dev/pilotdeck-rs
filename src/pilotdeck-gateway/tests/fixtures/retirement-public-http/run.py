@@ -1,9 +1,10 @@
 """Run the eight retained HTTP5 profiles in identical isolated /app paths, one at a time."""
-import argparse,hashlib,importlib.util,json,os,signal,subprocess,sys
+import argparse,hashlib,importlib.util,json,os,signal,subprocess,sys,time
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 IMAGE='sha256:eb58eb269804b8a9b2bb9ceeb9a175cac9b79612d4c8dafe0a987b277bd55683'
 PROFILES=('configured','skills-disabled','approval-unconfigured','feishu')
+CASE_TIMEOUT=240
 def load(name,path):
  spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 layout=load('http5_layout',HERE/'layout.py')
@@ -45,18 +46,22 @@ with common.parity_lock(timeout=1):
    try:
     with (run/'container.stdout').open('x') as so,(run/'container.stderr').open('x') as se:
      with common.deferred_signals():child=subprocess.Popen(command,stdout=so,stderr=se,start_new_session=True);common.LIVE_GROUPS.add(child.pid)
-     # Read the actual owned Docker mount record while this case is alive.
-     for attempt in range(100):
-      inspection=subprocess.run(['docker','inspect',name],capture_output=True,text=True,timeout=5)
+     # Startup and collection share one budget; a slow create must not lose
+     # its running inspection just because an unrelated poll count expired.
+     deadline=time.monotonic()+CASE_TIMEOUT
+     while child.poll() is None and time.monotonic()<deadline:
+      try:inspection=subprocess.run(['docker','inspect',name],capture_output=True,text=True,timeout=min(5,max(.001,deadline-time.monotonic())))
+      except subprocess.TimeoutExpired:continue
       if inspection.returncode==0:
        inspected=json.loads(inspection.stdout)
        # A created container is inspectable before its process has started.
        # Keep polling until the retained snapshot proves the live collector.
-       if len(inspected)==1 and inspected[0]['State']['Running'] is True and inspected[0]['State']['Pid']>0:
+       state=inspected[0].get('State') if len(inspected)==1 and isinstance(inspected[0],dict) else None
+       if isinstance(state,dict) and state.get('Running') is True and type(state.get('Pid')) is int and state['Pid']>0:
         save(run/'container-inspect.json',inspected);break
       if child.poll() is not None:break
-      import time;time.sleep(.05)
-     try:code=child.wait(timeout=240)
+      time.sleep(min(.05,max(0,deadline-time.monotonic())))
+     try:code=child.wait(timeout=max(0,deadline-time.monotonic()))
      except subprocess.TimeoutExpired:code=124
    finally:
     with common.deferred_signals():

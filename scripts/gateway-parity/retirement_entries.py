@@ -515,12 +515,14 @@ def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
         inspections = d.read(artifact(receipt['containerInspection']))
         d.require(len(inspections) == 1, 'ENTRY_CHANNEL_ISOLATION', 'one owned container inspection required')
         inspection = inspections[0]
+        state = inspection.get('State')
         d.require(inspection['Id'] == cleanup.get('containerId')
                   and inspection['Name'] == '/' + cleanup['name']
                   and inspection['Config']['Hostname'] == preflight.get('hostname')
                   and preflight.get('pidNamespace') == process['pidNamespace']
                   and inspection['HostConfig']['NetworkMode'] == 'none'
-                  and inspection['State']['Running'] is True and inspection['State']['Pid'] > 0,
+                  and isinstance(state, dict) and state.get('Running') is True
+                  and type(state.get('Pid')) is int and state['Pid'] > 0,
                   'ENTRY_CHANNEL_ISOLATION', 'preflight, process and cleanup belong to different containers')
     elif deployment is None:
         missing.append('source-bound-owned-container-cleanup')

@@ -284,8 +284,12 @@ class ChannelProvenance(unittest.TestCase):
 
         for index, (command, timeout, _) in enumerate(probes):
             with self.subTest(probe=command):
-                error = (error_type(128, command) if error_type is subprocess.CalledProcessError
-                         else error_type(command, timeout))
+                if error_type is subprocess.CalledProcessError:
+                    error = error_type(128, command)
+                elif error_type is subprocess.TimeoutExpired:
+                    error = error_type(command, timeout)
+                else:
+                    error = error_type(errno.EACCES, 'unit unreadable process probe', command[0])
                 check_output = Mock(side_effect=[probe[2] for probe in probes[:index]] + [error])
                 self.d.subprocess = types.SimpleNamespace(check_output=check_output,
                                                          SubprocessError=subprocess.SubprocessError)
@@ -309,6 +313,71 @@ class ChannelProvenance(unittest.TestCase):
 
     def test_ts_process_timeouts_do_not_abort_other_channel_results(self):
         self._assert_ts_process_failure_is_per_channel(subprocess.TimeoutExpired)
+
+    def test_ts_process_permission_errors_do_not_abort_other_channel_results(self):
+        self._assert_ts_process_failure_is_per_channel(PermissionError)
+
+    def test_owned_process_inspection_requires_running_positive_integer_pid(self):
+        # Synthetic unit originals only: no process, container or TS is launched.
+        executable = self.out / 'pilotdeck-gateway'
+        executable.write_bytes(b'unit candidate bytes; never executed')
+        executable_ref = reference(executable)
+        manifest = self.write_json('process-manifest.json', [
+            {'path': executable.name, 'sha256': executable_ref['sha256']}])
+        source = copy.deepcopy(self.native.source)
+        source_ref = self.write_json('process-source.json', source)
+        native = types.SimpleNamespace(manifest=Path(manifest['path']), manifest_sha=manifest['sha256'],
+                                       source_manifest=Path(source_ref['path']), source_sha=source_ref['sha256'],
+                                       source=source)
+        raw_ref = self.write_json('process-raw.json', {'unitFixture': True})
+        process = {'pid': 123, 'argv': [str(executable), '--native'], 'executable': executable_ref,
+                   'birth': {'bootId': 'unit-boot', 'startTimeTicks': '1'}, 'cwd': str(self.out),
+                   'exit': {'code': 0, 'signal': None}, 'reaped': True, 'portsClosed': True,
+                   'remainingOwnedIdentities': [], 'networkNamespace': 'net:[unit]', 'pidNamespace': 'pid:[unit]',
+                   'readyListeners': [{'host': '127.0.0.1', 'port': 28610, 'ownerPid': 123}]}
+        observation = {**process, 'errors': [], 'closeObservedAt': 1, 'identityStillPresent': False,
+                       'portsStillListening': [], 'observations': [{'readyListeners': process['readyListeners']}]}
+        preflight = {'networkNamespace': process['networkNamespace'], 'pidNamespace': process['pidNamespace'],
+                     'hostname': 'unit-host', 'interfaces': [[1, 'lo']], 'loopbackConnect': 'PASS',
+                     'negativeControls': [{'family': family, 'kind': kind, 'blocked': True}
+                                          for family in (2, 10) for kind in (1, 2)]}
+        inspection = {'Id': 'unit-container', 'Name': '/unit-container', 'Config': {'Hostname': 'unit-host'},
+                      'HostConfig': {'NetworkMode': 'none'}, 'State': {'Running': True, 'Pid': 123}}
+        receipt = {'schemaVersion': 1, 'channel': 'telegram', 'rawEvidence': raw_ref,
+                   'sourceManifest': source_ref, 'candidateManifest': manifest, 'runtimeLibraries': None,
+                   'producer': self.roles['producer'], 'finalizer': self.roles['finalizer'], 'bindingErrors': [],
+                   'observer': self.write_json('process-observer.json', self.roles['observer']),
+                   'observationTrace': self.write_json('process-observations.json', [observation]),
+                   'process': process, 'networkPreflight': self.write_json('process-preflight.json', preflight),
+                   'containerCleanup': self.write_json('process-cleanup.json',
+                       {'name': 'unit-container', 'containerId': 'unit-container', 'ownedContainerStillRunning': ''}),
+                   'containerInspection': self.write_json('process-inspection.json', [inspection]),
+                   'afterReapFiles': [dict(reference(self.business), bytes=self.business.stat().st_size)]}
+        receipt_ref = self.write_json('process-receipt.json', receipt)
+        verified = entries.verify_owned_process(self.d, native, receipt_ref, raw_ref, 'telegram')
+        self.assertEqual(verified['receipt'], receipt)
+        self.assertNotIn('source-bound-owned-container-cleanup', verified['missing'])
+        self.assertIn('production-inbound-and-outbound-response-originals', verified['missing'])
+        missing = object()
+        cases = [('missing', missing), ('null', None), ('list', []), ('empty', {}),
+                 ('running-bool-required', {'Running': 1, 'Pid': 123}),
+                 ('not-running', {'Running': False, 'Pid': 123}),
+                 ('pid-bool', {'Running': True, 'Pid': True}),
+                 ('pid-float', {'Running': True, 'Pid': 123.0}),
+                 ('pid-string', {'Running': True, 'Pid': '123'}),
+                 ('pid-zero', {'Running': True, 'Pid': 0}),
+                 ('pid-negative', {'Running': True, 'Pid': -1})]
+        for label, state in cases:
+            with self.subTest(state=label):
+                changed = copy.deepcopy(inspection)
+                if state is missing:
+                    changed.pop('State')
+                else:
+                    changed['State'] = state
+                receipt['containerInspection'] = self.write_json('process-inspection.json', [changed])
+                receipt_ref = self.write_json('process-receipt.json', receipt)
+                with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ISOLATION'):
+                    entries.verify_owned_process(self.d, native, receipt_ref, raw_ref, 'telegram')
 
     def test_v2_roles_accept_the_actual_registered_sources(self):
         entries.channel_v2_roles(self.d, self.native, self.raw, self.evidence)
