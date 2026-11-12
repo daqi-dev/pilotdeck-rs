@@ -541,6 +541,13 @@ class EnvironmentControls(unittest.TestCase):
                 self.assertEqual(step['working-directory'].value, '.',
                                  '#3078 the comparison step runs from the repository '
                                  'root (parsed)')
+                # fix-r6（MM boundary#2 P2）：run 标量样式钉为字面块——折成 `>`
+                # 单字符漂移可存活全部行级钉（源码行未变），生产侧整块折成一行
+                # 让 bash 吃 syntax error、比对步每次 PR 都假红。
+                self.assertEqual(step['run'].style, '|',
+                                 '#3078 the comparison step run body must stay a literal '
+                                 'block scalar (folding it onto one line breaks bash '
+                                 'parsing on every PR)')
                 self.assertEqual(step['if'].value,
                                  "${{ always() && needs.scope.outputs.docs_only "
                                  "!= 'true' }}",
@@ -2441,6 +2448,21 @@ class EnvironmentControls(unittest.TestCase):
                          workflow.replace(mismatch_exit,
                                          mismatch_exit.replace('exit 1', 'exit 0')),
                          '#3078 the comparison script must behave as pinned'))
+        # fix-r6（DS sibling#1 P2）：working-directory 值钉配对变异（同 hunk 的
+        # if / env 钉各有配对，同类先例 guard-working-directory-drift）。
+        ci_cases.append(('check-comparison-working-directory-drift',
+                         workflow.replace('        working-directory: .\n'
+                                          '        shell: bash\n'
+                                          '        env:\n'
+                                          '          RUST_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}',
+                                          '        working-directory: src\n'
+                                          '        shell: bash\n'
+                                          '        env:\n'
+                                          '          RUST_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}'),
+                         '#3078 the comparison step runs from the repository root '
+                         '(parsed)'))
         ci_cases.append(('guard-duplicated',
                          workflow.replace(shift_anchor, step + shift_anchor, 1),
                          '#2780 exactly two runner image guard steps exist'))
@@ -2452,7 +2474,8 @@ class EnvironmentControls(unittest.TestCase):
         # run 体插桩钉在行为自测上——与守卫登记各条分开路由（不同执法点）。
         fix_r5_parsed_cases = ('check-comparison-if-inverted',
                                'check-comparison-if-dropped',
-                               'check-comparison-env-both-rust')
+                               'check-comparison-env-both-rust',
+                               'check-comparison-working-directory-drift')
         fix_r5_behavior_cases = ('check-comparison-run-neutered',
                                  'check-comparison-missing-exit-neutered',
                                  'check-comparison-mismatch-exit-neutered')
@@ -2652,7 +2675,12 @@ class EnvironmentControls(unittest.TestCase):
     def test_same_build_comparison_step_logic_self_check(self):
         """#3078 fix-r5（DS boundary#2 P2-a）：比对步 run 体的行为自测——等值 rc 0、
         失配 rc 1 命中失配标记、任一侧空 rc 1 命中缺失标记。守卫脚本有整套逻辑
-        自测（上），同一 diff 新增的比对步不能只靠子串钉定（`exit 0` 插桩即存活）。"""
+        自测（上），同一 diff 新增的比对步不能只靠子串钉定（`exit 0` 插桩即存活）。
+        fix-r6（DS boundary#1 / MM boundary#1 双撞 P2）：空值边界补全五格——
+        rust 侧空、negative-controls 侧空、两侧同空（`-z` 缺失检查唯一独挡的
+        那格：两侧空时相等比较 `'' != ''` 不成立，只有缺失检查能拦）。fix-r6
+        （MM boundary#3 P2）：子进程按同文件守卫自测约定钉死 PATH 与隔离 cwd，
+        不让可执行查找落到 os.defpath 的 CWD 首查。"""
         jobs = self.ci_jobs()
         steps = self.ci_steps('check', jobs['check'], '#3078')
         compare = [step for step in steps
@@ -2671,11 +2699,20 @@ class EnvironmentControls(unittest.TestCase):
             ('rust-stamp-missing-red', {'RUST_IMAGE_VERSION': '',
                                         'NEGCTL_IMAGE_VERSION': '20261111.370.1'},
              False, '缺失'),
+            ('negctl-stamp-missing-red', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                          'NEGCTL_IMAGE_VERSION': ''},
+             False, '缺失'),
+            ('both-stamps-missing-red', {'RUST_IMAGE_VERSION': '',
+                                         'NEGCTL_IMAGE_VERSION': ''},
+             False, '缺失'),
         ]
         results = []
         for name, env, expect_pass, marker in scenarios:
-            completed = subprocess.run(['bash', '-c', script], env=env,
-                                       capture_output=True, text=True, timeout=30)
+            with tempfile.TemporaryDirectory() as temp:
+                completed = subprocess.run(
+                    ['bash', '-c', script], cwd=temp,
+                    env={'PATH': '/usr/bin:/bin', **env},
+                    capture_output=True, text=True, timeout=30)
             ok = ((completed.returncode == 0 and marker in completed.stdout) if expect_pass
                   else (completed.returncode == 1 and marker in completed.stderr))
             results.append((name, ok, completed.returncode,
