@@ -212,6 +212,32 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertEqual(message.count('#1457'), 1,
                          f'concurrency#2: the tag must appear exactly once: {message!r}')
 
+    def test_main_check_rejects_a_no_op_mutation(self):
+        # fix-r12 (review sibling P2, the r11 blankkey shape): before ==
+        # after used to stay green until the host's cargo round reported
+        # SURVIVED; native-config folds the leg into mutate()'s
+        # stale-anchor refusal, so the count reads 1.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][3] = rows[0][2]
+        saved_argv, saved_rows = sys.argv, nc.mutations
+        nc.mutations = rows
+        try:
+            sys.argv = ['negative_controls.py', '--check']
+            with self.assertRaises(SystemExit,
+                                   msg='#2692 fix-r12: a no-op mutation must '
+                                       'refuse --check') as caught:
+                nc.main()
+        finally:
+            nc.mutations = saved_rows
+            sys.argv = saved_argv
+        message = str(caught.exception)
+        self.assertIn(f'{rows[0][0]}: stale anchor (expected 1, got 1)', message,
+                      '#2692 fix-r12: the refusal names the row and the '
+                      'no-op shape (count reads 1)')
+        self.assertEqual(message.count('#1457'), 1,
+                         f'#2692 fix-r12: the envelope owns the tag exactly '
+                         f'once: {message!r}')
+
 
 if __name__ == '__main__':
     unittest.main()

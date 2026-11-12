@@ -380,6 +380,25 @@ EXPECTED_NAMES = (
     'session-id-uses-router-key',
 )
 
+# #2692 fix-r12 (review MM boundary P1): the rows below share their assertion
+# string with a sibling row, so their literal pins stay bound through the
+# sibling when the row is dropped from BOTH tables at once -- `registered()`
+# passes (both sides of the comparison were edited together, which a real
+# deletion does because `registered()` forces alignment) and
+# `check_literal_anchors` still sees every pin bound (the sibling asserts the
+# same verbatim string), so --check stayed green while one control silently
+# stopped being audited. The row pins name the rows themselves and refuse
+# any drift that loses one, which no pin-level rule can express: a pin is
+# keyed by (file, assertion), not by row identity.
+ROW_PINS = (
+    'submit-owner-uses-template-key',
+    'router-key-folds-null',
+    'registry-body-spelling',
+    'submit-raw-spelling',
+    'registry-skip-reverted',
+    'registry-band-leaf-depth',
+)
+
 
 def _assertions(case):
     return case.assertion if isinstance(case.assertion, list) else [case.assertion]
@@ -423,6 +442,14 @@ def mutate(case, original):
     return original.replace(case.old, case.new, 1)
 
 
+def check_row_pins(rows):
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit."""
+    names = {case.mutation for case in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            refuse(f'#2692 row pin names a row that is gone: {name}')
+
+
 def main():
     args = sys.argv[1:]
     compile_only = '--compile-only' in args
@@ -433,10 +460,19 @@ def main():
     # rc 2 ("this run never started", printed by `negative_selection.refuse`)
     # and not rc 1 ("ran, not green") — the four-way exit table in
     # `specs/negative-controls/README.md`.
+    # #2692 fix-r12 (review MM boundary P1 / sibling P2): a duplicate name
+    # would only surface inside `registered()`'s raw roster-diff list, so the
+    # shape gets its own message first (the turn-read / turn-publish
+    # duplicate-leg precedent); the row pins then close the both-tables
+    # drift hole the shared assertion strings opened.
+    names = [row[0] for row in mutations]
+    if len(set(names)) != len(names):
+        refuse('#2692 the mutation roster has duplicate names')
     try:
         registered(mutations, EXPECTED_NAMES)
     except (ValueError, OSError) as error:
         refuse(f'mutation roster drifted: {error}')
+    check_row_pins(every_row)
     # #2495 fix-r2 shape: --check's argv contract is machine-checked — a
     # typo'd `--check some-name` or a silently dropped --compile-only used
     # to return the same green "OK" line as the real roster check without

@@ -322,12 +322,30 @@ mutations = [
      '    }',
      OBSERVER_TEST, LOCK_ASSERTION),
     # #1600: the shared fixture drifts back to the retired unconnected bus.
+    # fix-r12 前置修复：#2692 fix-r3 之后 management_tests.rs 有了第二处
+    # 同形 user_dialog_bus 块（:350），裸块锚点计数变 2 让自查整红；锚点
+    # 前缀并入仅此一处存在的 #1600 注释行恢复唯一性（old/after 同带注释，
+    # 变异只改 bus 构造本身）。
     ('fixture-drifts-to-unconnected-bus', 'native_process/management_tests.rs',
+     '            // #1600: same state production assembles\n'
+     '            // (`native_process/assembly/user_dialog.rs`): connected, no\n'
+     '            // renderer observer. The legacy observer-coupled `new(runtime,\n'
+     '            // None)` made the shared fixture diverge from production, so any\n'
+     '            // case relying on "the bus is unavailable" here would test a state\n'
+     '            // that no longer exists. A case that genuinely needs the\n'
+     '            // unconnected state builds it explicitly.\n'
      '            user_dialog_bus: Arc::new(std::sync::Mutex::new(\n'
      '                crate::user_dialog::GatewayUserDialogBus::connected(\n'
      '                    crate::user_dialog::DialogRuntime::default(),\n'
      '                ),\n'
      '            )),',
+     '            // #1600: same state production assembles\n'
+     '            // (`native_process/assembly/user_dialog.rs`): connected, no\n'
+     '            // renderer observer. The legacy observer-coupled `new(runtime,\n'
+     '            // None)` made the shared fixture diverge from production, so any\n'
+     '            // case relying on "the bus is unavailable" here would test a state\n'
+     '            // that no longer exists. A case that genuinely needs the\n'
+     '            // unconnected state builds it explicitly.\n'
      '            user_dialog_bus: Arc::new(std::sync::Mutex::new(\n'
      '                crate::user_dialog::GatewayUserDialogBus::new(\n'
      '                    crate::user_dialog::DialogRuntime::default(),\n'

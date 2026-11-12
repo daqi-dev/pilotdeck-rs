@@ -9,7 +9,9 @@ case runs the real `--check` and pins its bound-test count; the second renames
 the short name the shared binder returns and demands the matching refusal.
 fix-r11 (review sibling#1 / sibling#2) adds the table-level red sides the same
 review round asked for on the turn twins: the static-roster drift leg and
-mutate()'s stale-anchor / no-op legs. The rows are drifted in memory (the
+mutate()'s stale-anchor / no-op legs. fix-r12 (review MM boundary P1 +
+sibling P2) adds the duplicate-name leg and the both-tables drift leg over
+the shared-assertion ROW_PINS. The rows are drifted in memory (the
 table is data here and `main()` reads the module global), so the tree is only
 read. Run from anywhere:
 
@@ -38,19 +40,25 @@ DROPPED_ROW = 'submit-raw-spelling'
 STALE_ROW = 'echo-capped-serializer'
 
 
-def run_check(rows=None):
+def run_check(rows=None, expected_names=None):
     """Call nc.main() under argv ['negative_controls.py', '--check'].
 
     Returns (exit code, stdout, stderr); the refusal envelope exits 2 with the
     reason on stderr. No cargo runs; the tree is only read. `rows` (fix-r11)
     swaps the module's mutation table in memory so the table-level red sides
-    can drift one row without touching the tree.
+    can drift one row without touching the tree; `expected_names` (fix-r12)
+    swaps the static roster too, so the both-tables drift leg can simulate a
+    real deletion (a dropped row is normally removed from both sides at once
+    because `registered()` forces alignment).
     """
     out, err = io.StringIO(), io.StringIO()
     saved_argv, saved_rows = sys.argv, nc.mutations
+    saved_names = nc.EXPECTED_NAMES
     sys.argv = ['negative_controls.py', '--check']
     if rows is not None:
         nc.mutations = rows
+    if expected_names is not None:
+        nc.EXPECTED_NAMES = expected_names
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -59,6 +67,7 @@ def run_check(rows=None):
                 code = stop.code
     finally:
         nc.mutations = saved_rows
+        nc.EXPECTED_NAMES = saved_names
         sys.argv = saved_argv
     return code, out.getvalue(), err.getvalue()
 
@@ -159,6 +168,42 @@ class BoundTestGate(unittest.TestCase):
                         f'rc={code} out={out!r}')
         self.assertIn(f'#2692 {STALE_ROW}: stale anchor (expected 1, got 1)', err,
                       '#2692 fix-r11: the refusal names the row and the no-op shape')
+
+    def test_check_rejects_duplicate_roster_names(self):
+        # fix-r12 (review sibling P2, the turn-read :126 / turn-publish :125
+        # shape): two rows sharing a name silently overwrite each other's
+        # evidence logs in the mutating run; the duplicate gets its own
+        # refusal instead of the raw roster-diff list.
+        rows = [list(row) for row in nc.mutations]
+        for row in rows:
+            if row[0] == DROPPED_ROW:
+                row[0] = STALE_ROW
+                break
+        code, out, err = run_check(rows=rows)
+        self.assertTrue(code == 2,
+                        f'#2692 fix-r12: a duplicate roster name must refuse '
+                        f'--check: rc={code} out={out!r}')
+        self.assertIn('#2692 the mutation roster has duplicate names', err,
+                      '#2692 fix-r12: the refusal names the duplicate shape')
+
+    def test_check_refuses_a_row_dropped_from_both_tables(self):
+        # fix-r12 (review MM boundary P1): the fix-r11 drift leg only dropped
+        # the runtime row, which `registered()` alone catches; a real
+        # deletion edits both sides at once (the comparison forces
+        # alignment). For the six shared-assertion rows that drift used to
+        # stay green -- every pin stayed bound through the sibling row that
+        # asserts the same verbatim string -- so the row pins must name the
+        # row itself. `submit-raw-spelling` is asserted separately from its
+        # string-mate `registry-body-spelling`, the pair the review named.
+        for dropped in nc.ROW_PINS:
+            rows = [row for row in nc.mutations if row[0] != dropped]
+            names = tuple(name for name in nc.EXPECTED_NAMES if name != dropped)
+            code, out, err = run_check(rows=rows, expected_names=names)
+            self.assertTrue(code == 2,
+                            f'#2692 fix-r12: dropping {dropped} from both '
+                            f'tables must refuse --check: rc={code} out={out!r}')
+            self.assertIn(f'#2692 row pin names a row that is gone: {dropped}', err,
+                          f'#2692 fix-r12: the refusal names the dropped row: {err!r}')
 
 
 if __name__ == '__main__':

@@ -18,6 +18,8 @@ import contextlib
 import dataclasses
 import importlib.util
 import io
+import os
+import sys
 import unittest
 from pathlib import Path
 
@@ -130,6 +132,43 @@ class LiteralAnchorGuard(unittest.TestCase):
             self.fail(f'#2692 fix-r10: a subset rerun must stay bound against '
                       f'the full table: rc={stop.code}')
         self.assertRefused('literal anchor unbound to any row', cases=[ROWS[0]])
+
+    def test_main_binds_a_targeted_run_to_the_whole_table(self):
+        # fix-r12 (review sibling P2, the native-config :139 shape): main()'s
+        # run path passes the selected rows as `cases` but the full table as
+        # `bound_rows` -- a targeted rerun selects one row yet still owns the
+        # whole pin table. This wiring had no red side here: passing
+        # selected_rows as the binding too would only refuse on a targeted
+        # run, which nothing in-tree exercised.
+        seen = {}
+        real = nc.check_literal_anchors
+
+        def spy(cases, bound_rows=None):
+            seen['cases'] = list(cases)
+            seen['bound'] = list(bound_rows or ())
+            raise SystemExit('stop before cargo')
+
+        saved_argv = sys.argv
+        saved_target = os.environ.get('CARGO_TARGET_DIR')
+        nc.check_literal_anchors = spy
+        try:
+            sys.argv = ['negative_controls.py', '/tmp/never-created', BAD_ROW]
+            os.environ['CARGO_TARGET_DIR'] = '/tmp/never-target'
+            with self.assertRaises(SystemExit):
+                nc.main()
+        finally:
+            nc.check_literal_anchors = real
+            sys.argv = saved_argv
+            if saved_target is None:
+                os.environ.pop('CARGO_TARGET_DIR', None)
+            else:
+                os.environ['CARGO_TARGET_DIR'] = saved_target
+        self.assertEqual([case.mutation for case in seen['cases']], [BAD_ROW],
+                         '#2692 fix-r12: the targeted run validates only the '
+                         'selected row')
+        self.assertEqual(len(seen['bound']), len(ROWS),
+                         '#2692 fix-r12: the targeted run is still bound '
+                         'against the whole table')
 
 
 if __name__ == '__main__':

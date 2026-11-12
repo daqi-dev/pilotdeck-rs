@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _negkit.contract import Case
 from _negkit import submit as adapter
+from negative_selection import refuse, registered
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -113,6 +114,71 @@ mutants = [
     # an attachment-free case must fail the absence assertion.
     ('always-acquire-lease', 'false => None,', 'false => Some(self.services.resolve_attachments(input).await?),', None, None, None),
 ]
+# #2692 fix-r12 (MM sibling P1): the denominator is this literal roster,
+# never `len(mutants)` -- the printed count and every downstream gate used to
+# derive from the same runtime table, so a dropped or renamed row kept
+# --check green while one control silently stopped being audited (the #1666
+# shape; `registered()` refuses on any drift, the turn-read / turn-publish /
+# native-config / native-blankkey EXPECTED_NAMES precedent).
+EXPECTED_NAMES = (
+    'permission-check-skipped',
+    'run-id-check-skipped',
+    'budget-check-skipped',
+    'trusted-context-check-skipped',
+    'busy-code-changed',
+    'sdk-capability-ignored',
+    'sdk-validation-ignored',
+    'sdk-dirty-skipped',
+    'sdk-abort-ignored',
+    'refresh-error-propagated',
+    'accepted-commit-skipped',
+    'projection-drop-event',
+    'projection-duplicate-event',
+    'early-terminal-before-session-end',
+    'finally-error-swallowed',
+    'input-ack-before-native-durable',
+    'stale-completion-filter-skipped',
+    'model-selection-event-skipped',
+    'request-started-fold-leaked',
+    'actual-text-model-skipped',
+    'lease-release-skipped',
+    'fingerprint-includes-reconnect-metadata',
+    'explicit-null-sdk-treated-absent',
+    'cancel-hides-recovery-failure',
+    'history-epoch-error-hidden',
+    'utf16-mode-lossy',
+    'utf16-busy-lossy',
+    'workspace-reservation-skipped',
+    'workspace-release-skipped',
+    'cwd-update-skipped',
+    'timeout-disabled',
+    'timeout-status-skipped',
+    'timeout-error-skipped',
+    'timeout-abort-skipped',
+    'timeout-close-skipped',
+    'timeout-prepare-revived',
+    'deadline-skipped',
+    'timeout-status-record-error-ignored',
+    'snapshot-pre-skipped',
+    'snapshot-pre-error-ignored',
+    'snapshot-post-skipped',
+    'snapshot-success-post-added',
+    'snapshot-timeout-kind-wrong',
+    'timeout-live-close-skipped',
+    'invalid-deadline-accepted',
+    'failureguard-model-observe-skipped',
+    'snapshot-capability-refusal-skipped',
+    'snapshot-cwd-refusal-skipped',
+    'cwd-capability-error-ignored',
+    'guard-config-not-provided',
+    'host-lease-release-skipped',
+    'cwd-host-unavailable-ok',
+    'lease-poison-unwrap-finish',
+    'lease-poison-unwrap-prepare',
+    'lease-order-records-swapped',
+    'lease-acquisition-skipped',
+    'always-acquire-lease',
+)
 mutant_source = {'guard-config-not-provided': host_source,
                  'host-lease-release-skipped': host_source,
                  'cwd-host-unavailable-ok': host_source,
@@ -159,6 +225,15 @@ AUDITED_MODULES = (
 
 
 def build():
+    # #2692 fix-r12 (MM sibling P1): the static-roster startup comparison --
+    # build() is the common entry of --check and the mutating run, so a
+    # dropped, renamed, duplicated or reordered row is a clean rc 2 refusal
+    # (printed by `negative_selection.refuse`) before any count is printed or
+    # any evidence directory is claimed.
+    try:
+        registered(mutants, EXPECTED_NAMES)
+    except (ValueError, OSError) as error:
+        refuse(f'turn-submit mutation roster drifted: {error}')
     oracle = json.loads((fixture / 'oracle.json').read_text())['cases']
     inventory = adapter.test_inventory(test_source, test) + adapter.test_inventory(
         host_source.with_name('submit_host_tests.rs'), host_test)
