@@ -616,6 +616,34 @@ def _run(gate, rrr, out_base: Path) -> int:
         if errs:
             fails.append(f"闸门：residual 字面值「无上一轮」应放行：{errs}")
 
+        # P0（DS boundary#1，#3056 fix-r1）：CJK 连写不吞轮号——Python \w 含 CJK，旧 \w 边界把
+        # 「修复fix-r5」「fix-r5轮」整轮判没（fixtype/residual/N≥4 全跳、闸门假 PASS）
+        if gate.fix_round_from_body("修复fix-r5：停泊补 waker") != 5:
+            fails.append("P0 正控：中文紧贴 fix-r5 应识别为修复轮 5")
+        if gate.fix_round_from_body("fix-r5轮继续修") != 5:
+            fails.append("P0 正控：fix-r5 后紧贴中文应识别为修复轮 5")
+        for bad in ("afix-r5", "Afix-r5", "fix-r5x", "prefix-fix-r5"):
+            if gate.fix_round_from_body(bad) is not None:
+                fails.append(f"P0 负控：{bad!r} 不应识别为修复轮")
+        cjk_body = f"fix(gateway) #1 修复fix-r5：停泊补 waker\n\n{s}\n{residual}Refs #1\n"
+        if gate.check(cjk_body, head, fp3):
+            fails.append(f"P0 正控：中文连写 fix-r5 + 齐字段应过闸：{gate.check(cjk_body, head, fp3)}")
+        errs = gate.check(cjk_body.replace(" fixtype=结构性", ""), head, fp3)
+        if not any("须带 fixtype" in e for e in errs):
+            fails.append(f"P0 负控：中文连写 fix-r5 缺 fixtype 应按修复轮拒收（不再被当非修复轮跳过）：{errs}")
+        # P1（DS sibling#1/boundary#2）：PR 侧 pdrs-residual 与任务书侧同口径——
+        # 占位符不算答、围栏 / 引用块 / 缩进块里的示例不算声明（复用 strip_fences / placeholder_in）
+        errs = gate.check(fixpr(s, res="<!-- pdrs-residual: <上轮残差判读> -->\n"), head, fp3)
+        if not any("占位符" in e for e in errs):
+            fails.append(f"residual 负控：占位符内容应拒收：{errs}")
+        errs = gate.check(fixpr(s, res="```\n<!-- pdrs-residual: 围栏里的示例不算声明 -->\n```\n"), head, fp3)
+        if not any("pdrs-residual" in e and "缺" in e for e in errs):
+            fails.append(f"residual 负控：围栏内示例不算声明（应判缺）：{errs}")
+        # CRLF 正文：行尾 \r 不得让 residual 标记匹配不上（假 FAIL；任务书侧先例）
+        crlf_body = fixpr(s).replace("\n", "\r\n")
+        if gate.check(crlf_body, head, fp3):
+            fails.append(f"CRLF 正控：CRLF 正文的 residual 标记应照常识别：{gate.check(crlf_body, head, fp3)}")
+
         # G（#3056 阻塞前置）：多块凑双谱系须同头或同一补丁指纹（head 置空隔离出 G 判定本身）
         b1 = s
         b2 = s.replace(f"head={head}", "head=" + "1" * 40)
@@ -652,6 +680,25 @@ def _run(gate, rrr, out_base: Path) -> int:
             errs = gate.check(bad, head)
             if not any(want in e for e in errs):
                 fails.append(f"waiver 负控：应拒收并说明「{want}」：{errs}")
+        # item 8（DS boundary#3）：值后紧贴中文标点不得并进值——「结构性，纯文档」判缺/非法；
+        # 值后空格分隔（fixtype=结构性 说明文字）是合法载体
+        w_sp = "fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免 fixtype=结构性 只改说明文字不碰代码 -->\n" \
+               f"{residual}Refs #1\n"
+        if gate.check(w_sp, head):
+            fails.append(f"waiver 正控：值后空格分隔的 fixtype 应过闸：{gate.check(w_sp, head)}")
+        w_cjk = "fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免只改说明文字不碰代码 fixtype=结构性，纯文档轮 -->\n" \
+                f"{residual}Refs #1\n"
+        errs = gate.check(w_cjk, head)
+        if not any("字面三值" in e for e in errs):
+            fails.append(f"waiver 负控：fixtype=结构性，纯文档（值后紧贴中文标点）应判缺/非法：{errs}")
+        # item 12（MM sibling#7）：非修复轮的豁免标记「声明即查」——不再静默放行非法值
+        nf_bad = "<!-- pr-gate:waiver 非修复轮纯文档豁免说明文字足够长 fixtype=结构派生 -->\nRefs #2\n"
+        errs = gate.check(nf_bad, head)
+        if not any("字面三值" in e for e in errs):
+            fails.append(f"waiver 负控：非修复轮 fixtype=结构派生 应声明即查拒收：{errs}")
+        nf_ok = "<!-- pr-gate:waiver 非修复轮纯文档豁免说明文字足够长 fixtype=结构性 -->\nRefs #2\n"
+        if gate.check(nf_ok, head):
+            fails.append(f"waiver 正控：非修复轮声明合法 fixtype 应过闸：{gate.check(nf_ok, head)}")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
@@ -722,6 +769,40 @@ def _run(gate, rrr, out_base: Path) -> int:
                             capture_output=True, text=True, env=dict(os.environ))
         if cp.returncode != 2 or "原件" not in cp.stderr:
             fails.append(f"rerun-clobber：out 目录已有评审原件应 rc=2 拒跑（rc={cp.returncode}、{cp.stderr.strip()[:150]}）")
+        # #3056 fix-r1 items 5/6：崩溃残留（父进程被杀，目录里只有 *.jsonl / *.err / diff.patch、
+        # 还没写 <角色>.md）同样拒复跑——复跑 open("w") 会把唯一原始流截断
+        for leftover in ("sibling.jsonl", "boundary.retry1.err", "diff.patch"):
+            d = out_base / ("clobber-" + leftover.replace(".", "-"))
+            d.mkdir(parents=True, exist_ok=True)
+            (d / leftover).write_text("old bytes\n")
+            cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                                 "--worktree", str(wt), "--base", "HEAD~1", "--out", str(d),
+                                 "--roles", "simplify", "--dry-run"], capture_output=True, text=True, env=dict(os.environ))
+            if cp.returncode != 2 or "原件" not in cp.stderr:
+                fails.append(f"rerun-clobber：崩溃残留 {leftover} 应 rc=2 拒跑（rc={cp.returncode}、{cp.stderr.strip()[:150]}）")
+            if (d / leftover).read_text() != "old bytes\n":
+                fails.append(f"rerun-clobber：{leftover} 不得被改动")
+        # item 5：原件清单的角色名从 ROLES 派生（不双份维护）——每个角色的 .md/.jsonl/.err 都算原件，
+        # 非角色名 / 其它扩展不算
+        with tempfile.TemporaryDirectory() as od:
+            odp = Path(od)
+            for r in rrr.ROLES:
+                (odp / f"{r}.jsonl").write_text("")
+            (odp / "notarole.md").write_text("")
+            (odp / "notes.txt").write_text("")
+            got = rrr.originals_in(odp)
+            if sorted(got) != sorted(f"{r}.jsonl" for r in rrr.ROLES):
+                fails.append(f"原件守卫：角色派生清单不符（{sorted(got)}）——notarole.md / notes.txt 不算原件")
+        # 同上（DS sibling#4）：闸门的 REQUIRED_ROLES 与执行器的 ROLES 是同一份名单——增删角色
+        # 只改一处会让闸门漏检 / 误拒（分开各写时无同步保证），测试钉死
+        if tuple(rrr.ROLES) != gate.REQUIRED_ROLES:
+            fails.append(f"角色名单漂移：ROLES={tuple(rrr.ROLES)} 与 check-pr-gate.REQUIRED_ROLES={gate.REQUIRED_ROLES} 须一致")
+        # item 10：线程异常分支的 rec 带 resource_contention=False（机读契约不因分支缺键）
+        rec = rrr.error_rec("simplify", "运行器异常 KeyError")
+        if rec.get("resource_contention") is not False or rec.get("status") != "ERROR" or rec.get("counts") is not None:
+            fails.append(f"error_rec：异常分支 rec 应带 resource_contention=False（{rec}）")
+        if rrr.error_rec("sibling", "slot timeout", contention=True).get("resource_contention") is not True:
+            fails.append("error_rec：争抢分支 rec 应带 resource_contention=True")
         # 非法 fixtype 值：argparse 在起进程前拒绝（rc 2）
         cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
                              "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out_base / "badfixtype"),
@@ -958,6 +1039,13 @@ def _fixtype_path_tests(gate, fails: list[str]) -> None:
         errs = gate.check(na_plain, h_code, "", base, str(repo))
         if not any("不限于文档白名单" in e for e in errs):
             fails.append(f"fixtype-path：非修复轮声明不适用（触代码路径）也应拒收：{errs}")
+        # waiver 侧同口径（#3056 fix-r1 item 12）：非修复轮的豁免标记声明了不适用也复算路径
+        w_nf_na = "<!-- pr-gate:waiver 非修复轮纯文档豁免说明文字足够长 fixtype=不适用 -->\nRefs #2\n"
+        if gate.check(w_nf_na, h_docs, "", base, str(repo)):
+            fails.append(f"fixtype-path：非修复轮 waiver + 不适用（docs-only）应放行：{gate.check(w_nf_na, h_docs, '', base, str(repo))}")
+        errs = gate.check(w_nf_na, h_code, "", base, str(repo))
+        if not any("不限于文档白名单" in e for e in errs):
+            fails.append(f"fixtype-path：非修复轮 waiver + 不适用（触代码路径）应拒收：{errs}")
 
 
 if __name__ == "__main__":

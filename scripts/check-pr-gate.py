@@ -18,8 +18,10 @@
      （提交标题 `fix(...) #N fix-rM：…`，PR 正文首行即标题回显；正文不回显标题则漏判——fail-open，
      与「防漏跑不防伪造」同一威胁模型）。修复轮 PR 的每个结果块须带 `fixtype=<枚举式|结构性|不适用>`
      （字面三值，子类字样一律写「结构性」）；N≥4 另须正文恰一个 `<!-- pdrs-residual: <非空> -->`
-     （无上一轮写字面值「无上一轮」，空白不算）。豁免轮（waiver）的修法类型写在豁免标记内
-     （`fixtype=<三值>`），豁免理由长度不计 fixtype 词汇。
+     （无上一轮写字面值「无上一轮」，空白与占位符不算，围栏 / 引用块里的示例不算声明——口径与任务书侧
+     check-taskbook-segments.py 同一正本）。豁免轮（waiver）的修法类型写在豁免标记内
+     （`fixtype=<三值>`，值后须空格或结尾分隔），豁免理由长度不计 fixtype 词汇；标记内声明了 fixtype
+     就查值（声明即查，是否必填看修复轮判定）。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -49,12 +51,17 @@ NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
                     "--diff-algorithm=myers", "--src-prefix=a/", "--dst-prefix=b/"]
 
-# #3056 修复轮字段（长尾收口卡「机检落点」）：修法类型只接受字面三值。
+# #3056 修复轮字段（长尾收点卡「机检落点」）：修法类型只接受字面三值。
 FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
 # PR 侧修复轮识别：正文第一个非空行含 fix-r<N>（词边界防 fix-r10 匹配成 fix-r1）。
-FIXROUND_RE = re.compile(r"(?<![\w-])fix-r(\d+)(?![\w-])")
+# 边界用 ASCII 字符集而不是 \w：Python 的 \w 含 CJK，中文紧贴（「修复fix-r5：」「fix-r5轮」）时
+# \w 边界把整轮判没 → fixtype/residual/N≥4 全跳、闸门假 PASS（DS boundary P0，Python 3.14 实测
+# re.match(r"\w", "复") 为 True）。中文不是 fix-r 的词组成部分，ASCII 边界足够。
+FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d+)(?![A-Za-z0-9_-])")
 RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
-WAIVER_FIXTYPE = re.compile(r"fixtype=(\S+)")
+# 值域 = 字面三值的字符集：紧贴的中文标点/后续文字不并进值（DS boundary#3）——
+# 「fixtype=结构性，纯文档」里值停在 结构性，「，纯文档」由 check() 的值后终止检查拒收（判缺/非法）。
+WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) + "]+)")
 
 
 def fix_round_from_body(body: str):
@@ -90,6 +97,52 @@ def _load_ci_scope():
         return mod
     except Exception:  # noqa: BLE001 —— 加载失败即 fail-closed，由调用方拒收
         return None
+
+
+def _load_taskbook():
+    """懒加载同目录 check-taskbook-segments.py（占位符判定 placeholder_in 与围栏屏蔽 strip_fences 的正本，
+    不复制实现——DS sibling#1/boundary#2）；任何失败返回 None（调用方 fail-closed 拒收）。
+    该模块自身只做模块级常量装配（含惰性加载本文件取 FIXTYPE_VALUES），加载无副作用。"""
+    try:
+        import importlib.util
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-taskbook-segments.py")
+        spec = importlib.util.spec_from_file_location("pdrs_taskbook_for_gate_3056", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:  # noqa: BLE001 —— 加载失败即 fail-closed，由调用方拒收
+        return None
+
+
+def residual_errors(body: str, fix_round) -> list[str]:
+    """N≥4 的 pdrs-residual 检查（blocks 与 waiver 两分支共用，不再各写一份）。
+
+    口径与任务书侧 check-taskbook-segments.check_fix_fields 同一正本：围栏 / 引用块 / 缩进块里的
+    示例不算声明（strip_fences 后再找标记），占位符不算答（placeholder_in）。任务书模块加载失败
+    按 fail-closed 拒收（宁拒不漏，与 _load_ci_scope 同款）。"""
+    if fix_round is None or fix_round < 4:
+        return []
+    tb = _load_taskbook()
+    if (tb is None or not hasattr(tb, "strip_fences") or not hasattr(tb, "placeholder_in")
+            or not hasattr(tb, "RESIDUAL_NONE")):
+        return ["pdrs-residual 口径模块（check-taskbook-segments.py）加载失败（fail-closed 拒收）"]
+    errs: list[str] = []
+    found = RESIDUAL_MARKER.findall(tb.strip_fences(body))
+    if not found:
+        errs.append(f"修复轮 fix-r{fix_round}（N≥4）PR 正文缺 <!-- pdrs-residual: 上轮残差判读 -->（无上一轮写字面值「无上一轮」）")
+    elif len(found) > 1:
+        errs.append("pdrs-residual 标记出现多次（至多一次）")
+    else:
+        content = found[0].strip()
+        if not content:
+            errs.append("pdrs-residual 内容是空白串（无上一轮写字面值「无上一轮」，空答不算答）")
+        elif content != tb.RESIDUAL_NONE:
+            hit = tb.placeholder_in(content)
+            if hit:
+                errs.append(f"pdrs-residual 内容还是占位符：{hit[:80]!r}（写实际判读；无上一轮写字面值「无上一轮」）")
+    return errs
 
 
 def check_na_path(base: str, repo: str, head: str) -> list[str]:
@@ -209,6 +262,9 @@ def check_block(attrs: str, head: str, patch: str = "") -> list[str]:
 
 def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str = "") -> list[str]:
     errs: list[str] = []
+    # 换行归一到 \n：CRLF 正文的行尾 \r 会让 RESIDUAL_MARKER 的行尾锚定匹配不上（假 FAIL）；
+    # 任务书侧 check-taskbook-segments.py 的换行归一是先例。后续所有正则都吃归一后的正文。
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
     blocks = list(MARKER.finditer(body))
     fix_round = fix_round_from_body(body)
     w = WAIVER.search(body)
@@ -232,39 +288,33 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
                 if not (len(set(heads)) == 1 or (all(patches) and len(set(patches)) == 1)):
                     errs.append(f"修复轮多块不一致（#3056 G）：块头 {heads} 各不相同且补丁指纹 "
                                 f"{['缺' if not p else p[:12] for p in patches]} 不统一——分批/复跑拼块须覆盖同一 head 或同一 patch 指纹")
-            # N≥4：上轮残差判读（PR 正文，恰一个、非空白）
-            if fix_round >= 4:
-                found = RESIDUAL_MARKER.findall(body)
-                if not found:
-                    errs.append(f"修复轮 fix-r{fix_round}（N≥4）PR 正文缺 <!-- pdrs-residual: 上轮残差判读 -->（无上一轮写字面值「无上一轮」）")
-                elif len(found) > 1:
-                    errs.append("pdrs-residual 标记出现多次（至多一次）")
-                elif not found[0].strip():
-                    errs.append("pdrs-residual 内容是空白串（无上一轮写字面值「无上一轮」，空答不算答）")
+            # N≥4：上轮残差判读（PR 正文，恰一个、非空白、非占位符、围栏内示例不算声明）
+            errs.extend(residual_errors(body, fix_round))
         # 义务 4：fixtype=不适用 的 diff 级路径检查（声明即查，与轮数判定无关——
         # 「不适用」本身断言了 docs-only diff，该断言可复算就必须复算）
         if any(v == "不适用" for v in declared):
             errs.extend(check_na_path(base, repo, head))
     elif w:
         reason = w.group(1).strip()
-        fv = None
-        if fix_round is not None:
+        # 声明即查（MM sibling#7；与结果块侧 :check_block 的 fixtype 校验同口径）：标记内声明了
+        # fixtype 就查值，是否必填才看修复轮判定——非修复轮写 fixtype=结构派生 / 不适用 也不再静默放行。
+        m2 = WAIVER_FIXTYPE.search(reason)
+        fv = m2.group(1) if m2 else None
+        if fix_round is not None and not m2:
             # 义务 3：waiver 轮载体——修法类型写在豁免标记内；豁免理由长度不计 fixtype 词汇
-            m2 = WAIVER_FIXTYPE.search(reason)
-            if not m2:
-                errs.append(f"修复轮（fix-r{fix_round}）的豁免标记须携带修法类型：fixtype=<枚举式|结构性|不适用>")
-            else:
-                fv = m2.group(1)
-                if fv not in FIXTYPE_VALUES:
-                    errs.append(f"豁免 fixtype={fv} 不是字面三值（枚举式 / 结构性 / 不适用）")
-            if fix_round >= 4:
-                found = RESIDUAL_MARKER.findall(body)
-                if not found:
-                    errs.append(f"修复轮 fix-r{fix_round}（N≥4）PR 正文缺 <!-- pdrs-residual: 上轮残差判读 -->（无上一轮写字面值「无上一轮」）")
-                elif len(found) > 1:
-                    errs.append("pdrs-residual 标记出现多次（至多一次）")
-                elif not found[0].strip():
-                    errs.append("pdrs-residual 内容是空白串（无上一轮写字面值「无上一轮」，空答不算答）")
+            errs.append(f"修复轮（fix-r{fix_round}）的豁免标记须携带修法类型：fixtype=<枚举式|结构性|不适用>")
+        if m2:
+            # 值域已收紧到三值字符集：紧贴文字并不进值，但值后若还跟着非空白（「结构性，纯文档」
+            # 「结构派生」）说明写的不是字面三值载体——判缺/非法而不是把尾巴并进值放行（DS boundary#3）
+            tail = reason[m2.end():m2.end() + 1]
+            if fv not in FIXTYPE_VALUES or (tail and not tail.isspace()):
+                why = "值后不得紧跟其它文字（用空格或结尾分隔）" if tail and not tail.isspace() \
+                    else "「结构派生」等子类字样一律写「结构性」"
+                errs.append(f"豁免 fixtype={fv}{tail if tail and not tail.isspace() else ''} 不是字面三值载体"
+                            f"（枚举式 / 结构性 / 不适用；{why}）")
+        if fix_round is not None:
+            # N≥4：上轮残差判读（同 blocks 分支口径：恰一个、非空白、非占位符、围栏内示例不算声明）
+            errs.extend(residual_errors(body, fix_round))
         plain = WAIVER_FIXTYPE.sub("", reason).strip()
         if len(plain) < 8:
             errs.append("豁免理由太短（≥8 字，不计 fixtype 词汇）")
