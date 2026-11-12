@@ -59,7 +59,9 @@ with common.parity_lock(timeout=1):
      if child is not None and child.poll() is None:subprocess.run(['docker','stop','--time','30',name],capture_output=True,timeout=45);child.wait(timeout=10)
      remaining=subprocess.check_output(['docker','ps','--filter','name=^/'+name+'$','--format','{{.ID}}'],text=True,timeout=10).strip()
      if child is not None and not remaining:common.LIVE_GROUPS.discard(child.pid)
-     save(run/'container-cleanup.json',{'name':name,'ownedContainerStillRunning':remaining,'clientExitCode':None if child is None else child.returncode})
+     inspected=json.loads((run/'container-inspect.json').read_text()) if (run/'container-inspect.json').is_file() else []
+     container_id=inspected[0].get('Id') if len(inspected)==1 else None
+     save(run/'container-cleanup.json',{'name':name,'containerId':container_id,'ownedContainerStillRunning':remaining,'clientExitCode':None if child is None else child.returncode})
    assert not remaining,'owned container cleanup unresolved; retain lease'
    save(run/'container-result.json',{'exit':code,'sourceManifest':ref(a.source_manifest),'candidateManifest':ref(a.candidate_manifest)})
    try:

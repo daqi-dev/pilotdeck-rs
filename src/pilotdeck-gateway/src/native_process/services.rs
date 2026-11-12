@@ -24,12 +24,12 @@ mod attachments;
 
 pub(super) use attachments::{compose_attachment_turn, compose_attachment_turn_with_cache};
 // Preserve the native_process helper paths even when only tests use the exports.
+#[cfg(test)]
+pub(super) use attachments::swap_test_hook;
 #[allow(unused_imports)]
 pub(super) use attachments::{
     attachment_identity_matches, canonical_upload_store, handle_bound_to_upload_areas,
 };
-#[cfg(test)]
-pub(super) use attachments::swap_test_hook;
 
 #[derive(Clone)]
 pub struct Services {

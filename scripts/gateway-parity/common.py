@@ -190,6 +190,7 @@ A2_SCRIPTS = (
     'observer.py', 'retirement_driver.mts', 'retirement_cold.py', 'retirement_entries.py', 'retirement_standard_http.py', 'retirement_public_http.py', 'retirement_native.py', 'run_round.py', 'session_history_driver.mts', 'test_retirement_standard_http.py', 'test_retirement_public_http.py', 'test_project_clock_scope.py', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'native_evidence.py', 'session_observations.mjs', 'controls/session_domain.py',
     'linux_group_cleanup.py', 'host_suite.py',
+    'retirement_channel_v2.py', 'test_retirement_channel_v2.py', 'test_channel_provenance.py',
 )
 A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
 

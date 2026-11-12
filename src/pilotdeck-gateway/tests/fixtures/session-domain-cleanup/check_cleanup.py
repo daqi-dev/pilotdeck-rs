@@ -1077,6 +1077,16 @@ AGGREGATION_POINTS = {
      'main'): 'negative-main',
 }
 NON_AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/retirement_entries.py', 'channel_results'):
+        'per-channel evidence faces consumed by report_entries; not the shared top-level batch verdict',
+    ('scripts/gateway-parity/retirement_public_http.py', 'report'):
+        'per-HTTP-entry contract verdicts consumed by report_entries; not a batch status/exit pair',
+    ('scripts/gateway-parity/retirement_standard_http.py', 'comparison'):
+        'single HTTP business comparison without tri-state children',
+    ('scripts/gateway-parity/test_retirement_public_http.py', 'exchange'):
+        'test-only wire exchange constructor; status is an HTTP response code',
+    ('scripts/gateway-parity/test_retirement_standard_http.py', 'row'):
+        'test-only HTTP response row constructor, not an acceptance summary',
     ('scripts/gateway-parity/test_safety.py', 'test_outcome_nonzero_and_unreadable_report_are_distinct'):
         'test-only construction of the original checker response and process failures; not a batch verdict',
     ('scripts/gateway-parity/test_safety.py', 'test_deadline_not_run_has_dedicated_exit_code'):

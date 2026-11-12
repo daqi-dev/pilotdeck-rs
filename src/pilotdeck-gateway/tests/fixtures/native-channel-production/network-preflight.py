@@ -19,7 +19,7 @@ with socket.socket() as server,socket.socket() as client:
     server.bind(('127.0.0.1',0));server.listen();assert client.connect_ex(server.getsockname())==0
     peer,_=server.accept();peer.close()
 assert socket.if_nameindex()==[(1,'lo')]
-receipt={'networkNamespace':os.readlink('/proc/self/ns/net'),'interfaces':socket.if_nameindex(),
+receipt={'networkNamespace':os.readlink('/proc/self/ns/net'),'pidNamespace':os.readlink('/proc/self/ns/pid'),'hostname':socket.gethostname(),'interfaces':socket.if_nameindex(),
          'negativeControls':rows,'loopbackConnect':'PASS','uid':os.getuid(),'sourceOfBlocking':'Docker --network none; only loopback interface'}
 (out/'network-isolation.json').write_text(json.dumps(receipt,indent=2))
 os.execv(sys.executable,[sys.executable,'-I','-B',*sys.argv[2:]])

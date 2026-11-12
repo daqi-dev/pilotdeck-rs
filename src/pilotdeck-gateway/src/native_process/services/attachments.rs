@@ -561,13 +561,19 @@ fn read_bounded(file: &mut File, limit: u64) -> std::io::Result<Vec<u8>> {
 /// not-found (no read, no registration; allowedReadFiles keeps the
 /// post-open canonical spelling either way).
 #[cfg(unix)]
-pub(in crate::native_process) fn attachment_identity_matches(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+pub(in crate::native_process) fn attachment_identity_matches(
+    before: &fs::Metadata,
+    opened: &fs::Metadata,
+) -> bool {
     use std::os::unix::fs::MetadataExt;
     before.dev() == opened.dev() && before.ino() == opened.ino()
 }
 
 #[cfg(not(unix))]
-pub(in crate::native_process) fn attachment_identity_matches(_before: &fs::Metadata, _opened: &fs::Metadata) -> bool {
+pub(in crate::native_process) fn attachment_identity_matches(
+    _before: &fs::Metadata,
+    _opened: &fs::Metadata,
+) -> bool {
     // #1468, stated honestly: without a stable cross-platform file identity
     // this comparison says nothing, and the open-first sequence's path-based
     // steps (post-open canonicalize containment, path stat) are all spelled

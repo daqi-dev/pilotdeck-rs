@@ -87,7 +87,11 @@ impl hyper::body::Body for FileBody {
 /// `index.html`, a missing path or directory falls back to the root
 /// `index.html`, and the containment guard rejects anything that would
 /// escape the root (defense in depth behind the URL layer).
-pub(super) async fn serve_static(root: &Path, path: &str, keep_alive: bool) -> Option<hyper::Response<Body>> {
+pub(super) async fn serve_static(
+    root: &Path,
+    path: &str,
+    keep_alive: bool,
+) -> Option<hyper::Response<Body>> {
     let pathname = if path == "/" { "/index.html" } else { path };
     let candidate = node_join(root, pathname);
     if !crate::mutants::on("native-http-containment-off") && !contained(root, &candidate) {

@@ -2,17 +2,17 @@
 //! The A4 entry never reads these options unless its routing selects the
 //! native composition: the first argument `--native` (#1071) or the
 //! `PILOTDECK_GATEWAY_MODE` config item (#1354).
+#[cfg(test)]
+use crate::config::Env;
 use crate::{ProxyError, host::modules::tool_context::TurnEnvironment};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 #[cfg(test)]
-use crate::config::Env;
-#[cfg(test)]
 use std::{path::Path, time::Duration};
 
 mod options;
-use options::{capture_environment, validate_environment};
 pub use options::{Options, gateway_mode, native_requested};
+use options::{capture_environment, validate_environment};
 mod agent;
 mod agent_mcp;
 mod assembly;

@@ -470,7 +470,8 @@ def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
     d.require({json.dumps(listener, sort_keys=True) for listener in process['readyListeners']}
               == actual_listeners, 'ENTRY_CHANNEL_PROCESS', 'ready listener receipt diverges from observations')
     d.require(all(process.get(field) == observed_process.get(field) for field in
-                  ('pid', 'argv', 'executable', 'birth', 'cwd', 'exit', 'remainingOwnedIdentities'))
+                  ('pid', 'argv', 'executable', 'birth', 'cwd', 'exit', 'remainingOwnedIdentities',
+                   'networkNamespace', 'pidNamespace'))
               and observed_process.get('closeObservedAt') is not None
               and observed_process.get('identityStillPresent') is False
               and observed_process.get('portsStillListening') == [],
@@ -492,11 +493,28 @@ def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
     preflight = d.read(artifact(receipt['networkPreflight']))
     cleanup = d.read(artifact(receipt['containerCleanup']))
     tests = preflight['negativeControls']
-    d.require(preflight['interfaces'] == [[1, 'lo']] and preflight['loopbackConnect'] == 'PASS'
+    d.require(isinstance(process.get('networkNamespace'), str)
+              and process['networkNamespace'].startswith('net:[')
+              and preflight['networkNamespace'] == process['networkNamespace']
+              and isinstance(process.get('pidNamespace'), str) and process['pidNamespace'].startswith('pid:[')
+              and preflight['interfaces'] == [[1, 'lo']] and preflight['loopbackConnect'] == 'PASS'
               and len(tests) == 4 and all(test['blocked'] is True for test in tests)
               and {(test['family'], test['kind']) for test in tests} == {(2, 1), (2, 2), (10, 1), (10, 2)}
               and cleanup['ownedContainerStillRunning'] == '',
               'ENTRY_CHANNEL_ISOLATION', 'network blocking or owned container cleanup is unproven')
+    if 'containerInspection' in receipt:
+        inspections = d.read(artifact(receipt['containerInspection']))
+        d.require(len(inspections) == 1, 'ENTRY_CHANNEL_ISOLATION', 'one owned container inspection required')
+        inspection = inspections[0]
+        d.require(inspection['Id'] == cleanup.get('containerId')
+                  and inspection['Name'] == '/' + cleanup['name']
+                  and inspection['Config']['Hostname'] == preflight.get('hostname')
+                  and preflight.get('pidNamespace') == process['pidNamespace']
+                  and inspection['HostConfig']['NetworkMode'] == 'none'
+                  and inspection['State']['Running'] is True and inspection['State']['Pid'] > 0,
+                  'ENTRY_CHANNEL_ISOLATION', 'preflight, process and cleanup belong to different containers')
+    elif deployment is None:
+        missing.append('source-bound-owned-container-cleanup')
     files = receipt['afterReapFiles']
     d.require(files and all(artifact(ref).stat().st_size == ref['bytes'] for ref in files),
               'ENTRY_CHANNEL_DURABLE', 'post-reap business bytes are missing')
@@ -533,6 +551,196 @@ def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
         missing.append('production-inbound-and-outbound-response-originals')
     return {'receipt': receipt, 'transportRecords': records, 'afterReapFiles': files,
             'originals': originals, 'missing': missing}
+
+
+def channel_v2_preserved(d, raw, process_evidence):
+    """Use the stopped directory's actual files, retaining its runtime names."""
+    receipt = process_evidence['receipt']
+    preserved = d.read(channel_artifact(d, receipt['preservation']))
+    layout_ref = {'path': raw['layout']['path'], 'sha256': raw['layout']['sha256']}
+    layout = d.read(channel_artifact(d, layout_ref))
+    d.require(raw['layout'] == dict(layout, **layout_ref)
+              and preserved['layout'] == layout_ref
+              and preserved['originalRoot'] == layout['root']
+              and set(preserved['actualClosedPorts']) == {layout['mockPort'], layout['controlPort']},
+              'ENTRY_CHANNEL_LAYOUT', 'capture and preserved directory use different layouts')
+    original = Path(layout['root'])
+    expected_runtime = {'node': 'v22.22.0', 'osHome': str(original / 'os-home'),
+                        'pilotHome': str(original / 'home'), 'home': str(original / 'home'),
+                        'project': str(original / 'project'), 'defaultProject': str(original / 'home'),
+                        'cwd': str(original / 'project'), 'tmp': str(original / 'tmp'),
+                        'mockPort': layout['mockPort'], 'controlPort': layout['controlPort']}
+    d.require(raw['runtime'] == expected_runtime
+              and receipt['originalBusinessRoots'] == {key: expected_runtime[key] for key in ('home', 'project')}
+              and receipt['process']['cwd'] == expected_runtime['cwd']
+              and {row['port'] for row in receipt['process']['readyListeners']} == {layout['controlPort']},
+              'ENTRY_CHANNEL_LAYOUT', 'actual process home/project/cwd/listener differs')
+    root = Path(preserved['preservedRoot'])
+    d.require(root.is_dir() and not root.is_symlink() and root.resolve() == root
+              and root.is_relative_to(d.ROOT / '_tmp'),
+              'ENTRY_CHANNEL_DURABLE', 'preserved root is not an owned actual directory')
+    actual = set()
+    def walk_error(error):
+        raise error
+    for name in ('home', 'project'):
+        folder = root / name
+        d.require(folder.is_dir() and not folder.is_symlink(),
+                  'ENTRY_CHANNEL_DURABLE', 'missing ordinary business directory')
+        for directory, dirs, names in os.walk(folder, followlinks=False, onerror=walk_error):
+            for name_ in dirs + names:
+                path = Path(directory) / name_
+                d.require(not path.is_symlink() and (path.is_dir() or path.is_file()),
+                          'ENTRY_CHANNEL_DURABLE', 'aliased or non-regular business entry')
+            actual.update(str(Path(directory) / name_) for name_ in names)
+    files = process_evidence['afterReapFiles']
+    d.require(len(files) == len(actual) and {row['path'] for row in files} == actual,
+              'ENTRY_CHANNEL_DURABLE', 'receipt does not enumerate every stopped business file')
+    contents = {}
+    for row in files:
+        path = channel_artifact(d, row)
+        runtime_path = str(original / path.relative_to(root))
+        d.require(row['originalPath'] == runtime_path and runtime_path not in contents,
+                  'ENTRY_CHANNEL_DURABLE', 'duplicate or different original business path')
+        contents[runtime_path] = path.read_bytes()
+    return root, contents
+
+
+def verify_channel_ts_sources(d, baseline):
+    """Reject source aliases and extra resolution candidates, including ignored files."""
+    roots = ('src', 'packages/sdk/src')
+    fixed = ('package.json', 'pnpm-lock.yaml', 'tsconfig.json')
+    tree = d.subprocess.check_output(['git', '-C', str(baseline), 'ls-tree', '-r', '-z',
+                                     d.RETIREMENT_BASELINE_REVISION, '--', *roots, *fixed], timeout=10)
+    expected = {}
+    for entry in tree.split(b'\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split(b'\t', 1)
+        mode, kind, identity = metadata.split()
+        d.require(mode in (b'100644', b'100755') and kind == b'blob',
+                  'ENTRY_CHANNEL_SOURCE', 'unsupported fixed TS source alias')
+        expected[name.decode()] = identity.decode()
+    actual = set()
+    def walk_error(error):
+        raise error
+    for name in roots:
+        folder = baseline / name
+        d.require(folder.is_dir() and folder.resolve() == folder,
+                  'ENTRY_CHANNEL_SOURCE', 'fixed TS source root is missing or aliased')
+        for directory, dirs, names in os.walk(folder, followlinks=False, onerror=walk_error):
+            for name_ in dirs + names:
+                path = Path(directory) / name_
+                d.require(not path.is_symlink() and (path.is_dir() or path.is_file()),
+                          'ENTRY_CHANNEL_SOURCE', 'fixed TS source contains an alias or non-regular entry')
+            actual.update(str((Path(directory) / name_).relative_to(baseline)) for name_ in names)
+    actual.update(name for name in fixed if (baseline / name).exists())
+    d.require(actual == set(expected), 'ENTRY_CHANNEL_SOURCE', 'fixed TS source has extra or missing files')
+    for name, identity in expected.items():
+        path = baseline / name
+        d.require(path.resolve() == path, 'ENTRY_CHANNEL_SOURCE', 'fixed TS file is aliased')
+        content = path.read_bytes()
+        obj = b'blob ' + str(len(content)).encode() + b'\0' + content
+        actual_hash = hashlib.sha1(obj).hexdigest() if len(identity) == 40 else hashlib.sha256(obj).hexdigest()
+        d.require(actual_hash == identity, 'ENTRY_CHANNEL_SOURCE', 'fixed TS source bytes differ: ' + name)
+
+
+def channel_v2_comparison(d, native, baseline, row, raw, process_evidence):
+    """Authenticate both real processes before comparing the eight-v2 scope."""
+    adapter = _load('retirement_channel_v2', _apparatus / 'retirement_channel_v2.py')
+    _verify_cli_imports(_apparatus)
+    tracked = {str(d.ROOT / item['path']): item['sha256'] for item in native.source['files']}
+    fixture = d.ROOT / 'src/pilotdeck-gateway/tests/fixtures/native-channel-production'
+    bins = {item['path']: item['sha256'] for item in d.read(native.manifest)}
+    originals, missing = [], list(process_evidence['missing'])
+    d.require(raw['channel'] == row['id'].partition(':')[2],
+              'ENTRY_CHANNEL_PROFILE', 'v2 raw channel differs from its inventory entry')
+
+    def source(path, digest):
+        d.require(tracked.get(str(path)) == digest == sha(path),
+                  'ENTRY_CHANNEL_PRODUCER', 'v2 source is not the authenticated build input')
+
+    source(d.ROOT / 'scripts/gateway-parity/retirement_channel_v2.py',
+           hashlib.sha256(adapter._apparatus_source).hexdigest())
+
+    def header(value, engine):
+        d.require(value.get('schemaVersion') == 2 and value.get('profile') == 'native-eight-v2'
+                  and value.get('engine') == engine and value.get('channel') == raw['channel']
+                  and value.get('sourceManifestSha256') == native.source_sha
+                  and value.get('gatewaySha256') == bins['pilotdeck-gateway']
+                  and value.get('sidecarSha256') == bins['pilotdeck-agent-loop-sidecar']
+                  and value.get('fixedTS') == d.RETIREMENT_BASELINE_REVISION,
+                  'ENTRY_CHANNEL_SOURCE', 'v2 capture belongs to a different source/binary/profile')
+        source(fixture / 'eight.mjs', value['fixtureSha256'])
+        source(fixture / 'reference-round-context.mjs', value['contextHelperSha256'])
+
+    header(raw, 'native')
+    if missing or 'preservation' not in process_evidence['receipt']:
+        return {'missing': [*missing, 'v2-stopped-layout-and-originals'], 'originals': originals}
+    native_root, native_files = channel_v2_preserved(d, raw, process_evidence)
+    proc = process_evidence['receipt']['process']
+    d.require(raw['actualExecutable'] == proc['executable'] and proc['argv'] == [
+        proc['executable']['path'], '--native', '--home', raw['runtime']['home'],
+        '--project', raw['runtime']['home'], '--listen', '127.0.0.1:' + str(raw['runtime']['controlPort']),
+        '--token-file', str(Path(raw['runtime']['home']) / 'token'),
+        '--sidecar', str(native.manifest.parent / 'pilotdeck-agent-loop-sidecar'), '--drain-ms', '2000'],
+        'ENTRY_CHANNEL_PROCESS', 'v2 native argv or executable differs')
+    observed = adapter.observe(raw, raw['channel'], process_evidence['transportRecords'], native_files)
+    if 'reference' not in row:
+        return {'observations': observed, 'missing': ['fixed-ts-v2-reference'], 'originals': originals}
+    reference = row['reference']
+    ts_raw = d.read(channel_artifact(d, reference['rawEvidence']))
+    originals.append(reference['rawEvidence'])
+    if ts_raw.get('status') == 'BLOCKED':
+        d.require(ts_raw.get('schemaVersion') == 2 and ts_raw.get('profile') == 'native-eight-v2'
+                  and ts_raw.get('engine') == 'ts' and ts_raw.get('channel') == raw['channel']
+                  and ts_raw.get('fixedTS') == d.RETIREMENT_BASELINE_REVISION
+                  and ts_raw.get('formalAcceptance') is False
+                  and isinstance(ts_raw.get('prerequisiteFailures'), list) and ts_raw['prerequisiteFailures'],
+                  'ENTRY_CHANNEL_REFERENCE', 'invalid TS prerequisite failure record')
+        return {'observations': observed, 'missing': ['fixed-ts-v2-prerequisites'],
+                'referenceBlockers': ts_raw['prerequisiteFailures'], 'originals': originals}
+    header(ts_raw, 'ts')
+    verify_channel_ts_sources(d, baseline)
+    d.require(ts_raw['runtime'] == raw['runtime'] and ts_raw['layout'] == raw['layout'],
+              'ENTRY_CHANNEL_LAYOUT', 'TS/native must run at the same original paths and ports')
+    preload = ts_raw['tsPreload']
+    d.require(preload['path'] == str(fixture / 'media-ts-loopback.mjs'),
+              'ENTRY_CHANNEL_PRODUCER', 'unexpected TS preload')
+    source(Path(preload['path']), preload['sha256'])
+    for key, path in [('tsEntrypoint', baseline / 'src/cli/pilotdeck.ts'),
+                      ('tsLoader', baseline / 'node_modules/tsx/dist/loader.mjs')]:
+        d.require(ts_raw[key] == {'path': str(path), 'sha256': sha(path)},
+                  'ENTRY_CHANNEL_SOURCE', 'TS entry or loader differs from the reference capture')
+    sdk = {'telegram': 'grammy', 'discord': 'discord.js', 'slack': '@slack/bolt', 'dingtalk': 'dingtalk-stream'}
+    roots = ('tsx', 'ws', '@pilotdeck/sdk', '@larksuiteoapi/node-sdk', 'weixin-ilink', 'undici')
+    if raw['channel'] in sdk:
+        roots += (sdk[raw['channel']],)
+    dependencies = common.baseline_dependency_hashes(baseline, roots=roots)
+    installed = (baseline / 'node_modules').resolve(strict=True)
+    d.require(installed.is_relative_to(baseline)
+              and (baseline / 'node_modules/tsx/dist/loader.mjs').resolve(strict=True).is_relative_to(installed)
+              and reference['baseline'] == {'path': str(baseline), 'revision': d.RETIREMENT_BASELINE_REVISION}
+              and reference['baselineDependencies'] == {
+                  'path': str(installed), 'sha256': common.tree_digest(installed), 'packages': dependencies},
+              'ENTRY_CHANNEL_SOURCE', 'TS dependency graph changed or omits linked package bytes')
+    ts_process = verify_owned_process(d, native, reference['processReceipt'], reference['rawEvidence'],
+                                      raw['channel'], executable_role='ts-node', node_ref=reference['node'],
+                                      baseline=baseline, preload_refs=(preload,))
+    originals.extend(ts_process['originals'])
+    missing.extend(ts_process['missing'])
+    d.require(ts_raw['actualExecutable'] == ts_process['receipt']['process']['executable']
+              and ts_process['receipt']['process']['argv'] == [reference['node']['path'], '--import',
+                  preload['path'], '--import', ts_raw['tsLoader']['path'], ts_raw['tsEntrypoint']['path'], 'server'],
+              'ENTRY_CHANNEL_PROCESS', 'v2 TS argv or executable differs')
+    if missing or 'preservation' not in ts_process['receipt']:
+        return {'observations': observed, 'missing': [*missing, 'fixed-ts-v2-stopped-originals'], 'originals': originals}
+    ts_root, ts_files = channel_v2_preserved(d, ts_raw, ts_process)
+    comparison = adapter.compare_pair(ts_raw, raw, ts_process['transportRecords'],
+                                      process_evidence['transportRecords'], ts_files, native_files,
+                                      ts_root=ts_root, native_root=native_root)
+    d.require(comparison['equal'], 'ENTRY_CHANNEL_BEHAVIOR',
+              'TS/native eight-v2 business differs: ' + str(comparison['differentFields']))
+    return {'observations': observed, 'comparison': comparison, 'missing': missing, 'originals': originals}
 
 
 def channel_results(d, native, entry_root, baseline=None):
@@ -584,6 +792,9 @@ def channel_results(d, native, entry_root, baseline=None):
                     cell['covered'].extend(['basic-text-model-outbound', 'public-reload', 'reported-process-stop'])
                 except (ValueError, KeyError, TypeError, IndexError) as error:
                     cell.update(status='FAIL', rule=str(error))
+            elif key.startswith('gateway.channel:') and row.get('profile') == 'native-eight-v2':
+                d.require(key.partition(':')[2] in EIGHT_CHANNELS,
+                          'ENTRY_CHANNEL_PROFILE', 'eight-channel profile assigned outside its domain')
             elif key.startswith('gateway.channel-http:'):
                 probes = raw.get('http', [])
                 retained = [probe for probe in probes if 'requestHex' in probe and 'responseHex' in probe]
@@ -617,11 +828,24 @@ def channel_results(d, native, entry_root, baseline=None):
                 if row.get('profile') == 'native-eight-v1':
                     cell['transportObservations'] = channel_transport_observation(raw, channel, records)
                     cell['covered'].append('actual-basic-inbound-model-outbound-response-bytes')
+                elif key.startswith('gateway.channel:') and row.get('profile') == 'native-eight-v2':
+                    paired = channel_v2_comparison(d, native, baseline, row, raw, process_evidence)
+                    cell['missing'].extend(paired['missing'])
+                    cell['originals'].extend(paired['originals'])
+                    if 'referenceBlockers' in paired:
+                        cell['referenceBlockers'] = paired['referenceBlockers']
+                    if 'observations' in paired:
+                        cell['observations'] = paired['observations']
+                        cell['covered'].append('v2-current-turn-interaction-reload-and-durable-originals')
+                    if 'comparison' in paired:
+                        cell['comparison'] = paired['comparison']
+                        cell['covered'].append('fixed-ts-v2-business-contract-comparison')
                 else:
                     cell['missing'].append('registered-profile-transport-contract-adapter')
             else:
                 cell['missing'].append('production-inbound-and-outbound-response-originals')
-            cell['missing'].append('fixed-ts-business-contract-comparison')
+            if 'comparison' not in cell:
+                cell['missing'].append('fixed-ts-business-contract-comparison')
         except (d.EvidenceError, OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
             cell.update(status='FAIL', rule=getattr(error, 'rule', 'ENTRY_CHANNEL_EVIDENCE'), detail=str(error))
     return result

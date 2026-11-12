@@ -40,6 +40,8 @@ if a.preservation_receipt:
  for row in files:
   previous=by_path.get(row['path']);assert previous and previous['sha256']==row['sha256'] and previous['originalPath']==row['originalPath']
  result['preservation']=ref(a.preservation_receipt);result['preserver']=preserved['preserver'];result['originalBusinessRoots']={'home':str(a.original_home),'project':str(a.original_project)}
+inspection=a.container_cleanup.parent/'container-inspect.json'
+if inspection.is_file():result['containerInspection']=ref(inspection)
 a.out.parent.mkdir(parents=True,exist_ok=True)
 with a.out.open('x') as f:f.write(json.dumps(result,indent=2)+'\n')
 print(json.dumps({'channel':a.channel,'path':str(a.out),'sha256':sha(a.out),'bindingErrors':errors,'reaped':closed,'portsClosed':ports_closed,'remainingObservedOwnedIdentities':remaining}))

@@ -60,7 +60,10 @@ async fn until(state: &Wire, label: &str, mut test: impl FnMut() -> bool) {
 fn sms_lifecycle_is(home: &std::path::Path, state: &str, message: &str) -> bool {
     use pilotdeck_protocol::JsValue;
     let snapshot = JsValue::Object(crate::channel::runtime_status::read_snapshot(home));
-    let Some(entry) = snapshot.get("channels").and_then(|channels| channels.get("sms")) else {
+    let Some(entry) = snapshot
+        .get("channels")
+        .and_then(|channels| channels.get("sms"))
+    else {
         return false;
     };
     entry
