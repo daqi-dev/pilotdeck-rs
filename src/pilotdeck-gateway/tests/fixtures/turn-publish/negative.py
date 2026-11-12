@@ -18,7 +18,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed, refuse
+from negative_selection import baseline_passed, refuse, registered
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import declares_test
 
@@ -98,6 +98,33 @@ mutants = [
      '            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });',
      'file_registry_publication_preserves_fifo_across_workers'),
 ]
+# #2692 fix-r10 (review boundary#1): the denominator is this literal roster,
+# never `len(mutants)` -- the printed anchor count and the twin's expectation
+# both used to derive from the same runtime table, so a dropped or renamed row
+# kept --check green while one control silently stopped being audited (the
+# #1666 shape; `registered()` refuses on any drift, the native-blankkey
+# EXPECTED_NAMES precedent).
+EXPECTED_NAMES = (
+    'drop-event',
+    'duplicate-event',
+    'visible-before-durable',
+    'early-terminal-before-session-end',
+    'missing-result-unknown',
+    'repeated-result-unknown',
+    'close-with-append-pending',
+    'duplicate-replay-lost',
+    'conflict-treated-as-unknown',
+    'accept-failure-as-conflict',
+    'preflight-failure-exposes-original',
+    'reverse-visible-order',
+    'late-append-not-awaited',
+    'duplicate-terminal-suppressed',
+    'ws-seq-confused-with-module',
+    'ws-final-too-early',
+    'storage-failure-exposes-original',
+    'external-emitter-skipped',
+    'file-adapter-skips-durable',
+)
 
 args = sys.argv[1:]
 # fix-r5 (review sibling#3): read-only --check — anchor uniqueness per
@@ -133,6 +160,15 @@ if args and args[0] == '--check':
         names = [name for name, *_ in mutants]
         if len(set(names)) != len(names):
             refuse('turn-publish roster has duplicate mutation names')
+        # fix-r10 (review boundary#1): the static roster named above -- after
+        # the per-row legs so each refusal keeps its own message. A dropped,
+        # renamed or reordered row used to shrink the printed anchor count and
+        # the twin's expectation together, so --check stayed green while one
+        # control silently stopped being audited (the #1666 shape).
+        try:
+            registered(mutants, EXPECTED_NAMES)
+        except ValueError as error:
+            refuse(f'turn-publish mutation roster drifted: {error}')
     except (ValueError, OSError) as error:
         refuse(f'turn-publish --check could not audit the tree: {error}')
     print(f'turn-publish: {len(mutants)} mutation anchors OK; '
@@ -141,6 +177,13 @@ if args and args[0] == '--check':
 if len(args) != 1:
     print('usage: negative.py --check | NEW_OUTPUT', file=sys.stderr)
     raise SystemExit(2)
+# fix-r10 (review boundary#1): the mutating run carries the same static roster
+# -- a dropped row used to print `18 ... mutants killed` and exit 0 (#1666);
+# refuse before any evidence directory is claimed.
+try:
+    registered(mutants, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(f'turn-publish mutation roster drifted: {error}')
 output = Path(args[0]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 

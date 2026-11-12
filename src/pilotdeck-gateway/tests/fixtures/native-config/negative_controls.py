@@ -23,6 +23,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import registered
 from negative_suite import (Case, bind_module_file, classify, declares_test,
                             invalidate_completed, passed, publish_summary)
 
@@ -780,6 +781,85 @@ mutations = [
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
 ]
+# #2692 fix-r10 (review boundary#1): the denominator is this literal roster,
+# never `len(mutations)` (#2391 fix-r1, specs/negative-controls/README.md
+# invariant 1). The printed anchor count and the red-side twin's expectation
+# both used to derive from the same runtime table, so a dropped or renamed row
+# kept `--check` green while one control silently stopped being audited (the
+# #1666 shape); `registered()` compares the two in order and refuses on any
+# drift, the same startup refusal native-blankkey already carries.
+EXPECTED_NAMES = (
+    'set-stub-revert',
+    'clear-stub-revert',
+    'permission-stub-revert',
+    'thinking-stub-revert',
+    'styles-list-stub-revert',
+    'styles-set-stub-revert',
+    'seed-stub-revert',
+    'selection-shape-gate-removed',
+    'session-key-gate-code',
+    'permission-mode-gate-removed',
+    'mode-whitelist-narrowed',
+    'thinking-shape-message',
+    'seed-mtime-boundary',
+    'seed-path-gate-code',
+    'transcript-clear-null',
+    'transcript-fence-removed-config',
+    'transcript-fence-removed-rename',
+    'transcript-live-bypass-config',
+    'transcript-live-bypass-rename',
+    'transcript-live-bypass-status',
+    'transcript-hydrate-fence-removed',
+    'transcript-cold-lease-skipped',
+    'transcript-cold-lease-skipped-status',
+    'transcript-cold-lease-skipped-config',
+    'model-set-checked-append-reverted',
+    'rename-checked-append-reverted',
+    'status-checked-append-reverted',
+    'writer-lease-folded-to-busy',
+    'set-alias-owner-busy-removed',
+    'set-busy-gate-blank-key-guard-removed',
+    'set-blank-key-busy-reverted-to-gate-skip',
+    'permission-blank-key-busy-skipped',
+    'clear-blank-key-require-weakened',
+    'set-blank-key-owner-reservation-restored',
+    'clear-blank-key-owner-reservation-restored',
+    'permission-blank-key-require-weakened',
+    'clear-alias-owner-busy-removed',
+    'set-alias-owner-reservation-skipped',
+    'clear-alias-owner-reservation-skipped',
+    'close-owner-fallback-busy-skipped',
+    'set-closes-owner-target-reverted',
+    'seed-mtime-wiring',
+    'set-busy-message',
+    'clear-busy-message',
+    'permission-busy-message',
+    'thinking-busy-message',
+    'style-busy-message',
+    'seed-busy-message',
+    'shared-trim-dropped',
+    'session-dir-blank-gate-removed',
+    'session-dir-surrogate-rejected',
+    'session-dir-project-key-domain-message',
+    'session-dir-project-key-surrogate-rejected',
+    'admission-null-refused',
+    'submit-null-refused',
+    'admission-null-refused-close-project',
+    'admission-null-refused-list-sessions',
+    'admission-null-refused-new-session',
+    'permission-store-write-removed',
+    'thinking-store-write-removed',
+    'style-store-write-removed',
+    'compose-permission-readback-removed',
+    'compose-thinking-readback-removed',
+    'compose-style-merge-removed',
+    'styles-list-selected-removed',
+    'submit-permission-source-removed',
+    'tools-admission-source-removed',
+    'acquire-ask-sync-removed',
+    'acquire-miss-dedup-removed',
+    'cron-inline-sync',
+)
 
 
 # #2065: `expect` / `expect_err` take `&str` and never interpolate, so a panic
@@ -1008,6 +1088,14 @@ def main():
     # table itself; refuse the whole run (including `--check`) instead.
     if len({case.mutation for case in every_row}) != len(every_row):
         raise SystemExit('#1457 duplicate mutation name in the table')
+    # #2692 fix-r10 (review boundary#1): the static roster guards both the
+    # --check gate and the mutating run's denominator (a dropped row used to
+    # print `69 mutation anchors OK` and still pass the twin's count pin, the
+    # #1666 shape).
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        raise SystemExit(f'#1457 mutation roster drifted: {error}')
     if args == ['--check']:
         # Guard first: it reports an unreadable scanned file as a clean refusal,
         # while the anchor probe below would raise a bare OSError on the same tree.

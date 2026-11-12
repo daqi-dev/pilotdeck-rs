@@ -29,6 +29,11 @@ SPEC.loader.exec_module(nc)
 
 ROWS = [nc.Case(*row) for row in nc.mutations]
 BAD_ROW = 'permission-mode-gate-removed'
+# Dropping this row leaves every pin bound through a sibling row (proven by
+# simulation), so with the roster guard broken the refusal below would not
+# come from `check_literal_anchors` either -- the drift test isolates the
+# static-roster refusal, not a knock-on pin refusal.
+DROPPED_ROW = 'transcript-live-bypass-config'
 
 
 def check(cases=None, pins=None, bound_rows=None):
@@ -106,6 +111,30 @@ class LiteralAnchorGuard(unittest.TestCase):
         # judging the subset alone would refuse every other pin as unbound.
         check(cases=[ROWS[0]], bound_rows=ROWS)
         self.assertRefused('unbound to any row', cases=[ROWS[0]])
+
+    def test_main_check_refuses_a_dropped_roster_row(self):
+        # fix-r10 (review boundary#1): the printed anchor count and this
+        # file's expectations all used to derive from the same runtime table,
+        # so a dropped row kept --check green while one control silently
+        # stopped being audited; the static EXPECTED_NAMES roster must refuse
+        # the drift before any count is printed.
+        rows = [row for row in nc.mutations if row[0] != DROPPED_ROW]
+        saved_argv, saved_rows = sys.argv, nc.mutations
+        nc.mutations = rows
+        try:
+            sys.argv = ['negative_controls.py', '--check']
+            with self.assertRaises(SystemExit,
+                                   msg='#2692 fix-r10: a dropped roster row '
+                                       'must refuse --check') as caught:
+                nc.main()
+        finally:
+            nc.mutations = saved_rows
+            sys.argv = saved_argv
+        message = str(caught.exception)
+        self.assertIn('mutation roster drifted', message,
+                      '#2692 fix-r10: the refusal names the drift')
+        self.assertIn(f'missing=[{DROPPED_ROW!r}]', message,
+                      f'#2692 fix-r10: the refusal names the missing row: {message!r}')
 
     def test_main_binds_a_targeted_run_to_the_whole_table(self):
         seen = {}

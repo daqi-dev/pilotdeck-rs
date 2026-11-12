@@ -65,7 +65,15 @@ run_registry / js_value / read）外，纳入断言所在的两个测试模块
 `declares_test`，fix-r6 评审 boundary#5）。这条门禁的红侧由同目录
 `test_bound_test_gate.py` 钉住（#2692 fix-r9，评审 sibling#3：正控跑真 `--check`
 核 `bound tests declared` 计数、红侧模拟绑定测试改名要求 rc 2 拒跑），该测试经
-`tests/negative_anchor_selfcheck.rs` 进 cargo CI。
+`tests/negative_anchor_selfcheck.rs` 进 cargo CI。字面锚守卫
+（`check_literal_anchors`）自己的红侧由同目录 `test_literal_anchors.py` 钉住
+（#2692 fix-r10，评审 sibling#1：正控净表通过，负控各破坏一个不变式——pin
+不在源 / pin 出 SOURCE_TEXTS / pin 无行绑定 / 断言无 pin / 行出 SOURCE_TEXTS /
+子集仍按全表绑定——要求 rc 2 与对应拒绝语），同样经
+`tests/negative_anchor_selfcheck.rs` 进 cargo CI；该 .rs 清单另有发现式 meta
+测试：每个 `fixtures/*/test_bound_test_gate.py` 与 `fixtures/*/
+test_literal_anchors.py` 红侧 twin 必须在清单里，忘登记即红（fix-r10，评审
+simplify#5）。
 
 ## 启动契约（#2391 迁移）
 

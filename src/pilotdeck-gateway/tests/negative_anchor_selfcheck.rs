@@ -70,6 +70,10 @@ fn negative_fixture_anchors_and_checker_controls() {
         ("turn-read/test_bound_test_gate.py", &[][..]),
         ("turn-publish/test_bound_test_gate.py", &[][..]),
         ("native-blankkey-submit/test_bound_test_gate.py", &[][..]),
+        // #2692 fix-r10（评审 sibling#1）：blankkey 自家 check_literal_anchors
+        // 字面锚守卫的红侧（pin 不在源 / 出扫描面 / 无行绑定 / 无 pin 断言 /
+        // 行出扫描面 / 子集绑定全表），同款纯 Python 零 cargo。
+        ("native-blankkey-submit/test_literal_anchors.py", &[][..]),
         // CI prepares the TS baseline after cargo test. This explicit mode still
         // lists missing launcher prerequisites; local invocation is strict.
         ("anchor_selfcheck.py", &["--anchors-only"][..]),
@@ -77,6 +81,47 @@ fn negative_fixture_anchors_and_checker_controls() {
         let report = python_output(Command::new("python3"), &fixtures.join(script), args)
             .unwrap_or_else(|error| panic!("#1110 fixture preflight: {error}"));
         print!("{report}");
+    }
+}
+
+#[test]
+fn fixture_red_side_twins_are_registered_in_the_preflight_list() {
+    // #2692 fix-r10 (review simplify#5): the run list above is hand-maintained,
+    // so a red-side twin that is not in it silently never runs -- the exact
+    // failure mode this preflight exists to catch. Discovery: every
+    // `fixtures/<dir>/test_bound_test_gate.py` and
+    // `fixtures/<dir>/test_literal_anchors.py` twin (the two shapes this
+    // family uses for in-tree red sides) must appear in the list above.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let list = include_str!("negative_anchor_selfcheck.rs");
+    let mut twins = Vec::new();
+    for entry in std::fs::read_dir(&fixtures).unwrap_or_else(|error| {
+        panic!("#2692 fix-r10: cannot read {}: {error}", fixtures.display())
+    }) {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!("#2692 fix-r10: cannot read {}: {error}", fixtures.display())
+        });
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        for name in ["test_bound_test_gate.py", "test_literal_anchors.py"] {
+            if entry.path().join(name).is_file() {
+                twins.push(format!("{}/{}", entry.file_name().to_string_lossy(), name));
+            }
+        }
+    }
+    twins.sort();
+    assert!(
+        !twins.is_empty(),
+        "#2692 fix-r10: discovery found no red-side twins under {}",
+        fixtures.display()
+    );
+    for script in &twins {
+        assert!(
+            list.contains(&format!("(\"{script}\", ")),
+            "#2692 fix-r10 (review simplify#5): the red-side twin {script} exists in \
+             tests/fixtures but is not registered in the preflight list above"
+        );
     }
 }
 

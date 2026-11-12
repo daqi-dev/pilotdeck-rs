@@ -18,7 +18,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed, refuse
+from negative_selection import baseline_passed, refuse, registered
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import declares_test
 
@@ -172,6 +172,41 @@ mutants = [
      'Self::Named(name, _) => name,', 'Self::Named(_, _) => "Error",',
      'run_corrupt_snapshot_errors'),
 ]
+# #2692 fix-r10 (review boundary#1): the denominator is this literal roster,
+# never `len(mutants)` -- the printed anchor count and the twin's expectation
+# both used to derive from the same runtime table, so a dropped or renamed row
+# kept --check green while one control silently stopped being audited (the
+# #1666 shape; `registered()` refuses on any drift, the native-blankkey
+# EXPECTED_NAMES precedent).
+EXPECTED_NAMES = (
+    'attempts-3-to-2',
+    'attempts-3-to-4',
+    'final-error-text',
+    'epoch-retry-removed',
+    'history-error-retried',
+    'not-configured-message',
+    'merge-stream-first',
+    'merge-keeps-stale-stream',
+    'cursor-validation-removed',
+    'limit-validation-removed',
+    'limit-bound-501',
+    'run-not-found-message',
+    'gap-off-by-one',
+    'gap-number-only',
+    'toprimitive-error-swallowed',
+    'deep-array-gate-reintroduced',
+    'lastseq-conversion-spin',
+    'join-string-recursive',
+    'nextseq-dropped',
+    'runid-surrogate-dropped',
+    'record-drops-projectkey',
+    'record-drops-result',
+    'reattach-returns-none',
+    'capability-unavailable-dropped',
+    'registry-error-swallowed',
+    'registry-error-name-plain',
+    'corrupt-snapshot-name-flattened',
+)
 args = sys.argv[1:]
 # fix-r5 (review sibling#3): read-only --check — anchor uniqueness per
 # target file, unique roster names, zero cargo. The mutating run below is
@@ -206,6 +241,15 @@ if args and args[0] == '--check':
         names = [name for name, *_ in mutants]
         if len(set(names)) != len(names):
             refuse('turn-read roster has duplicate mutation names')
+        # fix-r10 (review boundary#1): the static roster named above -- after
+        # the per-row legs so each refusal keeps its own message. A dropped,
+        # renamed or reordered row used to shrink the printed anchor count and
+        # the twin's expectation together, so --check stayed green while one
+        # control silently stopped being audited (the #1666 shape).
+        try:
+            registered(mutants, EXPECTED_NAMES)
+        except ValueError as error:
+            refuse(f'turn-read mutation roster drifted: {error}')
     except (ValueError, OSError) as error:
         refuse(f'turn-read --check could not audit the tree: {error}')
     print(f'turn-read: {len(mutants)} mutation anchors OK; '
@@ -214,6 +258,13 @@ if args and args[0] == '--check':
 if len(args) != 1:
     print('usage: negative.py --check | NEW_OUTPUT', file=sys.stderr)
     raise SystemExit(2)
+# fix-r10 (review boundary#1): the mutating run carries the same static roster
+# -- a dropped row used to print `26 ... mutants killed` and exit 0 (#1666);
+# refuse before any evidence directory is claimed.
+try:
+    registered(mutants, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(f'turn-read mutation roster drifted: {error}')
 output = Path(args[0]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 
