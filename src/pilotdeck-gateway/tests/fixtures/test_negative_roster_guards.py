@@ -278,6 +278,23 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
     # test interpreter must keep its own dispositions afterwards.
     saved_handlers = {name: signal.getsignal(getattr(signal, name))
                       for name in TERMINATE_SIGNALS if hasattr(signal, name)}
+    window_entry = {}
+
+    @contextlib.contextmanager
+    def recording_window(root, paths, **kwargs):
+        # The strong shape the two new classes in this change already pin
+        # (#2425, frozen test_safety.py:2862-2900): record the live
+        # dispositions when the window opens, and require every
+        # TERMINATE_SIGNALS member to be bound. A late install -- after the
+        # window entry -- leaves the batch unprotected while a post-return
+        # sample would still see the handler; the SIGTERM-only shape was
+        # judged P1 on the frozen side once already (DS rebase review of
+        # this PR, sibling#1).
+        window_entry.update({name: signal.getsignal(getattr(signal, name))
+                             for name in TERMINATE_SIGNALS
+                             if hasattr(signal, name)})
+        yield {path: path.read_bytes() for path in paths}
+
     installed = False
     stdout, stderr = io.StringIO(), io.StringIO()
     # A launcher identity that is NOT the entry path (a wrapper or symlink
@@ -286,7 +303,7 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
     wrapper = base / 'wrapper-launch.py'
     try:
         with patch.dict(os.environ, _environment(base)), \
-             patch.object(module, 'mutating_sources', stubbed_window), \
+             patch.object(module, 'mutating_sources', recording_window), \
              patch.object(module, 'write_source_atomic', fake_write_atomic), \
              patch.object(module, 'wait_for_slot', fake_slot), \
              patch.object(module, 'run_owned', fake_run_owned), \
@@ -309,12 +326,18 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
                     code = module.main()
             except ValueError as error:
                 code = f'uncaught ValueError: {error}'
-        # Sampled before the restore below puts the interpreter's own
-        # dispositions back.
-        installed = signal.getsignal(signal.SIGTERM) is module.terminate_cleanly
+        # Judged from the window-entry recording above, before the restore
+        # below puts the interpreter's own dispositions back.
+        installed = bool(window_entry) and all(
+            handler is module.terminate_cleanly
+            for handler in window_entry.values())
     finally:
         for name, handler in saved_handlers.items():
-            signal.signal(getattr(signal, name), handler)
+            # getsignal returns None when a non-Python handler held the
+            # signal; signal.signal refuses None (frozen side fixed this in
+            # test_safety.py:2834-2840; DS concurrency #3).
+            signal.signal(getattr(signal, name),
+                          handler if handler is not None else signal.SIG_DFL)
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed)
 
 
@@ -880,10 +903,13 @@ class ManagerRosterGuard(unittest.TestCase):
                             f'dangling publish, got {sequence}')
         # The self-held window must hold terminate handlers for the whole
         # run, not only inside the shared guard's own restore window
-        # (#2309 fix-r3, the mode-routing precedent).
+        # (#2309 fix-r3, the mode-routing precedent). Judged at the window
+        # entry, for every TERMINATE_SIGNALS member -- the same strong
+        # shape the two new classes in this change pin (#2425).
         self.assertTrue(run.installed,
                         '#2309 main() must install its terminate handler for '
-                        'SIGTERM while the window is self-held')
+                        'every TERMINATE_SIGNALS member before the window '
+                        'is self-held')
 
     def test_a_shrunken_run_publishes_no_green_summary(self):
         run = self.drive([], drop_last=True)
