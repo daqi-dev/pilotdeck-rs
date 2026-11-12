@@ -152,36 +152,56 @@ def bound(test):
     return classname + '.' + test
 
 
+def _anchor_errors():
+    # #2795 fix-r12（双锁契约回归，自 preflight() 拆出）：全表锚点预检的
+    # 检查面单独成函数，供两个锁窗共用——变异臂与 --check-anchors 走
+    # preflight() 自己的 60 s 锁窗；--memory 路径折进 rehearsal 的 900 s
+    # 锁窗（one() 首行）。调用方必须持有 tree 锁：兄弟变异运行器在自己的
+    # write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它
+    # 不拥有的源上（#2795 fix-r4「读在锁内」）。
+    errors = []
+    test_classes = _test_classes()
+    for name, path, before, after, test in cases:
+        if test not in test_classes:
+            errors.append(f'UNKNOWN TEST {name}: {test} is not defined in {fixture.name}')
+        text = path.read_text()
+        if text.count(before) != 1:
+            errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
+        else:
+            try:
+                compile(text.replace(before, after, 1), str(path), 'exec')
+            except SyntaxError as error:
+                errors.append(f'INVALID compile {name}: {error}')
+    return errors
+
+
+def _anchor_report(errors):
+    # 任何锚点错误都是响亮的拒跑（2），干净则打唯一一行汇总。
+    if errors:
+        print('\n'.join(errors), file=sys.stderr)
+        raise SystemExit(2)
+    print(f'#1140 fix-r1..fix-r3 {len(cases)} unique anchors; every Python mutant compiles')
+
+
 def preflight():
     # Read-only: this never executes a mutant or bypasses the HEAD guard.
     # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：本文件已给变异臂加
     # tree_lock，唯独 preflight() 留在锁外——兄弟变异运行器在自己的 write 与
     # restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有的源上；
-    # 锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与下方 memory /
-    # mutating_sources 窗口是顺序关系，锁先释放再重取，无同进程嵌套。
+    # 锁忙 / 读失败是拒跑（2）。
+    # #2795 fix-r12（双锁契约回归）：本 60 s 锁窗只属于变异臂与
+    # --check-anchors；--memory 路径不再先取这把锁（那会把 #1398 e2e 契约
+    # 钉的「tree_lock 恰好一次、timeout=900、锁先于 child」打破成两次
+    # 取锁），其全表预检折进 rehearsal 自己的 900 s 锁窗。与下方
+    # mutating_sources 窗口仍是顺序关系，锁先释放再重取，无同进程嵌套。
     try:
         with tree_lock(root, timeout=60):
-            errors = []
-            test_classes = _test_classes()
-            for name, path, before, after, test in cases:
-                if test not in test_classes:
-                    errors.append(f'UNKNOWN TEST {name}: {test} is not defined in {fixture.name}')
-                text = path.read_text()
-                if text.count(before) != 1:
-                    errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
-                else:
-                    try:
-                        compile(text.replace(before, after, 1), str(path), 'exec')
-                    except SyntaxError as error:
-                        errors.append(f'INVALID compile {name}: {error}')
+            errors = _anchor_errors()
     except (TimeoutError, OSError, UnicodeDecodeError) as error:
         print(f'tree lock or anchor read failed: '
               f'{type(error).__name__}: {error}', file=sys.stderr)
         raise SystemExit(2)
-    if errors:
-        print('\n'.join(errors), file=sys.stderr)
-        raise SystemExit(2)
-    print(f'#1140 fix-r1..fix-r3 {len(cases)} unique anchors; every Python mutant compiles')
+    _anchor_report(errors)
 
 
 def passed(result):
@@ -233,8 +253,8 @@ def execution_environment():
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
-    preflight()
     if sys.argv[1:] == ['--check-anchors']:
+        preflight()
         return 0
     output, baseline, only, memory = None, 'HEAD', None, False
     arguments = sys.argv[1:]
@@ -258,12 +278,25 @@ def main():
     if output is None:
         raise SystemExit('usage: negative_controls.py NEW_OUTPUT [--case NAME] '
                          '[--baseline TREE] [--memory] | --check-anchors')
+    if not memory:
+        # #2795 fix-r12（双锁契约回归）：--memory 路径不先走 preflight 的
+        # 60 s 锁窗（memory rehearsal 不变异源；先取 60 再取 900 会把
+        # #1398 e2e 契约钉的「tree_lock 恰好一次、timeout=900、锁先于
+        # child」打破成两次取锁），其全表锚点预检折进 rehearsal 自己的
+        # 900 s 锁窗（one() 首行）；变异臂不变：preflight 仍先于一切 case。
+        preflight()
     env = execution_environment()
     selected = cases if only is None else [row for row in cases if row[0] == only]
     if not selected:
         raise SystemExit('unknown negative case')
     out = new_output_directory(Path(output).resolve())
     results = []
+    # #2795 fix-r12（双锁契约回归）：--memory 路径的全表锚点预检折进
+    # rehearsal 的 900 s 锁窗——one() 只在锁内的循环里被调，首个 case 的
+    # 任何 child 之前先做一次（等价 preflight() 的检查面，不另取 60 s
+    # 锁；#1398 e2e 契约钉 tree_lock 恰好一次且 timeout=900、锁先于
+    # child）。变异臂不进此分支，预检仍在 main() 里先于一切 case。
+    table_checked = False
     def publish():
         # Publish only after mutating_sources has verified restoration; a
         # cancellation below re-publishes every row as INVALID before raising.
@@ -282,7 +315,13 @@ def main():
         (out / (name + '.log')).write_text(result.stdout + result.stderr)
         return result
     def one(row):
+        nonlocal table_checked
         name, path, before, after, test = row
+        # #2795 fix-r12（双锁契约回归）：见 table_checked 的登记注释——
+        # --memory 的全表预检在 rehearsal 锁窗内、首个 child 之前做一次。
+        if memory and not table_checked:
+            table_checked = True
+            _anchor_report(_anchor_errors())
 
         def restored():
             nonlocal status, reason
