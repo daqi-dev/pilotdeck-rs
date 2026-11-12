@@ -75,7 +75,8 @@ ROLES = {
 }
 ALLOWED_TOOLS = ["Read", "Grep", "Glob"]
 LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走 llm-center；Claude Code 自行拼 /v1/messages，基址须为主机根（带 /v1 会 404）
-# 网关对 GLM 在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
+# 网关对 GLM 在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；别名表内两形放行、且大小写差异按
+# casefold 放行（同 review-deepseek 口径）；表外 model 仍须逐字一致
 # （10-25 实测 claude-opus-5-5 / claude-sonnet-5-5 经 llm-center 原样回显，原件 _tmp/20261025-anth-runner/smoke-*；
 # 11-05 实测 MiniMax-M3.1-Flash 原样回显、deepseek-v4.1-flash-mb 回显 DeepSeek-V4.1-Flash，原件 _tmp/20261105-minimax-runner/）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
@@ -452,10 +453,16 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         return rec
     # real_resp 为空（只有 <synthetic>/None 占位）时 issubset 恒真，守卫退化为只靠 usage 一条证据——
     # 拒：成功 result 必须至少带一条真实 assistant 响应名，否则谱系无从证明（边界 #1）。
-    # 大小写与 review-deepseek 的 casefold 同口径：只变大小写不算换谱系，两边脚本不再一边放行一边误杀。
-    allowed_cf = {str(m).casefold() for m in allowed}
-    if model and (not real_resp or not {str(m).casefold() for m in real_resp}.issubset(allowed_cf)
-                 or not usage or not {str(m).casefold() for m in usage}.issubset(allowed_cf)):
+    # 大小写与 review-deepseek 的 casefold 同口径，但只对别名表登记的已知两形生效：未登记的 --model
+    # （如漏 -mb 的 glm-5.3，网关也应答）若也走 casefold，展示名回显会被误放行（r2 boundary#1），表外保持逐字。
+    if model in RESP_MODEL_ALIAS:
+        allowed_cf = {str(m).casefold() for m in allowed}
+        resp_ok = {str(m).casefold() for m in real_resp}.issubset(allowed_cf)
+        usage_ok = {str(m).casefold() for m in usage}.issubset(allowed_cf)
+    else:
+        resp_ok = real_resp.issubset(allowed)
+        usage_ok = usage.issubset(allowed)
+    if model and (not real_resp or not resp_ok or not usage or not usage_ok):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}（合法形 {sorted(allowed)}）"
         return rec
     text = result.get("result") if isinstance(result.get("result"), str) else ""

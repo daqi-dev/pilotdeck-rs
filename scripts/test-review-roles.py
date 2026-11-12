@@ -136,7 +136,7 @@ if mode != "no_assistant":
         if mode == "wrong_resp_quotes" else []
     print(json.dumps({"type": "assistant", "message": {"model": resp, "content": blocks}}), flush=True)
 final = "只有半截" if mode == "noverdict" else conf["final"]
-usage = {("wrong-model-x" if mode == "wrong_usage" else model): {}}
+usage = {("wrong-model-x" if mode == "wrong_usage" else (alias.get(model, model).swapcase() if mode == "case_variant" else model)): {}}
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final, "total_cost_usd": 0,
                   "modelUsage": usage}))
 if trace:
@@ -200,7 +200,7 @@ def _run(gate, rrr, out_base: Path) -> int:
                     "CLAUDE_CODE_USE_VERTEX", "GITHUB_TOKEN", "ZAI_API_KEY", "MINIMAX_API_KEY",
                     "DEEPSEEK_API_KEY", "FAKE_MODE"}
 
-        def run(name: str, mode: str, runner: str = "zai", timeout: int = 20) -> tuple[int, str]:
+        def run(name: str, mode: str, runner: str = "zai", timeout: int = 20, model: str = "") -> tuple[int, str]:
             # 污染的父环境：旧网关头、provider 选择器、他家令牌都不得传进评审进程
             (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL,
                                                        "aliases": dict(rrr.RESP_MODEL_ALIAS), "keys": {
@@ -217,7 +217,8 @@ def _run(gate, rrr, out_base: Path) -> int:
             cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner, "--claude-bin", str(fake),
                                  "--env-file", str(envfile),
                                  "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
-                                 "--timeout", str(timeout)], capture_output=True, text=True, env=env)
+                                 "--timeout", str(timeout), *(["--model", model] if model else [])],
+                                capture_output=True, text=True, env=env)
             s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
             return cp.returncode, s
 
@@ -308,6 +309,13 @@ def _run(gate, rrr, out_base: Path) -> int:
         rc, s = run("glm-case-variant", "case_variant", runner="zai")
         if rc != 0 or "simplify:PASS" not in s or gate_errs(s):
             fails.append(f"glm-case-variant：仅大小写不同的回显名应全 PASS 且过闸（rc={rc}）")
+        rc, s = run("ds-case-variant", "case_variant", runner="deepseek")
+        if rc != 0 or "simplify:PASS" not in s or gate_errs(s):
+            fails.append(f"ds-case-variant：仅大小写不同的回显名/用量名应全 PASS 且过闸（rc={rc}）")
+        # r2 boundary#1 负控：未登记的 --model（漏 -mb，网关也应答）+ 大小写变体回显——casefold 不得越过别名表放行
+        rc, s = run("glm-unregistered-case", "case_variant", runner="zai", model="glm-5.3")
+        if rc == 0 or "ERROR" not in s or not gate_errs(s):
+            fails.append(f"glm-unregistered-case：表外 model 的大小写变体回显应判 ERROR 且闸门拒收（rc={rc}）")
 
         # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
         for name, mode, want, runner in [("extra-tool", "extra_tool", "TOOLS_VIOLATION", "zai"), ("wrong-init", "wrong_init", "ERROR", "zai"),
