@@ -2149,8 +2149,8 @@ async fn submit_turn_surrogate_gate_precedes_the_busy_refusal() {
 
 // #1623 fix-r8 (review P2 #1): for a combined-invalid input — a bogus `mode`
 // beside a lone-surrogate `sessionKey` — TS answers the mode error first
-// (`submitTurn` has no sessionKey gate; `probe_ts_gates.log`), and the same
-// batch's config family orders the same way (mode → busy → sessionKey gate).
+// (`submitTurn` has no sessionKey gate; `probe_ts_gates.log`), as does
+// `set_permission_mode` (mode → busy → sessionKey gate, `methods/config.rs`).
 // The registered surrogate gate therefore sits after the mode/basePermissionMode
 // and runId checks: this input must answer INVALID_PERMISSION_MODE, not
 // INVALID_SESSION_KEY. Moving the gate ahead of the mode check turns this red.
