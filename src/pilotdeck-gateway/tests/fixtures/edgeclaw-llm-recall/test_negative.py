@@ -205,7 +205,7 @@ class PublicationControls(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='llmrecall-negctl-')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()  # claim_dir resolves; /var is a symlink on this host
         # The delivered script refuses to run without a caller-owned build tree.
         self.saved_target = os.environ.get('CARGO_TARGET_DIR')
         os.environ['CARGO_TARGET_DIR'] = str(self.root / 'target')
@@ -224,13 +224,15 @@ class PublicationControls(unittest.TestCase):
                         'the table must offer two controls with dedicated anchors')
 
     def _drive(self, *, fail_at=None, fail_with=None, restore_fails_at=None,
-               baseline_fails=False):
+               baseline_fails=False, stale_anchor=False):
         """Execute the delivered script once with the process layer mocked.
 
         ``fail_at`` is the 1-based ``run_owned`` call index (1 is the baseline
         run) that raises ``fail_with``; ``restore_fails_at`` is the 1-based
         ``write_source_atomic`` call index that raises instead of recording
         (5 is the first restore of the guarded window's own ``finally``).
+        ``stale_anchor`` makes every guarded file lose its anchors, driving
+        the exit-2 stale-anchor refusal.
         """
         out = self.root / 'run'
         state = {'runs': 0, 'writes': 0, 'summary_existed': False}
@@ -268,6 +270,12 @@ class PublicationControls(unittest.TestCase):
 
         def fake_mutating(root, paths, **kwargs):
             originals = {path: path.read_bytes() for path in paths}
+            if stale_anchor:
+                # Every guarded file loses its anchors, so the exit-2
+                # stale-anchor refusal runs while (for the reused-directory
+                # control) a previous green summary sits in the out path.
+                originals = {path: b'stale twin bytes: no anchors remain\n'
+                             for path in originals}
 
             class Guard:
                 def __enter__(self):
@@ -422,6 +430,73 @@ class PublicationControls(unittest.TestCase):
         self.assertTrue(
             all('runner: RuntimeError' in row['reason'] for row in payload['cases']),
             message + ' (the invalidation reason was not recorded)')
+
+    def test_closed_stderr_keeps_the_abort_exit_code(self):
+        """#1087 fix-r4 (concurrency #2): a closed stderr must not replace
+        the exit code.
+
+        The summary is already published when the diagnostic print runs, so
+        an unwritable stderr (a host that closed `2>&-`) must not turn the
+        "aborted = 3" contract into an unhandled OSError exit 1.
+        """
+        class ClosedStderr:
+            def write(self, data):
+                raise OSError('stderr is closed')
+
+            def flush(self):
+                pass
+
+        with patch.object(sys, 'stderr', ClosedStderr()):
+            code, state, disk, out = self._drive(
+                fail_at=3, fail_with=SystemExit(130))
+        message = '#1087 a closed stderr must not replace the exit code'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the SystemExit must propagate)')
+        self.assertTrue(code.code == 3,
+                        message + ' (the raw code must be normalized away from 2)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue([row['outcome'] for row in payload['cases']]
+                        == ['INVALID', 'INVALID'],
+                        message + ' (the on-disk rows were not voided)')
+
+    def test_refusal_invalidates_a_reused_directory_summary(self):
+        """#1087 fix-r4 (concurrency #3): a refused re-run must not leave the
+        previous run's green summary readable.
+
+        The evidence directory is claimed with ``mkdir(exist_ok=True)``, so a
+        host re-run can land in the same path. The exit-2 stale-anchor
+        refusal atomically replaces that stale green with a refusal marker
+        that carries no verdict rows.
+        """
+        out = self.root / 'run'
+        out.mkdir()
+        (out / 'summary.json').write_text(json.dumps(
+            {'baseline': {'outcome': 'PASS'},
+             'cases': [{'name': self.selected[0][0], 'outcome': 'KILLED'}]}) + '\n')
+        code, state, disk, out = self._drive(stale_anchor=True)
+        message = '#1087 a refused re-run must invalidate the stale summary'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the refusal must exit 2)')
+        self.assertTrue(code.code == 2, message + ' (the refusal must exit 2)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue('refused' in payload,
+                        message + ' (the stale green was not replaced by a refusal marker)')
+        self.assertTrue('cases' not in payload and 'baseline' not in payload,
+                        message + ' (the marker must carry no verdict rows)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+
+    def test_refusal_leaves_a_fresh_directory_untouched(self):
+        """A first-run refusal writes nothing: "never started" leaves no summary."""
+        code, state, disk, out = self._drive(stale_anchor=True)
+        message = '#1087 a fresh refused directory must stay summary-free'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the refusal must exit 2)')
+        self.assertTrue(code.code == 2, message + ' (the refusal must exit 2)')
+        self.assertTrue(not (out / 'summary.json').exists(),
+                        message + ' (a summary was written for a never-started run)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
 
 if __name__ == '__main__':
     unittest.main()

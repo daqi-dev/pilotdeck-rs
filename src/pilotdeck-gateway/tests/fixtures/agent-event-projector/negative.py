@@ -1015,8 +1015,19 @@ fn directory_flags() -> rustix::fs::OFlags {
                                 and "could not compile" not in raw
                                 and (
                                     overflow
-                                    or named_test_killed(
-                                        raw, used_test, "should throw"
+                                    # #1087 fix-r4 (same-family sweep): the
+                                    # assertion disjunct additionally requires
+                                    # libtest's own summary — an aborted run
+                                    # that already printed the named test's
+                                    # FAILED line and payload (the
+                                    # ``--nocapture`` SIGKILL shape) is not a
+                                    # kill. The overflow disjunct is the
+                                    # terminal evidence itself and stays as-is.
+                                    or (
+                                        "test result: FAILED" in raw
+                                        and named_test_killed(
+                                            raw, used_test, "should throw"
+                                        )
                                     )
                                 )
                             )

@@ -326,6 +326,23 @@ def write_summary(current_baseline):
     tmp.replace(out / 'summary.json')
 
 
+def _refuse_summary(reason):
+    """Invalidate a reused directory's stale summary (#1087 fix-r4, concurrency #3).
+
+    The evidence directory is claimed with ``mkdir(exist_ok=True)`` so a
+    host re-run can land in the same path; an exit-2 "never started"
+    refusal must not leave the previous run's green ``summary.json``
+    readable there as this run's evidence. The marker is one rename,
+    carries no verdict rows, and leaves a fresh directory untouched —
+    before the first run there is nothing to invalidate.
+    """
+    if not (out / 'summary.json').exists():
+        return
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(json.dumps({'refused': reason}, indent=2) + '\n')
+    tmp.replace(out / 'summary.json')
+
+
 def _void_pending(error):
     """Void the recorded rows and publish one INVALID summary (boundary #1).
 
@@ -346,7 +363,13 @@ def _void_pending(error):
                         'reason': reason, 'returncode': None,
                         'anchor': before, 'replacement': after})
     write_summary(baseline)
-    print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+    try:
+        print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+    except OSError:
+        # #1087 fix-r4 (concurrency #2): the summary is already published, so
+        # a closed stderr must not replace the exit code below — "aborted = 3"
+        # is the only contract left to keep.
+        pass
     if isinstance(error, SystemExit):
         # Normalize: 128+signum and any other raw code must not decide how a
         # coordinator reads this run (a 256/-256 code truncates to a zero
@@ -459,7 +482,11 @@ except SystemExit as error:
         raise
     if error.code == 2:
         # The deliberate stale-anchor refusal: nothing was measured, so
-        # nothing is published — "never started" leaves no summary behind.
+        # nothing is published. The directory claim above allows a host
+        # re-run into the same path, so a previous run's green summary is
+        # invalidated before the refusal propagates — it must not stay
+        # readable as this run's evidence (#1087 fix-r4, concurrency #3).
+        _refuse_summary('stale anchors: negative.py is out of sync with its sources')
         raise
     _void_pending(error)
 except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise

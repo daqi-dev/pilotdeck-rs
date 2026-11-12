@@ -176,7 +176,13 @@ def classify(row, result):
             return 'SURVIVED', 'bound test still passed'
         # #1087: only the named test's own FAILED status line plus a marker in
         # that test's own panic payload kills (negative_panic judges both).
-        if result.returncode != 0 and named_test_killed(log, row['test'], row['anchors']):
+        # #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
+        # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
+        # transcript without libtest's own summary (measured on a real libtest
+        # process), so the FAILED summary line is a separate requirement, the
+        # same guard as `_shared/negative_control.py`.
+        if (result.returncode != 0 and 'test result: FAILED.' in log
+                and named_test_killed(log, row['test'], row['anchors'])):
             return 'KILLED', 'bound test failed at its assertion'
         return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
     if result.returncode == 0:

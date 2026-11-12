@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 75 in both; 1531 keys: 417 bare-filename joins and 1114 shared-helper import keys.
+# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 75 in both; 1533 keys: 417 bare-filename joins and 1116 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -246,7 +246,7 @@ KNOWN_BLIND = {
     'issue-2495/negative_controls.py': '6 keys',
     'issue-297-domain-fold/negative_controls.py': '6 keys',
     'issue-297/negative_controls.py': '6 keys',
-    'js-math-zero/negative.py': '2 keys',
+    'js-math-zero/negative.py': '4 keys',
     'ledger-diffs/negative_controls.py': '2 keys + 1 unresolvable',
     'live-e2e-tmpdir/negative_controls.py': '6 keys',
     'live-e2e/negative_controls.py': '6 keys + 4 unresolvable',

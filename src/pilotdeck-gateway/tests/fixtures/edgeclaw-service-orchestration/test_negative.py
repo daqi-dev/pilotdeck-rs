@@ -193,7 +193,7 @@ class PublicationControls(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-orch-negctl-')
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()  # claim_dir resolves; /var is a symlink on this host
         self.addCleanup(self.tmp.cleanup)
         self.out = self.root / 'run'
         self.out.mkdir()
@@ -397,6 +397,166 @@ class PublicationControls(unittest.TestCase):
             all('runner: RuntimeError' in row['reason']
                 for row in payload['controls']),
             message + ' (the invalidation reason was not recorded)')
+
+    def test_closed_stdout_does_not_lose_the_abort_summary(self):
+        """#1087 fix-r4 (concurrency #1): a closed stdout must not eat the
+        INVALID summary.
+
+        A consumer that closed the pipe (`negative.py OUT a b | head -1`)
+        turns record()'s announce print into a BrokenPipeError. The void
+        handler appends the remaining rows without announcing and still
+        publishes one INVALID summary, exiting 3.
+        """
+        class ClosedStdout:
+            def write(self, data):
+                raise BrokenPipeError('consumer closed the pipe')
+
+            def flush(self):
+                pass
+
+        out = self.out
+        sources = dict(self.sources)
+        argv = [str(Path(self.runner.__file__).resolve()), str(out),
+                'twin-a', 'twin-b']
+        calls = {}
+
+        def fake_run_owned(command, cwd, env, timeout):
+            test = command[-2]
+            mutant = next(m for m in self.mutants if m['test'] == test)
+            seen = calls.get(test, 0)
+            calls[test] = seen + 1
+            if seen == 1:
+                return subprocess.CompletedProcess(
+                    command, 101, '',
+                    self._kill_log(test, mutant['test_file']))
+            return subprocess.CompletedProcess(
+                command, 0, '', self._green_log(test))
+
+        class Guard:
+            def __enter__(self):
+                return dict(sources)
+
+            def __exit__(self, *exc):
+                return False
+
+        with patch.multiple(
+                self.runner,
+                MUTANTS=self.mutants,
+                mutating_sources=lambda root, paths, **kw: Guard(),
+                run_owned=fake_run_owned,
+                wait_for_slot=lambda script, **kw: types.SimpleNamespace(
+                    stdout='', stderr=''),
+                write_source_atomic=lambda root, path, data, mode=None: None,
+                time=types.SimpleNamespace(sleep=lambda seconds: None)), \
+             patch.object(sys, 'argv', argv), \
+             patch.object(sys, 'stdout', ClosedStdout()):
+            try:
+                code = self.runner.main()
+            except BaseException as error:  # pragma: no cover - must not raise
+                self.fail(f'#1087 a closed stdout must not raise past main: {error!r}')
+        message = '#1087 the abort summary must survive a closed stdout'
+        self.assertTrue(code == 3,
+                        message + ' (the exit code must stay 3, not 1)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue(all(row['status'] == 'INVALID'
+                            for row in payload['controls']),
+                        message + ' (the rows must be voided to INVALID)')
+        self.assertTrue(all('BrokenPipeError' in row['reason']
+                            for row in payload['controls']),
+                        message + ' (the abort reason must be recorded)')
+
+    def test_closed_stderr_keeps_the_abort_exit_code(self):
+        """#1087 fix-r4 (concurrency #2): a closed stderr must not replace
+        the exit code.
+
+        The summary is already published when the diagnostic print runs, so
+        an unwritable stderr (a host that closed `2>&-`) must not turn the
+        "aborted = 3" contract into an unhandled OSError exit 1.
+        """
+        class ClosedStderr:
+            def write(self, data):
+                raise OSError('stderr is closed')
+
+            def flush(self):
+                pass
+
+        sources = dict(self.sources)
+
+        class Guard:
+            def __enter__(self):
+                return dict(sources)
+
+            def __exit__(self, *exc):
+                return False
+
+        out = self.out
+        argv = [str(Path(self.runner.__file__).resolve()), str(out),
+                'twin-a', 'twin-b']
+
+        def fake_run_owned(command, cwd, env, timeout):
+            raise SystemExit(130)
+
+        with patch.multiple(
+                self.runner,
+                MUTANTS=self.mutants,
+                mutating_sources=lambda root, paths, **kw: Guard(),
+                run_owned=fake_run_owned,
+                wait_for_slot=lambda script, **kw: types.SimpleNamespace(
+                    stdout='', stderr=''),
+                write_source_atomic=lambda root, path, data, mode=None: None,
+                time=types.SimpleNamespace(sleep=lambda seconds: None)), \
+             patch.object(sys, 'argv', argv), \
+             patch.object(sys, 'stderr', ClosedStderr()):
+            with self.assertRaises(SystemExit) as caught:
+                self.runner.main()
+        message = '#1087 a closed stderr must not replace the exit code'
+        self.assertTrue(caught.exception.code == 3,
+                        message + ' (the raw SystemExit(130) must still '
+                        'normalize to 3)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue(all(row['status'] == 'INVALID'
+                            for row in payload['controls']),
+                        message + ' (the on-disk rows were not voided)')
+
+    def test_refusal_invalidates_a_reused_directory_summary(self):
+        """#1087 fix-r4 (concurrency #3): a refused re-run must not leave the
+        previous run's green summary readable.
+
+        The evidence directory is claimed with ``exist_ok=True``, so a host
+        re-run can land in the same path. The exit-2 "never started"
+        refusal atomically replaces that stale green with a refusal marker
+        that carries no verdict rows.
+        """
+        out = self.out
+        (out / 'summary.json').write_text(json.dumps(
+            {'controls': [{'name': 'twin-a', 'status': 'KILLED'}]}) + '\n')
+        argv = [str(Path(self.runner.__file__).resolve()), str(out),
+                'no-such-mutant']
+        with patch.object(sys, 'argv', argv):
+            code = self.runner.main()
+        message = '#1087 a refused re-run must invalidate the stale summary'
+        self.assertTrue(code == 2, message + ' (the refusal must exit 2)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue('refused' in payload,
+                        message + ' (the stale green was not replaced by a refusal marker)')
+        self.assertTrue('controls' not in payload,
+                        message + ' (the marker must carry no verdict rows)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+
+    def test_refusal_leaves_a_fresh_directory_untouched(self):
+        """A first-run refusal writes nothing: "never started" leaves no summary."""
+        out = self.out
+        argv = [str(Path(self.runner.__file__).resolve()), str(out),
+                'no-such-mutant']
+        with patch.object(sys, 'argv', argv):
+            code = self.runner.main()
+        message = '#1087 a fresh refused directory must stay empty'
+        self.assertTrue(code == 2, message + ' (the refusal must exit 2)')
+        self.assertTrue(not (out / 'summary.json').exists(),
+                        message + ' (a summary was written for a never-started run)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
 
 
 if __name__ == '__main__':

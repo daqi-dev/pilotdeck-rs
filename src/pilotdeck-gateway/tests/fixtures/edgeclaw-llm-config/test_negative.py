@@ -225,7 +225,7 @@ class PublicationControls(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='llmconfig-negctl-')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()  # claim_dir resolves; /var is a symlink on this host
         # The delivered script refuses to run without a caller-owned build tree.
         self.saved_target = os.environ.get('CARGO_TARGET_DIR')
         os.environ['CARGO_TARGET_DIR'] = str(self.root / 'target')
@@ -442,6 +442,34 @@ class PublicationControls(unittest.TestCase):
         self.assertTrue(
             all('runner: RuntimeError' in row['reason'] for row in payload['cases']),
             message + ' (the invalidation reason was not recorded)')
+
+    def test_closed_stderr_keeps_the_abort_exit_code(self):
+        """#1087 fix-r4 (concurrency #2): a closed stderr must not replace
+        the exit code.
+
+        The summary is already published when the diagnostic print runs, so
+        an unwritable stderr (a host that closed `2>&-`) must not turn the
+        "aborted = 3" contract into an unhandled OSError exit 1.
+        """
+        class ClosedStderr:
+            def write(self, data):
+                raise OSError('stderr is closed')
+
+            def flush(self):
+                pass
+
+        with patch.object(sys, 'stderr', ClosedStderr()):
+            code, state, disk, out = self._drive(
+                fail_at=3, fail_with=SystemExit(130))
+        message = '#1087 a closed stderr must not replace the exit code'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the SystemExit must propagate)')
+        self.assertTrue(code.code == 3,
+                        message + ' (the raw code must be normalized away from 2)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue([row['outcome'] for row in payload['cases']]
+                        == ['INVALID', 'INVALID'],
+                        message + ' (the on-disk rows were not voided)')
 
 if __name__ == '__main__':
     unittest.main()

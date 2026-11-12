@@ -382,7 +382,14 @@ def assertion_failure(log, test, case_id, throws_name):
     # replay), so the kind is bound to the same payload as the case id.
     # A panic that carries only `case=<id>` is a wrong-kind failure, not
     # the kill the mutant is booked to prove.
+    # #1087 fix-r4 (sibling #1): an aborted run is not a kill decision —
+    # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
+    # transcript without libtest's own summary (measured on a real libtest
+    # process), so the FAILED summary line is a separate requirement, the
+    # same guard as `negative.py` and `_shared/negative_control.py`.
     if 'could not compile' in log:
+        return False
+    if 'test result: FAILED.' not in log:
         return False
     if not named_test_killed(log, test, f'case={case_id}'):
         return False

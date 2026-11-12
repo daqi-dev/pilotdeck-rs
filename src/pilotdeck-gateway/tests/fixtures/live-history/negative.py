@@ -87,7 +87,13 @@ def classify(result, test, anchor):
                             f'{len(names)} matches for {test}')
     if passed(result, names[0]):
         return 'SURVIVED', 'bound test still passed'
-    if result.returncode != 0 and named_test_killed(log, names[0], anchor):
+    # #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
+    # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
+    # transcript without libtest's own summary (measured on a real libtest
+    # process), so the FAILED summary line is a separate requirement, the
+    # same guard as `_shared/negative_control.py`.
+    if (result.returncode != 0 and 'test result: FAILED.' in log
+            and named_test_killed(log, names[0], anchor)):
         return 'KILLED', 'bound test failed at its assertion'
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing anchor)'
 

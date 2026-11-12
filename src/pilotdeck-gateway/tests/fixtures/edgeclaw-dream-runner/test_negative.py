@@ -32,10 +32,11 @@ class DreamRunnerJudgeControls(unittest.TestCase):
         self.runner = negative
 
     @staticmethod
-    def _panic_log(test, payload, *, status='FAILED'):
-        counts = ('0 passed; 1 failed' if status == 'FAILED' else '1 passed; 0 failed')
-        summary = f'test result: {"FAILED" if status == "FAILED" else "ok"}. ' \
-                  f'{counts}; 0 ignored; 0 measured; 0 filtered out'
+    def _panic_log(test, payload, *, status='FAILED', summary=None):
+        if summary is None:
+            counts = ('0 passed; 1 failed' if status == 'FAILED' else '1 passed; 0 failed')
+            summary = f'test result: {"FAILED" if status == "FAILED" else "ok"}. ' \
+                      f'{counts}; 0 ignored; 0 measured; 0 filtered out'
         return (
             '\nrunning 1 test\n'
             f'test {test} ... {status}\n'
@@ -104,6 +105,20 @@ class DreamRunnerJudgeControls(unittest.TestCase):
         )
         self.assertTrue(self.runner.failure_is_bound(log, fragment, test) is False,
                         '#1087 a fragment inside build output is never a kill')
+
+    def test_aborted_run_without_summary_is_not_a_kill(self):
+        """#1087 fix-r4 (sibling #2): a partial transcript is not a kill.
+
+        The bound test already printed its FAILED line and its own payload
+        (the ``--nocapture`` abort shape measured on a real libtest process
+        killed by SIGKILL), but the run never reached libtest's own
+        ``test result:`` summary. An aborted run is not a kill decision.
+        """
+        test = 'run_scratch_rejects_deletes'
+        fragment = '#773 remove refused: the run parent must not be removed'
+        log = self._panic_log(test, 'scratch delete rejected: ' + fragment, summary='')
+        self.assertTrue(self.runner.failure_is_bound(log, fragment, test) is False,
+                        '#1087 an aborted run without the FAILED summary line is not a kill')
 
 
 if __name__ == '__main__':

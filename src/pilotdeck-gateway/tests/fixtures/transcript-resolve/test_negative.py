@@ -137,6 +137,24 @@ class TranscriptResolveJudgeControls(unittest.TestCase):
                       '#1087 the cargo invocation must keep --exact so the '
                       'named test is the only test in the process')
 
+    def test_mutation_write_is_one_atomic_rename(self):
+        """#1087 fix-r4 (sibling #5): the mutation publish is one rename.
+
+        A truncating ``write_text`` killed mid-write-back leaves a half-
+        written source the next preflight refuses; the shared publish
+        helper keeps the single-rename contract, and the restore bytes are
+        the guard's own exit verification, not a local re-assert.
+        """
+        source = Path(__file__).with_name('negative_controls.py').read_text(
+            encoding='utf-8')
+        self.assertIn('write_source_atomic(root, source, changed.encode())',
+                      source,
+                      '#1087 the mutation publish must go through the '
+                      'shared single-rename helper')
+        self.assertNotIn('assert source.read_bytes() == original', source,
+                         '#1087 the restore bytes are verified by '
+                         'mutating_sources on exit, not re-asserted locally')
+
 
 if __name__ == '__main__':
     unittest.main()

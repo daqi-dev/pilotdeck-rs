@@ -570,20 +570,42 @@ def main():
     if output is None:
         print('usage: negative.py OUTPUT_DIR [mutant ...]', file=sys.stderr)
         return 2
+
+    def refuse_reused_summary(reason):
+        """Invalidate a reused directory's stale summary (#1087 fix-r4).
+
+        The evidence directory is claimed with ``exist_ok=True`` so a host
+        re-run can land in the same path; an exit-2 "never started" refusal
+        must not leave the previous run's green ``summary.json`` readable
+        there as this run's evidence (concurrency #3). The marker is one
+        rename, carries no verdict rows, and leaves a fresh directory
+        untouched — before the first run there is nothing to invalidate.
+        """
+        if output is None or not (output / 'summary.json').exists():
+            return
+        tmp = output / 'summary.json.tmp'
+        tmp.write_text(json.dumps({'refused': reason}, indent=2) + '\n')
+        tmp.replace(output / 'summary.json')
+
     requested = sys.argv[2:]
     known = {mutant['name'] for mutant in MUTANTS}
     unknown = [name for name in requested if name not in known]
     if unknown:
+        refuse_reused_summary('unknown mutant(s): run refused')
         print(f'unknown mutant(s): {", ".join(unknown)}', file=sys.stderr)
         return 2
     selected = [
         mutant for mutant in MUTANTS if not requested or mutant['name'] in requested
     ]
-    output.mkdir(parents=True, exist_ok=True)
+    # #1087 fix-r4 (concurrency #3): refuse before the evidence directory is
+    # claimed — and with the marker above, a reused path's old green summary
+    # can no longer be read as this run's evidence once the run refused.
     target = os.environ.get('CARGO_TARGET_DIR')
     if not target:
+        refuse_reused_summary('CARGO_TARGET_DIR missing: run refused')
         print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
         return 2
+    output.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env['CARGO_TARGET_DIR'] = target
     results = []
@@ -613,7 +635,7 @@ def main():
             log.write(result.stdout + result.stderr)
         return result
 
-    def record(mutant, status, reason):
+    def record(mutant, status, reason, *, announce=True):
         # #1087 fix-r3 (boundary #1): the row stays in memory only — the
         # disk summary is published once, after the guarded restore.
         results.append(dict(
@@ -624,7 +646,8 @@ def main():
             status=status,
             reason=reason,
         ))
-        print(f"{mutant['name']}: {status}: {reason}", flush=True)
+        if announce:
+            print(f"{mutant['name']}: {status}: {reason}", flush=True)
 
     def publish():
         """Publish the one final summary atomically (#1087 fix-r3, boundary #1).
@@ -665,10 +688,21 @@ def main():
             row['status'] = 'INVALID'
             row['reason'] = (f"{row['reason']}; voided: {reason}"
                              if row['reason'] else f"voided: {reason}")
+        # #1087 fix-r4 (concurrency #1): the remaining rows are appended
+        # without announcing — record()'s print goes to stdout, and a
+        # consumer that already closed the pipe (`negative.py OUT a b |
+        # head -1`) turns that print into a BrokenPipeError that escapes
+        # this handler before publish() could run.
         for mutant in selected[len(results):]:
-            record(mutant, 'INVALID', reason)
+            record(mutant, 'INVALID', reason, announce=False)
         publish()
-        print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+        try:
+            print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+        except OSError:
+            # #1087 fix-r4 (concurrency #2): the summary is already
+            # published, so a closed stderr must not replace the exit code
+            # below — "aborted = 3" is the only contract left to keep.
+            pass
         if isinstance(error, SystemExit):
             # Normalize: 128+signum and any other raw code must not decide
             # how a coordinator reads this run (a 256/-256 code truncates to

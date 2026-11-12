@@ -211,7 +211,14 @@ def outcome(result, test, expects=None):
     matched = (all(token in failure for token in required)
                and (not alternatives
                     or any(token in failure for token in alternatives)))
+    # #1087 fix-r4 (same-family sweep): the kill requires libtest's own
+    # FAILED summary line too — an aborted run that already printed the
+    # named test's FAILED line and payload (the ``--nocapture`` SIGKILL
+    # shape) is not a kill. A timeout is already INVALID above (the
+    # caller's TimeoutExpired branch), so this only closes the SIGKILL /
+    # crash shape.
     killed = (bool(failure) and matched
+              and 'test result: FAILED.' in log
               and named_test_killed(log, test, failure))
     return log, killed, failure
 

@@ -308,6 +308,27 @@ class OutcomeJudgeControls(unittest.TestCase):
         self.assertTrue(killed, message)
         self.assertTrue(failure == self.MARKER_LINE, message + ' (failure line)')
 
+    def test_aborted_run_without_summary_is_not_a_kill(self):
+        """#1087 fix-r4 (same-family sweep): a partial transcript is not a kill.
+
+        The bound test already printed its FAILED line and its own payload
+        (the ``--nocapture`` abort shape measured on a real libtest process
+        killed by SIGKILL), but the run never reached libtest's own
+        ``test result:`` summary. An aborted run is not a kill decision.
+        """
+        log, killed, failure = self.runner.outcome(
+            self.result(
+                'running 1 test\ntest t_one ... FAILED\n\n'
+                'failures:\n\n---- t_one stdout ----\n'
+                "thread 't_one' panicked at tests/common/timing.rs:41:13:\n"
+                f'{self.MARKER_LINE}\n'
+                'note: run with `RUST_BACKTRACE=1` environment variable to '
+                'display a backtrace\n',
+                code=-9),
+            self.TEST, self.EXPECTS)
+        message = '#1087 an aborted run without the FAILED summary line is not a kill'
+        self.assertTrue(not killed, message)
+
     def test_captured_stdout_is_not_a_kill(self):
         # The marker is echoed by the test's own captured stdout; the panic
         # payload is an unrelated assertion. The old whole-log scan recorded

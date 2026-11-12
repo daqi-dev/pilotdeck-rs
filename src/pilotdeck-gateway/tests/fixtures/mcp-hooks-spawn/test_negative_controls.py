@@ -174,5 +174,87 @@ class SpawnSummaryControls(unittest.TestCase):
                         message + ' (the guarded tree must end restored)')
 
 
+class SpawnJudgeControls(unittest.TestCase):
+    """#1087 fix-r4 (sibling #2): the kill judge must only accept a completed
+    run of the named test's own anchor panic."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        source = Path(__file__).with_name('negative_controls.py')
+        spec = importlib.util.spec_from_file_location('spawn_negative', source)
+        cls.runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.runner)
+
+    TEST = 'start_spawn_failure_matrix'
+    ANCHOR = 'failure clears cached attempt'
+    FULL = 'mcp::hooks::tests::start_spawn_failure_matrix'
+
+    @staticmethod
+    def _result(log, returncode):
+        return types.SimpleNamespace(returncode=returncode, stdout=log, stderr='')
+
+    @classmethod
+    def _panic_log(cls, payload, *, summary=None):
+        if summary is None:
+            summary = ('test result: FAILED. 0 passed; 1 failed; '
+                       '0 ignored; 0 measured; 0 filtered out')
+        return (
+            '\nrunning 2 tests\n'
+            f'test {cls.FULL} ... FAILED\n'
+            'test mcp::hooks::tests::start_spawn_drop_matrix ... ok\n'
+            '\nfailures:\n'
+            f"thread '{cls.FULL}' (2841) panicked at "
+            'src/pilotdeck-gateway/src/mcp/hooks.rs:44:9:\n'
+            f'{payload}\n'
+            'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+            f'{summary}\n'
+        )
+
+    def test_named_test_anchor_panic_kills(self):
+        """The positive shape: the named test's own anchor panic."""
+        log = self._panic_log(f'cached attempt leaked: {self.ANCHOR}')
+        self.assertEqual(
+            self.runner.classify(self._result(log, 101), self.TEST, self.ANCHOR),
+            ('KILLED', 'bound test failed at its assertion'),
+            "#1087 the named test's own anchor panic must kill")
+
+    def test_aborted_run_without_summary_is_not_a_kill(self):
+        """A partial transcript is not a kill.
+
+        The bound test already printed its FAILED line and its own payload
+        (the ``--nocapture`` abort shape measured on a real libtest process
+        killed by SIGKILL), but the run never reached libtest's own
+        ``test result:`` summary. An aborted run is not a kill decision.
+        """
+        log = self._panic_log(f'cached attempt leaked: {self.ANCHOR}', summary='')
+        self.assertEqual(
+            self.runner.classify(self._result(log, 101), self.TEST, self.ANCHOR),
+            ('INVALID', 'missing bound runtime failure (build error, '
+             'wrong panic, or missing anchor)'),
+            '#1087 an aborted run without the FAILED summary line is not a kill')
+
+    def test_captured_stdout_is_not_a_kill(self):
+        """An anchor printed to captured stdout is not a kill."""
+        log = (
+            '\nrunning 2 tests\n'
+            f'test {self.FULL} ... FAILED\n'
+            'test mcp::hooks::tests::start_spawn_drop_matrix ... ok\n'
+            '\nfailures:\n'
+            f'---- {self.FULL} stdout ----\n'
+            f'replay dump for debugging: {self.ANCHOR}\n'
+            f"thread '{self.FULL}' (2841) panicked at "
+            'src/pilotdeck-gateway/src/mcp/hooks.rs:44:9:\n'
+            'called `Option::unwrap()` on a `None` value\n'
+            'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+            'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n'
+        )
+        self.assertEqual(
+            self.runner.classify(self._result(log, 101), self.TEST, self.ANCHOR),
+            ('INVALID', 'missing bound runtime failure (build error, '
+             'wrong panic, or missing anchor)'),
+            '#1087 an anchor in captured stdout is not a kill')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -25,9 +25,22 @@ or the clamped expression itself).  A mutant must first compile
 then restoring the bytes must make the same test pass again.
 
 The control does not stop at the first survivor: it records KILLED / SURVIVED
-/ INVALID for every selected case, writes `summary.json`, and exits non-zero
-unless every case is KILLED.  A stale anchor is a harness defect, so it exits
-2 before compiling instead of being classified as SURVIVED.
+/ INVALID for every selected case, and exits non-zero unless every case is
+KILLED.  A stale anchor is a harness defect, so it exits 2 before compiling
+instead of being classified as SURVIVED.
+
+#1087 fix-r4 (sibling #3/#4): the verdict rows stay in memory for the whole
+guarded window and one final `summary.json` is published by a single rename
+only after `mutating_sources` restored and byte-verified every guarded
+source (the same skeleton as the five edgeclaw tables). An abort inside the
+window — a cancellation, a restore failure, the source guard — voids the
+recorded rows, publishes one INVALID summary and exits 3. A red baseline
+keeps exit 1 but still publishes its row. The kill judge is the shared
+strict #813 criterion (``named_test_killed``): the named test's own FAILED
+status line, the bound ``#947`` assertion message inside that test's own
+panic payload, and libtest's own ``test result: FAILED.`` summary line.
+Every guarded-source write in the window — mutation and restore alike — is
+one atomic rename (``write_source_atomic``), never a truncating write.
 
 `mutating_sources` proves every target equals HEAD and restores it on exit.
 A source tree with uncommitted #947 changes therefore refuses to run; that is
@@ -41,7 +54,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
 
@@ -273,31 +288,82 @@ def cargo(extra):
     return ['cargo', 'test', '--offline', '--manifest-path', str(root / 'src/Cargo.toml'), *extra]
 
 
-def classify(log, returncode):
-    """Three-way outcome; a renamed/filtered test is INVALID, never SURVIVED."""
-    if returncode is None or 'could not compile' in log:
+def classify(log, returncode, expected, test):
+    """Three-way outcome for one mutant run.
+
+    Every KILLED/SURVIVED verdict must prove that exactly one test actually
+    ran. A renamed or filtered-out test prints ``running 0 tests`` and exits 0;
+    without this guard it would be reported as SURVIVED (a false negative).
+    #1087 fix-r4 (sibling #3): a KILLED verdict additionally requires the
+    shared strict #813 judge — the named test's own FAILED status line, the
+    bound ``#947 ...`` assertion message inside that test's own panic
+    payload, and libtest's own ``test result: FAILED.`` summary line. The old
+    shape accepted any failure with any ``panicked at`` — including an
+    unrelated panic in the same binary, captured stdout, and an aborted run
+    that never reached the summary — the false-kill shapes ``--self-test``
+    and the twin controls in test_negative.py pin.
+    """
+    if returncode is None:
+        return 'INVALID'
+    if 'could not compile' in log:
         return 'INVALID'
     ran = re.search(r'^running (\d+) tests?$', log, re.MULTILINE)
     if ran is None or int(ran.group(1)) != 1:
         return 'INVALID'
-    if returncode == 101 and 'test result: FAILED.' in log and 'panicked at' in log:
-        return 'KILLED'
+    if returncode != 0 and 'test result: FAILED.' in log:
+        if named_test_killed(log, test, expected):
+            return 'KILLED'
+        return 'INVALID'
     if returncode == 0 and 'test result: ok.' in log:
         return 'SURVIVED'
     return 'INVALID'
 
 
 def self_test():
+    anchor = '#947 retry_after must propagate NaN'
+    test = 't_selftest'
+    killed_log = (
+        'running 1 test\n'
+        f'test {test} ... FAILED\n\n'
+        'failures:\n\n'
+        f"---- {test} stdout ----\n"
+        f"thread '{test}' panicked at src/x.rs:1:1:\n"
+        f'{anchor}\n'
+        'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+        'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n'
+    )
+    # The same FAILED shape on an unrelated unwrap: the anchor is nowhere in
+    # the test's own panic payload, so it is not a kill.
+    unrelated_log = killed_log.replace(anchor, 'called `Option::unwrap()` on a None value')
+    # The anchor only in captured stdout, not in the test's own panic block.
+    stdout_log = (
+        'running 1 test\n'
+        f'test {test} ... FAILED\n\n'
+        'failures:\n\n'
+        f'---- {test} stdout ----\n'
+        f'replay dump for debugging: {anchor}\n'
+        f"thread '{test}' panicked at src/x.rs:1:1:\n"
+        'called `Option::unwrap()` on a None value\n'
+        'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+        'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n'
+    )
+    # An aborted run: the FAILED status line and the payload are there, but
+    # the process never reached libtest's own summary (the SIGKILL shape).
+    aborted_log = killed_log.replace(
+        'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n', '')
     samples = [
         ('running 0 tests\n\ntest result: ok. 0 passed; 0 failed;', 0, 'INVALID'),
         ('running 1 test\n\ntest result: ok. 1 passed; 0 failed;', 0, 'SURVIVED'),
         ('running 2 tests\n\ntest result: ok. 2 passed; 0 failed;', 0, 'INVALID'),
-        ('running 1 test\npanicked at src/x.rs:1:1:\n#947\n\ntest result: FAILED. 0 passed; 1 failed;', 101, 'KILLED'),
-        ('running 1 test\n\ntest result: FAILED. 0 passed; 1 failed;', 0, 'INVALID'),
+        (killed_log, 101, 'KILLED'),
+        (unrelated_log, 101, 'INVALID'),
+        (stdout_log, 101, 'INVALID'),
+        (aborted_log, 101, 'INVALID'),
+        (killed_log, 0, 'INVALID'),
         ('error: could not compile `pilotdeck-gateway`', 101, 'INVALID'),
     ]
     for log, returncode, expected in samples:
-        actual = classify(log, returncode)
+        actual = classify(log, returncode, anchor, test)
         if actual != expected:
             raise RuntimeError((log, returncode, expected, actual))
     print('classify self-test: PASS')
@@ -371,10 +437,62 @@ env['CARGO_TARGET_DIR'] = target
 # only the mutation loop below runs the selected rows.
 paths = list(dict.fromkeys(case[1] for case in cases))
 results = []
+# #1087 fix-r4 (sibling #3): bound before the guarded window so the
+# cancellation handler can always publish, even when the abort happened
+# before the baseline run recorded anything.
+baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
 
 
-def write_summary():
-    (out / 'summary.json').write_text(json.dumps({'cases': results}, indent=2) + '\n')
+def write_summary(current_baseline):
+    """Publish the one final summary atomically (#1087 fix-r4, sibling #3).
+
+    Called exactly once per run, after ``mutating_sources`` restored and
+    byte-verified every guarded source — or from the cancellation handler,
+    after the same guard unwound. The old per-row truncating ``write_text``
+    left a partial all-KILLED summary on disk when a cancellation killed the
+    run mid-suite, and an interrupt inside the write could leave an empty or
+    half-written JSON document.
+    """
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(json.dumps(
+        {'baseline': current_baseline, 'cases': results}, indent=2) + '\n')
+    tmp.replace(out / 'summary.json')
+
+
+def _void_pending(error):
+    """Void the recorded rows and publish one INVALID summary (sibling #3).
+
+    A cancellation or crash inside the guarded window is not a verdict: the
+    rows recorded so far are voided, the remaining selected cases are
+    recorded INVALID, and the single summary is published after the guard
+    restored the tree. The process then exits 3 — deliberately different
+    from 2 ("never started", the stale-anchor refusal below) so a reader can
+    tell a cancelled run from one that never ran.
+    """
+    reason = f'runner: {type(error).__name__}: {error}'
+    for row in results:
+        row['status'] = 'INVALID'
+        row['reason'] = (f"{row['reason']}; voided: {reason}"
+                         if row['reason'] else f"voided: {reason}")
+    for name, path, _before, _after, test in run_rows[len(results):]:
+        results.append({'name': name, 'source': path.relative_to(root).as_posix(),
+                        'test': test, 'status': 'INVALID', 'reason': reason})
+    write_summary(baseline)
+    try:
+        print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+    except OSError:
+        # #1087 fix-r4 (concurrency #2): the summary is already published, so
+        # a closed stderr must not replace the exit code below — "aborted = 3"
+        # is the only contract left to keep.
+        pass
+    if isinstance(error, SystemExit):
+        # Normalize: 128+signum and any other raw code must not decide how a
+        # coordinator reads this run (a 256/-256 code truncates to a zero
+        # process status on POSIX).
+        raise SystemExit(3) from error
+    if not isinstance(error, Exception):
+        raise
+    raise SystemExit(3) from error
 
 
 def run(label, extra, timeout=600):
@@ -390,77 +508,107 @@ def run(label, extra, timeout=600):
     return result, log
 
 
-with mutating_sources(root, paths) as originals:
-    # Stale anchors are a harness defect: fail before any compile.
-    check_anchors({path: data.decode() for path, data in originals.items()})
-
-    # Positive baseline for every affected target, once each.
-    baseline_ok = True
-    for package, (extra, filter) in BASELINE.items():
-        if not any(package_for(case[1]) == package for case in run_rows):
-            continue
-        result, log = run('baseline-' + package, [*extra, filter])
-        ok = (result is not None and 'test result: ok.' in log
-              and 'running 0 tests' not in log)
-        if not ok:
-            baseline_ok = False
-            print(f'baseline {package}: FAIL', flush=True)
-            break
-        print(f'baseline {package}: PASS', flush=True)
-    if not baseline_ok:
-        raise RuntimeError('unmutated baseline did not pass; mutants not run')
-
-    for name, path, before, after, test in run_rows:
-        package = package_for(path)
-        extra, _filter = BASELINE[package]
-        original = originals[path].decode()
-        status, reason = 'INVALID', 'not run'
+try:
+    with mutating_sources(root, paths) as originals:
+        # Stale anchors are a harness defect: fail before any compile.
+        check_anchors({path: data.decode() for path, data in originals.items()})
+        baseline_ok = False
         try:
-            # Apply exactly one anchor replacement.
-            changed = original.replace(before, after, 1)
-            if changed == original:
-                raise RuntimeError('anchor replacement did not change the source')
-            path.write_text(changed)
+            # Positive baseline for every affected target, once each.
+            baseline_ok = True
+            for package, (extra, filter) in BASELINE.items():
+                if not any(package_for(case[1]) == package for case in run_rows):
+                    continue
+                result, log = run('baseline-' + package, [*extra, filter])
+                ok = (result is not None and 'test result: ok.' in log
+                      and 'running 0 tests' not in log)
+                if not ok:
+                    baseline_ok = False
+                    baseline = {'name': 'baseline', 'outcome': 'FAIL',
+                                'returncode': None if result is None else result.returncode}
+                    print(f'baseline {package}: FAIL', flush=True)
+                    break
+                baseline = {'name': 'baseline', 'outcome': 'PASS',
+                            'returncode': None if result is None else result.returncode}
+                print(f'baseline {package}: PASS', flush=True)
+            if not baseline_ok:
+                print('baseline failed; mutants not run', flush=True)
+                raise SystemExit(1)
 
-            # Requirement: every mutant must compile before its test verdict.
-            compiled, compile_log = run(name + '-compile', [*extra, '--no-run'])
-            if compiled is None or compiled.returncode != 0:
-                reason = 'mutant did not compile; never a kill'
-            else:
-                # No `--nocapture`: it splices the test's stdout into the
-                # `test <name> ... FAILED` status line that classify() and
-                # the #947 assertion check below match exactly (#1053).
-                result, log = run(name + '-negative',
-                                  [*extra, test, '--', '--exact'])
-                status = classify(log, None if result is None else result.returncode)
-                if status == 'KILLED' and (
-                        f'test {test} ... FAILED' not in log
-                        or ASSERTIONS[name] not in log
-                        or 'panicked at' not in log):
-                    status, reason = 'INVALID', 'missing named FAILED / #947 assertion / panic'
-                else:
-                    reason = 'named assertion failed' if status == 'KILLED' else 'classified'
-        except Exception as error:  # noqa: BLE001
-            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+            for name, path, before, after, test in run_rows:
+                package = package_for(path)
+                extra, _filter = BASELINE[package]
+                original = originals[path].decode()
+                status, reason = 'INVALID', 'not run'
+                try:
+                    # Apply exactly one anchor replacement.
+                    changed = original.replace(before, after, 1)
+                    if changed == original:
+                        raise RuntimeError('anchor replacement did not change the source')
+                    # #1087 fix-r4 (sibling #4): one rename, never a
+                    # truncating in-place write; the shared publish helper
+                    # (#1903) keeps a SIGKILL mid-write from leaving a source
+                    # the next preflight would refuse as "differs from HEAD".
+                    write_source_atomic(root, path, changed.encode(),
+                                        mode=path.stat().st_mode & 0o7777)
+
+                    # Requirement: every mutant must compile before its test verdict.
+                    compiled, compile_log = run(name + '-compile', [*extra, '--no-run'])
+                    if compiled is None or compiled.returncode != 0:
+                        reason = 'mutant did not compile; never a kill'
+                    else:
+                        # No `--nocapture`: it splices the test's stdout into the
+                        # `test <name> ... FAILED` status line that classify()
+                        # matches exactly (#1053).
+                        result, log = run(name + '-negative',
+                                          [*extra, test, '--', '--exact'])
+                        status = classify(log, None if result is None else result.returncode,
+                                          ASSERTIONS[name], test)
+                        reason = 'named assertion failed' if status == 'KILLED' else 'classified'
+                except Exception as error:  # noqa: BLE001
+                    status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+                finally:
+                    # Same #1087 fix-r4 window: the in-loop restore is also one
+                    # rename, never a truncating write_bytes; the guard's own
+                    # exit verification covers the bytes.
+                    write_source_atomic(root, path, originals[path],
+                                        mode=path.stat().st_mode & 0o7777)
+
+                # Restored bytes must pass the same named test.
+                if status == 'KILLED':
+                    result, log = run(name + '-restored', [*extra, test, '--', '--exact'])
+                    if (result is None or result.returncode != 0
+                            or f'test {test} ... ok' not in log
+                            or 'running 0 tests' in log):
+                        status, reason = 'INVALID', 'restored source did not pass the bound test'
+                results.append({'name': name, 'source': path.relative_to(root).as_posix(),
+                                'test': test, 'status': status, 'reason': reason})
+                print(f'{name}: {status}: {reason}', flush=True)
         finally:
-            path.write_bytes(originals[path])
-            if path.read_bytes() != originals[path]:
-                raise RuntimeError(f'restoration failed: {path}')
-
-        # Restored bytes must pass the same named test.
-        if status == 'KILLED':
-            result, log = run(name + '-restored', [*extra, test, '--', '--exact'])
-            if (result is None or result.returncode != 0
-                    or f'test {test} ... ok' not in log
-                    or 'running 0 tests' in log):
-                status, reason = 'INVALID', 'restored source did not pass the bound test'
-        results.append({'name': name, 'source': path.relative_to(root).as_posix(),
-                        'test': test, 'status': status, 'reason': reason})
-        write_summary()
-        print(f'{name}: {status}: {reason}', flush=True)
+            # Same #1087 fix-r4 window: the final restore is also one rename,
+            # never a truncating write_bytes.
+            for guarded in paths:
+                write_source_atomic(root, guarded, originals[guarded],
+                                    mode=guarded.stat().st_mode & 0o7777)
+except SystemExit as error:
+    if error.code == 1:
+        # The deliberate baseline failure: the guard already restored and
+        # byte-verified the tree while unwinding the with-block; publish the
+        # baseline row and keep the "ran and failed" exit code.
+        write_summary(baseline)
+        raise
+    if error.code == 2:
+        # The deliberate stale-anchor refusal: nothing was measured, so
+        # nothing is published — "never started" leaves no summary behind.
+        raise
+    _void_pending(error)
+except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+    _void_pending(error)
+# Reaching here means mutating_sources restored every guarded file and
+# verified it against the baseline bytes. Only now may a summary exist.
+write_summary(baseline)
 
 counts = {state: sum(row['status'] == state for row in results)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
-write_summary()
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
 raise SystemExit(0 if results and all(row['status'] == 'KILLED' for row in results) else 1)

@@ -344,7 +344,13 @@ def _void_pending(error):
                         'returncode': None,
                         'anchor': before, 'replacement': after})
     write_summary(baseline)
-    print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+    try:
+        print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+    except OSError:
+        # #1087 fix-r4 (concurrency #2): the summary is already published, so
+        # a closed stderr must not replace the exit code below — "aborted = 3"
+        # is the only contract left to keep.
+        pass
     if isinstance(error, SystemExit):
         # Normalize: 128+signum and any other raw code must not decide how a
         # coordinator reads this run (a 256/-256 code truncates to a zero

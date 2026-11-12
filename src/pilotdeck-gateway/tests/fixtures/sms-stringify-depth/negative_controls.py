@@ -167,7 +167,12 @@ with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as sn
                 raise RuntimeError(f'{name}: mutant does not compile')
             code, log = cargo(test, [])
             (out / f'{name}.log').write_text(log)
-            killed = (code != 0 and named_test_failed(log, test)
+            # #1087 fix-r4 (same-family sweep): the kill requires libtest's
+            # own FAILED summary line too — an aborted run that already
+            # printed the named test's FAILED line and payload (the
+            # ``--nocapture`` SIGKILL shape) is not a kill.
+            killed = (code != 0 and 'test result: FAILED.' in log
+                      and named_test_failed(log, test)
                       and named_test_killed(log, test, marker))
             status = 'KILLED' if killed else (
                 'SURVIVED' if code == 0 else 'INVALID')

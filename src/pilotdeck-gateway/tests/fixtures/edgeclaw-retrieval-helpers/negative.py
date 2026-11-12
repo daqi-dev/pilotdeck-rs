@@ -152,6 +152,13 @@ def assertion_failure(log, test, anchor):
     # stdout, which is not evidence (#818's cargo-side form).
     if 'could not compile' in log:
         return False
+    # #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
+    # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
+    # transcript without libtest's own summary (measured on a real libtest
+    # process), so the FAILED summary line is a separate requirement, the
+    # same guard as `_shared/negative_control.py`.
+    if 'test result: FAILED.' not in log:
+        return False
     return named_test_killed(log, test, anchor)
 
 
