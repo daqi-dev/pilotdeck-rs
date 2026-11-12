@@ -6411,3 +6411,43 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 下次两小时交接 ~11:30 写段 | e7 | 11:4x |
 
 **待人工验收（AI 已实测部分）**：无新增；2499 宿主链原始记录在 macmini `~/ws/pdrs-runner-evidence/issue-2499/`（AI 已实测 KILLED=75，待人签字项不变）。
+
+### 11:30（两小时交接，接 09:30；本窗 09:30–11:30；下一段 13:30）
+
+**做了什么**：
+
+- **磁盘超限处置（11:0x 实测 207.3 GiB > 200 上限）**：停新增写入，核 lsof 无进程、无近期写后删闲置树 cargo-target——wt-2617（19.9 GiB）+ wt-2499（4.9 GiB）→ 回 **187.3 GiB**（<200 合规，仍 >180 拒开新树、>160 WARN；fleet 口径 187.2）。后续随各 PR 合入继续回收（wt-3010 10.3 GiB、wt-1833 7.7 GiB、wt-1623 25.6 GiB 等在队）。
+- **PR 2964（#2759）MERGED 11:14 + 合入即收尾三件**：邮箱核平（noreply）；#2759 处置评论（issuecomment-6813388325：条目 1–7 + 折入 P1×2 全由 fix 轮覆盖、P2 出口 #3031/#3030、树回收、证据归档 622 文件计数一致）；wt-2759 回收（释放 258 MiB，树 59→58）；**#2759 保持 OPEN**（关闭前置 = #3031 处置完毕；#3030 不前置本单）。
+- **PR 3032 MERGED**（09:30 段进 main，bb4946ec0，邮箱核平）；本段基于其上（board-20261112-1130）。
+- **PR 3003（#2743）**：r9 双家收块——DS sibling P1 与 MM sibling P1 **同条**（register 另 4 row 无独立字面量分母，#1666 家族形状，两家独立撞=真问题）→ fix-r10 本机 GLM：ROSTER_SIZE 共享字面量表结构性一次钉齐（4 row 实测分母 + full-run 循环内 `len(EXPECTED_NAMES)` 先断言）+ session-domain import 守卫查重升级（sdk-signals 同形）；交付 exit=0（4 变异体全 KILLED、diff 仅 2 个 .py、自查 13 条过）→ 收货核验（diff 范围、gitleaks 1 commit 绿）→ 推送 **654e420d9** MATCH → **DS r10 全 PASS 0 P0/P1**（P2×2 待三分），MM r10 在飞；MM r9 simplify PARTIAL 由 r10 超越不复跑。worker 首轮被磁盘闸拒（197.9>190）按闸文档通道 FORCE 放行——本单零 Rust 字节、三次检查对 r9 头 no-op，已留档待复核。
+- **PR 3036（#2122）**：MM r9 收块——boundary P1（store.rs:1383 ContentUnknown 落折叠臂，与 DS 同根族 ContentUnknown 家族，两家不同级取高 P1）+ 同根 P2 家族（遮蔽链基线混装折叠形状等）→ fix-r1 派 **cb8**（6add2d107b8f，pid 712690）：8 条协调者补充（:1383 守卫二选一 + 缺失测试格 + 需实测 ReadOp 注入、净回归 ContentUnknown 不进遮蔽链基线、:1383 负控锚、冻结 R3 更正件路线 A6.3-CONFIG-POLL-001-R3.md、2N 分配次优先、README 锚点 31）；等待器 11:07 在等。
+- **PR 3018（#1833）→ 已入队**：双谱系收敛 0 P0/P1（DS r2+r2b、MM r2+r2b 四角色全 PASS；P2×13 无假 PASS 通道，全 c 档 #3037 三评论登记）→ body 手术（中间证据无 marker、每家单终块含合法 runner/model）→ **gate PASS** → CI 绿 → ready → 入队（等待器 bxrixu4l4）；合入后派 mutant-kill 宿主跑（13 mutants，config-error-names fixture）。
+- **PR 2960（#2692）**：fix-r6 收货推送 **016d2647c**（fmt/clippy/gitleaks 核验绿）→ DS+MM r6 双家收块：**双家撞同一根**（DS boundary 记 P1 / MM boundary#1 记 P2，取高 **P1**）——`TS_KEY_FOLD_DEPTH=2560` 只按 initialize 链形标定，同一常量门控 get/events/accept 全部调用方：get 链浅一档界可能更高（2561..K TS 能载 Rust 整册 Err）、生产链深一档界可能更低，双向开窗，R17 自称禁向未实测 → **fix-r7 派 cb8**（pid 768788，任务书含 get 链二分实测 + 探针证据拷回树内 + 同源门禁跟改 + rc2 出口 + 理由句随实测改准）。project-mark 2960 误标 impl=Claude 待改 GLM。
+- **PR 2983（#2617）**：MM 配额重置回可用 → MM **全量四角色**在飞（merge-base 全量，DS 四轮 gate 块已在 0ac5071f2）；收块后贴块 gate 入队。
+- **PR 2968（#2795）**：fix-r6 收货核验（6746342f8 早已推送 MATCH）→ DS r6 全量收块：boundary **P0×1**（`_has_check_mode_gate` 只认 2 种拼写，`'--check-anchors' in sys.argv` 等三种真实形状不可见 → 4 个现存裸读站漏点、尺子假通过）+ sibling#1 同根 P1 + concurrency#1 P1（`--negative` 元控入口绕真锁重开兄弟变异窗竞态）→ **fix-r7 派本机 GLM**（P1 1/2）：扫描器补形状 + 4 站登记 + 合成树负控 + 真锁默认/桩显式注入 + 4 条 a 档 P2；concurrency#2/boundary#2 窗口可证性升级开 P2-跟进。
+- **PR 2982（#1087）squash 断链确诊**：mergeable=CONFLICTING + mergeCommit=null + 0 CI runs at 2f14c0425 → 分支被 squash 合并后复用致 merge-base 断链（memory「queue-squash-branch-reuse-dead」）→ 处置：1087 fix-r3（cb8 在跑 52m+）交付后 `rebase --onto` 重铺新分支换 PR、关 2982、撤旧等待器（bybdquw46/b1lqtkoka）。
+- **1623 fix-r5 在跑**（本机 GLM，fleet 28m，P1 占用中）；3018/3029/2985/3009 合并等待器在飞（3018/3029 已入队、2985 checks 等待、3009 checks 等待）。
+- **巡场（11:24–11:32 实测，fleet + human-comments）**：盘 187.3 GiB、树 **58/60**（wt-2759 回收后）、本机 P1 1/2（1623+2795 两 worker）、cb8 2/6（1087+2122）+ 2692 fix-r7 刚上（3/6）、DS 3/16 MM 2/16 在飞（2743-r10×2、2617-MM、2692 尚未计入）、human-comments **空**（无人输入）；2743 fix-r10 收货推送、2795 fix-r6 漏收补核（04:52 DONE 未收，本轮补）。
+
+**未结义务表**：
+
+| 下一步动作 | 唯一责任人 | 最迟复查 |
+|---|---|---|
+| 2743 r10：MM 收块 → P2 三分 → 贴块 → gate → CI → 入队 | e7 | MM 完成即办 |
+| 2692 fix-r7 cb8 收货（等待日志 fix-r7/remote-run/waiter.log）→ 核验推送 → DS+MM r7 → 贴块 → gate → CI | e7 | 7200s 窗内 |
+| 2122 fix-r1 cb8 收货（pid 712690）→ 同上链路 | e7 | 7200s 窗内 |
+| 2795 fix-r7 本机收货（fix-r7/glm.exit）→ fmt/证伪核验 → 推送 → DS+MM r7（P0 轮两家复核） | e7 | 7200s 窗内 |
+| 1623 fix-r5 本机收货 → 核验推送 → DS+MM | e7 | 7200s 窗内 |
+| 2983 MM 全量四角色收块 → 贴块 → gate → CI → 入队 | e7 | 完成即办 |
+| 3018 合入（bxrixu4l4）→ 邮箱核 → **派 mutant-kill 宿主跑（13 mutants，config-error-names）** | e7 | MERGED 后 |
+| 3029 合入（bpkkljyng）→ 邮箱核 → #3010 冻结程序收尾/关单 + wt-3010 回收（10.3 GiB） | e7 | MERGED 后 |
+| 2985/3009 等待器收块（checks 绿即 merge，注意 2985 队列 rc=0≠入队坑） | e7 | 通知即办 |
+| 1087 fix-r3 收货 → **2982 分支重铺**（rebase --onto origin/main 新分支新 PR、关 2982、停 bybdquw46/b1lqtkoka） | e7 | 交付后 |
+| 2795 concurrency#2+boundary#2 P2-跟进单开立（负控读面窗口可证性 + 拒跑不落目录另一半） | e7 | 13:30 前 |
+| #1446 复合行重判（PR #2423 覆盖面）+ #1692 READY 行措辞修（09:30 遗留，两窗未清，挂账升级） | e7 | 13:30 前 |
+| 1623 concurrency#1 跟进单（sanitize 折叠别名互斥绕过，c 档；09:30 遗留挂账） | e7 | 13:30 前 |
+| project-mark 2960 --impl GLM 改正（现误标 Claude） | e7 | 13:30 前 |
+| 磁盘：187.3 GiB 持续监控，随 PR 合入回收 wt-3010/wt-1833/wt-2743/wt-2122/wt-1623 | e7 | 每轮巡场 |
+| 下次两小时交接 ~13:30 写段 | e7 | 13:4x |
+
+**待人工验收（AI 已实测部分）**：无新增；2499 宿主链原始记录在 macmini `~/ws/pdrs-runner-evidence/issue-2499/`（AI 已实测 KILLED=75，待人签字项不变）。
