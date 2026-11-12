@@ -71,7 +71,7 @@ import base64
 import json
 import re
 import shutil
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 
@@ -186,6 +186,7 @@ def transport_observation(raw, records):
     require(all(type(value) is int for value in sequences)
             and sequences == sorted(set(sequences)), 'TRANSPORT_SEQUENCE')
     requests, responses, channel_sent, channel_received, control_sent, control_received = {}, {}, [], [], [], []
+    ws_sockets = {}
     mock, control = raw['runtime']['mockPort'], raw['runtime']['controlPort']
     require(type(mock) is type(control) is int and 0 < mock < 65536 and 0 < control < 65536 and mock != control, 'PORTS')
     for row in records:
@@ -201,6 +202,10 @@ def transport_observation(raw, records):
         elif kind in ('fixture-ws-send', 'fixture-ws-receive'):
             socket = row['socket']
             require((socket.get('localPort') == mock) != (socket.get('remotePort') == control), 'WS_SOCKET')
+            identity = socket.get('id')
+            require(type(identity) is int and identity >= 0, 'WS_SOCKET_IDENTITY')
+            endpoint = tuple(socket.get(key) for key in ('localHost', 'localPort', 'remoteHost', 'remotePort'))
+            require(ws_sockets.setdefault(identity, endpoint) == endpoint, 'WS_SOCKET_IDENTITY')
             target = ((channel_sent if kind == 'fixture-ws-send' else channel_received)
                       if socket.get('localPort') == mock else
                       (control_sent if kind == 'fixture-ws-send' else control_received))
@@ -272,26 +277,77 @@ def _deliveries(raw, channel, trace):
     return identities, sequences
 
 
+def _feishu_output(raw, trace, index, reply_id):
+    """An edit inherits its recipient from its observed successful creation."""
+    row = raw['http'][index]
+    pair = trace['exchanges'][index]
+    body, path = row['body'], row['path']
+    base = '/open-apis/im/v1/messages'
+    deliveries = [delivery for delivery in raw['deliveries']
+                  if any(delivery_identity('feishu', frame['frame'])[0] == reply_id for frame in delivery['frames'])]
+    require(len(deliveries) == 1 and type(row.get('generation')) is int
+            and row['generation'] == deliveries[0]['generation'], 'FEISHU_OUTBOUND_GENERATION')
+    reply = json.loads(payload(pair['response']['body']))
+    require(type(reply.get('code')) is int and reply['code'] == 0, 'FEISHU_RESPONSE')
+    if row['method'] == 'POST':
+        recipient = (path == base and body.get('receive_id') == 'room'
+                     and urlsplit(pair['request']['url']).query == 'receive_id_type=chat_id')
+    else:
+        require(row['method'] == 'PUT' and path.startswith(base + '/'), 'FEISHU_EDIT_PATH')
+        creators = []
+        for previous_index, previous in enumerate(raw['http']):
+            if previous.get('method') != 'POST' or previous.get('path') != base:
+                continue
+            original = trace['exchanges'][previous_index]
+            if original['response']['sequence'] >= pair['request']['sequence']:
+                continue
+            response = json.loads(payload(original['response']['body']))
+            message_id = response.get('data', {}).get('message_id')
+            if (200 <= original['response']['status'] < 300 and type(response.get('code')) is int
+                    and response['code'] == 0 and isinstance(message_id, str) and message_id
+                    and path == base + '/' + quote(message_id, safe="~()*!.'-")):
+                creators.append((previous, original))
+        # The fixed fixture historically reused a message ID. Every observed
+        # definition must agree on recipient, and this round must have its own
+        # successful definition; neither a foreign chat nor an old round can
+        # supply authority for an update.
+        require(creators and all(previous['body'].get('receive_id') == 'room'
+                                and urlsplit(original['request']['url']).query == 'receive_id_type=chat_id'
+                                for previous, original in creators)
+                and any(type(previous.get('generation')) is int
+                        and previous['generation'] == row['generation'] for previous, _ in creators), 'FEISHU_EDIT_RECIPIENT')
+        recipient = (not urlsplit(pair['request']['url']).query
+                     and ('receive_id' not in body or body['receive_id'] == 'room'))
+    content = json.loads(body.get('content', '{}'))
+    if body.get('msg_type') == 'text':
+        output = content.get('text')
+    elif body.get('msg_type') == 'post':
+        output = '\n'.join(item.get('text', '') for line in content.get('zh_cn', {}).get('content', [])
+                           for item in line if item.get('tag') == 'text')
+    else:
+        output = None
+    return recipient, output
+
+
 def _outbound(raw, channel, trace, reference, marker, reply_id=None):
     source, index = reference['source'], reference['index']
     if source == 'http':
         row = indexed(raw['http'], index, 'OUTBOUND_INDEX')
         pair = trace['exchanges'][index]
-        require(row['method'] == 'POST' and not row['path'].startswith('/v1/')
+        require((row['method'] == 'POST' or channel == 'feishu' and row['method'] == 'PUT')
+                and not row['path'].startswith('/v1/')
                 and 200 <= pair['response']['status'] < 300, 'OUTBOUND_RESPONSE')
         body, path = row['body'], row['path']
         if channel == 'telegram':
             recipient, output = path.endswith('/sendMessage') and str(body.get('chat_id')) == '42', body.get('text')
         elif channel == 'discord':
-            recipient, output = path == '/channels/42/messages', body.get('content')
+            recipient, output = path == '/api/v10/channels/42/messages', body.get('content')
         elif channel == 'slack':
             recipient, output = path == '/api/chat.postMessage' and body.get('channel') == 'Droom', body.get('text')
         elif channel == 'dingtalk':
             recipient, output = path == '/lifecycle', body.get('markdown', {}).get('text')
         elif channel == 'feishu':
-            recipient = path == '/open-apis/im/v1/messages' and body.get('receive_id') == 'room' and body.get('msg_type') == 'post'
-            content = json.loads(body.get('content', '{}'))
-            output = '\n'.join(item.get('text', '') for line in content.get('zh_cn', {}).get('content', []) for item in line if item.get('tag') == 'text')
+            recipient, output = _feishu_output(raw, trace, index, reply_id)
         elif channel == 'weixin':
             message = body.get('msg', {})
             recipient = path == '/ilink/bot/sendmessage' and message.get('to_user_id') == 'chat' and message.get('context_token') == 'ctx'
@@ -308,10 +364,13 @@ def _outbound(raw, channel, trace, reference, marker, reply_id=None):
         recipient = row.get('cmd') == 'aibot_respond_msg' and row.get('headers', {}).get('req_id') == reply_id
         output = row.get('body', {}).get('markdown', {}).get('content')
         sequence = trace['channelReceived'][index]['sequence']
+        socket_id = trace['channelReceived'][index]['socket']['id']
         later = [item['sequence'] for item in trace['channelReceived'] if item['sequence'] > sequence
+                 and item['socket']['id'] == socket_id
                  and json.loads(payload(item['payload'])).get('headers', {}).get('req_id') == reply_id]
         upper = min(later) if later else float('inf')
         acknowledgements = [item for item in trace['channelSent'] if sequence < item['sequence'] < upper
+                            and item['socket']['id'] == socket_id
                             and (value := json.loads(payload(item['payload']))).get('headers', {}).get('req_id') == reply_id
                             and value.get('body', {}).get('errcode') == 0]
         require(len(acknowledgements) == 1, 'OUTBOUND_ACK')
@@ -326,7 +385,9 @@ def _rpc(raw, trace, receipt, method):
             and response == frame and response.get('type') == 'response'
             and response['id'] == request['id'] and response.get('ok') is True, 'HISTORY_RPC')
     sent = [row for row in trace['controlSent'] if json.loads(payload(row['payload'])) == request]
-    require(len(sent) == 1 and sent[0]['sequence'] < trace['controlReceived'][receipt['frameIndex']]['sequence'], 'HISTORY_REQUEST_ORIGINAL')
+    received = trace['controlReceived'][receipt['frameIndex']]
+    require(len(sent) == 1 and sent[0]['sequence'] < received['sequence']
+            and sent[0]['socket']['id'] == received['socket']['id'], 'HISTORY_REQUEST_ORIGINAL')
     return response['result']
 
 
@@ -485,7 +546,9 @@ def observe(raw, channel, transport_records, durable_files):
             require(len(replies) == 1 and replies[0][1].get('ok') is True
                     and replies[0][1].get('result') == {'reloaded': True, 'changedPaths': [f'adapters.{channel}.enabled']}, 'RELOAD_RESPONSE')
             sent = [row for row in trace['controlSent'] if json.loads(payload(row['payload'])) == {'type': 'request', 'id': action, 'method': 'reload_config', 'params': {}}]
-            require(len(sent) == 1 and sent[0]['sequence'] < trace['controlReceived'][replies[0][0]]['sequence'], 'RELOAD_REQUEST')
+            received = trace['controlReceived'][replies[0][0]]
+            require(len(sent) == 1 and sent[0]['sequence'] < received['sequence']
+                    and sent[0]['socket']['id'] == received['socket']['id'], 'RELOAD_REQUEST')
         turn = raw['roundContexts'][generation]['turnId']
         durable_rounds = []
         for path, data in durable_files.items():
@@ -504,12 +567,26 @@ def observe(raw, channel, transport_records, durable_files):
     second_input = next(i for i, row in enumerate(raw['deliveries']) if row['initial'] and row['generation'] == 1)
     require(final_round_sequences[0] < disable < enable < delivery_sequences[second_input], 'RELOAD_ORDER')
     require(any(row.get('event') == 'actual-process-stop' and row.get('exit') == raw['exit'] for row in raw['steps']), 'PROCESS_STOP')
-    # Reuse the already registered HTTP parser and its existing transport-only
-    # response-header exclusions; keep request headers, duplicate headers,
-    # protocol/status reason, complete bodies and every business exchange.
-    exchanges = []
+    return {'profile': 'native-eight-v2', 'channel': channel, 'scope': list(SCOPE),
+            **transport_projection(trace),
+            'inputs': [{'generation': row['generation'], 'text': row['text'],
+                        'frames': [frame['frame'] for frame in row['frames']]} for row in raw['deliveries']],
+            'contexts': contexts}
+
+
+def transport_projection(trace):
+    """Retain each socket's complete stream, not cross-socket scheduling.
+
+    Socket identity is used only to partition original records. Sorting whole
+    streams removes observer numbering; events within a stream are never sorted
+    by content, deduplicated or dropped. The same policy is already specified
+    in normalization.md and used by the registered HTTP outbound comparator.
+    """
+    exchanges, models = {}, {}
     for pair in trace['exchanges']:
         request, response = pair['request'], pair['response']
+        identity = request['socket']['id']
+        require(type(identity) is int, 'HTTP_SOCKET')
         head = response['actualHeaderText'].encode('latin-1')
         status, headers, end = contracts.http_head(head, 0)
         match = re.fullmatch(r'HTTP/1\.[01] ([1-5][0-9]{2}) [^\r\n]*', status)
@@ -522,24 +599,33 @@ def observe(raw, channel, transport_records, durable_files):
         request_headers = contracts.header_fields([f'{k}: {v}'.encode('latin-1')
                           for k, v in zip(request['rawHeaders'][::2], request['rawHeaders'][1::2])])
         require(request_headers.get('authorization', [None]) == [request['headers'].get('authorization')], 'HTTP_AUTHORIZATION')
-        exchanges.append({'method': request['method'], 'target': request['url'],
-                          'requestHeaders': request_headers, 'request': decoded(payload(request['body'])),
+        body = decoded(payload(request['body']))
+        exchanges.setdefault(identity, []).append({'method': request['method'], 'target': request['url'],
+                          'requestHeaders': request_headers, 'request': body,
                           'statusLine': status, 'responseHeaders': {key: value for key, value in headers.items()
                           if key not in {'date', 'connection', 'keep-alive', 'transfer-encoding'}},
                           'response': decoded(payload(response['body']))})
-    channel_replies = []
-    for row in trace['channelSent']:
+        if urlsplit(request['url']).path.startswith('/v1/'):
+            models.setdefault(identity, []).append(body)
+    channels, endpoints = {}, {}
+    events = [(row, direction) for field, direction in [('channelSent', 'send'), ('channelReceived', 'receive')]
+              for row in trace[field]]
+    for row, direction in sorted(events, key=lambda item: item[0]['sequence']):
+        socket = row['socket']
+        identity = socket.get('id')
+        require(type(identity) is int and identity >= 0, 'WS_SOCKET_IDENTITY')
+        require(type(socket.get('localPort')) is int and type(socket.get('remotePort')) is int, 'WS_SOCKET')
+        endpoint = tuple(socket.get(key) for key in ('localHost', 'localPort', 'remoteHost', 'remotePort'))
+        require(endpoints.setdefault(identity, endpoint) == endpoint, 'WS_SOCKET_IDENTITY')
         data = payload(row['payload'])
         try:
-            channel_replies.append(json.loads(data))
+            value = json.loads(data) if row.get('binary') is not True else {'rawBytesHex': data.hex()}
         except (ValueError, UnicodeDecodeError):
-            channel_replies.append({'rawBytesHex': data.hex()})
-    return {'profile': 'native-eight-v2', 'channel': channel, 'scope': list(SCOPE),
-            'models': raw['models'], 'exchanges': exchanges, 'channelWire': raw['wire'],
-            'channelReplies': channel_replies,
-            'inputs': [{'generation': row['generation'], 'text': row['text'],
-                        'frames': [frame['frame'] for frame in row['frames']]} for row in raw['deliveries']],
-            'contexts': contexts}
+            value = {'rawBytesHex': data.hex()}
+        channels.setdefault(identity, []).append({'direction': direction, 'binary': row.get('binary'), 'payload': value})
+    return {'models': sorted(models.values(), key=canonical),
+            'exchanges': sorted(exchanges.values(), key=canonical),
+            'channelStreams': sorted(channels.values(), key=canonical)}
 
 
 def compare_pair(ts_raw, native_raw, ts_records, native_records, ts_files, native_files, *, ts_root, native_root):
@@ -571,6 +657,10 @@ def compare_pair(ts_raw, native_raw, ts_records, native_records, ts_files, nativ
         normalizer = compare.entity_normalizer(root, {})
         normalizer.index(raw)
         projection = normalizer.value(observation)
+        # Entity normalization can change a stream's lexical key; it must not
+        # restore an accidental cross-connection ordering constraint.
+        for field in ('models', 'exchanges', 'channelStreams'):
+            projection[field].sort(key=canonical)
         projection['disk'] = compare.disk(root, normalizer)
         projections.append(projection)
     left, right = projections

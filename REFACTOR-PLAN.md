@@ -2,7 +2,7 @@
 
 目标：在保留固定 TS 行为契约的前提下，缩小产品模块的职责与修改范围，加快整合、定位与回归。最终目标仍是完整替换验收；文件拆分或静态审查不是替换通过。
 
-当前开发位置：本目录。源身份与执行边界仅见 SOURCE-MANIFEST.json、DEV-CONSTRAINTS.md。正式基线为 Rust 7d7c0ab2dad32b4c71bb2ed465147cdff179f374、TS cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85。
+当前开发位置：本目录。源身份、原快照位置与执行边界见 DEV-STATUS.md、DEV-CONSTRAINTS.md。正式基线为 Rust 7d7c0ab2dad32b4c71bb2ed465147cdff179f374、TS cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85。
 
 ## 第一波：三个互不覆盖的产品边界
 
@@ -30,9 +30,9 @@
 
 - 三条线每条只回传：变更文件、边界变化、被保留的入口、风险及待运行检查。独立静态复核只报可复现问题。
 - 判分修复、TS 采集修复、产品职责迁移分别生成变更清单与原始/当前内容哈希，避免无法归因的混合补丁；用初始来源清单生成各组补丁。
-- 在获准位置应用这些补丁并建立可追溯的集成提交后，才能绑定二进制与运行证据。当前无 Git 开发副本的哈希不是 Git 提交，不修改只读正本或借用旧提交身份。
+- 在获准位置应用这些补丁并建立可追溯的集成提交后，才能绑定二进制与运行证据。本轮已把快照集成到完整 Git 工作树；不修改只读正本或借用旧提交身份。
 - 首批产品改动合流后，先核导入可见性、cfg、测试挂载和函数体移动前后一致性；这些是静态核对，不冒充编译。
-- 构建与所有测试只在 cb8。当前网络限制未解除时保留补丁和精确待跑入口，不通过其他工具、终端或会话绕行。
+- 构建与所有测试只在 cb8。本轮已按此前用户授权接通 cb8；保持现行资源/隔离边界，不通过其他工具、终端或会话绕行。
 - 获准执行后，先同一集成提交的编译/相关回归，再补真实 TS/native 同输入证据；根据实测失败选择下一批产品改动。未编译的产品重构不继续叠加第二波。
 - 三线待跑目标：cb8 现行资源/租约包装器内执行 `cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib <过滤器> -j 4`；HTTP 使用 `native_http::tests`，附件使用 `native_process::services_tests` 与 `native_process::channel_attachment_security_tests`，配置使用 `native_process::tests`（含 `native_process::tests::review`）及 `native_process::management_tests`。同时覆盖调用这些公开入口的 workspace 构建及既有十阶段完整回归；过滤单测不替代这些门。
 - 配置的真实进程入口另跑 `cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --test native_process native_entry_process_rejects_inherited_authority -j 4`；`--lib` 的环境校验测试不能替代它。
@@ -46,4 +46,4 @@
 
 正式通过必须有当前集成提交及二进制/依赖身份相符的原始证据；静态复制、旧头成绩、编译成功和 CAPTURED 均不计入 PASS。
 
-状态：方案 v3。三条产品线已完成源码迁移，按独立静态审查补齐日志 trait 导入、负向控制源定位和真实进程测试映射。渠道采集修正已完成独立静态复核；各项完成情况以 DEV-STATUS.md 为准。编译/测试 NOT_RUN，尚未完成替换验收。
+状态：方案 v4（接续执行）。三条产品线已完成源码迁移，按独立静态审查补齐日志 trait 导入、负向控制源定位和真实进程测试映射。渠道采集修正已完成独立静态复核；各项完成情况以 DEV-STATUS.md 为准。完整 Git 集成及首轮 cb8 构建/回归已执行，仍有真实失败及正式验收缺项；具体版本与结果见 DEV-STATUS.md。

@@ -268,7 +268,7 @@ fn loopback_channel_endpoints(origin: String) -> ChannelEndpointOverrides {
         slack_api_base: Some(origin.clone()),
         feishu_api_base: Some(origin.clone()),
         telegram_api_root: Some(origin.clone()),
-        discord_api_root: Some(origin.clone()),
+        discord_api_root: Some(format!("{origin}/api/v10")),
         qq_api_base: Some(origin.clone()),
         qq_token_url: Some(format!("{origin}/app/getAppAccessToken")),
         dingtalk_stream_endpoint: Some(format!("{origin}/v1.0/gateway/connections/open")),
@@ -1050,6 +1050,10 @@ mod loopback_fixture_origin_tests {
     #[test]
     fn production_paths_survive_loopback_origin_substitution() {
         let endpoints = loopback_channel_endpoints("http://127.0.0.1:4321".into());
+        assert_eq!(
+            endpoints.discord_api_root.as_deref(),
+            Some("http://127.0.0.1:4321/api/v10")
+        );
         assert_eq!(
             endpoints.qq_token_url.as_deref(),
             Some("http://127.0.0.1:4321/app/getAppAccessToken")

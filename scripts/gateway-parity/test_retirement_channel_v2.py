@@ -80,9 +80,9 @@ def blob(data):
     return {'bytes': len(data), 'rawBytesHex': data.hex(), 'truncated': False}
 
 
-def fixture():
+def fixture(channel='qq', *, update_final=False):
     """Synthetic transport originals for rejection controls, never a capture."""
-    raw = {'schemaVersion': 2, 'profile': 'native-eight-v2', 'channel': 'qq', 'engine': 'native',
+    raw = {'schemaVersion': 2, 'profile': 'native-eight-v2', 'channel': channel, 'engine': 'native',
            'fixedTS': v2.FIXED_TS, 'status': 'CAPTURED', 'formalAcceptance': False,
            'failure': None, 'exit': {'code': 0, 'signal': None},
            'runtime': {'node': 'v22.22.0', 'osHome': '/test/cur/os-home', 'home': '/test/cur/home',
@@ -94,21 +94,24 @@ def fixture():
            'persistedSessions': [], 'persistedMessages': [],
            'steps': [{'event': 'actual-process-stop', 'exit': {'code': 0, 'signal': None}}]}
     records, files, history, durable = [], {}, [], []
-    channel_socket = {'localPort': 28690, 'remotePort': 41000}
-    control_socket = {'localPort': 42000, 'remotePort': 28610}
+    channel_socket = {'id': 2, 'localPort': 28690, 'remotePort': 41000}
+    control_socket = {'id': 3, 'localPort': 42000, 'remotePort': 28610}
     def record(kind, **value):
         row = {'kind': kind, 'sequence': len(records), **value}
         records.append(row)
         return row
     def ws(kind, value, socket):
-        return record(kind, socket=socket, payload=blob(json.dumps(value).encode()), binary=False)
-    def http(path, body, response=None):
+        data = value if isinstance(value, bytes) else json.dumps(value).encode()
+        return record(kind, socket=socket, payload=blob(data), binary=isinstance(value, bytes))
+    def http(path, body, response=None, *, method='POST'):
         index = len(raw['http'])
-        raw['http'].append({'method': 'POST', 'path': path, 'body': copy.deepcopy(body), 'authorization': 'Bearer fixture'})
-        request = record('mock-http-request', id=len(records), method='POST', url=path,
+        raw['http'].append({'generation': generation, 'method': method, 'path': path, 'body': copy.deepcopy(body), 'authorization': 'Bearer fixture'})
+        target = path + '?receive_id_type=chat_id' if channel == 'feishu' and method == 'POST' and path == '/open-apis/im/v1/messages' else path
+        request = record('mock-http-request', id=len(records), method=method, url=target,
                          headers={'authorization': 'Bearer fixture'}, rawHeaders=['Authorization', 'Bearer fixture'],
                          body=blob(json.dumps(body).encode()), socket={'id': 1})
-        reply = response if response is not None else b'{"id":"reply"}'
+        default = json.dumps({'code': 0, 'data': {'message_id': f'reply-{index}'}}).encode() if channel == 'feishu' else b'{"id":"reply"}'
+        reply = response if response is not None else default
         headers = {'content-type': 'text/event-stream' if path.startswith('/v1/') else 'application/json',
                    'content-length': str(len(reply))}
         record('mock-http-response', id=request['id'], status=200, finished=True, headers=headers,
@@ -116,18 +119,49 @@ def fixture():
         return index
     def deliver(generation, value, initial=False):
         identity = 'event-' + str(len(raw['deliveries']) + 1)
-        frame = {'op': 0, 't': 'GROUP_AT_MESSAGE_CREATE', 's': len(raw['deliveries']) + 2,
-                 'd': {'id': identity, 'group_openid': 'group', 'author': {'member_openid': 'human'}, 'content': value}}
-        ws('fixture-ws-send', frame, channel_socket)
-        row = {'generation': generation, 'text': value, 'initial': initial, 'messageId': identity,
+        if channel == 'feishu':
+            event = {'event': {'sender': {'sender_id': {'open_id': 'human'}},
+                              'message': {'message_id': identity, 'chat_id': 'room', 'content': json.dumps({'text': value})}}}
+            data = json.dumps(event).encode()
+            length, size = bytearray(), len(data)
+            while size >= 128:
+                length.append((size & 127) | 128)
+                size >>= 7
+            length.append(size)
+            encoded = b'\x42' + bytes(length) + data
+            ws('fixture-ws-send', encoded, channel_socket)
+            frame = {'rawBytesHex': encoded.hex()}
+        else:
+            frame = {'op': 0, 't': 'MESSAGE_CREATE' if channel == 'discord' else 'GROUP_AT_MESSAGE_CREATE',
+                     's': len(raw['deliveries']) + 2,
+                     'd': {'id': identity, 'channel_id' if channel == 'discord' else 'group_openid': '42' if channel == 'discord' else 'group',
+                           'author': {'id': 'human', 'bot': False} if channel == 'discord' else {'member_openid': 'human'}, 'content': value}}
+            ws('fixture-ws-send', frame, channel_socket)
+        row = {'generation': generation, 'text': value, 'initial': initial,
                'frames': [{'transport': 'websocket', 'frame': frame}]}
+        if channel != 'feishu':
+            row['messageId'] = identity
         index = len(raw['deliveries'])
         raw['deliveries'].append(row)
         if initial:
             raw['inbound'].append(row)
         return index, identity
     def outbound(value, identity):
-        return {'source': 'http', 'index': http('/v2/groups/group/messages', {'content': value, 'msg_id': identity})}
+        if channel == 'discord':
+            index = http('/api/v10/channels/42/messages', {'content': value})
+        elif channel == 'feishu':
+            final = value.startswith('CHANNEL_OUTPUT_')
+            content = {'zh_cn': {'content': [[{'tag': 'text', 'text': value}]]}} if final else {'text': value}
+            body = {'msg_type': 'post' if final else 'text', 'content': json.dumps(content)}
+            if final and update_final:
+                create = http('/open-apis/im/v1/messages', {'receive_id': 'room', 'msg_type': 'post',
+                              'content': json.dumps({'zh_cn': {'content': [[{'tag': 'text', 'text': 'working'}]]}})})
+                index = http(f'/open-apis/im/v1/messages/reply-{create}', body, method='PUT')
+            else:
+                index = http('/open-apis/im/v1/messages', {'receive_id': 'room', **body})
+        else:
+            index = http('/v2/groups/group/messages', {'content': value, 'msg_id': identity})
+        return {'source': 'http', 'index': index}
     def model(generation, phase):
         messages = [{'role': 'user', 'content': f'CHANNEL_INPUT_{generation}'}]
         if phase >= 1:
@@ -172,12 +206,12 @@ def fixture():
         turn = f'turn-{generation}'
         history.extend([{'source': 'history', 'role': role, 'kind': 'text', 'turnId': turn, 'text': value}
                         for role, value in [('user', f'CHANNEL_INPUT_{generation}'), ('assistant', f'CHANNEL_OUTPUT_{generation}')]])
-        entry = {'sessionKey': 'qq:group', 'cwd': '/test/cur/home'}
+        entry = {'sessionKey': channel + ':group', 'cwd': '/test/cur/home'}
         catalog = rpc(f'catalog-{generation}', 'list_sessions', {'projectKey': '/test/cur/home', 'limit': 100}, {'sessions': [entry]})
-        messages = rpc(f'history-{generation}', 'read_session_messages', {'projectKey': '/test/cur/home', 'sessionKey': 'qq:group', 'limit': 0}, {'session': entry, 'messages': history})
+        messages = rpc(f'history-{generation}', 'read_session_messages', {'projectKey': '/test/cur/home', 'sessionKey': channel + ':group', 'limit': 0}, {'session': entry, 'messages': history})
         raw['persistedSessions'].append({'generation': generation, **catalog})
         raw['persistedMessages'].append({'generation': generation, 'listIndex': generation, 'catalogSession': entry, **messages})
-        raw['roundContexts'].append({'generation': generation, 'projectKey': '/test/cur/home', 'sessionKey': 'qq:group',
+        raw['roundContexts'].append({'generation': generation, 'projectKey': '/test/cur/home', 'sessionKey': channel + ':group',
                                      'turnId': turn, 'listIndex': generation, 'messageIndex': generation,
                                      'anchorIndices': [generation * 2], 'userIndices': [generation * 2],
                                      'outputIndices': [generation * 2 + 1]})
@@ -186,7 +220,7 @@ def fixture():
                         {'type': 'turn_result', 'turnId': turn, 'result': {'content': f'CHANNEL_OUTPUT_{generation}'}}])
         if not generation:
             for action in ('disable', 'enable'):
-                rpc(action, 'reload_config', {}, {'reloaded': True, 'changedPaths': ['adapters.qq.enabled']})
+                rpc(action, 'reload_config', {}, {'reloaded': True, 'changedPaths': ['adapters.' + channel + '.enabled']})
     files['/test/cur/home/projects/test/session.jsonl'] = b''.join(json.dumps(row).encode() + b'\n' for row in durable)
     return raw, records, files
 
@@ -196,6 +230,26 @@ def observe(data):
     return v2.observe(raw, raw['channel'], records, files)
 
 
+def sync_request(data, index):
+    raw, records, _ = data
+    row = raw['http'][index]
+    request = [record for record in records if record['kind'] == 'mock-http-request'][index]
+    query = v2.urlsplit(request['url']).query
+    request.update(method=row['method'], url=row['path'] + ('?' + query if query else ''),
+                   body=blob(json.dumps(row['body']).encode()))
+
+
+def change_response(data, index, value):
+    _, records, _ = data
+    request = [record for record in records if record['kind'] == 'mock-http-request'][index]
+    response = next(record for record in records if record['kind'] == 'mock-http-response' and record['id'] == request['id'])
+    before = response['headers']['content-length']
+    response['body'] = blob(json.dumps(value).encode())
+    response['headers']['content-length'] = str(response['body']['bytes'])
+    response['actualHeaderText'] = response['actualHeaderText'].replace('content-length: ' + before + '\r\n',
+                                                                     'content-length: ' + str(response['body']['bytes']) + '\r\n')
+
+
 class ChannelV2Controls(unittest.TestCase):
     def rejected(self, data, rule):
         with self.assertRaisesRegex(ValueError, 'CHANNEL_V2_' + rule):
@@ -203,11 +257,11 @@ class ChannelV2Controls(unittest.TestCase):
 
     def test_complete_two_rounds_keep_full_business_and_no_pass(self):
         result = observe(fixture())
-        self.assertEqual(len(result['models']), 6)
+        self.assertEqual(sum(map(len, result['models'])), 6)
         self.assertEqual(len(result['contexts']), 2)
         self.assertNotIn('status', result)
         self.assertNotIn('attachment', result['scope'])
-        self.assertEqual(result['models'][0]['temperature'], 0.2)
+        self.assertEqual(result['models'][0][0]['temperature'], 0.2)
 
     def test_old_profile_cannot_be_relabelled_by_consumer(self):
         data = fixture()
@@ -354,13 +408,175 @@ class ChannelV2Controls(unittest.TestCase):
         first = {'cmd': 'aibot_respond_msg', 'headers': {'req_id': 'same'}, 'body': {'markdown': {'content': 'prompt'}}}
         second = {'cmd': 'aibot_respond_msg', 'headers': {'req_id': 'same'}, 'body': {'markdown': {'content': 'final'}}}
         ack = {'headers': {'req_id': 'same'}, 'body': {'errcode': 0}}
-        trace = {'channelReceived': [{'sequence': 10, 'payload': blob(json.dumps(first).encode())},
-                                     {'sequence': 20, 'payload': blob(json.dumps(second).encode())}],
-                 'channelSent': [{'sequence': 21, 'payload': blob(json.dumps(ack).encode())}]}
+        trace = {'channelReceived': [{'sequence': 10, 'socket': {'id': 4}, 'payload': blob(json.dumps(first).encode())},
+                                     {'sequence': 20, 'socket': {'id': 4}, 'payload': blob(json.dumps(second).encode())}],
+                 'channelSent': [{'sequence': 21, 'socket': {'id': 4}, 'payload': blob(json.dumps(ack).encode())}]}
         with self.assertRaisesRegex(ValueError, 'OUTBOUND_ACK'):
             v2._outbound({'wire': [first, second]}, 'wecom', trace, {'source': 'wire', 'index': 0}, 'prompt', 'same')
-        trace['channelSent'].insert(0, {'sequence': 11, 'payload': blob(json.dumps(ack).encode())})
+        trace['channelSent'].insert(0, {'sequence': 11, 'socket': {'id': 4}, 'payload': blob(json.dumps(ack).encode())})
         self.assertEqual(v2._outbound({'wire': [first, second]}, 'wecom', trace, {'source': 'wire', 'index': 0}, 'prompt', 'same'), 10)
+
+    def test_feishu_text_dialog_and_post_final_are_real_outbound_shapes(self):
+        result = observe(fixture('feishu'))
+        calls = [row for stream in result['exchanges'] for row in stream if row['target'].startswith('/open-apis/')]
+        self.assertEqual([row['request']['msg_type'] for row in calls], ['text', 'text', 'post', 'text', 'text', 'post'])
+
+    def test_feishu_live_post_edits_bind_successful_create_responses(self):
+        result = observe(fixture('feishu', update_final=True))
+        self.assertEqual(sum(row['method'] == 'PUT' for stream in result['exchanges'] for row in stream), 2)
+
+    def test_feishu_text_fallback_edit_keeps_bound_recipient(self):
+        data = fixture('feishu', update_final=True)
+        for index, row in enumerate(data[0]['http']):
+            if row['method'] == 'PUT':
+                row['body'] = {'msg_type': 'text', 'content': json.dumps({'text': f"CHANNEL_OUTPUT_{row['generation']}"})}
+                sync_request(data, index)
+        observe(data)
+
+    def test_feishu_edit_rejects_uncreated_and_previous_round_ids(self):
+        for target in ('uncreated', 'previous'):
+            data = fixture('feishu', update_final=True)
+            edits = [index for index, row in enumerate(data[0]['http']) if row['method'] == 'PUT']
+            index = edits[1]
+            data[0]['http'][index]['path'] = ('/open-apis/im/v1/messages/unknown' if target == 'uncreated'
+                                            else data[0]['http'][edits[0]]['path'])
+            sync_request(data, index)
+            self.rejected(data, 'FEISHU_EDIT_RECIPIENT')
+
+    def test_feishu_edit_rejects_foreign_recipient_and_query(self):
+        for field in ('recipient', 'query'):
+            data = fixture('feishu', update_final=True)
+            edit = next(index for index, row in enumerate(data[0]['http']) if row['method'] == 'PUT')
+            create = edit - 1
+            if field == 'recipient':
+                data[0]['http'][create]['body']['receive_id'] = 'other-room'
+                sync_request(data, create)
+            else:
+                request = [row for row in data[1] if row['kind'] == 'mock-http-request'][create]
+                request['url'] = '/open-apis/im/v1/messages?receive_id_type=open_id'
+            self.rejected(data, 'FEISHU_EDIT_RECIPIENT')
+
+    def test_feishu_edit_rejects_failed_or_missing_create_identity(self):
+        for response in ({'code': 1, 'data': {'message_id': 'matching'}}, {'code': 0, 'data': {}}):
+            data = fixture('feishu', update_final=True)
+            edit = next(index for index, row in enumerate(data[0]['http']) if row['method'] == 'PUT')
+            create = edit - 1
+            response = copy.deepcopy(response)
+            if response.get('data', {}).get('message_id'):
+                response['data']['message_id'] = f'reply-{create}'
+            change_response(data, create, response)
+            self.rejected(data, 'FEISHU_EDIT_RECIPIENT')
+
+    def test_feishu_edit_cannot_relabel_generation_or_use_future_create(self):
+        data = fixture('feishu', update_final=True)
+        edit = next(index for index, row in enumerate(data[0]['http']) if row['method'] == 'PUT')
+        data[0]['http'][edit]['generation'] = 1
+        self.rejected(data, 'FEISHU_OUTBOUND_GENERATION')
+        data = fixture('feishu', update_final=True)
+        raw, records, _ = data
+        trace = v2.transport_observation(raw, records)
+        trace['exchanges'][edit - 1]['response']['sequence'] = trace['exchanges'][edit]['request']['sequence'] + 1
+        with self.assertRaisesRegex(ValueError, 'FEISHU_EDIT_RECIPIENT'):
+            v2._outbound(raw, 'feishu', trace, {'source': 'http', 'index': edit}, 'CHANNEL_OUTPUT_0', 'event-1')
+
+    def test_discord_uses_real_api_v10_path_and_recipient(self):
+        observe(fixture('discord'))
+        for path in ('/channels/42/messages', '/api/v10/channels/other/messages'):
+            data = fixture('discord')
+            index = data[0]['permissionGate'][0]['promptReceipt']['index']
+            data[0]['http'][index]['path'] = path
+            sync_request(data, index)
+            self.rejected(data, 'OUTBOUND_RECIPIENT')
+
+    def test_http_projection_ignores_socket_numbers_and_cross_socket_schedule(self):
+        raw, records, _ = fixture()
+        seed = v2.transport_observation(raw, records)['exchanges'][0]
+        def pair(label, socket):
+            value = copy.deepcopy(seed)
+            value['request'].update(socket={'id': socket}, url='/business/' + label, body=blob(json.dumps({'value': label}).encode()))
+            return value
+        a1, a2, b1, b2 = pair('a1', 1), pair('a2', 1), pair('b1', 2), pair('b2', 2)
+        trace = {'exchanges': [a1, b1, a2, b2], 'channelSent': [], 'channelReceived': []}
+        expected = v2.transport_projection(trace)
+        reordered = copy.deepcopy(trace)
+        reordered['exchanges'] = [reordered['exchanges'][index] for index in (1, 0, 3, 2)]
+        for value in reordered['exchanges']:
+            value['request']['socket']['id'] += 100
+        self.assertEqual(expected, v2.transport_projection(reordered))
+        reordered['exchanges'] = [reordered['exchanges'][index] for index in (0, 3, 2, 1)]
+        self.assertNotEqual(expected, v2.transport_projection(reordered), 'same-socket order remains significant')
+        extra = copy.deepcopy(trace)
+        extra['exchanges'].append(copy.deepcopy(a2))
+        self.assertNotEqual(expected, v2.transport_projection(extra), 'repeated business calls remain significant')
+
+    def test_websocket_projection_preserves_duplex_order_without_cross_socket_order(self):
+        def frame(sequence, port, message):
+            return {'sequence': sequence, 'socket': {'id': port, 'localPort': 28690, 'remotePort': port},
+                    'payload': blob(json.dumps({'business': message}).encode()), 'binary': False}
+        trace = {'exchanges': [], 'channelSent': [frame(1, 41000, 'a1'), frame(2, 41001, 'b1'), frame(5, 41000, 'a3')],
+                 'channelReceived': [frame(3, 41000, 'a2'), frame(4, 41001, 'b2')]}
+        expected = v2.transport_projection(trace)
+        changed = copy.deepcopy(trace)
+        schedule = {1: 2, 2: 1, 3: 4, 4: 3, 5: 5}
+        for key in ('channelSent', 'channelReceived'):
+            for row in changed[key]:
+                row['sequence'] = schedule[row['sequence']]
+                row['socket']['remotePort'] += 100
+                row['socket']['id'] += 500
+        self.assertEqual(expected, v2.transport_projection(changed))
+        changed['channelReceived'][0]['sequence'] = 6
+        self.assertNotEqual(expected, v2.transport_projection(changed), 'send/receive interleaving on one socket remains significant')
+        changed = copy.deepcopy(trace)
+        changed['channelReceived'][0]['payload'] = blob(b'{"business":"changed"}')
+        self.assertNotEqual(expected, v2.transport_projection(changed))
+
+    def test_missing_socket_identity_is_not_inferred_from_endpoint_tuple(self):
+        data = fixture()
+        row = next(row for row in data[1] if row['kind'] == 'fixture-ws-send')
+        row['socket'] = {key: value for key, value in row['socket'].items() if key != 'id'}
+        self.rejected(data, 'WS_SOCKET_IDENTITY')
+
+    def test_reused_endpoint_tuple_does_not_merge_distinct_websocket_connections(self):
+        def frame(sequence, identity):
+            return {'sequence': sequence, 'socket': {'id': identity, 'localHost': '127.0.0.1',
+                    'localPort': 28690, 'remoteHost': '127.0.0.1', 'remotePort': 41000},
+                    'payload': blob(b'{"business":"same"}'), 'binary': False}
+        trace = {'exchanges': [], 'channelSent': [frame(1, 10), frame(2, 11)], 'channelReceived': []}
+        expected = v2.transport_projection(trace)
+        self.assertEqual(len(expected['channelStreams']), 2)
+        renamed = copy.deepcopy(trace)
+        for row in renamed['channelSent']:
+            row['socket']['id'] += 100
+        self.assertEqual(expected, v2.transport_projection(renamed))
+        merged = copy.deepcopy(trace)
+        merged['channelSent'][1]['socket']['id'] = 10
+        self.assertNotEqual(expected, v2.transport_projection(merged))
+        missing = copy.deepcopy(trace)
+        del missing['channelSent'][0]['socket']['id']
+        with self.assertRaisesRegex(ValueError, 'WS_SOCKET_IDENTITY'):
+            v2.transport_projection(missing)
+
+    def test_control_response_cannot_move_to_another_socket_with_the_same_tuple(self):
+        data = fixture()
+        row = next(row for row in data[1] if row['kind'] == 'fixture-ws-receive'
+                   and json.loads(bytes.fromhex(row['payload']['rawBytesHex'])).get('id') == 'history-0')
+        row['socket'] = dict(row['socket'], id=999)
+        self.rejected(data, 'HISTORY_REQUEST_ORIGINAL')
+
+    def test_reload_response_must_use_the_request_connection(self):
+        data = fixture()
+        row = next(row for row in data[1] if row['kind'] == 'fixture-ws-receive'
+                   and json.loads(bytes.fromhex(row['payload']['rawBytesHex'])).get('id') == 'disable')
+        row['socket'] = dict(row['socket'], id=999)
+        self.rejected(data, 'RELOAD_REQUEST')
+
+    def test_wecom_acknowledgement_must_use_the_reply_connection(self):
+        reply = {'cmd': 'aibot_respond_msg', 'headers': {'req_id': 'same'}, 'body': {'markdown': {'content': 'final'}}}
+        ack = {'headers': {'req_id': 'same'}, 'body': {'errcode': 0}}
+        trace = {'channelReceived': [{'sequence': 10, 'socket': {'id': 4}, 'payload': blob(json.dumps(reply).encode())}],
+                 'channelSent': [{'sequence': 11, 'socket': {'id': 5}, 'payload': blob(json.dumps(ack).encode())}]}
+        with self.assertRaisesRegex(ValueError, 'OUTBOUND_ACK'):
+            v2._outbound({'wire': [reply]}, 'wecom', trace, {'source': 'wire', 'index': 0}, 'final', 'same')
 
     def test_fixed_normalizer_pair_requires_both_complete_preserved_roots(self):
         raw, records, files = fixture()

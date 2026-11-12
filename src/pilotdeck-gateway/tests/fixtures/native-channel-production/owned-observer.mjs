@@ -50,7 +50,7 @@ globalThis.fetch=async function(input,init){const request=new Request(input,init
  const id=sequence++,payload=await request.clone().arrayBuffer();append('fixture-http-inbound-request',{id,url:request.url,method:request.method,headers:Object.fromEntries(request.headers),body:body(Buffer.from(payload))});
  const response=await originalFetch(request);const clone=response.clone();clone.arrayBuffer().then(raw=>append('fixture-http-inbound-response',{id,status:response.status,headers:Object.fromEntries(response.headers),body:body(Buffer.from(raw))})).catch(error=>append('fixture-http-inbound-error',{id,error:String(error)}));return response;};
 if(process.env.PDRS_BASELINE){const require=createRequire(path.join(process.env.PDRS_BASELINE,'package.json'));const {WebSocket}=require('ws');const send=WebSocket.prototype.send,emit=WebSocket.prototype.emit;
- const socket=ws=>({url:ws.url??null,localHost:ws._socket?.localAddress??null,localPort:ws._socket?.localPort??null,remoteHost:ws._socket?.remoteAddress??null,remotePort:ws._socket?.remotePort??null});
+ const socket=ws=>{const tcp=ws._socket?tcpSocket(ws._socket):null;return {url:ws.url??null,id:tcp?.id??null,localHost:tcp?.localHost??null,localPort:tcp?.localPort??null,remoteHost:tcp?.remoteHost??null,remotePort:tcp?.remotePort??null};};
  WebSocket.prototype.send=function(data,...args){append('fixture-ws-send',{socket:socket(this),payload:body(data)});return send.call(this,data,...args);};
  WebSocket.prototype.emit=function(event,...args){if(event==='message')append('fixture-ws-receive',{socket:socket(this),binary:args[1]===true,payload:body(args[0])});return emit.call(this,event,...args);};}
 // Real bytes for protocol mocks that intentionally use net instead of HTTP

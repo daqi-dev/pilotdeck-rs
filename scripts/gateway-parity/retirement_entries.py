@@ -206,6 +206,12 @@ def raw_background(d, folder, mode, result):
 # producer's business assertions. Other profiles retain their own raw evidence
 # and stay BLOCKED until their corresponding contract adapter is connected.
 EIGHT_CHANNELS = {'telegram', 'discord', 'slack', 'dingtalk', 'feishu', 'weixin', 'qq', 'wecom'}
+# The v2 adapter authenticates application observations, not their complete
+# socket streams. Merely retaining TCP chunks does not bind HTTP messages or
+# validate WS upgrade/frame headers against those bytes. Keep both obligations
+# explicit until a registered verifier implements the frozen normalization.
+CHANNEL_V2_WIRE_GAPS = ('v2-http-same-socket-wire-binding',
+                        'v2-websocket-frame-and-header-binding')
 
 
 def channel_basic_observation(raw, channel):
@@ -644,8 +650,41 @@ def verify_channel_ts_sources(d, baseline):
         d.require(actual_hash == identity, 'ENTRY_CHANNEL_SOURCE', 'fixed TS source bytes differ: ' + name)
 
 
+
+def channel_v2_roles(d, native, raw, process_evidence):
+    """Bind each v2 evidence role to its actual registered implementation.
+
+    The shared process verifier accepts producers for other profiles as well.
+    An arbitrary source-manifest member cannot stand in for an eight-v2
+    producer, observer, finalizer or preserver at this narrower boundary.
+    """
+    fixture = d.ROOT / 'src/pilotdeck-gateway/tests/fixtures/native-channel-production'
+    tracked = {str(d.ROOT / item['path']): item['sha256'] for item in native.source['files']}
+    receipt = process_evidence['receipt']
+    observer = d.read(channel_artifact(d, receipt['observer']))
+    preserved = d.read(channel_artifact(d, receipt['preservation']))
+    roles = {
+        'producer': (receipt['producer'], 'eight.mjs'),
+        'observer': ({key: observer[key] for key in ('path', 'sha256')}, 'owned-observer.mjs'),
+        'finalizer': (receipt['finalizer'], 'finalize-process.py'),
+        'preserver': (preserved['preserver'], 'preserve-layout.py'),
+    }
+    for role, (reference, filename) in roles.items():
+        path = fixture / filename
+        d.require(reference == {'path': str(path), 'sha256': tracked.get(str(path))}
+                  and reference['sha256'] == sha(path),
+                  'ENTRY_CHANNEL_ROLE', 'v2 ' + role + ' is not its registered role implementation')
+    d.require(receipt['producer']['sha256'] == raw['fixtureSha256']
+              and receipt['preserver'] == preserved['preserver'],
+              'ENTRY_CHANNEL_ROLE', 'v2 capture and process/preservation roles disagree')
+
+
 def channel_v2_comparison(d, native, baseline, row, raw, process_evidence):
-    """Authenticate both real processes before comparing the eight-v2 scope."""
+    """Authenticate both processes and compare the v2 application observations.
+
+    Matching semantic projections are diagnostic evidence. The current
+    adapter does not certify the HTTP/WS socket-byte obligations.
+    """
     adapter = _load('retirement_channel_v2', _apparatus / 'retirement_channel_v2.py')
     _verify_cli_imports(_apparatus)
     tracked = {str(d.ROOT / item['path']): item['sha256'] for item in native.source['files']}
@@ -676,6 +715,7 @@ def channel_v2_comparison(d, native, baseline, row, raw, process_evidence):
     header(raw, 'native')
     if missing or 'preservation' not in process_evidence['receipt']:
         return {'missing': [*missing, 'v2-stopped-layout-and-originals'], 'originals': originals}
+    channel_v2_roles(d, native, raw, process_evidence)
     native_root, native_files = channel_v2_preserved(d, raw, process_evidence)
     proc = process_evidence['receipt']['process']
     d.require(raw['actualExecutable'] == proc['executable'] and proc['argv'] == [
@@ -734,13 +774,15 @@ def channel_v2_comparison(d, native, baseline, row, raw, process_evidence):
               'ENTRY_CHANNEL_PROCESS', 'v2 TS argv or executable differs')
     if missing or 'preservation' not in ts_process['receipt']:
         return {'observations': observed, 'missing': [*missing, 'fixed-ts-v2-stopped-originals'], 'originals': originals}
+    channel_v2_roles(d, native, ts_raw, ts_process)
     ts_root, ts_files = channel_v2_preserved(d, ts_raw, ts_process)
     comparison = adapter.compare_pair(ts_raw, raw, ts_process['transportRecords'],
                                       process_evidence['transportRecords'], ts_files, native_files,
                                       ts_root=ts_root, native_root=native_root)
     d.require(comparison['equal'], 'ENTRY_CHANNEL_BEHAVIOR',
               'TS/native eight-v2 business differs: ' + str(comparison['differentFields']))
-    return {'observations': observed, 'comparison': comparison, 'missing': missing, 'originals': originals}
+    return {'observations': observed, 'semanticComparison': comparison,
+            'missing': [*missing, *CHANNEL_V2_WIRE_GAPS], 'originals': originals}
 
 
 def channel_results(d, native, entry_root, baseline=None):
@@ -795,6 +837,7 @@ def channel_results(d, native, entry_root, baseline=None):
             elif key.startswith('gateway.channel:') and row.get('profile') == 'native-eight-v2':
                 d.require(key.partition(':')[2] in EIGHT_CHANNELS,
                           'ENTRY_CHANNEL_PROFILE', 'eight-channel profile assigned outside its domain')
+                cell['missing'].extend(CHANNEL_V2_WIRE_GAPS)
             elif key.startswith('gateway.channel-http:'):
                 probes = raw.get('http', [])
                 retained = [probe for probe in probes if 'requestHex' in probe and 'responseHex' in probe]
@@ -830,16 +873,16 @@ def channel_results(d, native, entry_root, baseline=None):
                     cell['covered'].append('actual-basic-inbound-model-outbound-response-bytes')
                 elif key.startswith('gateway.channel:') and row.get('profile') == 'native-eight-v2':
                     paired = channel_v2_comparison(d, native, baseline, row, raw, process_evidence)
-                    cell['missing'].extend(paired['missing'])
+                    cell['missing'].extend(item for item in paired['missing'] if item not in cell['missing'])
                     cell['originals'].extend(paired['originals'])
                     if 'referenceBlockers' in paired:
                         cell['referenceBlockers'] = paired['referenceBlockers']
                     if 'observations' in paired:
                         cell['observations'] = paired['observations']
                         cell['covered'].append('v2-current-turn-interaction-reload-and-durable-originals')
-                    if 'comparison' in paired:
-                        cell['comparison'] = paired['comparison']
-                        cell['covered'].append('fixed-ts-v2-business-contract-comparison')
+                    if 'semanticComparison' in paired:
+                        cell['semanticComparison'] = paired['semanticComparison']
+                        cell['covered'].append('fixed-ts-v2-semantic-business-comparison')
                 else:
                     cell['missing'].append('registered-profile-transport-contract-adapter')
             else:

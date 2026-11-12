@@ -1077,6 +1077,12 @@ AGGREGATION_POINTS = {
      'main'): 'negative-main',
 }
 NON_AGGREGATION_POINTS = {
+    ('scripts/gateway-parity/test_channel_provenance.py', 'test_prerequisite_block_retains_reason_without_ts_coverage'):
+        'Synthetic prerequisite fixture; asserts the consumer remains BLOCKED and does not aggregate run outcomes.',
+    ('scripts/gateway-parity/test_retirement_channel_v2.py', 'fixture'):
+        'Synthetic two-round HTTP/WS fixture, including HTTP status codes; never reports a production verdict.',
+    ('scripts/gateway-parity/test_retirement_channel_v2.py', 'test_captured_failure_is_not_a_successful_business_observation'):
+        'Mutates a synthetic capture to FAIL and asserts rejection; no batch outcome aggregation.',
     ('scripts/gateway-parity/retirement_entries.py', 'channel_results'):
         'per-channel evidence faces consumed by report_entries; not the shared top-level batch verdict',
     ('scripts/gateway-parity/retirement_public_http.py', 'report'):

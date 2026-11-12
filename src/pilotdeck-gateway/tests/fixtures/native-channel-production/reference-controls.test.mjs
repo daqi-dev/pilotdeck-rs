@@ -58,6 +58,32 @@ test('QQ origin substitution preserves production token and gateway paths',async
  assert.deepEqual(fixture.requests.map(row=>row.url),['/app/getAppAccessToken','/gateway']);
 });
 
+test('Discord origin substitution preserves the versioned API root and reply bytes',async t=>{
+ const fixture=await loopback(t,'discord');
+ const result=await fixture.run(`
+  import https from 'node:https';
+  const headers={authorization:'Bot fixture-only','content-type':'application/json'};
+  await new Promise((resolve,reject)=>{const request=https.request('https://discord.com/api/v10/gateway/bot',{headers},response=>{response.resume();response.once('end',resolve);});request.once('error',reject);request.end();});
+  await fetch('https://discord.com/api/v10/users/@me',{headers});
+  await fetch('https://discord.com/api/v10/channels/42',{headers});
+  await fetch('https://discord.com/api/v10/channels/42/messages',{method:'POST',headers,body:'{"content":"same Discord reply"}'});
+  await fetch('https://discord.com/api/v10/channels/42/typing',{method:'POST',headers});
+ `);
+ assert.equal(result.code,0,result.stderr);
+ assert.deepEqual(fixture.requests.map(({url,method})=>({url,method})),[
+  {url:'/api/v10/gateway/bot',method:'GET'},
+  {url:'/api/v10/users/@me',method:'GET'},
+  {url:'/api/v10/channels/42',method:'GET'},
+  {url:'/api/v10/channels/42/messages',method:'POST'},
+  {url:'/api/v10/channels/42/typing',method:'POST'},
+ ]);
+ assert.equal(fixture.requests[3].hex,Buffer.from('{"content":"same Discord reply"}').toString('hex'));
+ assert(fixture.requests.every(row=>row.headers.authorization==='Bot fixture-only'));
+ const receipts=(await readFile(fixture.receipt,'utf8')).trim().split('\n').map(JSON.parse);
+ assert.deepEqual(receipts.map(row=>row.path),fixture.requests.map(row=>row.url));
+ assert(receipts.every(row=>row.upstream==='https://discord.com'&&row.channel==='discord'));
+});
+
 test('cross-channel hosts, credentials, alternate ports and bypass transports fail closed',async t=>{
  const fixture=await loopback(t,'feishu');
  const result=await fixture.run(`

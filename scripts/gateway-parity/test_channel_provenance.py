@@ -105,6 +105,14 @@ class ChannelProvenance(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='channel-provenance-', dir=self.root / '_tmp')
         self.addCleanup(temporary.cleanup)
         self.out = Path(temporary.name).resolve()
+        self.fixture = self.root / 'src/pilotdeck-gateway/tests/fixtures/native-channel-production'
+        self.roles = {role: reference(self.fixture / filename) for role, filename in {
+            'producer': 'eight.mjs', 'observer': 'owned-observer.mjs',
+            'finalizer': 'finalize-process.py', 'preserver': 'preserve-layout.py'}.items()}
+        self.other_source = reference(self.fixture / 'nine-http.mjs')
+        source_refs = [*self.roles.values(), self.other_source]
+        self.native = types.SimpleNamespace(source={'files': [
+            {'path': str(Path(item['path']).relative_to(self.root)), 'sha256': item['sha256']} for item in source_refs]})
         self.original = self.out / 'cur'
         self.preserved = self.out / 'native' / 'preserved'
         for name in ('home', 'project'):
@@ -119,11 +127,16 @@ class ChannelProvenance(unittest.TestCase):
                         'cwd': str(self.original / 'project'), 'tmp': str(self.original / 'tmp'),
                         'mockPort': 28690, 'controlPort': 28610}
         preservation = {'layout': layout_ref, 'originalRoot': str(self.original),
-                        'preservedRoot': str(self.preserved), 'actualClosedPorts': [28690, 28610]}
-        receipt = {'preservation': self.write_json('preservation.json', preservation),
+                        'preservedRoot': str(self.preserved), 'actualClosedPorts': [28690, 28610],
+                        'preserver': self.roles['preserver']}
+        receipt = {'producer': self.roles['producer'], 'finalizer': self.roles['finalizer'],
+                   'preserver': self.roles['preserver'],
+                   'observer': self.write_json('observer-source.json', dict(self.roles['observer'], ownerPid=123, records=1)),
+                   'preservation': self.write_json('preservation.json', preservation),
                    'originalBusinessRoots': {key: self.runtime[key] for key in ('home', 'project')},
                    'process': {'cwd': self.runtime['cwd'], 'readyListeners': [{'port': 28610}]}}
-        self.raw = {'layout': dict(self.layout, **layout_ref), 'runtime': self.runtime}
+        self.raw = {'layout': dict(self.layout, **layout_ref), 'runtime': self.runtime,
+                    'fixtureSha256': self.roles['producer']['sha256']}
         file_ref = dict(reference(self.business), originalPath=str(self.original / 'home/history.jsonl'))
         self.evidence = {'receipt': receipt, 'afterReapFiles': [file_ref],
                          'missing': [], 'originals': [], 'transportRecords': []}
@@ -135,6 +148,45 @@ class ChannelProvenance(unittest.TestCase):
         path = self.out / name
         path.write_text(json.dumps(value) + '\n')
         return reference(path)
+
+    def test_v2_roles_accept_the_actual_registered_sources(self):
+        entries.channel_v2_roles(self.d, self.native, self.raw, self.evidence)
+
+    def test_different_tracked_producer_cannot_stand_in_for_eight(self):
+        evidence = copy.deepcopy(self.evidence)
+        evidence['receipt']['producer'] = self.other_source
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ROLE.*producer'):
+            entries.channel_v2_roles(self.d, self.native, self.raw, evidence)
+
+    def test_different_tracked_observer_cannot_authenticate_transport(self):
+        evidence = copy.deepcopy(self.evidence)
+        evidence['receipt']['observer'] = self.write_json('other-observer.json', dict(self.other_source, ownerPid=123, records=1))
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ROLE.*observer'):
+            entries.channel_v2_roles(self.d, self.native, self.raw, evidence)
+
+    def test_different_tracked_finalizer_cannot_bind_process_receipt(self):
+        evidence = copy.deepcopy(self.evidence)
+        evidence['receipt']['finalizer'] = self.other_source
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ROLE.*finalizer'):
+            entries.channel_v2_roles(self.d, self.native, self.raw, evidence)
+
+    def test_different_tracked_preserver_cannot_certify_original_inodes(self):
+        evidence = copy.deepcopy(self.evidence)
+        preserved = self.d.read(Path(evidence['receipt']['preservation']['path']))
+        preserved['preserver'] = self.other_source
+        evidence['receipt']['preservation'] = self.write_json('other-preservation.json', preserved)
+        evidence['receipt']['preserver'] = self.other_source
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ROLE.*preserver'):
+            entries.channel_v2_roles(self.d, self.native, self.raw, evidence)
+
+    def test_capture_and_receipt_must_agree_on_role_hashes(self):
+        raw = dict(self.raw, fixtureSha256=self.other_source['sha256'])
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ROLE'):
+            entries.channel_v2_roles(self.d, self.native, raw, self.evidence)
+        evidence = copy.deepcopy(self.evidence)
+        evidence['receipt']['preserver'] = self.other_source
+        with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_ROLE'):
+            entries.channel_v2_roles(self.d, self.native, self.raw, evidence)
 
     def test_preservation_keeps_original_runtime_names(self):
         root, contents = entries.channel_v2_preserved(self.d, self.raw, self.evidence)
@@ -174,7 +226,10 @@ class ChannelProvenance(unittest.TestCase):
         adapter = _load('retirement_channel_v2', _apparatus / 'retirement_channel_v2.py')
         source_paths = ['scripts/gateway-parity/retirement_channel_v2.py',
                         'src/pilotdeck-gateway/tests/fixtures/native-channel-production/eight.mjs',
-                        'src/pilotdeck-gateway/tests/fixtures/native-channel-production/reference-round-context.mjs']
+                        'src/pilotdeck-gateway/tests/fixtures/native-channel-production/reference-round-context.mjs',
+                        'src/pilotdeck-gateway/tests/fixtures/native-channel-production/owned-observer.mjs',
+                        'src/pilotdeck-gateway/tests/fixtures/native-channel-production/finalize-process.py',
+                        'src/pilotdeck-gateway/tests/fixtures/native-channel-production/preserve-layout.py']
         source_rows = [{'path': path, 'sha256': reference(self.root / path)['sha256']} for path in source_paths]
         bins = [{'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},
                 {'path': 'pilotdeck-agent-loop-sidecar', 'sha256': 'unit-sidecar'}]
@@ -224,6 +279,8 @@ class ChannelProvenance(unittest.TestCase):
         self.assertEqual(cell['referenceBlockers'], blockers)
         self.assertIn('fixed-ts-v2-prerequisites', cell['missing'])
         self.assertIn('fixed-ts-business-contract-comparison', cell['missing'])
+        self.assertIn('v2-http-same-socket-wire-binding', cell['missing'])
+        self.assertIn('v2-websocket-frame-and-header-binding', cell['missing'])
         self.assertNotIn('comparison', cell)
         self.assertNotIn('fixed-ts-v2-business-contract-comparison', cell['covered'])
         self.assertIn('v2-current-turn-interaction-reload-and-durable-originals', cell['covered'])
@@ -232,6 +289,51 @@ class ChannelProvenance(unittest.TestCase):
         provenance.assert_called_once_with(self.d, native, native_receipt, raw_ref, 'telegram')
         observe.assert_called_once()
         compare.assert_not_called()
+
+    def test_semantic_equality_and_retained_tcp_chunks_do_not_certify_wire(self):
+        self.write_json('manifest.json', [
+            {'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},
+            {'path': 'pilotdeck-agent-loop-sidecar', 'sha256': 'unit-sidecar'},
+        ])
+        native = types.SimpleNamespace(manifest=self.out / 'manifest.json', source_sha='unit-source',
+                                       source={'files': []})
+        raw_ref = self.write_json('native-evidence.json', {
+            'sourceManifestSha256': 'unit-source', 'gatewaySha256': 'unit-native',
+            'sidecarSha256': 'unit-sidecar', 'fixedTS': self.d.RETIREMENT_BASELINE_REVISION,
+        })
+        row = {'id': 'gateway.channel:telegram', 'profile': 'native-eight-v2',
+               'rawEvidence': raw_ref, 'processReceipt': {'path': 'unit-native-provenance'}}
+        self.write_json('channels.json', {'schemaVersion': 1, 'entries': [row]})
+        applicability = {face: {'applicable': False, 'kinds': []}
+                         for face in ('attachment', 'channelInteraction')}
+        semantic = {'equal': True, 'differentFields': [], 'formalAcceptance': False}
+        observation = {'unitNativeObservation': True}
+        tcp = [{'kind': kind, 'sequence': sequence,
+                'socket': {'id': 9, 'localPort': 28690, 'remotePort': 42000},
+                'payload': {'bytes': 1, 'rawBytesHex': '78', 'truncated': False}}
+               for sequence, kind in enumerate(('fixture-tcp-data', 'fixture-tcp-write'))]
+        for records in ([], tcp):
+            with self.subTest(retained_tcp=bool(records)):
+                transport = self.out / 'transport.jsonl'
+                transport.write_text(''.join(json.dumps(record) + '\n' for record in records))
+                evidence = dict(self.evidence, receipt={'transportTrace': reference(transport)})
+                # This tests the consumer boundary: even a successful semantic
+                # result cannot supply the missing independent wire proof.
+                paired = {'observations': observation, 'semanticComparison': semantic,
+                          'missing': [], 'originals': []}
+                with patch.object(entries, 'verify_owned_process', return_value=evidence), \
+                        patch.object(entries, 'channel_applicability', return_value=applicability), \
+                        patch.object(entries, 'channel_v2_comparison', return_value=paired):
+                    cell = entries.channel_results(self.d, native, self.out,
+                                                   baseline=self.out / 'unused-baseline')[row['id']]
+                self.assertEqual(cell['status'], 'BLOCKED', cell)
+                self.assertEqual(cell['semanticComparison'], semantic)
+                self.assertIn('fixed-ts-v2-semantic-business-comparison', cell['covered'])
+                self.assertNotIn('comparison', cell)
+                self.assertNotIn('fixed-ts-v2-business-contract-comparison', cell['covered'])
+                self.assertIn('fixed-ts-business-contract-comparison', cell['missing'])
+                self.assertIn('v2-http-same-socket-wire-binding', cell['missing'])
+                self.assertIn('v2-websocket-frame-and-header-binding', cell['missing'])
 
 
 if __name__ == '__main__':
