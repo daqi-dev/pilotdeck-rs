@@ -1265,6 +1265,16 @@ class SessionDomainCleanupGuard(unittest.TestCase):
                         f'#2743 the clean full run must exit 0, got {code}; '
                         f'stdout tail={stdout[-400:]!r}; stderr={stderr!r}')
         report = json.loads((out / 'summary.json').read_text())
+        # Denominator pinned to the source literal, not derived from
+        # module.MUTATIONS (MM boundary P1, #1666 family): an emptied or
+        # row-deleted table would otherwise make every assertion below
+        # vacuously green while the run publishes a 0/0 PASS.
+        self.assertTrue(len(module.MUTATIONS) == 331,
+                        '#2743 the session-domain table must carry its '
+                        'literal 331 rows; truncating or emptying MUTATIONS '
+                        'must fail here instead of shrinking the denominator')
+        self.assertTrue(len(report['mutations']) > 0,
+                        '#2743 the full run must record a non-empty batch')
         selected = [row['mutation'] for row in report['mutations']]
         self.assertTrue(selected == [row[0] for row in module.MUTATIONS],
                         '#2743 the full run must record the whole table in order')
