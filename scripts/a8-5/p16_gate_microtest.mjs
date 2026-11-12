@@ -13,11 +13,16 @@
  * 端口纪律：39994（微测专用——fix-r4 挪出 39871–39898 段：原 39894 与 p15_driver 的
  * A-elevate 用例撞号、39895 为 p15 B-control，避让探针 39896–39898；39994 全仓无脚本
  * 绑定，评审 sibling#1 / concurrency#1）。
- * fix-r5（评审 boundary#1 P1，当轮必修）：T15 归一实跑格——接线层 entryHrefCandidates
- * 用真实文件系统形状（symlink/空格路径/目录/不存在路径）实跑归一；T13 的手写 href 与
- * T14 在 v22.22.0 命中 import.meta.main===true 首分支（argv 实参不参与比较）均覆盖不到
- * 接线层，接线层变异（两 href 传反 / 去 realpathSync 归一 / pathToFileURL 误用）由本格
- * 判杀。T15 全部同步 fs 操作（无子进程/无网络），watchdog 预算不变。
+ * fix-r5（评审 boundary#1 P1，当轮必修）：T15 **导出纯函数直调格**——直调
+ * entryHrefCandidates、真实文件系统形状（symlink/空格路径/目录/不存在路径）实跑归一；
+ * 判杀面是**函数体内**变异（返回字段互换 / 去 realpathSync 归一 / pathToFileURL 误用）。
+ * fix-r6（评审 sibling#2，P1）声明订正：T15 不经 p16_stop_acceptance.mjs 模块作用域的
+ * 真实调用点（v22.22.0 直接执行命中 import.meta.main===true 首分支、process.argv 实参
+ * 不参与比较）——调用点接线（含 T16 的 else-if 消费）零运行时覆盖，登记待办（coord
+ * 跟进单）。fix-r6 另修（评审 sibling#1/concurrency#1，P1 + concurrency#3，P2a）：新增
+ * T16（isSelfEntryPath 直调格——分支③独立复检的纯函数面）；T14 直跑负控格临时 scratch
+ * finally rmSync 清场 + 清场断言（对齐 T15）；末行登记随 T1–T16。
+ * T15 全部同步 fs 操作（无子进程/无网络），watchdog 预算不变。
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -31,7 +36,7 @@ import {
   parseRawGate, pooledHeaderPremise, derivePooledPremise,
   sawCleanFin, eventsAfterWrite, silentHang, isAbnormalEvent,
   rawReuseNote, reuseSilentHangClause, partBNote,
-  pooledSkipReason, agentReuseNote, isMainEntry, entryHrefCandidates,
+  pooledSkipReason, agentReuseNote, isMainEntry, entryHrefCandidates, isSelfEntryPath,
 } from "./p16_stop_acceptance.mjs";
 
 const PORT_MT = 39994;
@@ -394,28 +399,38 @@ await section("T13", () => {
 });
 
 // T14 直接执行正控（fix-r4 评审 boundary#1）：node 直接执行探针须跑 main——守卫坏了
-// （判成非 main）时零输出 + exit 0，本格必红。用不存在的 --base 让 main() 快速受控失败
-// （P16 FAILED + exit 1 + rec.dump 兜底落 JSON）：机器无关、秒级、不依赖 TS 基线 dist；
-// 全量输出正控由轮次验证腿的真实探针直跑承担（P16 DONE + 完整 JSON）。
+// （判成非 main）时零输出 + 静默 exit 0/exit 3，本格必红。用不存在的 --base 让 main()
+// 快速受控失败（P16 FAILED + exit 1 + rec.dump 兜底落 JSON）：机器无关、秒级、不依赖
+// TS 基线 dist；全量输出正控由轮次验证腿的真实探针直跑承担（P16 DONE + 完整 JSON）。
+// fix-r6（评审 concurrency#3，P2a）：scratch 临时目录 finally rmSync 清场（对齐 T15
+// :424-434/:445-452）+ 清场后断言（删 rmSync 变异在此红——清场判杀绑定点）。
 await section("T14", async () => {
   const scratch = resolve(tmpdir(), `p16-direct-mt-${process.pid}-${Date.now()}`);
-  const probePath = fileURLToPath(new URL("./p16_stop_acceptance.mjs", import.meta.url));
-  const child = spawnSync(
-    process.execPath,
-    [probePath, "--base", resolve(scratch, "no-such-base"), "--out", resolve(scratch, "out")],
-    { timeout: 30_000, encoding: "utf8" },
-  );
-  assert.notEqual(child.status, 0, `#T14 直接执行不得静默 exit 0（status=${child.status}，守卫误判为非 main 的假通过面）`);
-  assert.ok((child.stdout ?? "").includes("P16 FAILED"), `#T14 直接执行须跑 main（P16 FAILED 信号；stdout=${JSON.stringify(child.stdout ?? "")}）`);
-  assert.equal(existsSync(resolve(scratch, "out", "p16_stop_acceptance.json")), true, "#T14 main() 失败路径亦落 JSON（rec.dump 兜底）");
+  try {
+    const probePath = fileURLToPath(new URL("./p16_stop_acceptance.mjs", import.meta.url));
+    const child = spawnSync(
+      process.execPath,
+      [probePath, "--base", resolve(scratch, "no-such-base"), "--out", resolve(scratch, "out")],
+      { timeout: 30_000, encoding: "utf8" },
+    );
+    assert.notEqual(child.status, 0, `#T14 直接执行不得静默 exit 0（status=${child.status}，守卫误判为非 main 的假通过面）`);
+    assert.ok((child.stdout ?? "").includes("P16 FAILED"), `#T14 直接执行须跑 main（P16 FAILED 信号；stdout=${JSON.stringify(child.stdout ?? "")}）`);
+    assert.equal(existsSync(resolve(scratch, "out", "p16_stop_acceptance.json")), true, "#T14 main() 失败路径亦落 JSON（rec.dump 兜底）");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  assert.equal(existsSync(scratch), false, "#T14 直跑负控格 scratch 临时目录须清场（rmSync finally，fix-r6 concurrency#3）");
 });
 
-// T15 argv realpath 归一实跑格（fix-r5 评审 boundary#1 P1）：接线层
-// entryHrefCandidates(argv1, moduleUrl) 用真实文件系统形状实跑——T13 只测纯函数手写
-// href、T14 在 v22.22.0 命中 import.meta.main===true 首分支（argv 实参不参与比较），
-// 接线层变异（两 href 传反 / 去 realpathSync 归一 / pathToFileURL 误用）此前在任何
-// Node 版本上都不被微测判杀。断言全部走真实 realpathSync/pathToFileURL 路径，不手写
-// href；临时件（symlink/目录）finally 清场，不落仓库。全同步 fs 操作，无子进程。
+// T15 entryHrefCandidates 导出纯函数直调格（fix-r5 评审 boundary#1 P1；fix-r6 评审
+// sibling#2 声明订正）：直调导出函数、用真实文件系统形状（symlink/空格路径/目录/不
+// 存在路径）实跑归一——T13 只测纯函数手写 href、T14 在 v22.22.0 命中
+// import.meta.main===true 首分支（argv 实参不参与比较），**函数体内**变异（返回字段
+// 互换 / 去 realpathSync 归一 / pathToFileURL 误用）在 fix-r5 前在任何 Node 版本上都
+// 不被微测判杀、由本格判杀。本格不经 p16_stop_acceptance.mjs 模块作用域的真实调用点
+// （实参由本微测构造）——调用点接线零运行时覆盖，登记待办（coord 跟进单）。断言全部
+// 走真实 realpathSync/pathToFileURL 路径，不手写 href；临时件（symlink/目录）finally
+// 清场，不落仓库。全同步 fs 操作，无子进程。
 await section("T15", async () => {
   const probePath = fileURLToPath(new URL("./p16_stop_acceptance.mjs", import.meta.url));
   const probeUrl = pathToFileURL(probePath).href;
@@ -461,6 +476,32 @@ await section("T15", async () => {
   assert.equal(fileURLToPath(hu.selfHref), realpathSync(probePath), "#T15d selfHref 同上（argv 缺失不影响）");
 });
 
+// T16 分支③独立复检直调格（fix-r6 评审 sibling#1/concurrency#1，P1）：isSelfEntryPath
+// (argv1, selfPath)——路径级 realpathSync 归一比较（不建 href），判「argv[1] 即本模块
+// 文件（直接执行形状）」。本微测自身即「被 import 宿主」形状（argv[1]=本微测文件 ≠
+// 探针）——复检在该形状须 false（宿主不被杀的判别面，评审场景）；同 T15 口径：纯函数
+// 直调，分支③ else-if 调用点接线不在本格覆盖面、登记待办（coord 跟进单）。全同步
+// fs 操作，临时件 finally 清场。
+await section("T16", async () => {
+  const probePath = fileURLToPath(new URL("./p16_stop_acceptance.mjs", import.meta.url));
+  assert.equal(isSelfEntryPath(probePath, probePath), true, "#T16a 直接执行形状：argv[1] 即本模块文件 → true");
+  // symlink 入口：realpathSync 归一双侧（与守卫/entryHrefCandidates 同语义）——去归一变异在此红
+  const alias = resolve(tmpdir(), `p16-mt-selfalias-${process.pid}-${Date.now()}.mjs`);
+  symlinkSync(probePath, alias);
+  try {
+    assert.equal(isSelfEntryPath(alias, probePath), true, "#T16a symlink 入口 realpath 归一后即本模块文件 → true");
+  } finally {
+    rmSync(alias);
+  }
+  // 被 import 宿主形状：argv[1] 是宿主文件（本微测自身路径）→ false（宿主不被杀）
+  const hostPath = fileURLToPath(import.meta.url);
+  assert.equal(isSelfEntryPath(hostPath, probePath), false, "#T16b 被 import 宿主形状：argv[1] 为宿主文件 → false（不杀宿主）");
+  // argv[1] 缺失 / 不可 stat（-e/REPL/已删文件形状）→ false
+  assert.equal(isSelfEntryPath(undefined, probePath), false, "#T16c argv[1] 缺失（-e 宿主形状）→ false");
+  const missing = resolve(tmpdir(), `p16-no-such-self-${process.pid}-${Date.now()}`);
+  assert.equal(isSelfEntryPath(missing, probePath), false, "#T16c argv[1] 不存在（不可 stat）→ false");
+});
+
 // fix-r4：正常收尾——watchdog 计时器清除（不拖长正常跑；挂起路径由 watchdog 自身收场）
 clearTimeout(watchdogTimer);
 if (failures.length > 0) {
@@ -468,4 +509,4 @@ if (failures.length > 0) {
   for (const f of failures) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log("p16_gate_microtest: ALL PASS (T1–T15)");
+console.log("p16_gate_microtest: ALL PASS (T1–T16)");

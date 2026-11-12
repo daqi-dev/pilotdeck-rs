@@ -15,10 +15,13 @@
  * import 不建目录、不读调用方 argv/env（评审 sibling#7 / boundary#6 / simplify#3）。
  * 主模块守卫（fix-r4，评审 boundary#1）：import.meta.main 为真，或 argv[1] 与本模块
  * 两侧 realpathSync 归一后同 URL（symlink 入口可比）任一命中即直接执行——import.meta.main
- * 不提供的 Node 段（22.0–22.16）不再静默 no-op exit 0（尺子假通过面）；两信号皆不命中且
- * import.meta.main 缺失时显式 exit 3（取舍见文件尾注释）；被 import（现代 Node
- * import.meta.main === false）安静交还宿主、不退出（微测/T12 消费方）。fix-r5：href
- * 归一抽成可测导出 entryHrefCandidates（微测 T15 真实文件系统形状实跑覆盖接线层）。
+ * 不提供的 Node 段（22.0–22.16）不再静默 no-op exit 0（尺子假通过面）；被 import（现代
+ * Node import.meta.main === false）安静交还宿主、不退出（微测/T12 消费方）。fix-r5：href
+ * 归一抽成可测导出 entryHrefCandidates（微测 T15 **导出纯函数直调格**——真实文件系统形状
+ * 实跑，判杀函数体内变异；调用点接线不在其覆盖面，登记待办）。fix-r6（评审
+ * sibling#1/concurrency#1，P1）：分支③ exit 3 收窄为独立路径复检确证「直接执行而守卫未
+ * 跑 main」（isSelfEntryPath 导出 + 微测 T16 直调格）——被 import 的宿主（含
+ * import.meta.main 缺失的 22.0–22.16 段）不再于 body 前被杀，任何 Node 段安静交还。
  * #2759 fix-r2（两线整合）：前提判定经 common.mjs 单源（keepAliveProbe 炮台 +
  * keepAlivePremise 判定，#2756）；头/体切分与 freeSockets 直测并入该主干（direct
  * 压过头推断），close 前池占用复检（A/pool-at-close）保留 #2756 登记面。
@@ -607,16 +610,22 @@ async function main() {
 //   ② 被 import（现代 Node import.meta.main === false）→ 不跑 main、不退出，安静交还宿主
 //     ——仓内 import 消费方（p16_gate_microtest 顶层静态 import、其 T12 子进程）在此
 //     分支通过；「import 无副作用」语义保留（fix-r3）；
-//   ③ import.meta.main 缺失（22.0–22.16 段）且 argv 兜底未命中 → 不跑 main 且显式
-//     process.exit(3)——「误判为非 main」以非零码可被下游察觉，不与「假通过」（exit 0
-//     零证据）不可区分。
-// exit 3 不上移到 ②（无条件「miss 即 exit 3」）的取舍：实测会杀死仓内唯一 import 消费方
-// ——微测顶层 import 本文件，进程在微测 body 前死亡（退出码 3、零测试输出；T12 子进程
-// 同理 status=3），见本轮证据 raw/emp-exit3-*.out。② 是 Node 明示的「非 main」真值、非
-// 误判；兜底后「直接执行而两信号皆 miss」已不可达（直接执行定义上 argv[1]=本文件真实
-// 路径，realpath 归一必命中兜底）——残余风险是兜底本身被改坏，由微测直接执行格 T14 +
-// 归一实跑格 T15 承担判别（守卫/接线坏 → 微测红）。代价如实登记：import.meta.main 缺失
-// 的 Node 段上被 import 会 exit 3（微测在该段不可用——其口径钉 v22.22.0，见 RESULT）。
+//   ③ import.meta.main 缺失（22.0–22.16 段）且 argv 兜底未命中 → 不跑 main；fix-r6 起
+//     先做**独立路径复检**（isSelfEntryPath：argv[1] 与本模块文件两侧 realpathSync 归一
+//     后相同，见下）——确证「直接执行而守卫未跑 main」（守卫被改坏）才显式 process.exit(3)
+//     （「误判为非 main」以非零码可被下游察觉，不与「假通过」（exit 0 零证据）不可区分，
+//     boundary#1 语义保留）；复检不成立（argv[1] 为宿主文件 / `-e` 缺失形状 ⇒ 判为被
+//     import）→ 安静交还宿主。
+// fix-r6（评审 sibling#1/concurrency#1，P1）收窄原「miss 即 exit 3」：fix-r4/r5 的
+// 无条件分支③在 22.0–22.16 段（import.meta.main undefined ≠ false，② 不命中）会杀死
+// 顶层静态 import 的宿主——微测进程在 body 前死亡（退出码 3、零测试输出）、T12 子进程
+// 同理（fix-r4 轮证据 raw/emp-exit3-*.out；fix-r6 负控 M1a/M1b 为该形状的模拟复演）。
+// 复检为路径级比较（不建 href、不走 pathToFileURL），与 isMainEntry/entryHrefCandidates
+// 的 href 变异面分立：守卫接线被改坏（两 href 传反 / 去 realpathSync 归一 /
+// pathToFileURL 误用）不传染复检，「直接执行而两信号皆 miss」仍可确证 exit 3——现代
+// Node 段守卫 if 被改坏时同理（M2 负控：exit 3 非静默 0）。残余风险（复检自身被改坏）
+// 由微测 T16 直调格承担判别；分支③ else-if 接线与 T15 调用点同口径，零运行时覆盖、
+// 登记待办（coord 跟进单，fix-r6 评审 sibling#2）。
 export function isMainEntry(importMetaMain, argv1Href, moduleUrlHref) {
   if (importMetaMain === true) return true;
   return argv1Href !== undefined && argv1Href === moduleUrlHref;
@@ -625,10 +634,13 @@ export function isMainEntry(importMetaMain, argv1Href, moduleUrlHref) {
 // fix-r5（评审 boundary#1 P1，当轮必修）：argv[1]/本模块两侧 href 归一从调用点的两个
 // IIFE 抽成可测导出——fix-r4 的接线层（realpathSync 归一 + pathToFileURL）零运行时覆盖
 // （T13 只测纯函数手写 href、T14 在 v22.22.0 命中 import.meta.main===true 首分支、argv
-// 实参不参与比较），接线层变异（两 href 传反 / 去 realpathSync 归一 / pathToFileURL
+// 实参不参与比较），函数体内变异（返回字段互换 / 去 realpathSync 归一 / pathToFileURL
 // 误用）在任何 Node 版本上都不被微测判杀。语义与 fix-r4 的两个 IIFE 逐点相同：argv1
 // 缺失（`-e`/REPL 宿主形状）→ undefined；realpathSync 不可 stat（已删文件等）→ undefined
 // （兜底分支不命中）；两侧先 realpathSync 归一再 pathToFileURL（symlink 入口可比）。
+// fix-r6（评审 sibling#2，P1）声明订正：微测 T15 系**导出纯函数直调格**（实参由微测
+// 构造），判杀面只及本函数体内变异；调用点接线（真实 process.argv[1]/import.meta.url
+// 实参与 isMainEntry 消费）零运行时覆盖，登记待办（coord 跟进单）。
 export function entryHrefCandidates(argv1, moduleUrl) {
   let argv1Href;
   try {
@@ -645,6 +657,22 @@ export function entryHrefCandidates(argv1, moduleUrl) {
   return { argv1Href, selfHref };
 }
 
+// fix-r6（评审 sibling#1/concurrency#1，P1）：分支③的独立路径复检纯函数——「argv[1]
+// 即本模块文件（直接执行形状）」。路径级 realpathSync 归一比较（不建 href、不走
+// pathToFileURL），与 isMainEntry/entryHrefCandidates 的 href 变异面分立（见上注）：
+// 守卫接线被改坏时本复检不受影响，仍能确证「直接执行而守卫未跑 main」→ 调用点显式
+// exit 3（不静默 exit 0，boundary#1 保留）。argv1 缺失（`-e`/REPL 宿主形状）或不可
+// stat（已删文件）→ false（非直接执行形状，安静交还宿主）。微测 T16 直调本导出
+// （纯函数直调格——else-if 调用点接线同 T15 口径零覆盖，登记待办）。
+export function isSelfEntryPath(argv1, selfPath) {
+  if (argv1 === undefined) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(selfPath);
+  } catch {
+    return false; // argv[1] 不可 stat（已删文件等形状）——非直接执行形状
+  }
+}
+
 const p16EntryHrefs = entryHrefCandidates(process.argv[1], import.meta.url);
 if (isMainEntry(import.meta.main, p16EntryHrefs.argv1Href, p16EntryHrefs.selfHref)) {
   main().catch((e) => {
@@ -654,7 +682,10 @@ if (isMainEntry(import.meta.main, p16EntryHrefs.argv1Href, p16EntryHrefs.selfHre
   });
 } else if (import.meta.main === false) {
   // 分支 ②：被 import——见上注，安静交还宿主
-} else {
-  // 分支 ③：import.meta.main 缺失且 argv 兜底未命中——不静默 exit 0（boundary#1）
+} else if (isSelfEntryPath(process.argv[1], fileURLToPath(import.meta.url))) {
+  // 分支 ③（fix-r6）：import.meta.main 缺失段守卫未命中，独立路径复检确证「argv[1] 即
+  // 本模块文件」⇒ 直接执行而守卫被改坏——不静默 exit 0（boundary#1），显式 exit 3
   process.exit(3);
 }
+// 其余形状（import.meta.main 缺失段被 import——argv[1] 为宿主文件；`-e`/REPL 宿主
+// argv[1] 缺失）：安静交还宿主——顶层静态 import 的宿主不再于 body 前被杀（fix-r6）
