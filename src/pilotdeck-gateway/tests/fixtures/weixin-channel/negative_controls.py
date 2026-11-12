@@ -551,6 +551,58 @@ MUTATIONS = [
      '        if let Some(mut creds) = creds {\n',
      'channel::weixin::tests::save_cursor_read_modify_write_holds_the_credentials_lock',
      '#1725 the cursor save re-reads under the lock and keeps the newer credentials'),
+
+    # #1725 fix-r4 items 13/14/16. The two client-level falsy rows bind the
+    # knobs to unit goldens the replay cannot distinguish (its fake server
+    # echoes the cursor back and always answers `tt-1`, so no oracle case can
+    # turn the filters' branches) — the dedicated loopback tests hand the
+    # real client an empty response, the falsifiable golden item 14 asked for.
+    ('empty-buffer-clears-cursor-unit', weixin / 'client.rs',
+     'string_field(&response, "get_updates_buf").filter(|b| !b.units().is_empty())',
+     'string_field(&response, "get_updates_buf")',
+     'channel::weixin::tests::poll_with_an_empty_updates_buf_keeps_the_cursor',
+     '#1725 an empty get_updates_buf is falsy and does not clear the poll cursor'),
+    ('empty-ticket-sends-typing-unit', weixin / 'client.rs',
+     'string_field(&config, "typing_ticket").filter(|ticket| !ticket.units().is_empty())',
+     'string_field(&config, "typing_ticket")',
+     'channel::weixin::tests::send_typing_with_an_empty_ticket_makes_no_request',
+     '#1725 an empty typing_ticket is falsy: no sendtyping request is made'),
+    # auth.js `status.baseurl || baseUrl`: taking the returned baseurl
+    # unconditionally makes the empty (falsy) one win over the passed base.
+    ('login-baseurl-fallback-dropped', weixin / 'client.rs',
+     '                    base_url: if returned_base.is_empty() {\n'
+     '                        base_url.into()\n'
+     '                    } else {\n'
+     '                        returned_base\n'
+     '                    },',
+     '                    base_url: returned_base,',
+     'channel::weixin::tests::login_confirmed_fields_follow_js_falsy_semantics',
+     '#1725 an empty returned baseurl is falsy: the passed base URL stays'),
+    # WeixinChannel.ts:980-988: `!data.baseUrl || ...` — dropping the emptiness
+    # filter lets a `""` field count as present credentials.
+    ('empty-credentials-fields-accepted', weixin / 'mod.rs',
+     '                .and_then(JsValue::as_string)\n'
+     '                .filter(|text| !text.units().is_empty())',
+     '                .and_then(JsValue::as_string)',
+     'channel::weixin::tests::load_credentials_treats_empty_strings_as_absent',
+     '#1725 an empty baseUrl is falsy: the file is not credentials'),
+    # `this.client?.cursor || creds.cursor`: dropping the first filter keeps
+    # the empty live cursor instead of falling through to the saved one.
+    ('rebuild-cursor-fallback-dropped', weixin / 'mod.rs',
+     '            .map(|client| client.cursor())\n'
+     '            .filter(|cursor| !cursor.is_empty())\n'
+     '            .or_else(|| creds.cursor.clone());',
+     '            .map(|client| client.cursor())\n'
+     '            .or_else(|| creds.cursor.clone());',
+     'channel::weixin::tests::rebuild_client_after_poll_error_treats_empty_cursors_as_absent',
+     '#1725 an empty live cursor is falsy: the saved cursor is set instead'),
+    # #1725 item 13: the home knob derives the whole family; splitting the
+    # derived file off the knob is the shape the collapse removed.
+    ('credentials-home-filename-split', weixin / 'mod.rs',
+     '            .unwrap_or_else(|| credentials_home.join("weixin-credentials.json"));',
+     '            .unwrap_or_else(|| credentials_home.join("credentials.json"));',
+     'channel::weixin::tests::credentials_home_derives_the_whole_family',
+     '#1725 the derived credentials file is readable'),
 ]
 
 

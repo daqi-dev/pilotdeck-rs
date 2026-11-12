@@ -10,10 +10,19 @@ fn failure(message: impl Into<DiagnosticText>) -> Error {
     e
 }
 pub(super) fn invalid_path_argument(received: &pilotdeck_protocol::JsString) -> Error {
-    Error::new(
+    let mut e = Error::new(
         "ERR_INVALID_ARG_TYPE",
         crate::metadata::invalid_arg_type_message("path", received),
-    )
+    );
+    // `path.join` validates its segments before anything else, and a store row
+    // is not validated (`readProjectBinding` returns it as parsed), so a
+    // non-string `bindingId` throws Node's `TypeError [ERR_INVALID_ARG_TYPE]`
+    // (Node v22.22.0 probe:
+    // `_tmp/20261112-issue-1833/impl-r1/node-probe/a1-error-classes-probe.out`).
+    // The class matters: only a `PilotConfigError` replaces the retained
+    // reload diagnostics, and TS propagates the raw TypeError (#1833 A1).
+    e.name = "TypeError";
+    e
 }
 /// `encodeURIComponent` on a string `String(value)` kept with lone surrogates
 /// throws `URIError: URI malformed`; TS propagates that class, so the reload
@@ -242,12 +251,28 @@ pub(super) fn apply<F: Files>(
                 Options::default(),
             );
             if let Some(e) = doc.errors.first() {
-                return Err(Error::new(e.code, e.message.clone()));
+                // The baseline reads the bundle with yaml's `parse`, which
+                // throws `doc.errors[0]` itself — a `YAMLParseError` (Node
+                // v22.22.0 probe:
+                // `_tmp/20261112-issue-1833/impl-r1/node-probe/a2-sops-probe.out`).
+                // The default `PilotConfigError` name would make a failed
+                // reload replace the retained diagnostics (#1833 A2).
+                let mut error = Error::new(e.code, e.message.clone());
+                error.name = e.name;
+                return Err(error);
             }
-            graph::inspect_sops(
-                &doc.to_json()
-                    .map_err(|e| Error::new("gateway_request_failed", e.message))?,
-            )
+            match doc.to_json() {
+                // `parse` runs `doc.toJS` unguarded: an alias-count or depth
+                // failure throws its own class (`ReferenceError`,
+                // `RangeError`), which the default name would collapse the
+                // same way (#1833 A2).
+                Ok(graph) => graph::inspect_sops(&graph),
+                Err(e) => {
+                    let mut error = Error::new("gateway_request_failed", e.message);
+                    error.name = e.name;
+                    return Err(error);
+                }
+            }
         } else {
             object([("sops", JsValue::Array(vec![]))])
         };
@@ -446,9 +471,7 @@ fn ensure_modules(m: &JsValue, key: &str) -> Result<(), Error> {
     )))
 }
 fn encode_uri_component(v: &JsValue) -> Result<String, Error> {
-    if let Err(kind) = crate::js_value::string_coercible_checked(v) {
-        return Err(coercion_error(kind));
-    }
+    require_string_coercible(v)?;
     // `String(array)` keeps lone surrogates and `encodeURIComponent` then
     // throws `URIError: URI malformed`; the lossy `js_string` used to encode
     // U+FFFD and succeed (#1550 修 r5).
@@ -595,5 +618,209 @@ mod tests {
             let expected = row["pid"].as_i64().map(|n| i32::try_from(n).unwrap());
             assert_eq!(lock_pid(text.as_bytes()), expected, "{text:?}");
         }
+    }
+
+    /// A path-keyed file table for the sops read surface. `read` failures are
+    /// errno-shaped so `read_error` maps them like a real fs error, and a
+    /// present-but-unreadable entry keeps `stat` succeeding — the
+    /// existsSync/readFileSync race the loader really runs (#1833 A1).
+    struct SopsFiles {
+        files: Vec<(std::path::PathBuf, Vec<u8>)>,
+        unreadable: Vec<std::path::PathBuf>,
+    }
+    impl Files for SopsFiles {
+        fn entries(&self, _: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+            Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+        }
+        fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+            if self.unreadable.iter().any(|p| p == path) {
+                return Err(std::io::Error::from_raw_os_error(libc::EACCES));
+            }
+            self.files
+                .iter()
+                .find(|(p, _)| p == path)
+                .map(|(_, bytes)| bytes.clone())
+                .ok_or_else(|| std::io::Error::from_raw_os_error(libc::ENOENT))
+        }
+        fn stat(&self, path: &std::path::Path) -> Result<crate::metadata::Stat, std::io::Error> {
+            let present = self.files.iter().any(|(p, _)| p == path)
+                || self.unreadable.iter().any(|p| p == path);
+            if present {
+                Ok(crate::metadata::Stat {
+                    directory: false,
+                    size: 0,
+                    birth_ms: 0.0,
+                    ctime_ms: 0.0,
+                    mtime_ms: 0.0,
+                })
+            } else {
+                Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+            }
+        }
+    }
+    fn binding_env() -> Env {
+        Env::from([
+            ("STAFFDECK_PROJECT_BINDING_ENABLED".into(), "true".into()),
+            (
+                "STAFFDECK_FORMAL_API_ORIGIN".into(),
+                "https://staffdeck.invalid".into(),
+            ),
+            ("STAFFDECK_COPY_TENANT_ID".into(), "tenant".into()),
+        ])
+    }
+    fn sops_metadata(
+        files: Vec<(std::path::PathBuf, Vec<u8>)>,
+        unreadable: Vec<std::path::PathBuf>,
+    ) -> Metadata<SopsFiles> {
+        Metadata {
+            home: "/fixture/home".into(),
+            cwd: "/fixture".into(),
+            files: SopsFiles { files, unreadable },
+        }
+    }
+    fn binding_store(binding_id: JsValue) -> Vec<u8> {
+        let store = object([
+            ("version", JsValue::Number(1.0)),
+            ("installationId", "installation".into()),
+            (
+                "projects",
+                JsValue::Array(vec![object([
+                    ("projectRoot", "/fixture/home".into()),
+                    ("bindingId", binding_id),
+                    ("agentId", "agent".into()),
+                    ("status", "bound".into()),
+                    ("origin", "https://staffdeck.invalid".into()),
+                    ("tenantId", "tenant".into()),
+                ])]),
+            ),
+        ]);
+        pilotdeck_protocol::stringify_json(&store)
+            .expect("#1833 serialize the binding store")
+            .expect("#1833 serialize the binding store")
+            .into_bytes()
+    }
+    fn definitions_path() -> std::path::PathBuf {
+        std::path::Path::new("/fixture/home/staffdeck/binding-1/sops.json").to_path_buf()
+    }
+
+    /// #1833 A1: a non-string `bindingId` reaches `path.join`, which throws
+    /// `TypeError [ERR_INVALID_ARG_TYPE]` (Node v22.22.0 probe:
+    /// `_tmp/20261112-issue-1833/impl-r1/node-probe/a1-error-classes-probe.out`).
+    /// The class must survive `apply`: only a `PilotConfigError` replaces the
+    /// retained reload diagnostics, and TS propagates the raw TypeError.
+    #[test]
+    fn non_string_binding_id_reports_the_path_join_type_error() {
+        let store = std::path::Path::new("/fixture/home")
+            .join("staffdeck/project-bindings.json")
+            .to_path_buf();
+        let metadata = sops_metadata(vec![(store, binding_store(JsValue::Number(5.0)))], vec![]);
+        let error = apply(&metadata, object([]), Some("/fixture/home"), &binding_env())
+            .expect_err("#1833 a non-string bindingId must fail the binding");
+        assert_eq!(
+            error.name, "TypeError",
+            "#1833 path.join's TypeError class must not collapse to PilotConfigError"
+        );
+        assert_eq!(
+            error.code, "ERR_INVALID_ARG_TYPE",
+            "#1833 the Node code must stay"
+        );
+    }
+
+    /// #1833 A1: `sops.json` exists but the read fails — the exists/read race.
+    /// TS's `readFileSync` throws Node's fs error (`Error` with the errno
+    /// code, same probe as above), so the class must be `Error`, not the
+    /// default `PilotConfigError` a reload would treat as a config failure.
+    #[test]
+    fn sops_read_race_reports_the_node_error_class() {
+        let store = std::path::Path::new("/fixture/home")
+            .join("staffdeck/project-bindings.json")
+            .to_path_buf();
+        let metadata = sops_metadata(
+            vec![(store, binding_store("binding-1".into()))],
+            vec![definitions_path()],
+        );
+        let error = apply(&metadata, object([]), Some("/fixture/home"), &binding_env())
+            .expect_err("#1833 an unreadable sops.json must fail the binding");
+        assert_eq!(
+            error.name, "Error",
+            "#1833 the fs error class must not collapse to PilotConfigError"
+        );
+        assert_eq!(error.code, "EACCES", "#1833 the errno code must stay");
+        assert_eq!(
+            error.message.to_utf8().ok().as_deref(),
+            Some("EACCES: permission denied, open '/fixture/home/staffdeck/binding-1/sops.json'"),
+            "#1833 the message must be Node's fs wording"
+        );
+    }
+
+    /// #1833 A2: the baseline reads the bundle with yaml's `parse`, which
+    /// throws `doc.errors[0]` itself — a `YAMLParseError` (Node v22.22.0
+    /// probe:
+    /// `_tmp/20261112-issue-1833/impl-r1/node-probe/a2-sops-probe.out`).
+    /// Rebuilding the error with `Error::new` dropped the class and made a
+    /// failed reload replace the retained diagnostics.
+    #[test]
+    fn sops_yaml_parse_failure_keeps_the_yaml_parse_error_class() {
+        let store = std::path::Path::new("/fixture/home")
+            .join("staffdeck/project-bindings.json")
+            .to_path_buf();
+        let metadata = sops_metadata(
+            vec![
+                (store, binding_store("binding-1".into())),
+                (definitions_path(), b"sops: [unclosed\n".to_vec()),
+            ],
+            vec![],
+        );
+        let error = apply(&metadata, object([]), Some("/fixture/home"), &binding_env())
+            .expect_err("#1833 invalid sops yaml must fail the binding");
+        assert_eq!(
+            error.name, "YAMLParseError",
+            "#1833 parse()'s doc.errors[0] class must survive apply"
+        );
+        assert!(
+            error.message.to_utf8().ok().is_some_and(|m| m
+                .starts_with("Flow sequence in block collection must be sufficiently indented")),
+            "#1833 the yaml diagnostic message must stay (got {:?})",
+            String::from_utf16_lossy(error.message.units())
+        );
+    }
+
+    /// #1833 A2: `parse` runs `doc.toJS` unguarded; an excessive alias count
+    /// throws its own `ReferenceError` (Node v22.22.0 probe:
+    /// `_tmp/20261112-issue-1833/impl-r1/node-probe/excessive-alias-inline.out`).
+    /// The `doc.to_json()` failure path used to rebuild the error with the
+    /// default name, dropping the class the same way.
+    #[test]
+    fn sops_alias_conversion_failure_keeps_its_error_class() {
+        let store = std::path::Path::new("/fixture/home")
+            .join("staffdeck/project-bindings.json")
+            .to_path_buf();
+        // count(*a) = 11 references, aliasCount(a) = 10 inner aliases: 110 >
+        // yaml's maxAliasCount (100), the same arithmetic as
+        // nodes/Alias.js:68-70.
+        let aliases = |n: usize, name: &str| vec![name; n].join(", ");
+        let sops = format!(
+            "b: &b [1]\na: &a [{}]\nz: [{}]\n",
+            aliases(10, "*b"),
+            aliases(11, "*a"),
+        );
+        let metadata = sops_metadata(
+            vec![
+                (store, binding_store("binding-1".into())),
+                (definitions_path(), sops.into_bytes()),
+            ],
+            vec![],
+        );
+        let error = apply(&metadata, object([]), Some("/fixture/home"), &binding_env())
+            .expect_err("#1833 an excessive alias count must fail the binding");
+        assert_eq!(
+            error.name, "ReferenceError",
+            "#1833 toJS's ReferenceError class must survive apply"
+        );
+        assert_eq!(
+            error.message.to_utf8().ok().as_deref(),
+            Some("Excessive alias count indicates a resource exhaustion attack"),
+            "#1833 the alias-count message must stay"
+        );
     }
 }

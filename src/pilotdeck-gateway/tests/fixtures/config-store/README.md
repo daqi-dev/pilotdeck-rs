@@ -79,14 +79,18 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   都停在指纹记下的那个 tick 编号」这一格。每次采样先比对元数据（含每次写入与 `utimes` 都会
   刷新的 ctime、inode）：元数据未变则不读内容（#1739）。不完整采样不提交 metadata 指纹，
   按「什么失败」分两档（#1792 r1/r2）：条目或目录的 `NotFound` 是完整观测，缺失本身计入
-  指纹；打开或读取配置文件失败把该条目内容哈希成 `None`，按指纹差至多报一次（#1792，
-  `transient_read_failure_is_retried_until_the_content_is_seen`）；stat / `read_dir`
+  指纹；打开或读取配置文件失败把该条目内容折叠成 `None`，先与最后一次完整采样同批同刻
+  折叠的 unknown-read 孪生比较（#2122 fix-r1）：折叠相等（可观测状态未动）则不报也不
+  提交、清掉 metadata 短路（下一拍重试读），失败拍与恢复拍都静默；不等或无孪生基线
+  （状态动了）才按 #1792 报一次、持续失败静默、恢复再报一次
+  （`transient_read_failure_is_retried_until_the_content_is_seen`）；stat / `read_dir`
   的其它失败算被遮蔽采样，不提交任何指纹（含折叠指纹），只与上一遮蔽采样比较后上报可观测
   变化，读恢复后与最后一次完整采样比较、有差才报（#1792 r2，登记见
   `A6.3-CONFIG-POLL-001-R1.md`），同一不可读状态不会 reload 风暴、持续遮蔽也不会永久
   静默。#1987 收窄了这段口径的三格（启动采样不提交 metadata 短路 A2；遮蔽**过渡拍**
   另把 target 与最后一次完整采样比较 A1，与 R1 字面的差异待人批，见 issue #2094；
-  metadata 拍遮蔽而同拍折叠拍完整时按完整观测处理 A4），细节见
+  metadata 拍遮蔽而同拍折叠拍完整时按完整观测处理 A4；此三格之外，#2122 fix-r1 又把
+  内容读失败收进上文的 unknown-read 孪生门），细节见
   `src/config/store.rs` 模块文档。完整语义下漏检只有一格：改写后
   ctime 未跨 tick，且 len / is_dir / mtime / inode / dev 也都没变；精确表述见
   `src/config/store.rs` 模块文档。
@@ -106,17 +110,32 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 42 个
-源码变异（29 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 52 个
+源码变异（35 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
 遮蔽折叠指纹不提交、未分类模式不被 `NotFound` 定死、报变化拍不提交短路指纹、
 目录被换成文件后的类型探针、持续遮蔽仍上报可观测变更、目录消失是完整观测、
 `NotFound` stat 是完整观测；另有 #1899 的 6 行随 rebase 移植：停表证据退回
 `is_finished()`、watch 循环首拍 panic / spawn 后干净的早退 / 首拍循环内退出
 （drop 与 stop 两条路径）、以及永不停止——`#1650` 的静默死亡路径；#1946 再加 1 行：
 claiming poll 必须让出调度、就地载入即杀；#1987 新增
-6 行：遮蔽过渡拍不比较 target 的自身指纹、启动采样提交 metadata 短路、混合拍
+6 行：遮蔽过渡拍不比较 target 的自身指纹、启动恢复两采样窗口（原行名
+`startup-metadata-shortcut-committed`，#2122 更名 `startup-two-sample-window`——
+替换文本只重排采样顺序、并不提交短路，旧名与旧描述超出实际覆盖面）、混合拍
 误走遮蔽路径、启动即遮蔽把折叠值提交进完整指纹槽、`read_dir` 迭代中途错误被
-吞、父目录启动探测失败丢路径；#1920 新增 3 行：watch 循环 panic / spawn 后
+吞、父目录启动探测失败丢路径；#2122 新增 4 行：第二遮蔽拍重复上报同一状态
+（B6 测试的武装预算此前差一拍，第二条断言实际跑在完整拍上）、启动又提交
+metadata 短路（A2 断言须在首拍 `changed()` 之前才能杀——报变化拍恒置 None）、
+折叠拍内容未知的混合拍又走完整路径（守卫收成 `!= Complete`）、截断列表未走到
+target 被当作 target 消失（未观测臂返回空折叠值）；#2122 fix-r1 改锚 1 行、新增
+6 行（共 7 行改动）：内容未知拍改由「unknown-read 孪生」门收口
+（`mixed-content-tick-committed` 行随守卫改动改锚孪生门，`&& false` 关门即恢复
+F5 完整路径直落）、孪生门放宽
+`&& true`（真实改写后的持续读失败被吞掉应报的那一次）、第二调用点遮蔽守卫放宽回
+`!= Complete`（两采样间内容未知折叠进遮蔽链、欠报真实变更）、混合拍遮蔽守卫放宽
+回 `!= Complete`（遮蔽链混进内容未知折叠、形状翻转误报）、报变化的完整拍不提交
+孪生（其后的内容未知拍无基线可比对）、静默的内容未知拍不清短路（下一拍按相同
+metadata 短路、读不被重试）、启动采样不播种孪生（未动磁盘的首拍内容读失败
+误报——评审缺失格）；#1920 新增 3 行：watch 循环 panic / spawn 后
 干净早退两形状重绑 stop 测试（marker 含 #1920 stop 报告断言）、`stop()` 改回吞
 `JoinError` 恒报 Cancelled；#1920 fix-r1 再补 5 行：三种死亡形状补齐两半 drop
 测试的交叉格（panic / 干净早退的 store 半、首拍循环内退出的 handle 半）、
@@ -125,7 +144,7 @@ take 后的 `stop`）删掉 debug_assert 沉默退回 `Finished`），名册分�
 `EXPECTED_NAMES`
 静态字面量（删行 / 改名 / 换序即拒绝开跑，不再用运行期表长），要求各绑定
 测试自身 panic 载荷携带其行绑定的
-`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1920` / `#1946` / `#1987` 杀点标记（绑定测试内另含 `#1793` 的
+`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1920` / `#1946` / `#1987` / `#2122` 杀点标记（绑定测试内另含 `#1793` 的
 `MAX_POLL_INTERVAL == 60 s` 字面钉），每个变异前跑正控、后跑恢复正控，源码
 逐字节恢复并复核。运行时要求：
 

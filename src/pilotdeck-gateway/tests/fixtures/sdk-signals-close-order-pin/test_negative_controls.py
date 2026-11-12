@@ -59,6 +59,31 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   fails — no summary may survive a failed publish (a stale or half-written
   one would read as evidence), and rc 2 must say the device produced no
   verdict.
+- stdout-write-fault: a healthy all-KILLED run whose final counts line
+  cannot be written — the write fails with the measured /dev/full shape
+  (OSError ENOSPC, not a pipe error), so it must not be swallowed as
+  ``... | head``: rc 2 with a stderr diagnostic naming the failure, while
+  the summary on disk still carries the completed verdict rows.
+- stdout-pipe-fault: the mirror of the write fault — the final counts
+  line fails with a BrokenPipeError, the measured shape of ``... | head``
+  closing the pipe. That one the runner must swallow: the exit code
+  routes the reader, not stdout, so the healthy verdict code (rc 0) must
+  survive and no "#1382 stdout summary write failed" diagnostic may
+  appear — pinning that the pipe branch stays ahead of the OSError
+  branch instead of both folding into one refusal.
+- invalid-verdict-pipe: the third leg of that pairing — a verdict-path
+  INVALID run (no abort, the summary carries the INVALID rows) read
+  through ``... | head``. Swallowing the pipe must not swallow the
+  verdict: the run still exits 2 with the "#1382 INVALID controls"
+  diagnostic, so a folded-in ``os._exit(0)`` on the pipe branch cannot
+  pass a no-verdict run off as green.
+- survived-pipe: the last cell of the same 3-state-by-2-reader grid —
+  a SURVIVED run (every phase green, rc 1 is the only signal a red
+  device gives through ``... | head``) with the counts line hitting a
+  closed pipe. Swallowing the pipe must not collapse the tri-state:
+  the run still exits 1, so a regression folding the verdict codes to
+  ``os._exit(2 if invalid else 0)`` (dropping the SURVIVED code, a red
+  device read as rc 0 = all green) cannot pass a pipe-read run off.
 
 Both senses of exit 1 are pinned: the verdict path's 1 above, and the
 pre-guard refusals' 1 (an unknown selection, a missing CARGO_TARGET_DIR)
@@ -141,7 +166,7 @@ else:
         # stage-queue shape).
         index = calls['count']
         calls['count'] += 1
-        if mode == 'survived':
+        if mode in ('survived', 'survived-pipe'):
             # The verdict edge no abort mode can reach: every phase green, so
             # the negative run's preflight still passes and the row survives.
             return subprocess.CompletedProcess(
@@ -153,7 +178,7 @@ else:
         if (index - 1) % 2 == 0:
             if mode == 'cancel' and control == len(names) - 1:
                 raise KeyboardInterrupt()
-            if mode == 'invalid-verdict':
+            if mode in ('invalid-verdict', 'invalid-verdict-pipe'):
                 # The verdict path's INVALID row: the negative run fails
                 # without any dedicated #1382 marker (the stale-anchor shape),
                 # so the runner's else branch records INVALID and the exit
@@ -201,6 +226,55 @@ else:
             return raw_replace(self, target)
 
         Path.replace = fail_summary_publish
+
+    if mode in ('stdout-pipe-fault', 'invalid-verdict-pipe',
+                'survived-pipe'):
+        # #1800 fix-r4（DS sibling#2 / boundary#1，两家同撞）：管道分支与
+        # 两个 except 的先后次序此前零仓内覆盖——合并或调序成统一的
+        # `except OSError` 后，健康的 `... | head` 运行会从「吞管道、按判
+        # 决码退」变成 rc 2 + 诊断（协调者把健康读成无判决，假 FAIL），
+        # 而 Ran 11 照旧全绿。形态对照 /dev/full 实测的反面：管道错误
+        # 是 BrokenPipeError（EPIPE），必须走吞掉 + close stdout 的分支。
+        real_stdout = sys.stdout
+
+        class ClosedPipeStdout:
+            def write(self, text):
+                if '"counts"' in text:
+                    raise BrokenPipeError('broken pipe')
+                return real_stdout.write(text)
+
+            def flush(self):
+                return real_stdout.flush()
+
+            def close(self):
+                return real_stdout.close()
+
+        sys.stdout = ClosedPipeStdout()
+
+    if mode == 'stdout-write-fault':
+        # #1800 fix-r3 (comment follow-up 1): the final counts line fails
+        # with the measured /dev/full shape — OSError(ENOSPC), never a pipe
+        # error (the review's premise, reproduced by this file's host
+        # evidence). Only that one line fails: the per-control record lines
+        # still reach the reader, so the run itself completed and only the
+        # stdout delivery broke. The swap is in-process (nothing inherited
+        # from the environment is consulted) and stderr keeps its real
+        # stream, so the diagnostic the fix must print stays observable.
+        real_stdout = sys.stdout
+
+        class FullDiskStdout:
+            def write(self, text):
+                if '"counts"' in text:
+                    raise OSError(28, 'No space left on device')
+                return real_stdout.write(text)
+
+            def flush(self):
+                return real_stdout.flush()
+
+            def close(self):
+                return real_stdout.close()
+
+        sys.stdout = FullDiskStdout()
 sys.argv = [str(runner_path), str(out), *names]
 exec(compile(source, str(runner_path), 'exec'), runner_globals if mode != 'busy-lock' else {'__file__': str(runner_path), '__name__': '__main__'})
 """
@@ -436,6 +510,45 @@ class SurvivedVerdictTests(_PinDriver, unittest.TestCase):
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 a surviving run must still restore the catalog')
 
+    def test_survived_with_a_closed_pipe_still_exits_one(self):
+        # #1800 fix-r6（DS sibling P2，升 b 类）：三态×管道矩阵的最后一格
+        # ——SURVIVED 运行（全相位绿，rc 1 是红装置经 ``... | head`` 给出的
+        # 唯一信号）读到 counts 行时管道已关。吞管道必须不吞三态：回归把
+        # 判决段塌成两态（如 `os._exit(2 if invalid else 0)`，丢掉 rc 1）
+        # 时，健康用例（rc 0）与 INVALID 用例（rc 2）照绿，唯独本腿会把
+        #「有控制存活」读成 rc 0（协调者读成全绿＝假 PASS）——本用例钉 rc 1。
+        process, summary, tree, before = self.run_pin('survived-pipe')
+        self.assertEqual(process.returncode, 1,
+                         '#1800 a SURVIVED run read through a closed pipe '
+                         'must still exit 1 — swallowing the pipe error must '
+                         'not collapse the tri-state verdict codes: '
+                         f'rc={process.returncode}, stderr={process.stderr!r}')
+        self.assertIn('#1382 SURVIVED controls', process.stderr,
+                      '#1800 the SURVIVED diagnostic must still reach stderr '
+                      'after the pipe branch')
+        self.assertNotIn('#1382 stdout summary write failed', process.stderr,
+                         '#1800 the pipe error is swallowed, not diagnosed')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 rc 1 is the verdict path, never an abort')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line never reached the reader: '
+                         'the pipe closed at it')
+        self.assertIsNotNone(summary,
+                            '#1800 a SURVIVED run is not an abort: the '
+                            'summary must still be published')
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['SURVIVED'] * len(SELECTION),
+                         '#1800 the rows are SURVIVED on the verdict path, '
+                         'with the pipe fault layered on top')
+        self.assertEqual(summary['counts'],
+                         {'KILLED': 0, 'SURVIVED': len(SELECTION),
+                          'INVALID': 0})
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 a SURVIVED pipe run must still restore the '
+                         'catalog')
+
 
 class InvalidVerdictTests(_PinDriver, unittest.TestCase):
     """The verdict path's INVALID edge: no verdict, never rc 0 or 1."""
@@ -476,6 +589,44 @@ class InvalidVerdictTests(_PinDriver, unittest.TestCase):
                          '#1800 an INVALID-verdict run must still restore '
                          'the catalog')
 
+    def test_invalid_verdict_with_a_closed_pipe_still_exits_two(self):
+        # #1800 fix-r5（DS boundary P2a）：三态配对的第三腿——判决路径
+        # INVALID（非中止）的运行被 ``... | head`` 读到 counts 行。吞掉管
+        # 道错误后必须落到判决段的 `if invalid: os._exit(2)`，不能把
+        #「装置没出判决」折进管道分支的退出。坏改法（`except
+        # BrokenPipeError: ... os._exit(0)` 或判决段挪进 try 提前退出）
+        # 会让 head 读法的 INVALID 运行 rc 0——协调者把无判决读成全绿
+        # （假 PASS），而健康用例（rc 0）、ENOSPC 用例（不抛
+        # BrokenPipeError）、abort 用例（不装管道故障）全照绿。
+        process, summary, tree, before = self.run_pin('invalid-verdict-pipe')
+        self.assertEqual(process.returncode, 2,
+                         '#1800 a verdict-path INVALID run read through a '
+                         'closed pipe must still exit 2 — swallowing the '
+                         'pipe error must not swallow the verdict: '
+                         f'rc={process.returncode}, stderr={process.stderr!r}')
+        self.assertIn('#1382 INVALID controls', process.stderr,
+                      '#1800 the INVALID diagnostic must still reach stderr '
+                      'after the pipe branch')
+        self.assertNotIn('#1382 stdout summary write failed', process.stderr,
+                         '#1800 the pipe error is swallowed, not diagnosed')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 the rc 2 is the verdict path, not an abort')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line never reached the reader: '
+                         'the pipe closed at it')
+        self.assertIsNotNone(summary,
+                            '#1800 a verdict-path INVALID run is not an '
+                            'abort: the summary must still be published')
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['INVALID'] * len(SELECTION),
+                         '#1800 the rows are INVALID on the verdict path, '
+                         'with the pipe fault layered on top')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#1800 an INVALID-verdict pipe run must still '
+                         'restore the catalog')
+
     def test_unpublished_summary_exits_two_without_a_summary(self):
         # #1800 fix-r2（PR #2979 boundary P1）：summary 发布失败→rc 2 那条
         # 路径（temp 写入 + rename，失败须 unlink 且不得留半份/旧份 summary）
@@ -511,6 +662,90 @@ class InvalidVerdictTests(_PinDriver, unittest.TestCase):
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 a publish-fault run must still restore '
                          'the catalog')
+
+
+class StdoutWriteFaultTests(_PinDriver, unittest.TestCase):
+    """#1800 fix-r3: a non-EPIPE stdout write failure fails closed, loudly."""
+
+    def test_stdout_write_failure_exits_two_with_a_stderr_diagnostic(self):
+        # #1800 fix-r3（评论追加 1）：最终 counts 行的 stdout 写失败——
+        # /dev/full 实测抛 OSError(ENOSPC) 而非 BrokenPipeError（实验 A/B
+        # 原始输出贴 RESULT）——原 except 只认管道，异常落进尾段 catch-all：
+        # rc 2 不变、stderr 0 字节（连 abort 路径的「run did not complete」
+        # 都被跳过），即评审所说的「静默 rc 2」。回归两个方向都要红：吞掉
+        # 诊断（stderr 无该行），或放行成 rc 0（协调者把没送达的判决读成
+        # 全绿）。
+        process, summary, tree, before = self.run_pin('stdout-write-fault')
+        self.assertEqual(process.returncode, 2,
+                         '#1800 a run whose final stdout line cannot be '
+                         'written must exit 2 — the verdict line never '
+                         f'reached the reader: rc={process.returncode}, '
+                         f'stderr={process.stderr!r}')
+        self.assertIn(
+            '#1382 stdout summary write failed: OSError: '
+            '[Errno 28] No space left on device',
+            process.stderr,
+            '#1800 a swallowed non-EPIPE stdout write failure must name '
+            'itself on stderr before failing closed')
+        self.assertIsNotNone(
+            summary,
+            '#1800 only the stdout line failed: the summary must still be '
+            'published')
+        self.assertTrue(
+            [row['status'] for row in summary['results']]
+            == ['KILLED'] * len(SELECTION),
+            '#1800 the rows completed and were recorded: only the stdout '
+            'delivery failed, got '
+            + repr([row['status'] for row in summary['results']]))
+        self.assertIn(': KILLED: ', process.stdout,
+                      '#1800 the record lines must still have reached the '
+                      'reader: the fault is the final counts line alone')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line must not be readable from '
+                         'stdout: its write failed')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 the rc 2 must come from the stdout write '
+                         'branch, not the abort branch — the run completed')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertTrue(catalog.read_bytes() == before,
+                        '#1800 a stdout-fault run must still restore the '
+                        'catalog byte for byte')
+
+    def test_stdout_pipe_fault_keeps_the_healthy_exit_code(self):
+        # #1800 fix-r4（DS sibling#2 与 boundary#1 两家同撞）：counts 行抛
+        # BrokenPipeError —— ``... | head`` 关管道的实测形态。except 的先后
+        # 顺序是本契约的承重墙：BrokenPipeError 分支必须先于 OSError 分支
+        # 吞掉管道错误（退出码路由读者，不由 stdout 决定），健康的全 KILLED
+        # 运行仍按判决码 rc 0 退出、不落 #1382 诊断。把两分支合并成一个
+        # `except OSError`（或调换次序）会让健康的 head 读法变成 rc 2 + 诊
+        # 断——协调者把全绿读成「无判决」，假 FAIL；而 Ran 11 的闸门照旧
+        # 全绿，所以这条必须自己钉。
+        process, summary, tree, before = self.run_pin('stdout-pipe-fault')
+        self.assertEqual(process.returncode, 0,
+                         '#1800 a broken pipe on the counts line is the '
+                         'reader leaving (`... | head`): the exit code '
+                         'routes the reader, so the healthy verdict code '
+                         'must survive it — got '
+                         f'rc={process.returncode}, stderr='
+                         f'{process.stderr!r}')
+        self.assertNotIn('#1382 stdout summary write failed', process.stderr,
+                         '#1800 the pipe branch must swallow the error '
+                         'ahead of the OSError branch: a healthy head '
+                         'read is not a write failure to diagnose')
+        self.assertNotIn('#1382 run did not complete', process.stderr,
+                         '#1800 the run completed; only the reader left')
+        self.assertIn(': KILLED: ', process.stdout,
+                      '#1800 the record lines before the counts line must '
+                      'still have reached the reader')
+        self.assertNotIn('"counts"', process.stdout,
+                         '#1800 the counts line must not be readable from '
+                         'stdout: the pipe closed at it')
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertTrue(catalog.read_bytes() == before,
+                        '#1800 a pipe-fault run must still restore the '
+                        'catalog byte for byte')
 
 
 class PreGuardRefusalTests(unittest.TestCase):

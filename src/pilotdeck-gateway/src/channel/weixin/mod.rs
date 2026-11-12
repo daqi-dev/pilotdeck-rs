@@ -98,6 +98,12 @@ const WEIXIN_VIDEO_SKIPPED_TEXT: &str = "微信视频附件暂未接入内容理
 pub fn default_credentials_path() -> PathBuf {
     home_pilotdeck_dir().join("weixin-credentials.json")
 }
+/// The TS `homedir()/.pilotdeck` root every durable weixin path derives
+/// from (the credentials file, the `saveCredentials` mkdir target, the
+/// `im-attachments` store; WeixinChannel.ts:32,142,149,992). Overridable
+/// in the baseline only by overriding `process.env.HOME` — the whole
+/// family moves together, which is what [`WeixinChannelOptions::credentials_home`]
+/// models.
 fn home_pilotdeck_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -191,14 +197,24 @@ pub type WeixinStateChange = Arc<dyn Fn(&JsValue) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct WeixinChannelOptions {
-    pub credentials_path: PathBuf,
-    /// The directory `saveCredentials` mkdirs before writing
-    /// (`PilotDeckServerShutdownBundle`-era TS: `join(homedir(), ".pilotdeck")`,
-    /// WeixinChannel.ts:990-998). Defaults to the process `HOME`; tests point it
-    /// inside their scratch directory — the TS generator does the same by
-    /// overriding `process.env.HOME` — so a replay never writes into the
-    /// machine's real `~/.pilotdeck`.
-    pub credentials_dir: Option<PathBuf>,
+    /// #1725 item 13: the one home knob — the TS baseline's
+    /// `join(homedir(), ".pilotdeck")` root, overridable in TS only by
+    /// overriding `process.env.HOME`. When set, the `saveCredentials` mkdir
+    /// target, the `im-attachments` root and (unless `credentials_path`
+    /// is explicitly repointed) the credentials file all derive from this
+    /// single source, so a caller overriding only this knob never touches
+    /// the machine's real `~/.pilotdeck`. `None` keeps the process `HOME`
+    /// derivation (`home_pilotdeck_dir`). Migration: this replaces the
+    /// former `credentials_dir` knob, which constrained neither the file
+    /// path nor the attachment root (a caller covering only
+    /// `credentials_path` still mkdir'd the real `~/.pilotdeck`).
+    pub credentials_home: Option<PathBuf>,
+    /// The TS `options.credentialsPath ?? CREDENTIALS_PATH` seam
+    /// (WeixinChannel.ts:142): the credentials file location. `None` keeps
+    /// the derived default `<credentials_home>/weixin-credentials.json` —
+    /// same source as the mkdir target, unlike the former always-defaulted
+    /// `PathBuf` field whose default the home knob could not move.
+    pub credentials_path: Option<PathBuf>,
     pub mapper: Arc<WeixinSessionMapper>,
     pub client_factory: WeixinClientFactory,
     pub login: WeixinLogin,
@@ -220,8 +236,8 @@ impl WeixinChannelOptions {
     /// loopback mock; production keeps the auth.js default).
     pub fn with_login_base_url(base_url: String) -> Self {
         Self {
-            credentials_path: default_credentials_path(),
-            credentials_dir: None,
+            credentials_home: None,
+            credentials_path: None,
             mapper: Arc::new(WeixinSessionMapper::new()),
             client_factory: default_client_factory(),
             login: Arc::new(move |callbacks| {
@@ -401,11 +417,14 @@ struct Inner {
 struct Shared {
     key: ChannelKey,
     credentials_path: PathBuf,
-    credentials_dir: PathBuf,
+    /// The resolved `homedir()/.pilotdeck` root (#1725 item 13): the
+    /// `saveCredentials` mkdir target and the `im-attachments` root both
+    /// derive from it, like the single TS source.
+    credentials_home: PathBuf,
     /// `new ImAttachmentStore({ rootDir: join(homedir(), ".pilotdeck",
     /// "im-attachments"), channelKey, maxBytes: WEIXIN_MAX_ATTACHMENT_BYTES })`
     /// (WeixinChannel.ts:148-152). Both roots derive from `homedir()` in the
-    /// baseline, so the injectable `credentials_dir` covers this one too.
+    /// baseline, so the injectable home knob covers this one too.
     attachment_store: Arc<ImAttachmentStore>,
     mapper: Arc<WeixinSessionMapper>,
     client_factory: WeixinClientFactory,
@@ -432,17 +451,25 @@ pub struct WeixinChannel(Arc<Shared>);
 
 impl WeixinChannel {
     pub fn new(options: WeixinChannelOptions) -> Self {
-        let credentials_dir = options.credentials_dir.unwrap_or_else(home_pilotdeck_dir);
+        // #1725 item 13: one source. The home knob is the `homedir()/.pilotdeck`
+        // root; the credentials file defaults to it and only an explicit
+        // `credentials_path` (the TS constructor's own seam,
+        // WeixinChannel.ts:142) repoints the file alone — the mkdir target
+        // and the attachment root always follow the home knob.
+        let credentials_home = options.credentials_home.unwrap_or_else(home_pilotdeck_dir);
+        let credentials_path = options
+            .credentials_path
+            .unwrap_or_else(|| credentials_home.join("weixin-credentials.json"));
         let attachment_store = Arc::new(ImAttachmentStore::new(
-            credentials_dir.join("im-attachments"),
+            credentials_home.join("im-attachments"),
             CHANNEL_KEY,
             media::WEIXIN_ATTACHMENT_MAX_BYTES,
             Arc::new(media::WeixinAttachmentFetcher::new()),
         ));
         Self(Arc::new(Shared {
             key: ChannelKey::new(CHANNEL_KEY),
-            credentials_path: options.credentials_path,
-            credentials_dir,
+            credentials_path,
+            credentials_home,
             attachment_store,
             mapper: options.mapper,
             client_factory: options.client_factory,
@@ -567,8 +594,9 @@ impl WeixinChannel {
     /// byte; the tmp hop only adds the never-observe-a-half-written-file
     /// guarantee a single-threaded TS gets for free.
     fn write_credentials_file(&self, creds: &SavedCredentials) -> std::io::Result<()> {
-        // TS mkdirs `homedir()/.pilotdeck` regardless of credentialsPath.
-        std::fs::create_dir_all(&self.0.credentials_dir)?;
+        // TS mkdirs `homedir()/.pilotdeck` regardless of credentialsPath —
+        // the home knob, not the file's parent (#1725 item 13).
+        std::fs::create_dir_all(&self.0.credentials_home)?;
         let mut object = JsObject::new();
         object.insert("baseUrl".into(), JsValue::from(creds.base_url.as_str()));
         object.insert("botToken".into(), JsValue::from(creds.bot_token.as_str()));

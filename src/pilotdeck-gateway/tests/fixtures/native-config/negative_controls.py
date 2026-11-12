@@ -80,7 +80,32 @@ REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 # the mutated source, CRON_TESTS carries the bound assertion literal (#2065).
 CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
 CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs'
+# #1623 fix-r2: the three entry gates the surrogate divergence now covers —
+# the connection-owned submit entry (submit.rs validate), the rewind_files
+# request gate (tools.rs, delegated to the shared guard), and the archive
+# family's session gate (native_archive.rs). SUBMIT_TESTS / ARCHIVE_TESTS
+# carry their bound tests' assertion literals (the #1864 mutate-writer /
+# read-test precedent); tools.rs carries its own tests module.
+SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
+SUBMIT_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs'
+ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
+ARCHIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_archive/tests.rs'
+# #1623 fix-r2: the methods/tools.rs of the rewind_files request gate — a
+# different file from the TOOLS path above (native_process/tools.rs, the
+# host session tools' admission source).
+METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
+# #1623 fix-r4: the local-routing read's sessionKey gate (session_model_get)
+# — its `sanitize_session` renders the same lossy `<id>.jsonl` name the
+# native_archive family refuses (#2992). SESSION_MODEL_TESTS carries the
+# bound test's assertion literal (the #1864 mutate-writer / read-test
+# precedent).
+SESSION_MODEL = ROOT / 'src/pilotdeck-gateway/src/session_model.rs'
+SESSION_MODEL_TESTS = ROOT / 'src/pilotdeck-gateway/src/session_model/tests.rs'
 CFG = 'native_process::methods::config::tests::'
+SUBMIT_T = 'runtime::turn::submit::tests::'
+TOOLS_T = 'native_process::methods::tools::tests::'
+ARCHIVE_T = 'native_archive::tests::'
+SESSION_MODEL_T = 'session_model::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -127,9 +152,12 @@ mutations = [
      'if false {',
      CFG + 'session_model_set_gate_order_matches_the_ts_chain',
      '#1457 missing selection message'),
-    ('session-key-gate-code', CONFIG,
-     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )',
-     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )',
+    # #1623: config.rs now delegates its `require_session_key` to the shared
+    # guard (methods/mod.rs), so the gate-code mutant moved to the shared call
+    # — the effect on the bound config test is the same wrong-code answer.
+    ('session-key-gate-code', METHODS_MOD,
+     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )?;',
+     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )?;',
      CFG + 'set_permission_mode_applies_and_validates',
      '#1457 missing sessionKey code'),
     ('permission-mode-gate-removed', CONFIG,
@@ -582,11 +610,17 @@ mutations = [
      '                Ok(TrimGuard::Missing)',
      DIR + 'resume_session_rejects_blank_session_key',
      '#1455 resume_session rejects the blank key'),
+    # #1623 方案 B: the surrogate key is now refused by the shared
+    # `require_session_key` (methods/mod.rs), so this mutant re-adds the
+    # #1455-era `to_utf8` filter inside the family-shared `trim_guard` — the
+    # rejection then answers "sessionKey is required." instead of the #1623
+    # message, so the re-bound resume case must die at its message assertion
+    # (the filter would also fold a surrogate projectKey, #2083's cell).
     ('session-dir-surrogate-rejected', METHODS_MOD,
      '            if crate::metadata::js_trim(&text).is_empty() {',
      '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
-     DIR + 'resume_session_accepts_lone_surrogate_session_key',
-     '#1455 resume_session accepts the surrogate key'),
+     DIR + 'resume_session_rejects_lone_surrogate_session_key',
+     "#1623 the resume rejection is the shared guard's domain error"),
     # #1604: `close_project_sessions` keeps TS's plain `Error` shape on the
     # missing/blank branch; this mutant rewords the domain message so that
     # branch's test is the one that has to die.
@@ -611,6 +645,90 @@ mutations = [
      '            .map_err(|_| RequestError::new("projectKey is required."))?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
+    # ── #1623 方案 B: removing the lone-surrogate rejection from the shared
+    # `require_session_key` (methods/mod.rs) must be caught — one code point,
+    # four bound tests (#2564's one-mutation-many-rows shape): the resume
+    # identity path, the destructive delete, the issue's end-to-end alias
+    # acceptance, and the config write path. The delete/e2e anchors are the
+    # stable tails of `{method}`-templated assertion messages, so the runtime
+    # panic payload still carries them after format! expansion.
+    ('session-key-surrogate-guard-removed-resume', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'resume_session_rejects_lone_surrogate_session_key',
+     '#1623 resume_session rejects the surrogate key'),
+    ('session-key-surrogate-guard-removed-delete', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'delete_session_surrogate_key_gate',
+     'refuses the lone-surrogate session key'),
+    ('session-key-surrogate-guard-removed-e2e', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'surrogate_key_cannot_reach_the_fffd_transcripts_files',
+     '#1623 the surrogate-spelled tag is refused'),
+    ('session-key-surrogate-guard-removed-config', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     CFG + 'session_model_set_surrogate_key_answers_the_session_key_gate',
+     '#1623 the surrogate key answers the sessionKey gate'),
+    # #1623: the rejection keeps the guard family's error shape — rewording
+    # the message must be caught by the per-method message assertion. fix-r2
+    # re-bound: the wording now lives in the shared `SESSION_KEY_SURROGATE_MESSAGE`
+    # constant (methods/mod.rs) that every gate renders, so the mutant edits
+    # the constant instead of one call site's inline copy.
+    ('session-key-surrogate-message', METHODS_MOD,
+     'pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =\n'
+     '    "sessionKey must not contain an unpaired surrogate.";',
+     'pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =\n'
+     '    "sessionKey contains a surrogate.";',
+     DIR + 'tag_session_surrogate_key_gate',
+     "answers the guard family's surrogate message"),
+    # ── #1623 fix-r2: the three entry gates the divergence now covers. Each
+    # row removes one gate's surrogate rejection at its own site — not the
+    # shared guard, which the rows above already kill four ways — and binds
+    # the test that pins that gate's refusal.
+    ('submit-entry-surrogate-guard-removed', SUBMIT,
+     '        && crate::native_process::has_unpaired_surrogate(key.units())',
+     '        && false',
+     SUBMIT_T + 'submit_turn_rejects_lone_surrogate_session_key',
+     "#1623 the surrogate key answers the entry gate's error event"),
+    ('rewind-entry-surrogate-guard-removed', METHODS_TOOLS,
+     '            let session_key = super::require_session_key(&params)?;',
+     '            let session_key = required_trimmed(\n'
+     '                &params,\n'
+     '                "sessionKey",\n'
+     '                "INVALID_SESSION_KEY",\n'
+     '                "sessionKey is required.",\n'
+     '            )?;',
+     TOOLS_T + 'rewind_files_rejects_lone_surrogate_session_key',
+     '#1623 rewind_files rejects the lone-surrogate key'),
+    ('archive-entry-surrogate-guard-removed', ARCHIVE,
+     '        JsValue::String(s) if crate::native_process::has_unpaired_surrogate(s.units()) =>',
+     '        JsValue::String(s) if false =>',
+     ARCHIVE_T + 'archive_gate_rejects_lone_surrogate_session_key',
+     '#1623 the archive gate rejects the lone-surrogate key'),
+    # #1623 fix-r4: the local-routing read's own gate — `session_model_get`
+    # renders the key through `sanitize_session` (`from_utf16_lossy`) before
+    # the `<id>.jsonl` join (#2992), so removing this gate re-opens the same
+    # cross-session read the archive gate closes. Bound to the reject test's
+    # `expect_err` marker (the runner's panic-payload binding).
+    ('session-model-entry-surrogate-guard-removed', SESSION_MODEL,
+     '    if crate::native_process::has_unpaired_surrogate(session_string.units()) {',
+     '    if false {',
+     SESSION_MODEL_T + 'session_model_get_rejects_lone_surrogate_session_key',
+     '#1623 session_model_get rejects the lone-surrogate session key'),
+    # #1623 fix-r5: the status write's own gate (#2998) — the entry keeps its
+    # `must be a string.` read (no trim gate, A7.8) but every identity it
+    # hands the key to is the lossy `sanitize_session_id` render (fence path,
+    # cold append_metadata_with_lease, live_recorder), so removing this gate
+    # re-opens the cross-session status write the guard families refuse.
+    # Bound to the reject test's `expect_err` marker.
+    ('record-status-entry-surrogate-guard-removed', SESSION_DIR,
+     '        if crate::native_process::has_unpaired_surrogate(session_key.units()) {',
+     '        if false {',
+     DIR + 'record_agent_status_message_rejects_lone_surrogate_session_key',
+     '#1623 record_agent_status_message rejects the lone-surrogate session key'),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
     # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
     # Dropping the null arm restores the pre-#2272 shape where an explicit
@@ -642,6 +760,41 @@ mutations = [
      '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
      'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
      '#2562 explicit null is not an error with the recorder on'),
+    # ── #2617: the submit path's string branch converts a lone-surrogate
+    # projectKey lossily — the #2083 close-path shape (`session_dir.rs`), same
+    # judge same fix (the TS resolver chain runs the key to completion without
+    # throwing — it lands on the process cwd's project, not necessarily the
+    # configured one; probes `_tmp/20261111-issue-2617-probe/
+    # probe-submit-surrogate.out` + `_tmp/20261111-2617-evidence/
+    # probe-submit-surrogate-resolver.out`, whose "resolves like the fallback"
+    # flag is tautological — the script pinned `fallbackProjectRoot =
+    # process.cwd()`). The first row re-adds the pre-#2617 `to_utf8`
+    # rejection, so the anchor's code assertion dies first; the second row
+    # disables the capability gate itself, so the anchor's reject-cell
+    # `.expect_err` dies on the served Ok; the third row serves another
+    # directory's id, so the admit cell's id-equality assertion is the kill
+    # point (it otherwise has no red side).
+    ('submit-surrogate-project-key-rejected', SERVICES,
+     '            let project = String::from_utf16_lossy(project.units());',
+     '            let project = project\n'
+     '                .to_utf8()\n'
+     '                .map_err(|_| failure("projectKey must be a valid path string."))?;',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey reaches the capability gate'),
+    ('submit-serve-gate-removed', SERVICES,
+     '            if !self.options.serves_project(&project) {',
+     '            if false && !self.options.serves_project(&project) {',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey is not the type error'),
+    # fix-r2 (MM sibling-2 / boundary-1): the admit cell's id-equality
+    # assertion had no red side — both rows above die in the reject cell.
+    # This row serves another directory's id (home instead of the configured
+    # project), so the admit cell's equality assertion is the only kill point.
+    ('submit-admit-cell-serves-wrong-id', SERVICES,
+     '            let project = self.options.project.to_string_lossy();',
+     '            let project = self.options.home.to_string_lossy();',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     "#2617 the admit cell answers the residual project's own workspace id"),
     # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
     # path — with the null arm dropped the admission refusal (isolated-project
     # message) answers before the method's own `?.trim()` gate, so the null
@@ -1301,19 +1454,29 @@ mutations = [
 # the derived counts in the paragraph above describe the #2065 table as it was.
 # #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
 # the counts moved to 51 rows / 41 literal-anchor entries.
-# #2207: the five #2090 gate-order tests joined the bound rows (an
-# admission-refusal mutant and a trim-gate mutant each), so the counts moved
-# to 80 rows / 62 literal-anchor entries.
-# #2199: the six config-family gate-order tests joined the same form, so the
-# counts moved to 92 rows / 64 literal-anchor entries.
-# #2199 fix-r1: the six admission-null-refused-config rows above (DS
-# sibling#1, the #2564 fix-r1 precedent re-applied to the config family)
-# moved the counts to 98 rows / 65 literal-anchor entries.
-# #2207 fix-r2: the four admission-null-refused session_dir rows above
-# (GLM r3 sibling#1) moved the counts to 102 rows / 65 literal-anchor entries.
-# #2207/#2199 fix-r3 (DS r6 sibling#1): the six admission/trim rows above
-# (per-spelling discriminative mutants) moved the counts to 108 rows /
-# 65 literal-anchor entries.
+# #2617 (rebase 改数，fix-r4 按 DS r6 双 P1 实测重算): the three #2617 rows
+# (two submit-surrogate + one admit-cell) joined the table with their three
+# MANAGEMENT_TESTS pins. The pre-rebase note derived counts from the stale
+# "108 rows / 65 entries" baseline; the rebase-time main table actually held
+# 118 rows / 72 literal-anchor entries, so with our +3 rows / +3 pins the
+# head 8ecbdee3b `--check` reads #1457 121 mutation anchors / #2065 75
+# literal anchors (2026-11-12 实跑).
+# #1623: the sessionKey surrogate-rejection rows joined the table (one
+# re-bind of the old #1455 row, five new rows, one row re-pointed from
+# config.rs to the shared guard in methods/mod.rs); the later fix-r2/r4/r5
+# commits add their own rows above. The pre-rebase figures (123 rows / 77
+# literal-anchor entries, then 126/80 after fix-r2, 127/81 after fix-r4,
+# 128/82 after fix-r5) rode the stale #2207/#2199 chain this rebase
+# replaced; against the post-rebase table the head reads #1457 131 mutation
+# anchors / #2065 85 literal anchors (2026-11-12 rebase-time `--check` run,
+# which also absorbed the three #2617 rows main added).
+# #1623 fix-r2: the three fix-r2 entry gates (submit_turn validate,
+# rewind_files request gate, native_archive session gate) joined with one
+# row and one literal anchor each.
+# #1623 fix-r4: the session_model_get entry gate joined with one row and one
+# literal anchor.
+# #1623 fix-r5: the record_agent_status_message entry gate (#2998) joined with
+# one row and one literal anchor.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1362,7 +1525,6 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1874 a closed session writer is an error, not a recorded status'),
     (SESSION_DIR, '#1873 a broken lock file is a storage error, not the retryable busy answer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
-    (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
     (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
                   'so the sessionKey gate answers the blank key'),
@@ -1380,6 +1542,9 @@ LITERAL_ANCHORS = [
     (CONFIG, '#2199 a null projectKey falls back like a missing one, '
              'so the sessionKey gate answers the blank key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey reaches the capability gate'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey is not the type error'),
+    (MANAGEMENT_TESTS, "#2617 the admit cell answers the residual project's own workspace id"),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
@@ -1398,6 +1563,27 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#2068 the surrogate projectKey keeps its raw unit inside the prefix'),
     # fix-r1: the bare-message mapping the throwing-object test pins.
     (SESSION_DIR, '#2068 the ToPrimitive failure keeps the bare V8 text'),
+    # #1623: the surrogate-rejection rows — the re-bound #1455 row's message
+    # assertion, the four guard-removal rows' panic anchors, and the message
+    # row's template tail (a `{method}` format string's stable fragment, the
+    # `permission-mode-gate-removed` prefix shape).
+    (SESSION_DIR, "#1623 the resume rejection is the shared guard's domain error"),
+    (SESSION_DIR, '#1623 resume_session rejects the surrogate key'),
+    (SESSION_DIR, 'refuses the lone-surrogate session key'),
+    (SESSION_DIR, '#1623 the surrogate-spelled tag is refused'),
+    (SESSION_DIR, "answers the guard family's surrogate message"),
+    (CONFIG, '#1623 the surrogate key answers the sessionKey gate'),
+    # #1623 fix-r2: the three entry gates' bound literals — the submit entry
+    # (test file), the rewind request gate (tools.rs carries its tests), and
+    # the archive session gate (test file).
+    (SUBMIT_TESTS, "#1623 the surrogate key answers the entry gate's error event"),
+    (METHODS_TOOLS, '#1623 rewind_files rejects the lone-surrogate key'),
+    (ARCHIVE_TESTS, '#1623 the archive gate rejects the lone-surrogate key'),
+    # #1623 fix-r4: the local-model read entry's bound literal (its tests file).
+    (SESSION_MODEL_TESTS, '#1623 session_model_get rejects the lone-surrogate session key'),
+    # #1623 fix-r5: the status write entry's bound literal (session_dir.rs
+    # carries its own tests module).
+    (SESSION_DIR, '#1623 record_agent_status_message rejects the lone-surrogate session key'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
@@ -1407,7 +1593,9 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS,
+                SUBMIT, SUBMIT_TESTS, ARCHIVE, ARCHIVE_TESTS, METHODS_TOOLS,
+                SESSION_MODEL, SESSION_MODEL_TESTS)
 
 
 def _assertions(case):

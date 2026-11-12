@@ -8,6 +8,26 @@
 //! run restores. A shared lock suffices: readers never exclude each other, and
 //! every writer restores its guarded sources before releasing.
 //!
+//! Lock taxonomy, for anyone pointing at this header as the canonical
+//! wording: one lock file, two acquisition modes. Writers take it
+//! exclusively (`tree_lock`, LOCK_EX); the resident readers in this
+//! module take it shared (`fixture_read_lease`, `try_lock_shared`) and
+//! are thereby excluded from writer windows but never from each other.
+//! Whether any *other* command takes the lock at all is a per-runner
+//! fact, not a property of reading or writing: `utf16-residual-sort/
+//! negative_controls.py --check-anchors` takes it; `issue-1246/
+//! negative_controls.py --check` takes it (its check runs inside the
+//! tree lock), and so does `issue-2495/negative_controls.py --check`
+//! (its stale scan runs inside the tree lock); `always-on-2294/
+//! negative_controls.py --check` does not; a plain `cargo test` takes
+//! none itself, but the resident tests that call `fixture_read_lease`
+//! hold it shared for their reads (`sdk_signal_exit.rs` and `common/signal_replay.rs` here). Nothing that
+//! never takes the lock is excluded from anything — any lockless command
+//! can read a mid-window mutant and false-fail. A writer SIGKILLed while
+//! inside the mutation window leaves the mutant on disk (its `finally`
+//! restore never ran); the lock dies with the process, so an absent lock
+//! proves nothing about tree cleanliness.
+//!
 //! #1662 started this in `sdk_signal_exit.rs`; #1885 lifts it into this shared
 //! module so `signal_replay.rs` (96-cell replay, the SIGINT wrapper probe and
 //! both D1 ledger readers) uses the exact same lease instead of a second

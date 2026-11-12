@@ -1,6 +1,8 @@
 // The HTTP mock also runs in a service HOME, never in the coordinator's HOME.
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { root } from './env.mjs';
 import { assertRealExecutionEnv } from './execution-env.mjs';
 import { startMockLLM } from './mock-llm.mjs';
@@ -40,7 +42,7 @@ export async function startIsolatedMockLLM(env, children, spawnImpl = spawn) {
     try { await exited; } finally { clearTimeout(timeout); }
   } };
 }
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   assertRealExecutionEnv(process.env);
   let mock, closing = false;
   const close = async () => {

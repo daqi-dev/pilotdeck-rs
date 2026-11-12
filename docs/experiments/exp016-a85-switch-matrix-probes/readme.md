@@ -27,7 +27,19 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   ICU 78.2。
 - **落位**：`scripts/a8-5/`（common.mjs + 各探针；`--base`/`--out` 参数化，默认基线取
   `PILOTDECK_BASE` 或标准 runner 路径）。`node scripts/a8-5/<probe>.mjs --out <证据目录>`。
-- **纪律**：仅 loopback 高位端口（39871–39898 段）、隔离 `PILOT_HOME`/`diskSpillDir`、不外发网络
+- **必跑（fix-r4 接线登记）**：P16 守门/note 纯函数的入仓负控微测
+  `node scripts/a8-5/p16_gate_microtest.mjs`（无参数、无落盘副作用、不依赖 TS 基线 dist，
+  端口 39994；退出码 0 = 全过 T1–T16，任一断言失败 exit 1、总时限 watchdog 60s 超时
+  exit 2——退出码集 {0,1,2} 复用不变，fix-r6：探针被 import 的宿主（含
+  import.meta.main 缺失的 22.0–22.16 段）不再于 body 前被 exit 3 杀，微测在该段由
+  不可用改为可用）——凡改动 `p16_stop_acceptance.mjs` / `common.mjs` 的守门/note 面，本微测必跑、
+  原始输出归档进当轮证据目录。**该微测当前不被任何 runner/CI 收录**（fix-r4 评估：
+  `scripts/a8-5` 全仓无脚本/CI 引用；`.github/workflows/ci.yml` 的 check job 有钉
+  node-version 22.22.0 的 node 步（`test_metadata_observer.mjs`）可挂 `node
+  scripts/a8-5/p16_gate_microtest.mjs`，或新增 `check_a8_5_gates.sh`——CI 闸门面属全员
+  策略，归 #2759 P2-跟进由协调者终判）。
+- **纪律**：仅 loopback 高位端口（39871–39898 段；p16 守门微测用 39994——fix-r4 挪出该段，
+  原 39894 与 p15_driver 的 A-elevate 用例撞号）、隔离 `PILOT_HOME`/`diskSpillDir`、不外发网络
   （provider 指不可路由 loopback）、子进程记 pid 逐个收尸、观察窗全部有界、无无界派生。
 - **证据**：P1–P7 原始输出（cb8）归档于主仓
   `_tmp/20261107-archive-wt-1353/20261026-issue-1353/raw/`；P8–P16 原始输出（mbp2）在
@@ -52,7 +64,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
-| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET）。前提守门（#2662）：两处健康检查响应须为 keep-alive（缺头按完整 HTTP/1.1 响应头隐式）、窗内须实际观测到干净 FIN（`end`，非 error→close 异常拆链），否则对应观察降级——agent-reuse 前提失败落 `A/SKIP-agent-reuse`、close 前池被收空落 `A/SKIP-pool-drained-before-reuse`（fix-r1 池占用复检），裸层/FIN 前提失败以 `rawPremise`/`finObserved` 字段与降级 note 体现（不发独立 SKIP 行），不出上述结论（#2756：keepAliveToken/入池前提判定收敛进 common.mjs——`keepAliveProbe.once` 返回 `premise`/`premiseReason`，本探针内联 agent 炮台改用共用 keepAliveProbe，p2b/p1_p2/p6 三探针同形；fix-r1：裸层 `rawPremise` 亦改共用 `keepAlivePremise`、once 另带 `reusedSocket`、agent 暴露 `freeSocketCount()` 供 close 前复检；fix-r2：`freeSocketCount` 改各 origin 数组长度求和、`A/agent-pooled-request1` note 收窄为「请求 1 已入池，close 前是否仍占用见 A/SKIP-pool-drained-before-reuse」——close 后 `reusedSocket` 两路径同为 false 仅作参考，判别依据是 close 前的池占用复检；fix-r3：池占用复检无论结果都落显式 `A/pool-at-close` 行，note 指向该行、不再以 SKIP 行缺席作负证据） |
+| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET）。前提守门（#2662，#2759 精化）：裸层以头/体切分后的头块查 Connection（体行不误判）、缺头仅完整 HTTP/1.1 响应隐式 keep-alive、显式头无论 1.0/1.1 一律按 token（`parseRawGate` 落盘原值）；agent 入池以 `agent.freeSockets` 直接观测量为准（头推断仅降级路径，`derivePooledPremise` 落盘——fix-r3 起 header/direct 分量随 `pooledHeader`/`pooledDirect` 字段落盘，reason 经 `pooledSkipReason` 按 pooled1/freeSockets/头推断三态分叉）——入池前提失败落 `A/SKIP-agent-reuse`、close 前池被收空落 `A/SKIP-pool-drained-before-reuse`（fix-r1 池占用复检、`A/pool-at-close` 显式行）；「静默悬挂」句由 `write2`（writeOk + write 回调 flush）与 `eventsAfterWrite`（保留 at/relToWrite；写前窗 [t0,writeAt)/写后窗 [writeAt,∞) 分区不双占）实测推导（`silentHang`，fix-r3 评审 P1 簇修：`write2.flush.flushed` 进守门——pending/回调失败（对已销毁 socket 写的 ERR_STREAM_DESTROYED 形状，实测写同步未抛、写后窗为空、error 全落写前窗 at<writeAt）不得判「写成功」），FIN 前提以 `finBeforeWrite`（`sawCleanFin`）体现；机制 B note 由 rawEvents 推导（sawConnect/sawEnd/sawError/sawAbnormal 落盘，握手前 error/无 EOF 等形状如实降级；fix-r3 起 rst 分支异常判定与裸层共用谓词——error ∥ close(hadError)，只余 close(hadError=true) 时不降级为「RST 未到达」）；B-EOF 收尾加界（`srv.close` 1.5s 界 + 残余连接销毁兜底，JSON+DONE 为完整性信号；fix-r3 实测 net.Server 无 `closeAllConnections`（http.Server 才有）——旧 `srv.closeAllConnections?.()` 兜底实为静默 no-op，改为跟踪已接受连接手工销毁，二次 race 结果落 `B-<mode>/srv-close-final` 显式行、未落定如实写降级行）。前提未成立的格降级记录（字段+note 原值），不出上述结论（#2756：keepAliveToken/入池前提判定收敛进 common.mjs——`keepAliveProbe.once` 返回 `premise`/`premiseReason`，本探针内联 agent 炮台改用共用 keepAliveProbe，p2b/p1_p2/p6 三探针同形；fix-r1：裸层 `rawPremise` 亦改共用 `keepAlivePremise`、once 另带 `reusedSocket`、agent 暴露 `freeSocketCount()` 供 close 前复检（fix-r2：`freeSocketCount` 改按各 origin 数组长度求和——原 origin 键计数在同 origin 多 socket 时低估；`A/agent-pooled-request1` note 收窄为「请求 1 已入池」——close 后 `reusedSocket` 两种路径同为 false 仅作参考，判别依据是 close 前的池占用复检）；fix-r3：池占用复检无论结果都落显式 `A/pool-at-close` 行，note 指向该行、不再以 SKIP 行缺席作负证据；#2759 fix-r2 两线整合：前提判定以 common 单源为结构主干，头/体切分与 freeSockets 直测并入该主干——入池直测在共用 agent 上经 `freeSocketKeys()` 取直接观测量（direct 压过头推断）、与 close 前池占用复检并存，pooled 侧头推断即 once 随响应带回的 `premise`（同源同形）、裸层与 pooled 缺头语义单源对齐；#2759 fix-r3：守门纯函数仓内负控微测进仓 `scripts/a8-5/p16_gate_microtest.mjs`（import 本探针真实代码、不复制逻辑），探针 import 无副作用（路径/Recorder 惰性初始化于 main）、主模块守卫改 `import.meta.main`（v22.22.0 实测 symlink 入口下不再静默 no-op）；p2b/p1_p2/p6 三探针的建池前提**登记豁免**：保持 once 头推断 + close 前池占用复检兜底（结论行被 #2756 fix-r1 复检与 SKIP 守门兜住、不产生假 PASS/假 FAIL），freeSockets 直测消费是 p16 侧 #2759 精化、升 common 共享归 #2759 跟进单）；#2759 fix-r4（2026-11-11，主机 cb8）评审修复：主模块守卫兜底——`isMainEntry` 纯函数（import.meta.main 为真，或 argv[1] 与模块 URL 两侧 realpathSync 归一后同 URL），import.meta.main 未提供的 Node 段（22.0–22.16）直接执行不再静默 no-op exit 0（尺子假通过面，评审 boundary#1），该段且 argv 兜底未命中时先独立路径复检（fix-r6：argv[1] 与本模块文件两侧 realpathSync 归一后相同才显式 exit 3——「直接执行而守卫未跑 main」以非零码可察；否则安静交还宿主。被 import 的宿主任何 Node 段不被杀——fix-r4 原始取舍与 fix-r6 收窄见各轮 RESULT）；现代 Node 被 import（main===false）安静交还宿主（微测/T12 消费方不受影响）；B-EOF 分支与 rst 分支同构（干净 EOF 判 `sawEnd && !sawAbnormal`，「end + 只余 close(hadError)」单列降级句，不再把异常拆链说成干净 EOF）；`A/raw-keepalive-request1` 增落 `connValue`（多行 Connection 形状可由落盘原值复算 rawPremise）；微测端口 39894→39994（原与 p15 A-elevate 撞号）+ T4 listen 挂 error 监听（EADDRINUSE 受控 FAIL）+ 总时限 watchdog 60s + T13/T14 守卫负控格（直接执行格：守卫误判为非 main 时必红），partB `srv.listen` 同挂 error 监听；#2759 fix-r5（2026-11-12，主机 cb8）评审修复：href 归一抽成可测导出 `entryHrefCandidates` + 微测 T15 **导出纯函数直调格**（symlink/空格路径/目录/不存在路径真实文件系统形状实跑——判杀函数体内变异：返回字段互换 / 去 realpathSync 归一 / pathToFileURL 误用；调用点接线——真实 process.argv[1]/import.meta.url 实参与 isMainEntry 消费——零运行时覆盖，登记待办 coord 跟进单）；#2759 fix-r6（2026-11-12，主机 cb8）评审修复：分支③ exit 3 收窄为独立路径复检（`isSelfEntryPath` 导出 + 微测 T16 直调格——路径级 realpathSync 归一，与 href 守卫变异面分立）——被 import 的宿主（含 22.0–22.16 段 import.meta.main 缺失形状）不再于 body 前被杀、微测退出码集 {0,1,2} 复用不变；T14 直跑负控格临时 scratch finally 清场 + 清场断言（对齐 T15）；登记面同步（本 readme 必跑行 T1–T16 + 退出码集复用、matrix §4.2 要点③「守门过为限」限定） |
 
 ## 结论
 
@@ -75,9 +87,11 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
    控制面照常摘除；server 级半停窗口 E1/E2 照常可服务、后续步骤照走、退出码 0。
 9. **单飞 + 退出码抬升**（p15）：重复信号下停机只进一次；退出码可被停机挂起窗口内迟到的
    unhandledRejection 抢写为 1（对照 0）——退出码不只由停切换过程产生。
-10. **停接纳机制观测面**（p16）：机制 A 在 connect 相位明确拒绝并立即释放端口；机制 B 握手一律完成、
-    失败推迟到读写相位且端口不释放；A 的裸层复用是静默悬挂（重建连解释坐实）；B 的 EOF/RST 变体在
-    node:http 层同码（ECONNRESET）、fetch 层可区分。
+10. **停接纳机制观测面**（p16）：机制 A 在 connect 相位明确拒绝并立即释放端口；机制 B 实测形状握手
+    完成后失败推迟到读写相位且端口不释放（握手前 error 等形状由 rawEvents 推导、如实降级）；A 的裸层
+    复用在前提成立时为静默悬挂（写成功 = writeOk + 写回调 flushed + 写后窗无回包/无 RST，由
+    write2/eventsAfterWrite 实测支撑，重建连解释坐实）；B 的 EOF/RST 变体在 node:http 层同码（ECONNRESET）、fetch 层可区分——以上
+    均以前提守门通过为限（keep-alive 头守门、入池直测、写前干净 FIN），未过门的格降级记录、不计入结论。
 
 ## 边界（时间与规模）
 
