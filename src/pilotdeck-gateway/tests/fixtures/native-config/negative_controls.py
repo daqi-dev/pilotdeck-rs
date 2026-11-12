@@ -718,6 +718,17 @@ mutations = [
      '    if false {',
      SESSION_MODEL_T + 'session_model_get_rejects_lone_surrogate_session_key',
      '#1623 session_model_get rejects the lone-surrogate session key'),
+    # #1623 fix-r5: the status write's own gate (#2998) — the entry keeps its
+    # `must be a string.` read (no trim gate, A7.8) but every identity it
+    # hands the key to is the lossy `sanitize_session_id` render (fence path,
+    # cold append_metadata_with_lease, live_recorder), so removing this gate
+    # re-opens the cross-session status write the guard families refuse.
+    # Bound to the reject test's `expect_err` marker.
+    ('record-status-entry-surrogate-guard-removed', SESSION_DIR,
+     '        if crate::native_process::has_unpaired_surrogate(session_key.units()) {',
+     '        if false {',
+     DIR + 'record_agent_status_message_rejects_lone_surrogate_session_key',
+     '#1623 record_agent_status_message rejects the lone-surrogate session key'),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
     # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
     # Dropping the null arm restores the pre-#2272 shape where an explicit
@@ -1463,6 +1474,8 @@ mutations = [
 # row and one literal anchor each.
 # #1623 fix-r4: the session_model_get entry gate joined with one row and one
 # literal anchor.
+# #1623 fix-r5: the record_agent_status_message entry gate (#2998) joined with
+# one row and one literal anchor.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1567,6 +1580,9 @@ LITERAL_ANCHORS = [
     (ARCHIVE_TESTS, '#1623 the archive gate rejects the lone-surrogate key'),
     # #1623 fix-r4: the local-model read entry's bound literal (its tests file).
     (SESSION_MODEL_TESTS, '#1623 session_model_get rejects the lone-surrogate session key'),
+    # #1623 fix-r5: the status write entry's bound literal (session_dir.rs
+    # carries its own tests module).
+    (SESSION_DIR, '#1623 record_agent_status_message rejects the lone-surrogate session key'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the

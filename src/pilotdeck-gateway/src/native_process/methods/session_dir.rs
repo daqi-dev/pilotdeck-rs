@@ -497,6 +497,25 @@ impl Requests {
             .and_then(JsValue::as_string)
             .cloned()
             .ok_or_else(|| RequestError::new("sessionKey must be a string."))?;
+        // #1623 方案 B at the status write (fix-r5, #2998): every identity this
+        // entry hands the key to is lossy — the fence path, the cold
+        // `append_metadata_with_lease`, and the `live_recorder` lookup all
+        // render it through `sanitize_session_id`
+        // (`String::from_utf16_lossy`), so a lone-surrogate key and an
+        // explicit U+FFFD key are one transcript, the same alias the guard
+        // families refuse. TS has no gate here at all beyond the string read
+        // above (`InProcessGateway.ts:2068` forwards `input.sessionKey` raw;
+        // the cold fallback reaches the same lossy fs boundary —
+        // A7.8-INTERACTION-NONSTRING-OWNER-001-R1 keeps this entry's own
+        // `must be a string.` shape), so the rejection is the registered
+        // A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence, stricter than
+        // TS. Only the unpaired shape is refused.
+        if crate::native_process::has_unpaired_surrogate(session_key.units()) {
+            return Err(gateway_error(
+                "INVALID_SESSION_KEY",
+                crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+            ));
+        }
         let turn_id = params
             .get("turnId")
             .and_then(JsValue::as_string)
@@ -1541,6 +1560,109 @@ mod tests {
     #[tokio::test]
     async fn tag_session_surrogate_key_gate() {
         surrogate_key_gate("tag_session").await;
+    }
+
+    // #1623 方案 B at the status write (fix-r5, #2998): this entry keeps its
+    // own `must be a string.` gate (TS has no `?.trim()` here —
+    // A7.8-INTERACTION-NONSTRING-OWNER-001-R1), and its every downstream
+    // identity is the lossy `sanitize_session_id` render — the fence path, the
+    // cold `append_metadata_with_lease`, and the `live_recorder` lookup
+    // (`assembly.rs`, alias-aware by design for `/`-vs-`-`). A surrogate
+    // spelling therefore reaches the `s\u{FFFD}` session's transcript exactly
+    // the way the pre-fix probes showed the tag/delete doing; the gate answers
+    // before any of those reads. The registered A7-W5 divergence, stricter
+    // than TS (which forwards the key raw, `InProcessGateway.ts:2068`).
+    #[tokio::test]
+    async fn record_agent_status_message_rejects_lone_surrogate_session_key() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let error = r
+            .session_dir_request(
+                "record_agent_status_message".into(),
+                object([
+                    ("sessionKey", JsValue::String(key)),
+                    ("turnId", "surrogate-status".into()),
+                    ("status", JsValue::Undefined),
+                ]),
+            )
+            .await
+            .expect_err("#1623 record_agent_status_message rejects the lone-surrogate session key");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 record_agent_status_message refuses the lone-surrogate session key"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 the status rejection is the shared guard family's message"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1623 controls: only the unpaired shape is refused. An explicit U+FFFD
+    // key and a surrogate pair (an astral character) pass the gate and the cold
+    // append lands in each spelling's *own* `<id>.jsonl` — the two spellings
+    // are distinct files, so a gate that over-rejected or a write that
+    // resolved both onto one file cannot pass the cross-checks.
+
+    #[tokio::test]
+    async fn record_agent_status_message_keeps_fffd_and_paired_surrogate_keys() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let home = r.options.home.clone();
+        let project = r.options.project.clone();
+        let mut transcripts: Vec<(&str, String)> = Vec::new();
+        for (label, units, turn) in [
+            ("explicit-fffd", vec![0x73, 0xfffd], "fffd-status"),
+            (
+                "paired-surrogate",
+                vec![0x73, 0xd800, 0xdc00],
+                "paired-status",
+            ),
+        ] {
+            let key = JsString::from_utf16(units);
+            let recorded = r
+                .session_dir_request(
+                    "record_agent_status_message".into(),
+                    object([
+                        ("sessionKey", JsValue::String(key.clone())),
+                        ("turnId", turn.into()),
+                        ("status", JsValue::Undefined),
+                    ]),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("#1623 the {label} key passes the gate: {error:?}"));
+            negative_assert_eq!(
+                recorded.get("recorded").and_then(JsValue::as_bool),
+                Some(true),
+                "#1623 the {label} key reports recorded:true through the cold append"
+            );
+            let path = transcript_locks::session_transcript_path(&home, &project, &key);
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!("#1623 the {label} transcript is readable: {error}")
+            });
+            negative_assert!(
+                text.contains(turn),
+                "#1623 the {label} status entry lands in its own transcript"
+            );
+            transcripts.push((label, text));
+        }
+        let [(fffd_label, fffd_text), (paired_label, paired_text)] = transcripts.as_slice() else {
+            panic!("#1623 both control spellings ran")
+        };
+        negative_assert!(
+            !fffd_text.contains("paired-status"),
+            "#1623 the {fffd_label} transcript does not carry the {paired_label} entry"
+        );
+        negative_assert!(
+            !paired_text.contains("fffd-status"),
+            "#1623 the {paired_label} transcript does not carry the {fffd_label} entry"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
     }
 
     /// The session keys one `snapshot_state` table holds, as UTF-8 strings.
