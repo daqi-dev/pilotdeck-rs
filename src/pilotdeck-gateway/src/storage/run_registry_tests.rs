@@ -963,21 +963,31 @@ fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
 // keeps it under the folded "" key but every read of it throws on the record
 // clone, so "single record invisible, the rest readable" is the aligned
 // shape (registered divergence). Past the band the load fails like TS's get
-// does (#251 boundary oracle).
+// does (#251 boundary oracle). fix-r5 calibrates the band to the join's own
+// frame count (one per array, `array_nesting`): a scalar leaf and an empty
+// innermost array throw at the same level on a fixed caller stack
+// (`fix-r5/node-probe/fold-band-stackdep.out`), so both leaf shapes share
+// every boundary below.
 #[test]
 fn deep_session_key_record_reopens_without_bricking_the_other_records() {
     let scratch = Scratch::new();
     let path = scratch.path();
-    let snapshot_with = |depth: usize| {
-        let deep = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+    // `depth` counts arrays — the join-frame caliber — for either leaf shape.
+    let snapshot_with = |depth: usize, empty_leaf: bool| {
+        let deep = if empty_leaf {
+            format!("{}[]{}", "[".repeat(depth - 1), "]".repeat(depth - 1))
+        } else {
+            format!("{}1{}", "[".repeat(depth), "]".repeat(depth))
+        };
         format!(
             r#"{{"schemaVersion":1,"records":[{{"sessionKey":null,"runId":"run-a1","state":"completed","requestMaterial":"m1"}},{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
         )
     };
-    // Inside the fold band: the null record stays readable, the deep record
-    // is invisible under every spelling, and the skip is counted.
-    for depth in [2001, 2621] {
-        let text = snapshot_with(depth);
+    // Inside the fold band, both leaf shapes: the null record stays readable,
+    // the deep record is invisible under every spelling, and the skip is
+    // counted.
+    for (depth, empty_leaf) in [(2001, false), (2621, false), (2621, true)] {
+        let text = snapshot_with(depth, empty_leaf);
         fs::write(&path, &text).unwrap();
         let registry = FileRunRegistry::open(&path).unwrap();
         assert_eq!(
@@ -1018,17 +1028,62 @@ fn deep_session_key_record_reopens_without_bricking_the_other_records() {
         );
     }
     // Past the fold band the load fails like TS's get (the #251 oracle's
-    // RangeError), with the snapshot and the lock left as they were.
-    let text = snapshot_with(2622);
-    fs::write(&path, &text).unwrap();
-    let Err(RunRegistryError::Invalid(message)) = FileRunRegistry::open(&path) else {
-        panic!("#2692 depth 2622 is past V8's fold band and must fail the load");
-    };
+    // RangeError) for either leaf shape, with the snapshot and the lock left
+    // as they were.
+    for empty_leaf in [false, true] {
+        let text = snapshot_with(2622, empty_leaf);
+        fs::write(&path, &text).unwrap();
+        let Err(RunRegistryError::Invalid(message)) = FileRunRegistry::open(&path) else {
+            panic!("#2692 depth 2622 is past V8's fold band and must fail the load");
+        };
+        assert_eq!(
+            message, "Maximum call stack size exceeded",
+            "#2692 the load failure carries V8's RangeError text"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        assert!(!lock_path(&path).exists());
+        no_temporaries(&scratch.0);
+    }
+}
+
+// #2692 fix-r5 (review boundary#3, P0): the in-band skip used to be silent
+// in production — the per-file counter was `#[cfg(test)]`-only. The process
+// cumulative `unrekeyable_skips()` is the production half of the registered
+// signal surface (R17): monotonic, so a reader takes a delta around an
+// operation instead of trusting an absolute. Concurrent tests in this
+// process skip their own records, so the assertions are deltas.
+#[test]
+fn unrekeyable_skips_advances_in_production_on_every_read() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let deep = format!("{}[]{}", "[".repeat(2620), "]".repeat(2620));
+    fs::write(
+        &path,
+        format!(
+            r#"{{"schemaVersion":1,"records":[{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+        ),
+    )
+    .unwrap();
+    let before = unrekeyable_skips();
+    let registry = FileRunRegistry::open(&path).unwrap();
     assert_eq!(
-        message, "Maximum call stack size exceeded",
-        "#2692 the load failure carries V8's RangeError text"
+        registry.skipped_unrekeyable(),
+        1,
+        "#2692 the deep record sits inside the fold band, so the read skips it"
     );
-    assert_eq!(fs::read_to_string(&path).unwrap(), text);
-    assert!(!lock_path(&path).exists());
-    no_temporaries(&scratch.0);
+    assert!(
+        unrekeyable_skips() > before,
+        "#2692 the production counter moved — the skip is not a test-only observable"
+    );
+    // Every read re-reads the snapshot, so the cumulative count advances
+    // again (a per-read signal, not a once-per-process one).
+    let between = unrekeyable_skips();
+    assert!(
+        registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+        "#2692 the skipped record is invisible under the blank spelling"
+    );
+    assert!(
+        unrekeyable_skips() > between,
+        "#2692 the production counter moves on every read that skips"
+    );
 }

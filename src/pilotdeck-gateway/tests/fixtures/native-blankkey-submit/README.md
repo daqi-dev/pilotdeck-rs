@@ -10,14 +10,14 @@ coordinator / busy 门预检）按原始值本身索引（`router_key`：字符�
 `RunAcceptInput.session_key_raw` 保持原始值；读取面把请求自己的 `sessionKey` 回显进
 snapshot（miss 也回显）。
 
-## 变异名册（12 行，逐行绑死测试）
+## 变异名册（13 行，逐行绑死测试）
 
 - `submit-owner-uses-template-key` —— owner 各 Map 回退模板拼法，null 回合对
   router 域查找不可见（admit 截止期先死）；
 - `router-key-folds-null` —— Null 臂回退字符串拼法，null 与 `"null"` 重新折叠成
   一个 router 键；
 - `template-key-checked-folds` —— 复合键助手把拼法 Err 折回 `""`（修复前的
-  unchecked 折叠）；
+  unchecked 折叠；fix-r5 起函数体是 `property_key` 的显式转调，锚点随迁）；
 - `acceptance-error-swallowed` —— accept-catch 形状被丢掉：ToString 抛错的键被
   静默接受，无 result_unknown 事件；
 - `owner-conjunction-only` —— busy 门只剩 #1872 owner 合取，请求键查不到自己的
@@ -27,7 +27,11 @@ snapshot（miss 也回显）。
 - `registry-body-spelling` / `submit-raw-spelling` —— 记录体丢掉原始 JSON null
   （round-1 行，重锚后幸存）；
 - `registry-skip-reverted` —— 折叠带跳过被整个去掉，深键记录越过带也跳过，load
-  不再像 TS 那样失败；
+  不再像 TS 那样失败（fix-r5 起带判据按 `array_nesting` 数组嵌套层数计，锚点
+  随迁）；
+- `registry-skip-silent`（fix-r5，评审 boundary#3 P0）—— 生产信号面（累计计数器
+  增量 + 每读 stderr 行）被整体去掉，带内跳过回到只有 `#[cfg(test)]` 访问器可见
+  的静默形状；
 - `echo-drops-raw-key` —— 读取面回显固定 null 而不是请求自己的值；
 - `session-id-uses-router-key`（fix-r3 条1）—— SessionContext 交接把路径/持久身份域
   折叠回 router 键，非字符串 sessionKey 回合死在生产工厂的 `create_storage`
@@ -39,9 +43,16 @@ snapshot（miss 也回显）。
 （Grok#2）、`js_value::tests::template_key_spells_the_template_literal_form`（拼法表）、
 `storage::run_registry_tests::null_session_key_body_keeps_json_null_while_the_key_spells_null`
 （记录体）、`storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
-（折叠带）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
+（折叠带）、`storage::run_registry_tests::unrekeyable_skips_advances_in_production_on_every_read`
+（生产信号面，fix-r5）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
 （回显）、`native_process::methods::config::tests::real_services_null_session_key_turn_dies_at_model_resolution`
 （SessionContext 双域键，fix-r3 条1）。
+
+扫描面（fix-r5，评审 P3#5）：SOURCE_TEXTS 除五个被变异源码（submit / config /
+run_registry / js_value / read）外，纳入断言所在的两个测试模块
+（`run_registry_tests.rs`、`read_tests.rs`）——先前只住在测试文件里的断言不在
+字面锚覆盖内，纳入后按「断言逐字出现于被扫源 → 必须有 pin」规则补齐（13 个
+字面锚）。
 
 ## 启动契约（#2391 迁移）
 

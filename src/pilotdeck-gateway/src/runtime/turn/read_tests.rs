@@ -1048,6 +1048,67 @@ async fn read_session_messages_reads_the_router_domain_and_echoes_the_raw_key() 
     drop(stream);
 }
 
+/// #2692 fix-r5 (review boundary#2, R17 registration): the echo of an
+/// unspellable sessionKey rides the response face, which serializes through
+/// `pilotdeck_protocol::stringify_json` — iterative, no depth cap — not the
+/// 2000-level-capped `js_value::json_stringify` (that one serves provider
+/// bodies only). Node 22.22.0 measured `structuredClone` throwing from 2100
+/// levels while `JSON.stringify` stays fine past 3000
+/// (`fix-r5/node-probe/fold-band.out`), so a 3000-level key is the band
+/// where TS's read face fails on the response clone while this side answers
+/// the miss shape with the full raw echo — the answer-shape divergence R17
+/// registers (TS-side mechanism inferred from cell e; exact band unprobed).
+#[tokio::test]
+async fn deep_session_key_echo_survives_the_response_serializer() {
+    struct PlainHistory;
+    impl SessionHistoryReader for PlainHistory {
+        fn read(
+            &self,
+            _input: &JsValue,
+        ) -> Pin<Box<dyn Future<Output = Result<JsValue, TurnReadError>> + Send>> {
+            Box::pin(async { Ok(js(&json!({"messages": [], "total": 0}))) })
+        }
+    }
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    let history = PlainHistory;
+    let mut deep = JsValue::Array(vec![]);
+    for _ in 0..3000 {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let input = crate::metadata::object([("sessionKey", deep.clone())]);
+    let result = read_session_messages(&coordinator, Some(&history), &input)
+        .await
+        .expect("#2692 the unspellable deep key answers the miss shape");
+    let stream_object = result
+        .get("stream")
+        .expect("#2692 the merge appends the stream");
+    assert_eq!(
+        stream_object.get("active"),
+        Some(&JsValue::Bool(false)),
+        "#2692 the deep key misses every live turn"
+    );
+    assert_eq!(
+        stream_object.get("sessionKey"),
+        Some(&deep),
+        "#2692 the miss echoes the raw 3000-level array"
+    );
+    // The wire face: the iterative serializer carries the full echo, while
+    // the capped serializer that serves provider bodies refuses the same
+    // value — the two-caliber split the review flagged, pinned here so the
+    // response face cannot drift onto the capped one unnoticed.
+    let wire = stringify_json(&result)
+        .unwrap()
+        .expect("#2692 the iterative response serializer has no depth cap");
+    assert!(
+        wire.contains(&format!("\"sessionKey\":{}", "[".repeat(3000))),
+        "#2692 the full 3000-level echo rides the response body"
+    );
+    assert!(
+        crate::js_value::json_stringify(&result).is_err(),
+        "#2692 the capped provider-body serializer refuses the same value"
+    );
+}
+
 /// A turn that settles while the durable history is being read is retried to
 /// a merged terminal snapshot, through the real publication pipeline and the
 /// durable registry — no deadlock, and the result's stream is the terminal

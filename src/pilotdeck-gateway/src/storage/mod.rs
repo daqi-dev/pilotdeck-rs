@@ -16,6 +16,7 @@ mod workspace_snapshot;
 
 pub use run_registry::{
     FileRunRegistry, RunAcceptInput, RunAccepted, RunRecord, RunRef, RunRegistryError, RunState,
+    unrekeyable_skips,
 };
 // #637 fix-r4: shared "wait for a concurrent file writer" bound; the spill
 // wait derives from it rather than duplicating the 30 s.

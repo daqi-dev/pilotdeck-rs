@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Temporarily mutate the owned implementation, require assertion failure, restore.
 
+--check (fix-r5) is read-only: anchor uniqueness and roster sanity, no cargo.
+
 No tests/oracle are changed. Run alone: the shared tree flock plus a HEAD
 byte baseline prevents another mutation run from adopting a mutant. Every mutation and the original SHA are recorded before
 writing. finally restores the exact bytes, including on failed controls.
@@ -16,16 +18,108 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed
+from negative_selection import baseline_passed, refuse
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
 repo = rust.parent
-output = Path(sys.argv[1]).resolve()
-output.mkdir(parents=True, exist_ok=True)
 source = rust / 'pilotdeck-gateway/src/runtime/turn/publish.rs'
 connection = rust / 'pilotdeck-gateway/src/runtime/connection/mod.rs'
+
+mutants = [
+    ('drop-event', source,
+     '                    state.queue.push_back(event);',
+     '                    let _ = event;', 'ordered_durable_terminal_after_session_end'),
+    ('duplicate-event', source,
+     '                    state.queue.push_back(event);',
+     '                    state.queue.push_back(event.clone()); state.queue.push_back(event);',
+     'ordered_durable_terminal_after_session_end'),
+    ('visible-before-durable', source,
+     '        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
+     '        state.queue.push_back(event.clone());\n        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
+     'ordered_durable_terminal_after_session_end'),
+    ('early-terminal-before-session-end', source,
+     '        if is(&event, "type", "turn_completed") {',
+     '        if false && is(&event, "type", "turn_completed") {',
+     'ordered_durable_terminal_after_session_end'),
+    ('missing-result-unknown', source,
+     '            Err(_) if !state.failure_published => {',
+     '            Err(_) if false => {', 'append_failure_then_success_single_unknown'),
+    ('repeated-result-unknown', source,
+     '                state.failure_published = true;',
+     '                state.failure_published = false;', 'all_appends_fail_only_one_unknown'),
+    ('close-with-append-pending', source,
+     '\n        self.publication.wait_for(&writes).await;\n',
+     '\n        let _ = writes;\n',
+     'close_waits_for_pending_append'),
+    ('duplicate-replay-lost', source,
+     '        Ok(Some(events)) => TurnAcceptance::Replay(events),',
+     '        Ok(Some(_events)) => TurnAcceptance::Replay(vec![]),', 'duplicate_replays_durable_events'),
+    ('conflict-treated-as-unknown', source,
+     '            let conflict = error.code() == Some("conflict");',
+     '            let conflict = false;', 'conflict_does_not_start_pump'),
+    ('accept-failure-as-conflict', source,
+     '            let conflict = error.code() == Some("conflict");',
+     '            let conflict = true;', 'accept_failure_result_unknown'),
+    ('preflight-failure-exposes-original', source,
+     '        return persistence_failure(&run.run_id, true);',
+     '        return event;', 'preflight_registry_failure'),
+    ('reverse-visible-order', source,
+     '                    state.queue.push_back(event);',
+     '                    state.queue.push_front(event);', 'file_registry_publication_preserves_fifo_across_workers'),
+    ('late-append-not-awaited', source,
+     '                self.publication.wait_for_trailing_writes(&writes).await;\n                let _pump = lock(&self.pump);',
+     '                let _ = writes;\n                let _pump = lock(&self.pump);',
+     'late_event_while_terminal_append_pending'),
+    ('duplicate-terminal-suppressed', source,
+     '            state.deferred.push(event);',
+     '            if state.deferred.is_empty() { state.deferred.push(event); }',
+     'duplicate_terminal_is_registry_failure'),
+    ('ws-seq-confused-with-module', connection,
+     '            out.insert("seq".into(), JsValue::Number(stream.0 as f64));',
+     '            out.insert("seq".into(), JsValue::Number((stream.0 + 71) as f64));',
+     'ordered_durable_terminal_after_session_end'),
+    ('ws-final-too-early', connection,
+     '            out.insert("final".into(), JsValue::Bool(false));',
+     '            out.insert("final".into(), JsValue::Bool(true));',
+     'ordered_durable_terminal_after_session_end'),
+    ('storage-failure-exposes-original', source,
+     '            Err(_) if !state.failure_published => {',
+     '            Err(_) if !state.failure_published => { state.queue.push_back(event);',
+     'real_storage_persist_failure'),
+    ('external-emitter-skipped', source,
+     '        self.coordinator.emit(&self.publication.router_key, event)',
+     '        let _ = event; false', 'ordered_durable_terminal_after_session_end'),
+    ('file-adapter-skips-durable', source,
+     '            return self.call(move |registry| registry.append(&run, &event));',
+     '            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });',
+     'file_registry_publication_preserves_fifo_across_workers'),
+]
+
+args = sys.argv[1:]
+# fix-r5 (review sibling#3): read-only --check — anchor uniqueness per
+# target file, unique roster names, zero cargo. The mutating run below is
+# unchanged.
+if args and args[0] == '--check':
+    if len(args) != 1:
+        refuse('turn-publish --check takes no output directory and no mutation names')
+    texts = {path: path.read_text() for path in (source, connection)}
+    for name, path, before, _after, _test in mutants:
+        count = texts[path].count(before)
+        if count != 1:
+            refuse(f'turn-publish {name}: stale anchor (expected 1, got {count})')
+    names = [name for name, *_ in mutants]
+    if len(set(names)) != len(names):
+        refuse('turn-publish roster has duplicate mutation names')
+    print(f'turn-publish: {len(mutants)} mutation anchors OK')
+    raise SystemExit(0)
+if len(args) != 1:
+    print('usage: negative.py --check | NEW_OUTPUT', file=sys.stderr)
+    raise SystemExit(2)
+output = Path(args[0]).resolve()
+output.mkdir(parents=True, exist_ok=True)
+
 with mutating_sources(repo, [source, connection]) as snapshots:
     originals = {source: snapshots[source], connection: snapshots[connection]}
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
@@ -33,75 +127,6 @@ with mutating_sources(repo, [source, connection]) as snapshots:
         sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     prefix = 'runtime::turn::publish::tests::'
-    mutants = [
-        ('drop-event', source,
-         '                    state.queue.push_back(event);',
-         '                    let _ = event;', 'ordered_durable_terminal_after_session_end'),
-        ('duplicate-event', source,
-         '                    state.queue.push_back(event);',
-         '                    state.queue.push_back(event.clone()); state.queue.push_back(event);',
-         'ordered_durable_terminal_after_session_end'),
-        ('visible-before-durable', source,
-         '        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
-         '        state.queue.push_back(event.clone());\n        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
-         'ordered_durable_terminal_after_session_end'),
-        ('early-terminal-before-session-end', source,
-         '        if is(&event, "type", "turn_completed") {',
-         '        if false && is(&event, "type", "turn_completed") {',
-         'ordered_durable_terminal_after_session_end'),
-        ('missing-result-unknown', source,
-         '            Err(_) if !state.failure_published => {',
-         '            Err(_) if false => {', 'append_failure_then_success_single_unknown'),
-        ('repeated-result-unknown', source,
-         '                state.failure_published = true;',
-         '                state.failure_published = false;', 'all_appends_fail_only_one_unknown'),
-        ('close-with-append-pending', source,
-         '\n        self.publication.wait_for(&writes).await;\n',
-         '\n        let _ = writes;\n',
-         'close_waits_for_pending_append'),
-        ('duplicate-replay-lost', source,
-         '        Ok(Some(events)) => TurnAcceptance::Replay(events),',
-         '        Ok(Some(_events)) => TurnAcceptance::Replay(vec![]),', 'duplicate_replays_durable_events'),
-        ('conflict-treated-as-unknown', source,
-         '            let conflict = error.code() == Some("conflict");',
-         '            let conflict = false;', 'conflict_does_not_start_pump'),
-        ('accept-failure-as-conflict', source,
-         '            let conflict = error.code() == Some("conflict");',
-         '            let conflict = true;', 'accept_failure_result_unknown'),
-        ('preflight-failure-exposes-original', source,
-         '        return persistence_failure(&run.run_id, true);',
-         '        return event;', 'preflight_registry_failure'),
-        ('reverse-visible-order', source,
-         '                    state.queue.push_back(event);',
-         '                    state.queue.push_front(event);', 'file_registry_publication_preserves_fifo_across_workers'),
-        ('late-append-not-awaited', source,
-         '                self.publication.wait_for_trailing_writes(&writes).await;\n                let _pump = lock(&self.pump);',
-         '                let _ = writes;\n                let _pump = lock(&self.pump);',
-         'late_event_while_terminal_append_pending'),
-        ('duplicate-terminal-suppressed', source,
-         '            state.deferred.push(event);',
-         '            if state.deferred.is_empty() { state.deferred.push(event); }',
-         'duplicate_terminal_is_registry_failure'),
-        ('ws-seq-confused-with-module', connection,
-         '            out.insert("seq".into(), JsValue::Number(stream.0 as f64));',
-         '            out.insert("seq".into(), JsValue::Number((stream.0 + 71) as f64));',
-         'ordered_durable_terminal_after_session_end'),
-        ('ws-final-too-early', connection,
-         '            out.insert("final".into(), JsValue::Bool(false));',
-         '            out.insert("final".into(), JsValue::Bool(true));',
-         'ordered_durable_terminal_after_session_end'),
-        ('storage-failure-exposes-original', source,
-         '            Err(_) if !state.failure_published => {',
-         '            Err(_) if !state.failure_published => { state.queue.push_back(event);',
-         'real_storage_persist_failure'),
-        ('external-emitter-skipped', source,
-         '        self.coordinator.emit(&self.publication.router_key, event)',
-         '        let _ = event; false', 'ordered_durable_terminal_after_session_end'),
-        ('file-adapter-skips-durable', source,
-         '            return self.call(move |registry| registry.append(&run, &event));',
-         '            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });',
-         'file_registry_publication_preserves_fifo_across_workers'),
-    ]
     summary = []
     failures = []
     try:

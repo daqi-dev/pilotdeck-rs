@@ -266,7 +266,12 @@ pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
 /// here — with the same `Maximum call stack size exceeded` message the clone
 /// reports.
 pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {
-    to_string_units_checked(value).map(JsString::from_utf16)
+    // Same walk as `property_key` — `String()`'s coercion — under a different
+    // semantic hat: this is a template-literal slot, that is a property-key
+    // slot. TS renders both through the same ToString; only the callers'
+    // intent differs, so one spelling function serves both (review P3#4:
+    // two verbatim-identical bodies would drift).
+    property_key(value)
 }
 
 /// The raw-value key TS's router-shaped maps use (SameValueZero): sessions,

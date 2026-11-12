@@ -17,7 +17,10 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex, PoisonError},
+    sync::{
+        Arc, LazyLock, Mutex, PoisonError,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -727,17 +730,31 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
                 // RangeError).
                 if [project, session, run_id]
                     .into_iter()
-                    .map(container_depth)
+                    .map(array_nesting)
                     .max()
                     .is_some_and(|depth| depth > TS_KEY_FOLD_DEPTH)
                 {
                     return Err(error);
                 }
                 snapshot.unrekeyable += 1;
+                UNREKEYABLE_SKIPPED.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
         };
         snapshot.records.insert(key, record.clone());
+    }
+    // #2692 fix-r5 (review boundary#3, P0): the in-band skip used to be
+    // silent in production — the only observable was a `#[cfg(test)]`
+    // accessor. One stderr line per read that skipped (plus the cumulative
+    // counter below) is the registered signal surface (R17): the next
+    // mutation rewrites the file without the skipped records, so an operator
+    // sees the drop coming on every read, not after the bytes are gone.
+    if snapshot.unrekeyable > 0 {
+        eprintln!(
+            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
+            path.display(),
+            snapshot.unrekeyable
+        );
     }
     // Object.entries(snapshot.events). Load order is irrelevant to the bytes:
     // persist re-serializes with JS key order, as Object.fromEntries does.
@@ -767,6 +784,19 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
     Ok(snapshot)
 }
 
+/// #2692 fix-r5: cumulative, process-wide count of records every read has
+/// skipped as un-rekeyable (`read_snapshot`'s in-band skip). The per-file
+/// current count stays test-side ([`FileRunRegistry::skipped_unrekeyable`]);
+/// this is the production-visible half of the registered divergence's
+/// signal surface — monotonic, so a reader can take a delta around an
+/// operation instead of trusting an absolute.
+pub fn unrekeyable_skips() -> usize {
+    UNREKEYABLE_SKIPPED.load(Ordering::Relaxed)
+}
+/// #2692 fix-r5: backs [`unrekeyable_skips`]; incremented once per skipped
+/// record per read, so re-reading a registry with one deep record counts up.
+static UNREKEYABLE_SKIPPED: AtomicUsize = AtomicUsize::new(0);
+
 /// `${projectKey ?? ""}\0${sessionKey}\0${runId}` (RunRegistry.ts:70).
 fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsString> {
     let mut units = match project {
@@ -780,29 +810,33 @@ fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsStri
     Ok(JsString::from_utf16(units))
 }
 
-/// The deepest container nesting V8's recursive array join folds before it
+/// The deepest array nesting V8's recursive array join folds before it
 /// throws (measured on the #2692 probe machine, Node 22.22.0: 2621 folds,
 /// 2622 throws — stack-dependent, like every V8 recursion bound; the
 /// #251 boundary fixture ran 10,000, far past it). `read_snapshot` bands an
 /// un-rekeyable record on this: inside the band it skips the record, beyond
 /// the band the load fails the way TS's load does.
+///
+/// The band counts array nesting levels — one per joined array, the same
+/// caliber as `to_string_units`' frames — not the depth of the deepest leaf
+/// node: fix-r5 measured the throw boundary identical for a scalar leaf and
+/// an empty innermost array at one fixed caller stack depth
+/// (`_tmp/20261026-issue-2692/fix-r5/node-probe/fold-band-stackdep.out`),
+/// so a leaf-depth count under-reports the empty-leaf shape by exactly one
+/// and let one extra band edge past. [`array_nesting`] holds the caliber.
 const TS_KEY_FOLD_DEPTH: usize = 2621;
 
-/// The nesting depth of the deepest array or object under `value` (0 for a
-/// non-container). Iterative, like the rest of the depth-bounded walks.
-fn container_depth(value: &JsValue) -> usize {
+/// The nesting level of the deepest array under `value`, counted the way
+/// `to_string_units` joins: one level per array being joined, with objects
+/// as leaves (`[object Object]` never recurses). Iterative, like the rest
+/// of the depth-bounded walks.
+fn array_nesting(value: &JsValue) -> usize {
     let mut max = 0;
     let mut pending = vec![(value, 0usize)];
     while let Some((value, depth)) = pending.pop() {
-        max = max.max(depth);
-        match value {
-            JsValue::Array(items) => {
-                pending.extend(items.iter().map(|item| (item, depth + 1)));
-            }
-            JsValue::Object(object) => {
-                pending.extend(object.entries().iter().map(|(_, item)| (item, depth + 1)));
-            }
-            _ => {}
+        if let JsValue::Array(items) = value {
+            max = max.max(depth + 1);
+            pending.extend(items.iter().map(|item| (item, depth + 1)));
         }
     }
     max

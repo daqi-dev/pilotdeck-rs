@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#2692 fix-r1/fix-r2/fix-r3: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
+"""#2692 fix-r1/fix-r2/fix-r3/fix-r5: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
 
 The submit chain keeps TS's two key domains apart (`ts-prodkey-probe.out`):
 the composite run key spells `String(sessionKey)` (null → "null", absent →
@@ -29,6 +29,10 @@ test that must die:
   the raw JSON null (round-1 rows, re-anchored survivors).
 - `registry-skip-reverted`: the fold-band skip is dropped, so a deep-key
   record past the band also skips and the load no longer fails like TS's.
+- `registry-skip-silent` (fix-r5): the production signal surface — the
+  cumulative counter and the per-read stderr line — is removed, so the
+  in-band skip goes back to being observable only through the
+  `#[cfg(test)]` accessor (review boundary#3's P0 shape).
 - `echo-drops-raw-key`: the read face echoes a fixed null instead of the
   request's own value (probe cell b echo shape).
 - `session-id-uses-router-key` (fix-r3 条1): the SessionContext handoff folds
@@ -57,13 +61,18 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 
 ROOT = Path(__file__).resolve().parents[5]
 # The five sources the rows mutate; the assertion messages also live in the
-# CONFIG test module, so that file is scanned for pins too.
+# CONFIG test module and in the run-registry / turn-read test modules that
+# carry the bound tests, so those files are scanned for pins too (#2692
+# fix-r5, review P3#5: an assertion that lives only in a test file used to
+# sit outside the literal-anchor coverage).
 SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
 GATES = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 REGISTRY = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry.rs'
 JS_VALUE = ROOT / 'src/pilotdeck-gateway/src/js_value.rs'
 READ = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/read.rs'
-SOURCE_TEXTS = (SUBMIT, GATES, REGISTRY, JS_VALUE, READ)
+REGISTRY_TESTS = ROOT / 'src/pilotdeck-gateway/src/storage/run_registry_tests.rs'
+READ_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/read_tests.rs'
+SOURCE_TEXTS = (SUBMIT, GATES, REGISTRY, JS_VALUE, READ, REGISTRY_TESTS, READ_TESTS)
 
 CFG = 'native_process::methods::config::tests::'
 null_test = (CFG + 'session_model_set_null_key_turn_from_the_submit_chain_'
@@ -74,6 +83,8 @@ registry_test = ('storage::run_registry_tests::'
                  'null_session_key_body_keeps_json_null_while_the_key_spells_null')
 reopen_test = ('storage::run_registry_tests::'
                'deep_session_key_record_reopens_without_bricking_the_other_records')
+signal_test = ('storage::run_registry_tests::'
+               'unrekeyable_skips_advances_in_production_on_every_read')
 echo_test = ('runtime::turn::read::tests::'
              'read_session_messages_reads_the_router_domain_and_echoes_the_raw_key')
 mutations = [
@@ -92,14 +103,12 @@ mutations = [
      '        JsValue::Null => JsString::from("null"),',
      null_test, '-keyed turn was never admitted'),
     # The composite-key helper folds a spelling error back to "" (the
-    # original unchecked fold) instead of answering it.
+    # original unchecked fold) instead of answering it. fix-r5 made the body
+    # an explicit delegation to `property_key` (review P3#4), so the anchor
+    # is the delegation.
     ('template-key-checked-folds', JS_VALUE,
-     'pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {\n'
-     '    to_string_units_checked(value).map(JsString::from_utf16)\n'
-     '}',
-     'pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {\n'
-     '    Ok(to_string_units(value).map(JsString::from_utf16).unwrap_or_default())\n'
-     '}',
+     '    property_key(value)\n}',
+     '    Ok(to_string_units(value).map(JsString::from_utf16).unwrap_or_default())\n}',
      'js_value::tests::template_key_spells_the_template_literal_form',
      '#2692 a too-deep array is an unreadable key, not a blank one'),
     # The accept-catch shape is dropped: a key whose ToString throws is
@@ -182,20 +191,58 @@ mutations = [
      null_test, '#2692 the record body keeps the raw JSON null'),
     # The fold-band skip is dropped entirely, so a deep-key record past the
     # throw band also skips and the reopen stops failing like TS's get.
+    # fix-r5 recalibrated the band to the join's own frame count
+    # (`array_nesting`, review boundary#1) and added the cumulative-counter
+    # increment to the skip arm, so both ride in the anchor.
     ('registry-skip-reverted', REGISTRY,
      '                if [project, session, run_id]\n'
      '                    .into_iter()\n'
-     '                    .map(container_depth)\n'
+     '                    .map(array_nesting)\n'
      '                    .max()\n'
      '                    .is_some_and(|depth| depth > TS_KEY_FOLD_DEPTH)\n'
      '                {\n'
      '                    return Err(error);\n'
      '                }\n'
      '                snapshot.unrekeyable += 1;\n'
+     '                UNREKEYABLE_SKIPPED.fetch_add(1, Ordering::Relaxed);\n'
      '                continue;',
      '                snapshot.unrekeyable += 1;\n'
      '                continue;',
      reopen_test, "past V8's fold band and must fail the load"),
+    # fix-r5 (review boundary#3, P0): the production signal surface — the
+    # cumulative counter increment and the per-read stderr line — is removed,
+    # restoring the silent skip the review graded P0 (the only observable
+    # left is the #[cfg(test)] per-file accessor). The log block sits right
+    # after the records loop, so one span covers both halves of the surface.
+    ('registry-skip-silent', REGISTRY,
+     '                snapshot.unrekeyable += 1;\n'
+     '                UNREKEYABLE_SKIPPED.fetch_add(1, Ordering::Relaxed);\n'
+     '                continue;\n'
+     '            }\n'
+     '        };\n'
+     '        snapshot.records.insert(key, record.clone());\n'
+     '    }\n'
+     '    // #2692 fix-r5 (review boundary#3, P0): the in-band skip used to be\n'
+     '    // silent in production — the only observable was a `#[cfg(test)]`\n'
+     '    // accessor. One stderr line per read that skipped (plus the cumulative\n'
+     '    // counter below) is the registered signal surface (R17): the next\n'
+     '    // mutation rewrites the file without the skipped records, so an operator\n'
+     '    // sees the drop coming on every read, not after the bytes are gone.\n'
+     '    if snapshot.unrekeyable > 0 {\n'
+     '        eprintln!(\n'
+     '            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",\n'
+     '            path.display(),\n'
+     '            snapshot.unrekeyable\n'
+     '        );\n'
+     '    }\n',
+     '                snapshot.unrekeyable += 1;\n'
+     '                continue;\n'
+     '            }\n'
+     '        };\n'
+     '        snapshot.records.insert(key, record.clone());\n'
+     '    }\n',
+     signal_test,
+     '#2692 the production counter moved — the skip is not a test-only observable'),
     # The read face echoes a fixed null instead of the request's own value,
     # so a string request's miss stops echoing its own spelling.
     ('echo-drops-raw-key', READ,
@@ -239,6 +286,14 @@ LITERAL_ANCHORS = [
     (GATES, '#2692 permission cell F code'),
     (GATES, '#2692 the record body keeps the raw JSON null'),
     (GATES, '#2692 the agent_status message'),
+    # fix-r5 (review P3#5): the run-registry and turn-read test modules joined
+    # SOURCE_TEXTS, so the assertions that live there are pinned where they
+    # live — plus the fix-r5 signal row's own assertion.
+    (REGISTRY_TESTS, '#2692 the record body keeps the raw JSON null'),
+    (REGISTRY_TESTS, "past V8's fold band and must fail the load"),
+    (REGISTRY_TESTS,
+     '#2692 the production counter moved — the skip is not a test-only observable'),
+    (READ_TESTS, '#2692 the miss echoes the raw request value'),
 ]
 
 # The denominator is this literal, never `len(mutations)` (#2391 fix-r1,
@@ -257,6 +312,7 @@ EXPECTED_NAMES = (
     'registry-body-spelling',
     'submit-raw-spelling',
     'registry-skip-reverted',
+    'registry-skip-silent',
     'echo-drops-raw-key',
     'session-id-uses-router-key',
 )
