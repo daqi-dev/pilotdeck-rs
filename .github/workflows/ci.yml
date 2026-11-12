@@ -260,7 +260,7 @@ jobs:
           expected="24.04"
           expected_label="ubuntu-24.04"
           expected_image_os="ubuntu24"
-          expected_image_versions="20261101.360.1"
+          expected_image_versions="20261101.360.1 20261111.370.1"
           # PDRS_IMAGE_GUARD_OS_RELEASE 只重定向 os-release 的读取路径（供本仓
           # 守卫逻辑自测注入假 os-release），钉值比对不变；该行被机检钉死。
           os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"
@@ -590,7 +590,7 @@ jobs:
           expected="24.04"
           expected_label="ubuntu-24.04"
           expected_image_os="ubuntu24"
-          expected_image_versions="20261101.360.1"
+          expected_image_versions="20261101.360.1 20261111.370.1"
           # PDRS_IMAGE_GUARD_OS_RELEASE 只重定向 os-release 的读取路径（供本仓
           # 守卫逻辑自测注入假 os-release），钉值比对不变；该行被机检钉死。
           os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"
