@@ -45,3 +45,9 @@
 - 建议（已执行）：②，交付 f5e2cc959（74/74 全绿、A/B 负控、批 1 抽 3 表 twin 在 HEAD 态全绿、已知限制「fd 启动后 close 可能被复用」登记进 docstring；b1fix+装置修 DS 增量 4/4 PASS P0=P1=0）。
 - 可复用原则：**装置缺陷以「出厂契约测试红→绿」为判据单独开最小修单，不搭车产品批次；跨平台 poll 语义差异（POLLERR vs POLLHUP）写进装置注释**。
 - 实测留证：`_build/wt-1087/_tmp/20261113-1087-r7b1fix/`（fd-defect-probe.log、deadstreamdetach-head-vs-patched.log、negative_process-pollhup.patch）与 `_build/wt-1087/_tmp/20261113-1087-fdisdead-fix/`（全套原始输出）。
+
+## 量纲注记：长尾卡判据 5 计数单位与 fixround-ledger 键归并口径核对（2026-11-13 04:4x，AI 核对，待人复核）
+
+- 核对结论：**口径一致**。`state/decisions-20261110-longtail-closure-rule.md` 新增判据 5（通道兜底）计数单位 = 谱系×轮（同链同谱系累计「修复轮不可用」数，阈值 2）；`scripts/fixround-ledger.py` 键 = 链×谱系×轮号，`count` 先按键归并（每键一次；计入类失败优先于补跑 PASS；同轮多条只计 1）再按链×谱系累计，≥2 退出码 1——两侧同维（轮），归并规则实现卡的三前提与「同轮一次」口径。
+- 发现并已修：`scripts/README.md` fixround-ledger 节对判据 5 的概括「同一失败第三次同一形状」**失实**（那是钉族规则 / 判据 1 的措辞）——已在 #3074 增量 a77ff02da 按卡上正本改正为「通道兜底：同链同谱系累计 2 个修复轮不可用」（doc-only 1 行，DS 增量复核另档）。ledger 代码与测试无同款失实。
+- 引用规约：对 `scripts/README.md` 的引用以节标题（「fixround-ledger.py — 长尾卡判据 5 的计数登记台账」）为准、不写行号（合入后行号漂移；memory decisions-pointer-heading 同则）。
