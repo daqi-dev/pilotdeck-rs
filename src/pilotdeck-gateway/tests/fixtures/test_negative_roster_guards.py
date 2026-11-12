@@ -1161,12 +1161,13 @@ class ModeRoutingGuard(unittest.TestCase):
         # The self-held window must hold terminate handlers for the whole
         # run (#2425's install-and-bind pin; the handler bodies themselves
         # are pinned by the shared restore window's own defer contract).
-        # Judged at the window entry, for every TERMINATE_SIGNALS member --
-        # a late install or a dropped SIGHUP/SIGQUIT line stays red.
+        # Judged at both window edges, for every TERMINATE_SIGNALS member --
+        # a late install, a dropped SIGHUP/SIGQUIT line, or a mid-window
+        # restore to the default dispositions stays red (DS r6 P1: the exit
+        # sample the third drive recorded was dead code until this fix).
         self.assertTrue(installed,
                         '#2743 main() must install its terminate handler for '
-                        'every TERMINATE_SIGNALS member before the window '
-                        'is self-held')
+                        'every TERMINATE_SIGNALS member for the whole window')
 
 
 class SessionDomainCleanupGuard(unittest.TestCase):
@@ -1244,9 +1245,11 @@ class SessionDomainCleanupGuard(unittest.TestCase):
                     contextlib.redirect_stdout(stdout), \
                     contextlib.redirect_stderr(stderr):
                 code = module.main()
-            installed = bool(window_entry) and all(
+            installed = bool(window_entry) and bool(window_exit) and all(
                 handler is module.terminate_cleanly
-                for handler in window_entry.values())
+                for handler in window_entry.values()) and all(
+                handler is module.terminate_cleanly
+                for handler in window_exit.values())
         finally:
             for name, handler in saved_handlers.items():
                 # getsignal returns None when a non-Python handler held the
@@ -1307,12 +1310,13 @@ class SessionDomainCleanupGuard(unittest.TestCase):
         # The batch loop must run under terminate handlers: an interrupted
         # batch unwinds through the finally blocks instead of leaving a
         # mutant behind under the parity lease (#892 r23 origin, #2425 pin).
-        # Judged at the window entry, for every TERMINATE_SIGNALS member --
-        # a late install or a dropped SIGHUP/SIGQUIT line stays red.
+        # Judged at both window edges, for every TERMINATE_SIGNALS member --
+        # a late install, a dropped SIGHUP/SIGQUIT line, or a mid-window
+        # restore to the default dispositions stays red (DS r6 P1: the exit
+        # sample the third drive recorded was dead code until this fix).
         self.assertTrue(installed,
                         '#2743 main() must install its terminate handler for '
-                        'every TERMINATE_SIGNALS member before the window '
-                        'is self-held')
+                        'every TERMINATE_SIGNALS member for the whole window')
 
 
 if __name__ == '__main__':
