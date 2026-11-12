@@ -32,20 +32,23 @@ RENAMED_ROW = 'run-id-check-skipped'
 RENAMED_TO = 'run-id-check-skipped-renamed'
 
 
-def run_check(rows=None):
+def run_check(rows=None, expected_names=None):
     """Call nc.main() under argv ['negative.py', '--check'].
 
     Returns (exit code, stdout, stderr); the refusal envelope exits 2 with the
     reason on stderr (`negative_selection.refuse`), which `main()`'s
     `except Exception` cannot swallow. No cargo runs; the tree is only read.
-    `rows` swaps the module's mutation table in memory so the red sides can
-    drift one row without touching the tree.
+    `rows` / `expected_names` swap the module's two tables in memory so the
+    red sides can drift one row without touching the tree.
     """
     out, err = io.StringIO(), io.StringIO()
     saved_argv, saved_rows = sys.argv, nc.mutants
+    saved_names = nc.EXPECTED_NAMES
     sys.argv = ['negative.py', '--check']
     if rows is not None:
         nc.mutants = rows
+    if expected_names is not None:
+        nc.EXPECTED_NAMES = expected_names
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -54,6 +57,7 @@ def run_check(rows=None):
                 code = stop.code
     finally:
         nc.mutants = saved_rows
+        nc.EXPECTED_NAMES = saved_names
         sys.argv = saved_argv
     return code, out.getvalue(), err.getvalue()
 
@@ -115,6 +119,26 @@ class RosterGate(unittest.TestCase):
                       '#2692 fix-r12: the refusal names the roster drift')
         self.assertIn(f'missing=[{RENAMED_ROW!r}]', err,
                       f'#2692 fix-r12: the refusal names the shadowed row: {err!r}')
+
+    def test_check_refuses_a_row_dropped_from_both_tables(self):
+        # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
+        # assertion string another row also carries used to survive a
+        # both-tables drop -- `registered()` stayed aligned and the surviving
+        # sibling kept the shared #813 marker bound, so --check stayed green
+        # while one control silently stopped being audited. ROW_PINS is a
+        # third denominator outside both tables; every pin in turn must
+        # refuse the drop (the native-blankkey fix-r12 red-side shape).
+        for dropped in nc.ROW_PINS:
+            rows = [row for row in nc.mutants if row[0] != dropped]
+            names = [name for name in nc.EXPECTED_NAMES if name != dropped]
+            assert rows and len(rows) == len(nc.mutants) - 1, dropped
+            code, out, err = run_check(rows=rows, expected_names=names)
+            self.assertTrue(code == 2,
+                            f'#2692 fix-r13: a both-tables drop of {dropped} '
+                            f'must refuse --check: rc={code} out={out!r}')
+            self.assertIn(f'#2692 row pin names a row that is gone: {dropped}', err,
+                          f'#2692 fix-r13: the refusal names the dropped row '
+                          f'{dropped}')
 
 
 if __name__ == '__main__':

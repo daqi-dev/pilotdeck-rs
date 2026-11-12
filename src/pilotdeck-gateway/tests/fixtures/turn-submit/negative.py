@@ -116,10 +116,13 @@ mutants = [
 ]
 # #2692 fix-r12 (MM sibling P1): the denominator is this literal roster,
 # never `len(mutants)` -- the printed count and every downstream gate used to
-# derive from the same runtime table, so a dropped or renamed row kept
-# --check green while one control silently stopped being audited (the #1666
-# shape; `registered()` refuses on any drift, the turn-read / turn-publish /
-# native-config / native-blankkey EXPECTED_NAMES precedent).
+# derive from the same runtime table, so a row dropped from the roster alone,
+# or renamed, kept --check green while one control silently stopped being
+# audited (the #1666 shape; `registered()` refuses on any drift, the
+# turn-read / turn-publish / native-config / native-blankkey EXPECTED_NAMES
+# precedent). fix-r13 (DS + MM sibling/boundary): the guard only sees
+# one-sided drift -- a row deleted from `mutants` *and* this roster together
+# is caught by ROW_PINS below, not by `registered()`.
 EXPECTED_NAMES = (
     'permission-check-skipped',
     'run-id-check-skipped',
@@ -179,6 +182,42 @@ EXPECTED_NAMES = (
     'lease-acquisition-skipped',
     'always-acquire-lease',
 )
+# #2692 fix-r13 (DS + MM sibling/boundary, both families): the roster above
+# only catches one-sided drift. Sixteen rows ride an assertion string another
+# row also carries (the #813 markers / capability refusals above), so deleting
+# one of them from `mutants` *and* `EXPECTED_NAMES` together kept
+# `registered()` aligned and the surviving sibling kept the shared anchor
+# bound -- `--check` stayed green while one control silently stopped being
+# audited. ROW_PINS is a third denominator outside both tables: every
+# shared-assertion row must be present, so a both-tables drop refuses like a
+# one-sided one (the native-blankkey fix-r12 shape).
+ROW_PINS = (
+    'model-selection-event-skipped',
+    'request-started-fold-leaked',
+    'actual-text-model-skipped',
+    'projection-drop-event',
+    'projection-duplicate-event',
+    'input-ack-before-native-durable',
+    'failureguard-model-observe-skipped',
+    'guard-config-not-provided',
+    'timeout-disabled',
+    'timeout-status-skipped',
+    'timeout-error-skipped',
+    'timeout-abort-skipped',
+    'timeout-close-skipped',
+    'timeout-live-close-skipped',
+    'cwd-capability-error-ignored',
+    'cwd-host-unavailable-ok',
+)
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit."""
+    names = {row[0] for row in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            refuse(f'#2692 row pin names a row that is gone: {name}')
+
 mutant_source = {'guard-config-not-provided': host_source,
                  'host-lease-release-skipped': host_source,
                  'cwd-host-unavailable-ok': host_source,
@@ -229,11 +268,17 @@ def build():
     # build() is the common entry of --check and the mutating run, so a
     # dropped, renamed, duplicated or reordered row is a clean rc 2 refusal
     # (printed by `negative_selection.refuse`) before any count is printed or
-    # any evidence directory is claimed.
+    # any evidence directory is claimed. fix-r13 limits the claim: "dropped"
+    # here means from one table alone -- a row deleted from both tables at
+    # once is caught by `check_row_pins` below (the ROW_PINS denominator).
     try:
         registered(mutants, EXPECTED_NAMES)
     except (ValueError, OSError) as error:
         refuse(f'turn-submit mutation roster drifted: {error}')
+    # #2692 fix-r13: the third denominator, outside both tables -- a
+    # shared-assertion row dropped from both at once must refuse exactly
+    # like a one-sided drift.
+    check_row_pins(mutants)
     oracle = json.loads((fixture / 'oracle.json').read_text())['cases']
     inventory = adapter.test_inventory(test_source, test) + adapter.test_inventory(
         host_source.with_name('submit_host_tests.rs'), host_test)

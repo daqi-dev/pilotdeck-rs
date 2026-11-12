@@ -149,6 +149,13 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 入口进 `test_negative_optimize_guards.py` 拒跑矩阵；断言字面量以
 `LITERAL_ANCHORS` 逐行绑定被扫源，fix-r3 增 `session-id-uses-router-key` 行，
 钉 SessionContext 路径域与映射域的分离）。
+以及 `turn-submit`（#2692 fix-r12 起名册腿同形：`EXPECTED_NAMES` 静态名册 +
+`registered` 于 `build()` 启动对表，树内红侧 `test_bound_test_gate.py`；
+fix-r13 起加 `ROW_PINS` 行身份分母与双表同删红腿。入口本体仍是 M6 submit
+adapter（`_negkit/submit.py`）契约，故未进 `test_negative_optimize_guards.py`
+拒跑矩阵：其认领语义「目录非空才拒、空目录可认领」与矩阵的 `already exists`
+rc 2 不同形，且 CARGO_HOME/PDRS_BASELINE 守卫先于选择执行，对齐须动 M6 共享件，
+登记 #2133 家族批）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
@@ -161,6 +168,14 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
    `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
    当分母时，删掉一行只是把这一轮悄悄变短：summary 仍报 `N/N killed`；整表被清空则打印
    `0/0 killed` 并退出 0——零分母的运行没有测过任何东西。
+   **行身份分母（#2692 fix-r13，DS+MM 两谱系同撞 P1）**：`registered` 只看得见单侧漂移。
+   一行的断言串若同时被另一行携带（共享锚），从两张表**同时**删掉它仍保持名册对齐、
+   幸存的兄弟行照样绑住共享锚——`--check` 假绿。修法是第三张表 `ROW_PINS`：凡断言串
+   被 ≥2 行共用的行必须入 pin 表，启动在 `registered` 之后核（native-blankkey-submit /
+   native-config / turn-submit 三家先例）；结构普查由
+   `tests/fixtures/test_shared_assertion_pins.py` 机检全仓（可读表里未 pin 的共享行即红；
+   未读形状与家族债进 ROW_PIN_GAPS / SHAPE_GAPS 登记，登记只减不增、条目陈旧或重复即红，
+   债归 #2133 批清）。
 2. **空结果永不返回 0**。收尾用 `verdict_exit(rows, key=…)`：至少一行且全部 KILLED 才 0；
    空选择、SURVIVED、INVALID、SKIPPED 一律 1。这是 `0/0 killed` 假绿的正面堵口。
 3. **守卫写成 `raise` / `refuse()`，一个都不依赖 `assert`**。`python3 -O` 与

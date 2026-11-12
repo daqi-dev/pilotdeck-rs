@@ -861,6 +861,34 @@ EXPECTED_NAMES = (
     'cron-inline-sync',
 )
 
+# #2692 fix-r13 (DS + MM sibling/boundary, both families): the roster guard
+# above only catches one-sided drift. Nine rows ride an assertion string
+# another row also carries, so deleting one of them from `mutations` *and*
+# `EXPECTED_NAMES` together kept `registered()` aligned and the surviving
+# sibling kept every pin bound -- `--check` stayed green while one control
+# silently stopped being audited. ROW_PINS is a third denominator outside
+# both tables: every shared-assertion row must be present, so a both-tables
+# drop refuses like a one-sided one (the native-blankkey fix-r12 shape).
+ROW_PINS = (
+    'permission-stub-revert',
+    'mode-whitelist-narrowed',
+    'transcript-fence-removed-config',
+    'transcript-fence-removed-rename',
+    'transcript-live-bypass-config',
+    'transcript-live-bypass-rename',
+    'transcript-live-bypass-status',
+    'styles-set-stub-revert',
+    'style-store-write-removed',
+)
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit."""
+    names = {case.mutation for case in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            raise SystemExit(f'#2692 row pin names a row that is gone: {name}')
+
 
 # #2065: `expect` / `expect_err` take `&str` and never interpolate, so a panic
 # that rides one can only be matched by text the source holds verbatim -- the
@@ -1096,6 +1124,10 @@ def main():
         registered(mutations, EXPECTED_NAMES)
     except ValueError as error:
         raise SystemExit(f'#1457 mutation roster drifted: {error}')
+    # #2692 fix-r13: the third denominator, after the roster guard -- a row
+    # dropped from both tables at once must refuse exactly like a one-sided
+    # drift (see ROW_PINS above).
+    check_row_pins(every_row)
     if args == ['--check']:
         # Guard first: it reports an unreadable scanned file as a clean refusal,
         # while the anchor probe below would raise a bare OSError on the same tree.

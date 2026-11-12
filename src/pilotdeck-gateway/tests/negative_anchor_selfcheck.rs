@@ -88,6 +88,20 @@ const PREFLIGHT: &[Entry] = &[
         discover: false,
         ran: true,
     },
+    // #2692 fix-r13 (DS + MM sibling/boundary, both families): the structural
+    // census. The one-table-at-a-time ROW_PINS fixes (r11 blankkey, r12
+    // turn-submit roster, r13 the two tables of this round) kept closing the
+    // same hole after a review tripped over it, so this preflight entry runs
+    // the family-wide rule: a readable mutation table whose assertion string
+    // another row also carries must pin those rows, and every other table /
+    // family-debt gap is a registered, live entry (ROW_PIN_GAPS /
+    // SHAPE_GAPS inside the script; #2133 owns clearing the debt).
+    Entry {
+        script: "test_shared_assertion_pins.py",
+        args: &[],
+        discover: false,
+        ran: true,
+    },
     Entry {
         script: "test_negative_process.py",
         args: &[
@@ -658,9 +672,14 @@ fn python_output(entry: &Entry, fixtures: &Path) -> Result<String, String> {
 /// red-side module ran anything -- `Ran 0 tests` still exits 0, so an emptied
 /// or renamed test module kept the preflight green. The last `Ran N` line is
 /// the authoritative summary (a parent prints its own after any children).
+/// #2692 fix-r13 (review P2, skip form): `OK (skipped=N)` with every test
+/// skipped is the same empty-measurement shape -- a module whose tests all
+/// skip (a stale skipIf, a renamed-away prerequisite) still exits 0 and kept
+/// the preflight green. Only a run with at least one un-skipped test is OK.
 fn require_unittest_summary(label: &str, report: &str) -> Result<(), String> {
     let mut ran: Option<usize> = None;
     let mut ok = false;
+    let mut skipped = 0usize;
     for line in report.lines() {
         if let Some(rest) = line.strip_prefix("Ran ")
             && let Some(count) = rest
@@ -672,6 +691,13 @@ fn require_unittest_summary(label: &str, report: &str) -> Result<(), String> {
         }
         if line == "OK" || line.starts_with("OK (") {
             ok = true;
+            if let Some(rest) = line.strip_prefix("OK (skipped=")
+                && let Some(count) = rest
+                    .strip_suffix(')')
+                    .and_then(|token| token.parse::<usize>().ok())
+            {
+                skipped = count;
+            }
         }
     }
     match ran {
@@ -681,7 +707,11 @@ fn require_unittest_summary(label: &str, report: &str) -> Result<(), String> {
         Some(0) => Err(format!(
             "{label}: ran 0 tests -- an emptied or renamed red-side module still exits 0:\n{report}"
         )),
-        Some(_) if ok => Ok(()),
+        Some(count) if ok && skipped < count => Ok(()),
+        Some(count) if ok => Err(format!(
+            "{label}: every test was skipped (ran {count}, skipped {skipped}) -- an \
+             all-skipped module still exits 0:\n{report}"
+        )),
         Some(_) => Err(format!("{label}: the unittest run is not OK:\n{report}")),
     }
 }
@@ -707,6 +737,17 @@ fn a_missing_run_tests_summary_is_an_error() {
     let failed = require_unittest_summary("label", "Ran 2 tests in 0.1s\n\nFAILED (failures=1)\n")
         .unwrap_err();
     assert!(failed.contains("not OK"), "{failed}");
+    // #2692 fix-r13 (review P2): an entirely skipped module still exits 0
+    // with `OK (skipped=N)`; the summary judgment must refuse it the same
+    // way it refuses `Ran 0 tests`, while a partial skip stays OK.
+    let all_skipped =
+        require_unittest_summary("label", "Ran 3 tests in 0.0s\n\nOK (skipped=3)\n").unwrap_err();
+    assert!(
+        all_skipped.contains("every test was skipped"),
+        "{all_skipped}"
+    );
+    assert!(require_unittest_summary("label", "Ran 3 tests in 0.1s\n\nOK (skipped=1)\n").is_ok());
+    assert!(require_unittest_summary("label", "Ran 3 tests in 0.1s\n\nOK\n").is_ok());
 }
 
 #[test]
@@ -819,6 +860,46 @@ fn mutation_runner_dirs_carry_a_red_side_twin_or_a_registered_exemption() {
             "#2692 fix-r12: duplicate TWIN_EXEMPTIONS entry: {dir}"
         );
     }
+}
+
+#[test]
+fn twin_exemption_reasons_name_a_live_red_side() {
+    // #2692 fix-r13 (review P2): the non-LEGACY exemptions below justify
+    // themselves by naming the third-named red-side file that carries the
+    // twin's job. That reason used to be prose a rename or deletion silently
+    // outlived; now every `*.py` file the reason names must exist in the
+    // exempted directory, or the exemption is hiding exactly the drift the
+    // census exists to catch. LEGACY_RUNNER names no file and is skipped.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut checked = 0;
+    for (dir, reason) in TWIN_EXEMPTIONS {
+        if *reason == LEGACY_RUNNER {
+            continue;
+        }
+        let named: Vec<&str> = reason
+            .split_whitespace()
+            .map(|token| {
+                token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_')
+            })
+            .filter(|token| token.ends_with(".py"))
+            .collect();
+        assert!(
+            !named.is_empty(),
+            "#2692 fix-r13: the {dir} exemption reason must name its red-side file"
+        );
+        for file in &named {
+            assert!(
+                fixtures.join(dir).join(file).is_file(),
+                "#2692 fix-r13: the {dir} exemption names {file}, which does not \
+                 exist -- a renamed or deleted red side must update the reason"
+            );
+        }
+        checked += 1;
+    }
+    assert!(
+        checked > 20,
+        "#2692 fix-r13: suspiciously few non-LEGACY exemptions were checked"
+    );
 }
 
 #[test]

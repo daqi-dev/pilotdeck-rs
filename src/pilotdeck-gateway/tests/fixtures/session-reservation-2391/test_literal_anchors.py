@@ -20,6 +20,8 @@ import contextlib
 import dataclasses
 import importlib.util
 import io
+import os
+import sys
 import unittest
 from pathlib import Path
 
@@ -118,6 +120,92 @@ class LiteralAnchorGuard(unittest.TestCase):
             self.fail(f'#2391 fix-r12: a subset rerun must stay bound against '
                       f'the full table: rc={stop.code}')
         self.assertRefused('literal anchor unbound to any row', cases=[ROWS[0]])
+
+    def assert_main_check_refused(self, rows, *needles):
+        """Run main() --check over drifted rows and demand the rc 2 refusal."""
+        err = io.StringIO()
+        saved_argv, saved_rows = sys.argv, nc.mutations
+        nc.mutations = rows
+        try:
+            sys.argv = ['negative_controls.py', '--check']
+            with contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit,
+                                       msg='#2391 the drifted table must '
+                                           'refuse --check') as caught:
+                    nc.main()
+        finally:
+            nc.mutations = saved_rows
+            sys.argv = saved_argv
+        self.assertTrue(caught.exception.code == 2,
+                        f'#2391 fix-r13: the refusal must be a clean rc 2: '
+                        f'code={caught.exception.code!r}')
+        for needle in needles:
+            self.assertIn(needle, err.getvalue(),
+                          f'#2391 fix-r13: the refusal must say {needle!r}: '
+                          f'{err.getvalue()!r}')
+        return err.getvalue()
+
+    def test_main_check_refuses_a_stale_anchor(self):
+        # #2391 fix-r13 (review P2, the native-config fix-r8 shape): the
+        # --check envelope's own legs. Until now only the guard-level cases
+        # above existed -- a main() that stopped calling mutate() kept
+        # --check green, and the tag is asserted exactly once because the
+        # envelope used to print it a second time.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][2] = '#2391 an anchor nobody ships in the scanned sources'
+        message = self.assert_main_check_refused(
+            rows, f'{rows[0][0]}: stale anchor (expected 1, got 0)')
+        self.assertEqual(message.count('#2391'), 1,
+                         f'fix-r13: the tag must appear exactly once: {message!r}')
+
+    def test_main_check_rejects_a_no_op_mutation(self):
+        # #2391 fix-r13 (review P2, the native-config fix-r12 shape):
+        # before == after used to stay green until the host's cargo round
+        # reported SURVIVED; the fixture folds the leg into mutate()'s
+        # stale-anchor refusal, so the count reads 1.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][3] = rows[0][2]
+        message = self.assert_main_check_refused(
+            rows, f'{rows[0][0]}: stale anchor (expected 1, got 1)')
+        self.assertEqual(message.count('#2391'), 1,
+                         f'fix-r13: the tag must appear exactly once: {message!r}')
+
+    def test_main_binds_a_targeted_run_to_the_whole_table(self):
+        # #2391 fix-r13 (review P2, the native-config wiring shape): the
+        # guard-level cases above call check_literal_anchors directly, so a
+        # main() that stopped wiring it in (or narrowed its bound_rows to the
+        # selection) kept every one of them green. The spy records what main
+        # actually passed and stops before any cargo; it must really have
+        # been called -- a silently unwired main() fails the seen-assertions.
+        seen = {}
+        real = nc.check_literal_anchors
+
+        def spy(cases, bound_rows=None):
+            seen['cases'] = [case.mutation for case in cases]
+            seen['bound'] = [case.mutation for case in (bound_rows or ())]
+            raise SystemExit('stop before cargo')
+
+        saved_argv = sys.argv
+        saved_target = os.environ.get('CARGO_TARGET_DIR')
+        nc.check_literal_anchors = spy
+        try:
+            sys.argv = ['negative_controls.py', '/tmp/never-created', BAD_ROW]
+            os.environ['CARGO_TARGET_DIR'] = '/tmp/never-target'
+            with self.assertRaises(SystemExit):
+                nc.main()
+        finally:
+            nc.check_literal_anchors = real
+            sys.argv = saved_argv
+            if saved_target is None:
+                os.environ.pop('CARGO_TARGET_DIR', None)
+            else:
+                os.environ['CARGO_TARGET_DIR'] = saved_target
+        self.assertTrue(seen, '#2391 fix-r13: main() never called the guard')
+        self.assertEqual(seen['cases'], [BAD_ROW],
+                         '#2391 fix-r13: the selection must reach the guard')
+        self.assertEqual(seen['bound'], [case.mutation for case in ROWS],
+                         '#2391 fix-r13: a targeted run must stay bound '
+                         'against the whole table')
 
 
 if __name__ == '__main__':

@@ -136,6 +136,33 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertIn(f'missing=[{DROPPED_ROW!r}]', message,
                       f'#2692 fix-r10: the refusal names the missing row: {message!r}')
 
+    def test_check_refuses_a_row_dropped_from_both_tables(self):
+        # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
+        # assertion string another row also carries used to survive a
+        # both-tables drop -- `registered()` stayed aligned and the surviving
+        # sibling kept every pin bound, so --check stayed green while one
+        # control silently stopped being audited. ROW_PINS is a third
+        # denominator outside both tables; every pin in turn must refuse the
+        # drop (the native-blankkey fix-r12 red-side shape).
+        for dropped in nc.ROW_PINS:
+            rows = [row for row in nc.mutations if row[0] != dropped]
+            names = [name for name in nc.EXPECTED_NAMES if name != dropped]
+            saved_argv, saved_rows, saved_names = sys.argv, nc.mutations, nc.EXPECTED_NAMES
+            nc.mutations, nc.EXPECTED_NAMES = rows, names
+            try:
+                sys.argv = ['negative_controls.py', '--check']
+                with self.assertRaises(SystemExit,
+                                      msg=f'#2692 fix-r13: a both-tables drop '
+                                          f'of {dropped} must refuse --check') as caught:
+                    nc.main()
+            finally:
+                nc.mutations, nc.EXPECTED_NAMES = saved_rows, saved_names
+                sys.argv = saved_argv
+            self.assertIn(f'#2692 row pin names a row that is gone: {dropped}',
+                          str(caught.exception),
+                          f'#2692 fix-r13: the refusal names the dropped row '
+                          f'{dropped}')
+
     def test_main_binds_a_targeted_run_to_the_whole_table(self):
         seen = {}
         real = nc.check_literal_anchors
