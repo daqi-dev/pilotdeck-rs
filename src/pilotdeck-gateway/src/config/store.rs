@@ -119,11 +119,15 @@
 //! after the obstruction clears (the folded chain only covers the later
 //! obscured ticks; every other entry's contribution in an obscured fold is
 //! hashed from failed reads and is not comparable). A mixed tick — the
-//! metadata-only sample failed but the folded one succeeded — is a complete
-//! observation: it is compared against the last complete fingerprint and
-//! committed, not routed through the obscured path (which used to defer the
-//! change a tick and leave a complete folded value as the obscured chain's
-//! baseline, false-reporting on a later readability flap). And the startup
+//! metadata-only sample failed but the folded one was fully observed — is a
+//! complete observation: it is compared against the last complete fingerprint
+//! and committed, not routed through the obscured path (which used to defer
+//! the change a tick and leave a complete folded value as the obscured
+//! chain's baseline, false-reporting on a later readability flap); a folded
+//! sample that is itself incomplete — its content read failed — is not
+//! complete evidence either and takes the obscured handling (#2122 F5: it
+//! used to fall through, committing a content-unknown fold and false-reporting
+//! an untouched config twice). And the startup
 //! takes one full sample, content included, committing no metadata
 //! shortcut: the first tick re-samples in full (one extra bounded content
 //! read per watched path) so a write landing between the startup samples —
@@ -901,10 +905,13 @@ enum ReadOp {
 
 /// #1792 test hook: the next N reads of each (path, op) fail, keyed by path
 /// for the same parallel-test isolation as [`CONTENT_READS`]; only armed in
-/// test builds.
+/// test builds. Nested per path so a lookup borrows the path — #2122 F3: the
+/// flat `(PathBuf, ReadOp)` key allocated a fresh `PathBuf` on every probe,
+/// once per directory entry per sample.
 #[cfg(test)]
-static READ_FAILURES: Mutex<Option<std::collections::HashMap<(PathBuf, ReadOp), usize>>> =
-    Mutex::new(None);
+static READ_FAILURES: Mutex<
+    Option<std::collections::HashMap<PathBuf, std::collections::HashMap<ReadOp, usize>>>,
+> = Mutex::new(None);
 
 #[cfg(test)]
 fn content_reads(path: &Path) -> usize {
@@ -919,7 +926,8 @@ fn content_reads(path: &Path) -> usize {
 fn read_should_fail(path: &Path, op: ReadOp) -> bool {
     match lock(&READ_FAILURES)
         .as_mut()
-        .and_then(|failures| failures.get_mut(&(path.to_path_buf(), op)))
+        .and_then(|failures| failures.get_mut(path))
+        .and_then(|ops| ops.get_mut(&op))
     {
         Some(remaining) if *remaining > 0 => {
             *remaining -= 1;
@@ -948,18 +956,22 @@ fn stat_path(path: &Path) -> std::io::Result<std::fs::Metadata> {
 
 /// The `read_dir` iteration of a watched directory (#1987 B6): every step
 /// goes through the failure hook, so an iteration error — not only a failed
-/// open — can be injected for tests. Zero-cost when no failures are armed.
-struct WatchedDirEntries {
-    path: PathBuf,
+/// open — can be injected for tests. Zero-cost when no failures are armed:
+/// the path is borrowed (#2122 F3 — it used to be an owned `PathBuf` cloned
+/// per `read_dir`, paying an allocation every tick in every build just to
+/// feed the non-test hook that inlines to a constant `false`), and the test
+/// hook's lookup borrows it too, so no build allocates per step.
+struct WatchedDirEntries<'a> {
+    path: &'a Path,
     entries: std::fs::ReadDir,
 }
 
-impl Iterator for WatchedDirEntries {
+impl Iterator for WatchedDirEntries<'_> {
     type Item = std::io::Result<std::fs::DirEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let entry = self.entries.next()?;
-        if read_should_fail(&self.path, ReadOp::ReadDirEntry) {
+        if read_should_fail(self.path, ReadOp::ReadDirEntry) {
             return Some(Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "#1987 test hook",
@@ -971,7 +983,7 @@ impl Iterator for WatchedDirEntries {
 
 /// Every `read_dir` of a watched directory goes through here, like
 /// [`stat_path`]; the returned iterator's steps do too (#1987 B6).
-fn read_dir_path(path: &Path) -> std::io::Result<WatchedDirEntries> {
+fn read_dir_path(path: &Path) -> std::io::Result<WatchedDirEntries<'_>> {
     if read_should_fail(path, ReadOp::ReadDir) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
@@ -979,7 +991,7 @@ fn read_dir_path(path: &Path) -> std::io::Result<WatchedDirEntries> {
         ));
     }
     Ok(WatchedDirEntries {
-        path: path.to_path_buf(),
+        path,
         entries: std::fs::read_dir(path)?,
     })
 }
@@ -994,7 +1006,9 @@ fn content_read_should_fail(path: &Path) -> bool {
 fn arm_read_failures(path: &Path, op: ReadOp, failures: usize) {
     lock(&READ_FAILURES)
         .get_or_insert_with(Default::default)
-        .insert((path.to_path_buf(), op), failures);
+        .entry(path.to_path_buf())
+        .or_default()
+        .insert(op, failures);
 }
 
 /// Disarms any leftover failures for this (path, op) only (#1792 test hook).
@@ -1004,7 +1018,13 @@ fn arm_read_failures(path: &Path, op: ReadOp, failures: usize) {
 #[cfg(test)]
 fn clear_read_failures(path: &Path, op: ReadOp) {
     if let Some(failures) = lock(&READ_FAILURES).as_mut() {
-        failures.remove(&(path.to_path_buf(), op));
+        let emptied = failures.get_mut(path).is_some_and(|ops| {
+            ops.remove(&op);
+            ops.is_empty()
+        });
+        if emptied {
+            failures.remove(path);
+        }
     }
 }
 
@@ -1258,6 +1278,28 @@ impl WatchedPath {
         }
     }
 
+    /// #1792 r2 / #1987 A1: the obscured tick's own handling, shared by its
+    /// two call sites in [`Self::changed`] — the tick whose metadata sample
+    /// was already obscured (#2122 F5: any folded sample short of `Complete`
+    /// takes this path), and the tick whose failure landed between the two
+    /// samples. The bodies used to be duplicated verbatim; the copy between
+    /// the samples has no test of its own (the failure hook counts reads
+    /// from the first one, so no arming can make only the second sample
+    /// fail), so a regression there was indistinguishable from one here —
+    /// one body, one set of negative controls (`recovery-trusts-folded-
+    /// fingerprint`, `obscured-transition-target-not-compared`).
+    fn observe_obscured_tick(&mut self, next: u64, target_sample: Option<u64>) -> bool {
+        self.metadata_fingerprint = None;
+        // #1987 A1: the transition tick — no folded obscured predecessor —
+        // still compares the target against the last complete sample.
+        let transition = self.obscured_fingerprint.is_none();
+        let mut changed = self.observe_obscured(next);
+        if transition {
+            changed |= self.observe_target_on_transition(target_sample);
+        }
+        changed
+    }
+
     fn changed(&mut self) -> bool {
         // #1792 r2: a watched path can change type (a directory replaced by a
         // file, or the reverse). Without this the directory branch would hit
@@ -1314,25 +1356,19 @@ impl WatchedPath {
             // failed stat exactly like a missing entry (D9).
             let (next, status, target_sample) =
                 fingerprint(&self.path, directory, self.target.as_deref(), true);
-            // #1987 A4: a mixed tick — the metadata sample failed but the
-            // folded one succeeded — is a complete observation. Routing it
-            // through the obscured path compared a complete folded sample
-            // against the previous obscured one and left it as the obscured
-            // chain's baseline, decoupling the watch from the last complete
-            // fingerprint; it falls through to the complete path below
-            // instead, compared against [`Self::fingerprint`] and committed
-            // like any other complete sample.
-            if status == SampleStatus::Obscured {
-                self.metadata_fingerprint = None;
-                // #1987 A1: the transition tick — no folded obscured
-                // predecessor — still compares the target against the last
-                // complete sample.
-                let transition = self.obscured_fingerprint.is_none();
-                let mut changed = self.observe_obscured(next);
-                if transition {
-                    changed |= self.observe_target_on_transition(target_sample);
-                }
-                return changed;
+            // #1987 A4 / #2122 F5: a mixed tick is a complete observation
+            // only when the folded sample was *fully* observed. The comment
+            // used to say "the folded one succeeded" while the guard below
+            // accepted any non-obscured status: a folded sample whose content
+            // read failed (`ContentUnknown`) fell through to the complete
+            // path too, committing its `read = None` fold into `fingerprint`
+            // and false-reporting an untouched config twice — once on the
+            // mixed tick, once more at recovery. Only a `Complete` folded
+            // sample is compared against [`Self::fingerprint`] and committed
+            // like any other complete sample; anything less observed goes
+            // through the obscured handling instead (which commits nothing).
+            if status != SampleStatus::Complete {
+                return self.observe_obscured_tick(next, target_sample);
             }
             (next, status, target_sample)
         } else {
@@ -1347,16 +1383,7 @@ impl WatchedPath {
         if status == SampleStatus::Obscured {
             // Same rule as the metadata branch above, reached when the
             // failure landed between the two samples.
-            self.metadata_fingerprint = None;
-            // #1987 A1: the transition tick — no folded obscured
-            // predecessor — still compares the target against the last
-            // complete sample.
-            let transition = self.obscured_fingerprint.is_none();
-            let mut changed = self.observe_obscured(next);
-            if transition {
-                changed |= self.observe_target_on_transition(target_sample);
-            }
-            return changed;
+            return self.observe_obscured_tick(next, target_sample);
         }
         // #1792 r2: the config may have changed while the startup probe (and
         // every sample) was failing, so the first complete sample with no
@@ -1367,6 +1394,12 @@ impl WatchedPath {
         let changed = previous != Some(next);
         // #1987 A1: seed the target comparison slot from every complete
         // sample, so the next obstruction's transition tick has a baseline.
+        // #2122 P3: the guard is not redundant bookkeeping. A `ContentUnknown`
+        // sample's `target_sample` is necessarily `None` (the target's own
+        // read is the only content read a folded sample takes), so an
+        // unconditional assignment would *clear* the slot on such a tick and
+        // the next transition tick would compare against nothing; the guard
+        // keeps the last fully observed baseline instead.
         if status == SampleStatus::Complete {
             self.complete_target_fingerprint = target_sample;
         }

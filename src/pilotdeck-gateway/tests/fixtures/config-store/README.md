@@ -106,17 +106,23 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 42 个
-源码变异（29 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 46 个
+源码变异（30 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
 遮蔽折叠指纹不提交、未分类模式不被 `NotFound` 定死、报变化拍不提交短路指纹、
 目录被换成文件后的类型探针、持续遮蔽仍上报可观测变更、目录消失是完整观测、
 `NotFound` stat 是完整观测；另有 #1899 的 6 行随 rebase 移植：停表证据退回
 `is_finished()`、watch 循环首拍 panic / spawn 后干净的早退 / 首拍循环内退出
 （drop 与 stop 两条路径）、以及永不停止——`#1650` 的静默死亡路径；#1946 再加 1 行：
 claiming poll 必须让出调度、就地载入即杀；#1987 新增
-6 行：遮蔽过渡拍不比较 target 的自身指纹、启动采样提交 metadata 短路、混合拍
+6 行：遮蔽过渡拍不比较 target 的自身指纹、启动恢复两采样窗口（原行名
+`startup-metadata-shortcut-committed`，#2122 更名 `startup-two-sample-window`——
+替换文本只重排采样顺序、并不提交短路，旧名与旧描述超出实际覆盖面）、混合拍
 误走遮蔽路径、启动即遮蔽把折叠值提交进完整指纹槽、`read_dir` 迭代中途错误被
-吞、父目录启动探测失败丢路径；#1920 新增 3 行：watch 循环 panic / spawn 后
+吞、父目录启动探测失败丢路径；#2122 新增 4 行：第二遮蔽拍重复上报同一状态
+（B6 测试的武装预算此前差一拍，第二条断言实际跑在完整拍上）、启动又提交
+metadata 短路（A2 断言须在首拍 `changed()` 之前才能杀——报变化拍恒置 None）、
+折叠拍内容未知的混合拍又走完整路径（守卫收成 `!= Complete`）、截断列表未走到
+target 被当作 target 消失（未观测臂返回空折叠值）；#1920 新增 3 行：watch 循环 panic / spawn 后
 干净早退两形状重绑 stop 测试（marker 含 #1920 stop 报告断言）、`stop()` 改回吞
 `JoinError` 恒报 Cancelled；#1920 fix-r1 再补 5 行：三种死亡形状补齐两半 drop
 测试的交叉格（panic / 干净早退的 store 半、首拍循环内退出的 handle 半）、
@@ -125,7 +131,7 @@ take 后的 `stop`）删掉 debug_assert 沉默退回 `Finished`），名册分�
 `EXPECTED_NAMES`
 静态字面量（删行 / 改名 / 换序即拒绝开跑，不再用运行期表长），要求各绑定
 测试自身 panic 载荷携带其行绑定的
-`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1920` / `#1946` / `#1987` 杀点标记（绑定测试内另含 `#1793` 的
+`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1920` / `#1946` / `#1987` / `#2122` 杀点标记（绑定测试内另含 `#1793` 的
 `MAX_POLL_INTERVAL == 60 s` 字面钉），每个变异前跑正控、后跑恢复正控，源码
 逐字节恢复并复核。运行时要求：
 

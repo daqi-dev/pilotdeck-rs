@@ -1992,13 +1992,19 @@ fn a_write_between_the_startup_samples_is_reported() {
     // startup window can swallow.
     *lock(&STARTUP_SAMPLE_WRITE) = Some((path.clone(), other_model().into_bytes()));
     let mut watched = WatchedPath::new(path.clone()).expect("#1987 A2 file watched");
-    assert!(
-        watched.changed(),
-        "#1987 A2 a write between the startup samples is reported"
-    );
+    // #2122 F2: this must be asserted *before* the first `changed()`. D11
+    // forces `metadata_fingerprint` back to `None` on every tick that
+    // reports a change, so placed after the reporting `changed()` below the
+    // assertion could not fail and pinned nothing — the startup's own commit
+    // is what this line owns, and it is observable only until something
+    // reports.
     assert_eq!(
         watched.metadata_fingerprint, None,
         "#1987 A2 the startup sample commits no metadata shortcut"
+    );
+    assert!(
+        watched.changed(),
+        "#1987 A2 a write between the startup samples is reported"
     );
     // Back on the short-circuit: quiet, and the next tick commits.
     assert!(
@@ -2123,9 +2129,13 @@ fn read_dir_iteration_failure_obscures_the_sample() {
         watched.fingerprint.is_some(),
         "#1987 B6 the startup sample is complete"
     );
-    // Both entries are swallowed before either sample of either of two ticks
-    // reaches them: the whole listing is poisoned per sample.
-    arm_read_failures(&dir, ReadOp::ReadDirEntry, 4);
+    // Each obscured tick consumes four armed entry steps — the two entries
+    // of both of its samples, the metadata-only one and the folded one — so
+    // covering two obscured ticks takes eight. #2122 F1: the previous budget
+    // of four ran out after the first tick, so the "second obscured tick"
+    // assertion below actually ran on a complete sample and the folded chain
+    // comparison was never exercised by it.
+    arm_read_failures(&dir, ReadOp::ReadDirEntry, 8);
     assert!(
         !watched.changed(),
         "#1987 B6 an obscured sample reports nothing"
@@ -2155,6 +2165,117 @@ fn read_dir_iteration_failure_obscures_the_sample() {
     );
 }
 
+/// #2122 F5: a mixed tick whose folded sample is *not* fully observed — the
+/// metadata sample was obscured and the folded sample's content read failed
+/// (`ContentUnknown`) — is no complete observation. The A4 guard used to
+/// accept any non-obscured folded status, so the `read = None` fold fell
+/// through to the complete path, was committed into `fingerprint`, and an
+/// untouched config false-reported once on the mixed tick and once more at
+/// recovery. Routed through the obscured handling, both ticks are quiet and
+/// the complete baseline is never polluted.
+#[test]
+fn a_mixed_tick_whose_folded_content_read_fails_reports_nothing() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 F5 file watched");
+    let complete = watched.fingerprint;
+    assert!(
+        complete.is_some(),
+        "#2122 F5 the startup sample is complete"
+    );
+    // The mixed tick: the metadata sample is obscured (the type probe and
+    // its stat each consume one armed failure — a file watch stats itself
+    // twice per tick, D15), while the folded sample's stat succeeds and its
+    // content read fails. Nothing changes on disk.
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 F5 a mixed tick with an unknown fold reports nothing"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#2122 F5 the mixed tick commits no metadata shortcut"
+    );
+    assert_eq!(
+        watched.fingerprint, complete,
+        "#2122 F5 the mixed tick commits no complete fingerprint"
+    );
+    // Recovery with no change in between: quiet against the untouched
+    // baseline (D9), not a second report.
+    assert!(
+        !watched.changed(),
+        "#2122 F5 an unchanged recovery after the mixed tick reports nothing"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 F5 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 F4: a truncated listing that never reaches the watched target is
+/// *no observation of the target at all* — `target_sample` is `None` on that
+/// tick, so the transition comparison must not fire. The arm this pins is
+/// the unobserved one in `fingerprint`'s target fold: mis-written as "the
+/// absence hash" (or any constant), the transition tick would read
+/// "unobserved" as "vanished" and false-report a reload for an untouched
+/// config. The only other `ReadDirEntry` test watches a directory with no
+/// target, where the two are indistinguishable.
+#[test]
+fn a_truncated_listing_that_misses_the_target_reports_nothing() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let path = dir.join("pilotdeck.yaml");
+    std::fs::create_dir(&dir).expect("#2122 F4 watch directory");
+    std::fs::write(dir.join("a.yaml"), "a: 1\n").expect("#2122 F4 sibling entry");
+    // The config file is missing at startup: the parent directory is watched
+    // with the file as its target, and the startup sample observes its
+    // absence (a complete observation, D17).
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 F4 parent watched");
+    assert!(
+        watched.fingerprint.is_some(),
+        "#2122 F4 the startup sample is complete"
+    );
+    // The target appears — a real change, reported by a complete tick, which
+    // also seeds the last complete target fingerprint with the file's own.
+    std::fs::write(&path, BASE).expect("#2122 F4 the target appears");
+    assert!(
+        watched.changed(),
+        "#2122 F4 the target's appearance is reported"
+    );
+    // Two obscured ticks, both listings truncated before any entry (two
+    // entries × two samples × two ticks of armed `ReadDirEntry` steps): the
+    // target is never reached, so nothing about it was observed — not its
+    // absence, not its presence.
+    arm_read_failures(&dir, ReadOp::ReadDirEntry, 8);
+    assert!(
+        !watched.changed(),
+        "#2122 F4 a transition tick that never reached the target reports nothing"
+    );
+    assert!(
+        !watched.changed(),
+        "#2122 F4 the second truncated tick stays quiet"
+    );
+    // Recovery: nothing changed while the listings were truncated, so the
+    // complete sample is quiet against the last complete one.
+    clear_read_failures(&dir, ReadOp::ReadDirEntry);
+    assert!(
+        !watched.changed(),
+        "#2122 F4 an unchanged recovery after the truncated ticks reports nothing"
+    );
+    // Liveness: a real change is still seen.
+    std::fs::write(dir.join("c.yaml"), "c: 1\n").expect("#2122 F4 late entry");
+    assert!(
+        watched.changed(),
+        "#2122 F4 an entry created after recovery is still seen"
+    );
+}
+
 /// #1987 A3 (registration only): a startup probe failure on the *parent* of a
 /// missing config file keeps watching that parent (the `existsSync` ->
 /// `dirname` fallback's target) instead of dropping the path — the mode stays
@@ -2173,9 +2294,13 @@ fn startup_parent_probe_failure_watches_the_parent_dir() {
     let dir = root.0.join("watched");
     let path = dir.join("pilotdeck.yaml");
     std::fs::create_dir(&dir).expect("#1987 A3 watch directory");
-    // The config file is missing and its parent's stat fails (three armed
-    // failures: the startup probe plus the first two `changed()` re-probes).
-    arm_read_failures(&dir, ReadOp::Stat, 3);
+    // The config file is missing and its parent's stat fails. #2122 P3: the
+    // comment used to claim three armed failures ("the startup probe plus the
+    // first two `changed()` re-probes") but only two are ever consumed — the
+    // probe inside `new()` (which takes the `probing` shape, no sample) and
+    // the one re-probe of the mid-test `changed()`; the recovery `changed()`
+    // below happens after the clear. The budget is now exactly that.
+    arm_read_failures(&dir, ReadOp::Stat, 2);
     let mut watched = WatchedPath::new(path.clone()).expect("#1987 A3 the parent is kept");
     assert_eq!(
         watched.path, dir,
