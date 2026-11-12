@@ -59,14 +59,19 @@ fix-r2 追加三个入口：`runtime/turn/submit.rs` `validate()`（主写路径
 wire sessionKey 原样进 `RunRef`，经生产 `assembly.rs` create_storage 链落盘；
 错误走该入口既有 error-event 通道
 `{type:"error",code,message,recoverable:true}`，registry 与 session factory
-之前短路。fix-r8 次序口径：该门位于 mode/basePermissionMode 与 runId 校验
-之后、busy 拒绝之前——组合非法输入（如 `{mode:"bogus",sessionKey:"\ud800"}`）
-保持 TS 的产码次序（TS 先答 INVALID_PERMISSION_MODE，`probe_ts_gates.log`
-实测无 sessionKey 门），与同批 config 族的入口次序一致（mode → busy →
-sessionKey 门）；先序钉
+之前短路。fix-r9 次序口径：该门收在 `validate()` 末尾（maxBudgetUsd 检查
+之后、busy 拒绝之前）——TS 的 submitTurn 对组合非法输入先答字段错误
+（`{mode:"bogus",sessionKey:"\ud800"}` → INVALID_PERMISSION_MODE、
+`{runId:"bad/id",…}` → INVALID_RUN_ID（oracle.json:1104-1123）、
+`{trustedContext:"x",…}` → INVALID_TRUSTED_CONTEXT（:1188）、
+`{maxBudgetUsd:0,…}` → INVALID_MAX_BUDGET_USD（:1153）；实测
+`probe_ts_gates.log` 无 sessionKey 门），与 `set_permission_mode` 入口同序
+（mode → busy → sessionKey 门，`methods/config.rs`；其余 config 入口的
+代理分支次序见跟进单口径）；先序钉
 `submit_turn_surrogate_gate_precedes_the_busy_refusal` 不受影响（busy 在
-validate 之后），另有 `submit_turn_combined_invalid_keeps_the_ts_mode_code`
-钉组合次序）；`methods/tools.rs` `tools_rewind_files` 的 sessionKey 门改委托
+validate 之后），`submit_turn_combined_invalid_keeps_the_ts_mode_code` 与
+`submit_turn_combined_invalid_keeps_the_ts_field_codes`（runId /
+trustedContext / maxBudgetUsd 三格）钉组合次序）；`methods/tools.rs` `tools_rewind_files` 的 sessionKey 门改委托
 共享 `require_session_key`（原 `required_trimmed` 门不拒代理，而 rewind 经
 `create_session_storage` 读对方 transcript、把 `FileHistoryStore::rewind`
 的快照还原进项目工作树）；`native_archive.rs` `session()` 在 blank 分支后
@@ -156,10 +161,18 @@ subagents/tasks 注册表，`task.session_id == *session_key` 精确 JsString
   file-history 经 B 的代理拼写 tag/delete 后原样幸存）+
   `native_process/methods/config.rs` tests
   `session_model_set_surrogate_key_answers_the_session_key_gate`（config
-  写路径入口）；fix-r2 三门各一组（拒绝 + FFFD/成对代理对照）：
+  写路径入口）与 `config_family_surrogate_key_gate_matrix`（fix-r8：六方法
+  矩阵——`session_model_set`/`session_model_clear`/`set_permission_mode`/
+  `set_session_thinking`/`set_output_style`/`seed_read_state` 各一行，防任一
+  调用点掉出共享守卫；负控侧不另加绑行，`session-key-surrogate-guard-removed-config`
+  变异会连带矩阵转红）；fix-r2 三门各一组（拒绝 + FFFD/成对代理对照）：
   `runtime/turn/submit_tests.rs`
   `submit_turn_rejects_lone_surrogate_session_key`（error-event 形状 +
   session factory 未达）与 `submit_turn_keeps_fffd_and_paired_surrogate_keys`、
+  `submit_turn_combined_invalid_keeps_the_ts_mode_code` 与
+  `submit_turn_combined_invalid_keeps_the_ts_field_codes`（fix-r8/r9：
+  组合非法先序钉——mode/runId/trustedContext/maxBudgetUsd 的字段错误对孤立
+  代理 key 优先生答，与 TS 产码次序一致）、
   `native_process/methods/tools.rs` tests
   `rewind_files_rejects_lone_surrogate_session_key` 与
   `rewind_files_keeps_fffd_and_paired_surrogate_keys`（对照过门走到

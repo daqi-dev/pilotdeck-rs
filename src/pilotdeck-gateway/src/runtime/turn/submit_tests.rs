@@ -2190,3 +2190,61 @@ async fn submit_turn_combined_invalid_keeps_the_ts_mode_code() {
         "#1623 the validation short-circuit still precedes the session factory"
     );
 }
+
+// #1623 fix-r9 (r8 review, both lineages): the surrogate gate now closes
+// validate(), so every field check outranks it — TS answers each of these
+// first for a combined-invalid input (oracle.json:1104-1123 runId, :1188
+// trustedContext, :1153 maxBudgetUsd). One row per field: with a
+// lone-surrogate sessionKey beside a field error, the field error must win.
+#[tokio::test]
+async fn submit_turn_combined_invalid_keeps_the_ts_field_codes() {
+    use crate::{negative_assert, negative_assert_eq};
+    for (label, field, value, code) in [
+        ("runId", "runId", "bad/id".into(), "INVALID_RUN_ID"),
+        (
+            "trustedContext",
+            "trustedContext",
+            "not-an-array".into(),
+            "INVALID_TRUSTED_CONTEXT",
+        ),
+        (
+            "maxBudgetUsd",
+            "maxBudgetUsd",
+            JsValue::Number(0.into()),
+            "INVALID_MAX_BUDGET_USD",
+        ),
+    ] {
+        let (submitter, factory, log) = counting_factory_submitter();
+        let mut input = submit_turn_input(JsString::from_utf16(vec![0x73, 0xd800]));
+        set(&mut input, field, value);
+        collect(submitter.submit(input), log.clone()).await;
+        let visible = log
+            .visible
+            .lock()
+            .expect("#1623 submit fixture prerequisite");
+        let error = visible
+            .iter()
+            .find(|event| event["type"] == "error")
+            .unwrap_or_else(|| panic!("#1623 the {label} combination answers an error event"));
+        negative_assert_eq!(
+            error["code"],
+            json!(code),
+            "#1623 the {label} error outranks the surrogate sessionKey at the entry, as in TS"
+        );
+        negative_assert!(
+            !visible
+                .iter()
+                .any(|event| event["code"] == "INVALID_SESSION_KEY"),
+            "#1623 the surrogate gate stays behind every field check for the {label} combination"
+        );
+        drop(visible);
+        negative_assert!(
+            factory
+                .keys
+                .lock()
+                .expect("#1623 submit fixture prerequisite")
+                .is_empty(),
+            "#1623 the validation short-circuit still precedes the session factory"
+        );
+    }
+}
