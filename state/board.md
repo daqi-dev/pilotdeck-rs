@@ -5914,3 +5914,7 @@ a7d22018a 同头 fmt/严格clippy/四bin通过；6508 Gateway库项全覆盖分�
 ### 2026-11-12 19:0x CST · Gateway 接续开发，回归失败逐项修复
 
 root 独占 `codex/gateway-wave1-completion` 开发树，45 个摘取文件及 6 补丁已逐 SHA 整合；原树与快照保留。c2 同头 cb8 十阶段构建全过，188 的来源19/公共HTTP26/覆盖678通过；本批同 socket HTTP/WS 原字节绑定、connect 身份补齐和实际比较接线在 cb8 独立导出通过68/22/26项，真实Node/ws原件及三篡改反例验证，不放宽mask/心跳/UUID。r7完整回归清单6921项、266忽略，旧总FAIL保留：一处父/子libtest汇总误识别，另 negative_anchor_selfcheck 真失败19项，三代理分别修解析器、源码锚、审查执行器最小阻塞，root修辅助文件登记；83变异、SMS两项及7监听器红/恢复尚未启动。全部执行仅cb8，正式远端树保持clean c2；历史副本经逐member压缩认证后净释放23.07GiB，未动当前候选。下一步修这批实际接线失败、复算原log并补跑受影响检查，再继续既定负控与A1/E1校准。固定TS四渠道SDK/ESM阻塞、FROZEN登记、150/四host/session/retirement/冷切和真人验收未闭合，A7拒绝范围仍NOT_RUN，用户服务未切换。原件索引在本树 `_tmp/20261112-wave1-validation/`，本批116项见 `wire-integrated-checks-summary.json`。
+
+### 2026-11-12 19:2x CST · 用户停用 cb8，迁移 mbp2
+
+用户最新指令“别用 cb8 了，可以考虑换到 mbp2 上”覆盖旧 cb8-only。4b855f9ef 已经 gitleaks 扫描15提交无泄漏并推至 codex/gateway-wave1-completion；cb8本轮仅8/10构建阶段完成，按用户要求安全取消，34份原件逐SHA回存、owned容器移除/双PID消失/双锁释放，candidate未生成，后续prepare/83/SMS/7监听器/8重锚变异均NOT_RUN，不再访问cb8。已完成的完整锚扫描6226/0ERROR与122控制保持真实通过，旧c2完整回归6654/1/266总FAIL原件不改。新r6两谱系因三超时/一超预算均不完整，有效P1指独立WS连接随机nonce/mask逐字节比较，先在mbp2真实仲裁，未授权归一化或改冻结标准。mbp2已核Darwin arm64/Rust1.99/固定Node22.22，当前无Linux容器，主仓dev/takeover由他任务持有且dirty，禁止接管；remote_setup核原独立嵌套树，audit_delivery准备Darwin可执行范围，ts_reference负责有界wire实测，root继续持有本机源码。迁移与原件索引在本树_tmp/20261112-wave1-validation/{validation-latest.json,mbp2-migration-handoff.json,host-switch-20261112.md}。下一步优先迁可真实执行部分，Linux专属零匹配不算通过；完整替换、最终双审、冻结重登记与人签字仍未完成。
