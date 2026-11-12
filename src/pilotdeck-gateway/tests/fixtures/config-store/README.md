@@ -106,8 +106,8 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 46 个
-源码变异（30 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 52 个
+源码变异（35 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
 遮蔽折叠指纹不提交、未分类模式不被 `NotFound` 定死、报变化拍不提交短路指纹、
 目录被换成文件后的类型探针、持续遮蔽仍上报可观测变更、目录消失是完整观测、
 `NotFound` stat 是完整观测；另有 #1899 的 6 行随 rebase 移植：停表证据退回
@@ -122,7 +122,15 @@ claiming poll 必须让出调度、就地载入即杀；#1987 新增
 （B6 测试的武装预算此前差一拍，第二条断言实际跑在完整拍上）、启动又提交
 metadata 短路（A2 断言须在首拍 `changed()` 之前才能杀——报变化拍恒置 None）、
 折叠拍内容未知的混合拍又走完整路径（守卫收成 `!= Complete`）、截断列表未走到
-target 被当作 target 消失（未观测臂返回空折叠值）；#1920 新增 3 行：watch 循环 panic / spawn 后
+target 被当作 target 消失（未观测臂返回空折叠值）；#2122 fix-r1 再改锚新增
+7 行：内容未知拍改由「unknown-read 孪生」门收口（`mixed-content-tick-committed`
+行随守卫改动改锚孪生门，`&& false` 关门即恢复 F5 完整路径直落）、孪生门放宽
+`&& true`（真实改写后的持续读失败被吞掉应报的那一次）、第二调用点遮蔽守卫放宽回
+`!= Complete`（两采样间内容未知折叠进遮蔽链、欠报真实变更）、混合拍遮蔽守卫放宽
+回 `!= Complete`（遮蔽链混进内容未知折叠、形状翻转误报）、报变化的完整拍不提交
+孪生（其后的内容未知拍无基线可比对）、静默的内容未知拍不清短路（下一拍按相同
+metadata 短路、读不被重试）、启动采样不播种孪生（未动磁盘的首拍内容读失败
+误报——评审缺失格）；#1920 新增 3 行：watch 循环 panic / spawn 后
 干净早退两形状重绑 stop 测试（marker 含 #1920 stop 报告断言）、`stop()` 改回吞
 `JoinError` 恒报 Cancelled；#1920 fix-r1 再补 5 行：三种死亡形状补齐两半 drop
 测试的交叉格（panic / 干净早退的 store 半、首拍循环内退出的 handle 半）、
