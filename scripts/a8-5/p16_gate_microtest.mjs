@@ -375,7 +375,7 @@ await section("T11", () => {
 // 惰性初始化于 main()，import 不建目录、不落盘。
 await section("T12", async () => {
   const scratch = resolve(tmpdir(), `p16-gate-mt-scratch-${process.pid}-${Date.now()}`);
-  const p16Url = pathToFileURL(resolve(dirname(new URL(import.meta.url).pathname), "p16_stop_acceptance.mjs")).href;
+  const p16Url = pathToFileURL(resolve(dirname(fileURLToPath(import.meta.url)), "p16_stop_acceptance.mjs")).href;
   const child = spawnSync(
     process.execPath,
     ["--input-type=module", "-e", `import(${JSON.stringify(p16Url)}).then(() => console.log("IMPORTED"), (e) => { console.error("IMPORT-FAIL", e); process.exit(1); })`],
