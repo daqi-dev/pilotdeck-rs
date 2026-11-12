@@ -9,11 +9,14 @@
      否则补跑后仍争抢的 `contention_counted` 永不可达（#3056 fix-r1 MM concurrency#1）。
   2. **单写者与原子累加**（义务 9）：flock + O_APPEND 追加写（board.md:791 跨进程丢行改 O_APPEND 的先例），
      读-判重-写在同一把锁内完成，多进程并发登记不丢行。
-  3. **计数**：`count` 与 `judge` 同一分类（classify 单一实现，不再各说各话）。计入停手阈值的
-     失败类 = contention_counted（补跑后仍争抢，前提③）+ unavailable_other（非争抢失败）；不计入 =
+  3. **计数（按键归并）**：`count` 与 `judge` 同一分类（classify 单一实现，不再各说各话）。计数
+     单位是**键**（= 链×谱系×轮号）：`count` 先按键归并——每个键只贡献一次，取该键最严形态
+     （补跑形态优先于首登），再按链×谱系汇总；同轮「首登失败 + 补跑失败」两条只计 1，防单轮
+     顶满阈值的假停手（#3056 fix-r2 MM concurrency#1 P1）。计入停手阈值的失败类 =
+     contention_counted（补跑后仍争抢，前提③）+ unavailable_other（非争抢失败）；不计入 =
      contention_first（首次争抢排除段，须补跑）、superseded（重复登记）、available（PASS 有效块——
-     PASS 不是失败）。任一链×谱系计入类 ≥ 2 时退出码 1（判据 5 停手阈值的机读信号，人据此停修
-     转结构性/转人，本脚本不停任何东西）。
+     PASS 不是失败）。任一链×谱系键归并后计入类 ≥ 2 时退出码 1（判据 5 停手阈值的机读信号，
+     人据此停修转结构性/转人，本脚本不停任何东西）。
   4. **争抢二义收敛**（义务 10，MM 建议）：资源争抢类排除**仅覆盖首次**；补跑后仍无有效块即按前提③计入。
      落地：登记行带 `resource_contention`（run-review-roles.py 的 rec 字段，SlotTimeout / 429 配额 /
      执行级 TIMEOUT 为 true）与 `rerun`（--rerun 补跑标记）两个机读字段，`judge` 据此分类：
@@ -137,9 +140,15 @@ def register(path: str, key: str, status: str, contention: bool, rerun: bool, no
     if not key_ok(key):
         print(f"fixround-ledger: 登记键非法：{key}（形如 #2692/ds/r11，见 --help）", file=sys.stderr)
         return 2
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    # 单写者：flock 排他 + O_APPEND 追加（读-判重-写都在锁内；board.md:791 先例）
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o644)
+    # 单写者：flock 排他 + O_APPEND 追加（读-判重-写都在锁内；board.md:791 先例）。
+    # makedirs/os.open 也走 fail-closed（#3056 fix-r2 修 5）：父目录是普通文件 / 路径是目录等
+    # OSError 一律干净文案拒跑（rc 2），不让 traceback 冒充「count 触发阈值」（rc 1 专属停手信号）
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o644)
+    except OSError as e:
+        print(f"fixround-ledger: {path} 打不开（fail-closed）：{e}", file=sys.stderr)
+        return 2
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         existing = _parse_records(path, _read_text_fail_closed(path, create_ok=True))
@@ -150,7 +159,21 @@ def register(path: str, key: str, status: str, contention: bool, rerun: bool, no
         rec = {"key": key, "ts": dt.datetime.now().isoformat(timespec="seconds"), "status": status,
                "resource_contention": contention, "rerun": rerun, "superseded": dup,
                "note": note}
-        os.write(fd, (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8"))
+        # 追加写整行（#3056 fix-r2 修 5）：短写循环补写；中途 OSError 回滚到写前长度（仍在锁内），
+        # 不留半行 JSON 让后续 count/register 的坏行 fail-closed 连坐
+        payload = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+        end = os.fstat(fd).st_size
+        try:
+            done = 0
+            while done < len(payload):
+                done += os.write(fd, payload[done:])
+        except OSError as e:
+            try:
+                os.ftruncate(fd, end)
+            except OSError:
+                pass
+            print(f"fixround-ledger: {path} 写入失败已回滚（fail-closed）：{e}", file=sys.stderr)
+            return 2
         tag = "（重复键，标 superseded 不计数——先登记者为准）" if dup else ""
         print(f"fixround-ledger: 登记 {key} status={status} contention={contention} rerun={rerun}{tag}")
         return 0
@@ -159,10 +182,26 @@ def register(path: str, key: str, status: str, contention: bool, rerun: bool, no
         os.close(fd)
 
 
-def count(path: str) -> int:
-    recs = read_lines(path)
-    tally: dict[tuple[str, str], int] = {}
+def _merged_by_key(recs: list[dict]) -> list[dict]:
+    """按键归并（#3056 fix-r2 修 1，MM concurrency#1 P1）：每个键至多贡献一条记录——
+    superseded（同键同形态重复登记）弃掉；补跑形态（rerun）优先于首登（取该键最严形态）。
+    同形态的重复登记都会被 register 标 superseded，故两形态各至多一条非 superseded 记录。
+    逐条累加会让同轮「首登失败 + 补跑失败」计 2、单轮顶满停手阈值（假停手），先归并再汇总。"""
+    chosen: dict[str, dict] = {}
     for rec in recs:
+        if rec.get("superseded"):
+            continue
+        cur = chosen.get(rec["key"])
+        if cur is None or (rec.get("rerun") and not cur.get("rerun")):
+            chosen[rec["key"]] = rec
+    return list(chosen.values())
+
+
+def count(path: str) -> int:
+    # 先按键归并（每键一次、补跑形态优先），再按链×谱系汇总——逐条累加会把同轮
+    # 「首登失败 + 补跑失败」计 2，单轮即顶满停手阈值（#3056 fix-r2 修 1，MM concurrency#1 P1）
+    tally: dict[tuple[str, str], int] = {}
+    for rec in _merged_by_key(read_lines(path)):
         # 与 judge 同一分类（classify）：只计失败类（contention_counted / unavailable_other）。
         # 首次争抢（contention_first）是排除段、superseded 是重复登记、available 是 PASS——都不计，
         # 否则「一次真失败 + 一次资源不足」就假触发停手（#3056 fix-r1 DS concurrency#4/DS sibling#3）
@@ -175,7 +214,7 @@ def count(path: str) -> int:
         print(f"#{chain}/{lineage}: {n}{flag}")
         if n >= COUNT_THRESHOLD:
             rc = 1
-    print(f"fixround-ledger: {'触发停手阈值（判据 5）：同链×谱系计入类失败累计 ≥ 2' if rc else '未触发阈值'}")
+    print(f"fixround-ledger: {'触发停手阈值（判据 5）：同链×谱系键归并后计入类失败累计 ≥ 2' if rc else '未触发阈值'}")
     return rc
 
 
@@ -198,7 +237,7 @@ def main() -> int:
     rg.add_argument("--contention", action="store_true", help="该轮属资源争抢（SlotTimeout / 429 配额 / 执行级 TIMEOUT）")
     rg.add_argument("--rerun", action="store_true", help="该轮是补跑（--rerun；首次争抢补跑后仍争抢按前提③计入）")
     rg.add_argument("--note", default="", help="备注（跟踪单评论链接等）")
-    ct = sub.add_parser("count", help="按链×谱系累计计入类失败（与 judge 同分类；≥2 退出码 1，判据 5 停手信号）")
+    ct = sub.add_parser("count", help="按键归并（每键一次，补跑形态优先）再按链×谱系累计计入类失败（与 judge 同分类；≥2 退出码 1，判据 5 停手信号）")
     ct.add_argument("path")
     jd = sub.add_parser("judge", help="逐条分类：available / contention_first / contention_counted / unavailable_other")
     jd.add_argument("path")

@@ -14,14 +14,17 @@
      与当前 PR 补丁指纹（`git diff <PR base>...<PR head>`）相同才沿用——纯 rebase、内容逐字不变的提交链
      不必重审（同 Gerrit trivial rebase 保留评审）；任何一行不同、上下文变了、或算不出指纹，都按旧提交拒收。
 
-  4. 修复轮字段（#3056，长尾收口卡「机检落点」）：正文第一个非空行含 `fix-r<N>` 即判为修复轮 PR
-     （提交标题 `fix(...) #N fix-rM：…`，PR 正文首行即标题回显；正文不回显标题则漏判——fail-open，
-     与「防漏跑不防伪造」同一威胁模型）。修复轮 PR 的每个结果块须带 `fixtype=<枚举式|结构性|不适用>`
+  4. 修复轮字段（#3056，长尾收口卡「机检落点」）：正文第一个非空行含 `fix-r<N>`、或其后首个
+     标题回显形态（行首 `fix(...) #N fix-rM：…` 的提交标题形）的行含 `fix-r<N>`，即判为修复轮 PR
+     （提交标题回显；首行是 badge / `## 概述` / 结果块时靠标题回显行兜住——只认行首标题形态，
+     不误扫正文中间的普通提及；再没有则漏判——fail-open，与「防漏跑不防伪造」同一威胁模型）。
+     修复轮 PR 的每个结果块须带 `fixtype=<枚举式|结构性|不适用>`
      （字面三值，子类字样一律写「结构性」）；N≥4 另须正文恰一个 `<!-- pdrs-residual: <非空> -->`
      （无上一轮写字面值「无上一轮」，空白与占位符不算，围栏 / 引用块里的示例不算声明——口径与任务书侧
      check-taskbook-segments.py 同一正本）。豁免轮（waiver）的修法类型写在豁免标记内
      （`fixtype=<三值>`，值后须空格或结尾分隔），豁免理由长度不计 fixtype 词汇；标记内声明了 fixtype
-     就查值（声明即查，是否必填看修复轮判定）。
+     就查值（声明即查，是否必填看修复轮判定）。「围栏 / 引用块 / 缩进块里的示例不算声明」对
+     结果块 / 豁免 / issue 关联 / 修复轮识别同一口径生效（同一份去围栏文本，修 8）。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -43,9 +46,13 @@ import subprocess
 import sys
 
 REQUIRED_ROLES = ("sibling", "concurrency", "boundary", "simplify")
-MARKER = re.compile(r"<!--\s*pr-gate:v1\b([^>]*)-->")
+# 边界一律用 ASCII 环视而不是 \b（#3056 fix-r2 修 3①，MM2 sibling#1）：Python 的 \w 含 CJK，
+# 「已Fixes #1」「Refs #3056的说明」「结果块pr-gate:v1…」这类中文紧贴会让 \b 两侧都是 \w
+# → 正则不匹配 → 合规 PR 被判「缺 issue 关联 / 缺结果块」（假 FAIL）。与 FIXROUND_RE 同款口径
+# （check-taskbook-segments.py:96 的先例注释）。
+MARKER = re.compile(r"<!--\s*pr-gate:v1(?![A-Za-z0-9_])([^>]*)-->")
 WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S)
-ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d+\b", re.I)
+ISSUE_LINK = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d+(?![A-Za-z0-9_])", re.I)
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 补丁指纹的 diff 参数全部写死：不受本机 / CI 的 diff.renames、diff.algorithm、前缀、颜色、外部 diff 配置影响
 FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
@@ -58,6 +65,12 @@ FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
 # \w 边界把整轮判没 → fixtype/residual/N≥4 全跳、闸门假 PASS（DS boundary P0，Python 3.14 实测
 # re.match(r"\w", "复") 为 True）。中文不是 fix-r 的词组成部分，ASCII 边界足够。
 FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d+)(?![A-Za-z0-9_-])")
+# 修 9（MM2 boundary#2）：首行不是标题回显（badge / `## 概述` / 结果块）时，修复轮识别放宽为
+# 继续扫首个**标题回显形态**的行——行首提交标题形（类型词 + 可选 (scope) + 空白/结尾），如
+# `fix(gateway) #1 fix-r5：停泊补 waker`；「上轮 fix-r5 评审指出」「fix-r5 任务书在 _tmp」这类
+# 普通提及没有标题形态，不触发（只认标题形态，不误扫正文中间的提及）。
+TITLE_ECHO = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert|hotfix)"
+                        r"(\([^)\n]{0,80}\))?!?(?=\s|$)")
 RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
 # 值域 = 字面三值的字符集：紧贴的中文标点/后续文字不并进值（DS boundary#3）——
 # 「fixtype=结构性，纯文档」里值停在 结构性，「，纯文档」由 check() 的值后终止检查拒收（判缺/非法）。
@@ -65,12 +78,23 @@ WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) +
 
 
 def fix_round_from_body(body: str):
-    """正文第一个非空行里的 fix-r<N>；没有则 None。首行不回显提交标题会漏判（fail-open，见 docstring 规则 4）。"""
+    """正文第一个非空行里的 fix-r<N>；首行没有则继续扫首个标题回显形态（TITLE_ECHO）的行；
+    都没有则 None。首行与正文都不回显标题会漏判（fail-open，见 docstring 规则 4）。"""
+    first = True
     for line in body.split("\n"):
         s = line.strip()
-        if s:
+        if not s:
+            continue
+        if first:
+            first = False
             m = FIXROUND_RE.search(s)
-            return int(m.group(1)) if m else None
+            if m:
+                return int(m.group(1))
+            continue  # 首行无 fix-rN：不是直接 None，继续找标题回显行（修 9）
+        if TITLE_ECHO.match(s):
+            m = FIXROUND_RE.search(s)
+            if m:
+                return int(m.group(1))
     return None
 
 
@@ -116,20 +140,19 @@ def _load_taskbook():
         return None
 
 
-def residual_errors(body: str, fix_round) -> list[str]:
+def residual_errors(masked: str, fix_round, tb) -> list[str]:
     """N≥4 的 pdrs-residual 检查（blocks 与 waiver 两分支共用，不再各写一份）。
 
     口径与任务书侧 check-taskbook-segments.check_fix_fields 同一正本：围栏 / 引用块 / 缩进块里的
-    示例不算声明（strip_fences 后再找标记），占位符不算答（placeholder_in）。任务书模块加载失败
-    按 fail-closed 拒收（宁拒不漏，与 _load_ci_scope 同款）。"""
+    示例不算声明（strip_fences 后再找标记），占位符不算答（placeholder_in）。masked 是 check()
+    已经去围栏的正文（修 8 同一份），tb 是 check() 已加载并校验过的任务书模块——这里不再各自
+    加载，同一份文本同一份正本。"""
     if fix_round is None or fix_round < 4:
         return []
-    tb = _load_taskbook()
-    if (tb is None or not hasattr(tb, "strip_fences") or not hasattr(tb, "placeholder_in")
-            or not hasattr(tb, "RESIDUAL_NONE")):
+    if tb is None or not hasattr(tb, "placeholder_in") or not hasattr(tb, "RESIDUAL_NONE"):
         return ["pdrs-residual 口径模块（check-taskbook-segments.py）加载失败（fail-closed 拒收）"]
     errs: list[str] = []
-    found = RESIDUAL_MARKER.findall(tb.strip_fences(body))
+    found = RESIDUAL_MARKER.findall(masked)
     if not found:
         errs.append(f"修复轮 fix-r{fix_round}（N≥4）PR 正文缺 <!-- pdrs-residual: 上轮残差判读 -->（无上一轮写字面值「无上一轮」）")
     elif len(found) > 1:
@@ -265,9 +288,22 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
     # 换行归一到 \n：CRLF 正文的行尾 \r 会让 RESIDUAL_MARKER 的行尾锚定匹配不上（假 FAIL）；
     # 任务书侧 check-taskbook-segments.py 的换行归一是先例。后续所有正则都吃归一后的正文。
     body = body.replace("\r\n", "\n").replace("\r", "\n")
-    blocks = list(MARKER.finditer(body))
-    fix_round = fix_round_from_body(body)
-    w = WAIVER.search(body)
+    # 修 8（DS sibling#1）：「围栏 / 引用块 / 缩进块里的示例不算声明」从 pdrs-residual 推广到
+    # 结果块 / 豁免 / issue 关联 / 修复轮识别——全部走同一份去围栏文本（正本 check-taskbook-segments.py，
+    # 只对齐口径不改语义）。模块加载失败 fail-closed 拒收（与 _load_ci_scope 同款，宁拒不漏）。
+    tb = _load_taskbook()
+    if (tb is None or not hasattr(tb, "strip_fences") or not hasattr(tb, "fence_unclosed")
+            or not hasattr(tb, "placeholder_in") or not hasattr(tb, "RESIDUAL_NONE")):
+        return ["围栏屏蔽口径模块（check-taskbook-segments.py）加载失败（fail-closed 拒收）"]
+    # 修 6（DS boundary#1 = MM2 boundary#1）：围栏未闭合时 strip_fences 会把开栏到 EOF 整段抹掉，
+    # 真标记被吞、误报「缺」——先守卫，报「围栏未闭合」fail-closed，不静默吞内容
+    # （任务书侧 check-taskbook-segments.py 的 fence_unclosed 守卫是先例，两侧同一口径）。
+    if tb.fence_unclosed(body):
+        return ["PR 正文代码围栏没有闭合（``` 开了没收）——未闭合围栏会把它之后的声明整段吞掉，先补齐围栏再过闸（fail-closed）"]
+    masked = tb.strip_fences(body)
+    blocks = list(MARKER.finditer(masked))
+    fix_round = fix_round_from_body(masked)
+    w = WAIVER.search(masked)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
         for n, m in enumerate(blocks, 1):
@@ -289,7 +325,7 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
                     errs.append(f"修复轮多块不一致（#3056 G）：块头 {heads} 各不相同且补丁指纹 "
                                 f"{['缺' if not p else p[:12] for p in patches]} 不统一——分批/复跑拼块须覆盖同一 head 或同一 patch 指纹")
             # N≥4：上轮残差判读（PR 正文，恰一个、非空白、非占位符、围栏内示例不算声明）
-            errs.extend(residual_errors(body, fix_round))
+            errs.extend(residual_errors(masked, fix_round, tb))
         # 义务 4：fixtype=不适用 的 diff 级路径检查（声明即查，与轮数判定无关——
         # 「不适用」本身断言了 docs-only diff，该断言可复算就必须复算）
         if any(v == "不适用" for v in declared):
@@ -314,7 +350,7 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
                             f"（枚举式 / 结构性 / 不适用；{why}）")
         if fix_round is not None:
             # N≥4：上轮残差判读（同 blocks 分支口径：恰一个、非空白、非占位符、围栏内示例不算声明）
-            errs.extend(residual_errors(body, fix_round))
+            errs.extend(residual_errors(masked, fix_round, tb))
         plain = WAIVER_FIXTYPE.sub("", reason).strip()
         if len(plain) < 8:
             errs.append("豁免理由太短（≥8 字，不计 fixtype 词汇）")
@@ -324,7 +360,7 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
             errs.extend(check_na_path(base, repo, head))
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not ISSUE_LINK.search(body) and not NO_ISSUE.search(body):
+    if not ISSUE_LINK.search(masked) and not NO_ISSUE.search(masked):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     return errs
 
