@@ -56,7 +56,17 @@ API_SERVER_MOUNT = '    crate::channel::api_server::register(&mut mounts);\n'
 WECOM_MOUNT = (
     '    mounts.register(\n'
     '        "wecomCallback",\n'
-    '        crate::channel::wecom_callback::WeComCallbackChannel::constructor(responder.port()),\n'
+    '        match test_origin {\n'
+    '            Some(origin) => {\n'
+    '                crate::channel::wecom_callback::WeComCallbackChannel::constructor_with_base(\n'
+    '                    responder.port(),\n'
+    '                    format!("{origin}/cgi-bin"),\n'
+    '                )\n'
+    '            }\n'
+    '            None => {\n'
+    '                crate::channel::wecom_callback::WeComCallbackChannel::constructor(responder.port())\n'
+    '            }\n'
+    '        },\n'
     '    );\n'
 )
 

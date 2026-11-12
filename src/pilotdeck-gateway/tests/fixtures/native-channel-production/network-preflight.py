@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported isolated network probe, no product source mutations
 """Verify the actual isolated network before executing the unchanged collector supervisor."""
 import errno,json,os,socket,subprocess,sys
 from pathlib import Path

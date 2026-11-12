@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported real process capture with dynamic helper imports, no product source mutations
 """Real public CLI Server HTTP / WS / periodic Always-On / Cron collector, mock only.
 Run only inside the validated network-none namespace. No behavioral scoring replacement.
 """

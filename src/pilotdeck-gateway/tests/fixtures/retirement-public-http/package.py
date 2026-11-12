@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported source-bound artifact packaging helper, no product source mutations
 """Prepare a fresh install-shaped mock artifact from existing source-bound binaries.
 No build, download, env resource-root injection, or mutation of the source candidate.
 This is not the source-install acceptance workflow.

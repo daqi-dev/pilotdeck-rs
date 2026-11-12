@@ -1,67 +1,53 @@
 # Gateway 接续开发状态
 
-本轮已将先前摘取快照整合为真实 Git 提交，完成第一波模块拆分，并根据 cb8 回归与独立审查修复实际问题。完整 Gateway 替换验收仍未完成；本文件不授予 PASS，也不授权切换用户服务。
+2026-11-12 接续结论：摘取快照已恢复为真实 Git 开发，模块拆分、监听器关闭修复和渠道 HTTP/WS 原字节比较已实现。完整回归发现的测试接线问题正在收口；正式 Gateway 替换验收仍未完成，用户服务未切换。
 
-## 代码与证据位置
+## 唯一开发线与证据
 
-- 本机开发树：`/Users/da/.codex/worktrees/gateway-wave1-completion/pilotdeck-rs`，分支 `codex/gateway-wave1-completion`。
-- cb8 执行树：`/home/clawbox-08/ws/pdrs-worker-wt/gateway-integration-20261110`，同名分支，树内独立 `_build/cargo-target`。
-- Rust 起点：`7d7c0ab2dad32b4c71bb2ed465147cdff179f374`；固定 TS：`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。
-- 45 个交付文件和 6 份补丁已逐哈希核验，首个集成提交为 `1ddb1221069a9fbb11c398177813cd137c8f20c9`。原件仍在 `/Users/da/ws/pilotdeck-rs-codex/gateway-dev`，只读源未改。
-- 本轮构建、测试、语法和格式检查全部在 cb8；本机仅编辑、静态阅读、哈希、Git 和只读模型审查。
-- 原始运行材料在两端各自树内 `_tmp/20261112-wave1-validation/`；最终运行索引为该目录的 `validation-latest.json`（未产生时即尚未闭合）。每条结果须看自己的 HEAD、命令、退出码与原始日志，不合并不同版本的成绩。
+- 本机树：`/Users/da/.codex/worktrees/gateway-wave1-completion/pilotdeck-rs`，分支 `codex/gateway-wave1-completion`，root 独占写入。
+- cb8 树：`/home/clawbox-08/ws/pdrs-worker-wt/gateway-integration-20261110`，同名分支，独立 `_build/cargo-target`。构建、测试、语法和格式执行全部在 cb8；本机只编辑、读码、哈希、Git 和只读模型审查。
+- Rust 起点 `7d7c0ab2dad32b4c71bb2ed465147cdff179f374`，固定 TS `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。45 文件及 6 补丁逐 SHA 整合为 `1ddb12210`，原树和快照保留。
+- 当前运行索引：`_tmp/20261112-wave1-validation/validation-latest.json`。每个结论均绑定自己的源版本、输入哈希、命令、退出码和原始记录；历史失败不覆盖，旧头通过不冒充新头通过。
 
-## 已整合代码
+## 已实现
 
-| 范围 | 行为与边界 |
+| 范围 | 实际行为 |
 |---|---|
-| HTTP | 响应与静态资源分别移入 `native_http/response.rs`、`static_assets.rs`，保持原路由入口 |
-| 附件 | 组合逻辑移入 `native_process/services/attachments.rs`；能力检查、提交生命周期与阻塞调度仍由父模块控制 |
-| 启动配置 | 选项与环境校验移入 `native_process/options.rs`，保留原导出、参数优先级及组装顺序 |
-| 迁移证明 | 既有负控锚点绑定新文件并保留父文件身份保护；补齐 webhook 源码守卫及产品覆盖引用 |
-| 公共 HTTP | 完整保留状态行、重复头、正文、同 socket 原字节与模型交换；Docker 运行见证须实际 Running 且 PID 为正 |
-| 渠道 v2 | 两轮真实入站、权限/问答续接、reload、当前轮公开历史及停机落盘；进程、依赖、角色源码和保留目录均需对应原件 |
-| 渠道路由与关联 | Discord 保留 `/api/v10`；飞书 text/post 与 PUT 绑定实际 message_id；同 socket 双向记录保持完整顺序 |
-| 失败报告 | 固定 TS 的 Git 对象读取失败或超时落到具体渠道的 `ENTRY_CHANNEL_SOURCE`，其余渠道仍产生结果 |
-| 监听器关闭 | API/SMS 已实测修复 Linux 继承描述符导致 stop 后仍可连接；同模式延伸到 webhook、wecom_callback、native WS、HTTP store、execute_code RPC，保留各自原 drain 时序并传播关闭错误，新增真实入口 dupFD/rebind 控制 |
+| 模块拆分 | HTTP response/static_assets、attachments service、启动 options 独立成模块；路由、能力检查、提交生命周期、阻塞调度与参数顺序保留 |
+| 监听器关闭 | API、SMS、webhook、wecom_callback、native WS、HTTP store、execute_code RPC 对共享 socket 执行 shutdown，修复 Linux 继承描述符使 stop 后仍可连接；保留各入口原 drain 时序，传播错误 |
+| 公共 HTTP | 保留完整状态行、重复头、正文、同 socket 原字节与模型交换；receipt 的 State 必须是对象、Running 必须为 true、Pid 必须是严格正整数；启动与采集共用 240 秒预算 |
+| 渠道 v2 | 两轮实际入站、权限/问答续接、reload、当前轮公开历史和停机落盘；绑定实际进程、依赖、角色源码和原保留目录 |
+| HTTP/WS wire | `f1defa53e` 把实际 TCP connect、同 socket FIFO 请求响应、upgrade 与 frame 验证接入比较主路径；保留帧头、mask、心跳、调用次数及未知 UUID 差异，仅双方严格证据完整才清除两个 wire 缺项 |
+| 错误隔离 | 单渠道源码或子进程探针的 I/O/超时失败落入该渠道结果，其余渠道继续产生结果；不由 producer 成功推断运行见证 |
+| 测试接线修复 | 8 处旧源码锚点重新绑定实际实现，匹配数量与断言保持；11 个采集/打包/私有 C 副本实验按既有规则精确登记；完整自检结果单独记录 |
 
-最后一行的延伸修复及新增边界控制还须以下最终提交的 cb8 验证，静态复核不算运行通过。
+## 当前已取得的实测
 
-## 已取得的真实结果
-
-| 检查 | 观察结果 | 实际版本/原件 |
+| 检查 | 结果与版本边界 | 原始索引 |
 |---|---|---|
-| workspace build/check、严格 clippy | PASS | `983e23a31`，对应 `workspace-*.log`、`clippy.log` |
-| native HTTP | 138 通过、1 忽略 | `1ddb12210`，`native-http.log` |
-| API Server | 69 通过、1 忽略；dupFD 修复的断言级红/恢复控制通过 | `74f61521b`，`api-server.log`、`listener-stop-negative.json` |
-| SMS 头期限/关闭 | 9 通过、2 忽略；有效 dupFD 红/恢复控制通过 | `029efa413`，`sms-head-timeout.log`、`sms-listener-stop-r2-negative.json` |
-| native_process 广域回归 | 763 通过、0 失败、69 忽略 | `029efa413`，`native-process-after-sms-fix.log` |
-| 实际进程权限拒绝、loopback 端点 | PASS | 对应 `native-authority.log`、`loopback-origins.log` |
-| 渠道 v2/来源/reference | 41 / 12 / 9 项通过 | `68c187fb5`，`channel-*-reviewed.log` |
-| 公共 HTTP / 完整 HTTP / 项目时钟范围 | 25 / 12 / 13 项通过 | 对应 `public-http.log`、`standard-http.log`、`project-clock.log` |
-| safety | 153 项通过，1 项被旧 FROZEN 阻塞；不重写冻结检查 | `safety-reviewed.log` |
-| 同头十阶段构建 | 全部通过：fmt、严格 clippy、4 bin、各指定 no-run 和 workspace inputs | `94b79f40c`，`common-94b79f40c-verify-wave120261112T070412Z/results.json` |
-| 完整隔离回归 | r3 在准备预检失败，测试未开始；83 迁移负控未启动 | 固定 TS 目录既有 `trace.cpython-312.pyc` 未跟踪缓存；完整原字节、inode、mtime 已保全移出，tracked TS 未改，待最终头重跑 |
-| 审查后证据修复 | 来源控制 14 项、CheckoutProvenance、webhook `--check`、公共 HTTP 控制通过 | `c6c06d504`，`evidence-review-c6c06d504/results.json` |
-| 产品覆盖 | PASS，678 entries、0 errors | `c6c06d504`，`product-coverage-deps-20261112T072438Z-ee5c4e87/`；20 个固定纯 JS 工具依赖由离线缓存安装，未执行安装脚本 |
-| Docker 状态仲裁 | 真实 create 后 inspect exit0 但 Running=false/Pid=0；start 后 Running=true/Pid>0；本次容器已移除 | `scratch/docker-inspection-20261112T071555Z-111bbddd/` |
+| 同头十阶段构建 | c2c906246 全部 PASS：fmt、严格 clippy、四 bin、各指定 no-run 和 workspace inputs；no-run 不算测试运行 | `r5-build-results.json` |
+| 完整隔离回归 r7 | c2c906246 实际 6654 passed、1 failed、266 ignored。唯一真实失败为 negative_anchor_selfcheck 的 19 处失配/未登记；另一个分片因嵌套 libtest footer 被旧汇总器误报。原总 FAIL 保留 | `r7-full-artifacts-manifest.json`、`r7-full-summary.json`、`r7-anchor-errors.txt` |
+| 汇总器修复 | cb8 对 25 份原日志重新解析、17 个正负控制通过；此复算只纠正汇总，不把真实锚点失败改为通过 | `footer-replay-20261112T110915Z/` |
+| 来源/HTTP/覆盖 | 188249b11 的来源 19 项、HTTP 26 项、覆盖 678 条通过；初次缺 TypeScript 依赖的失败保留 | `root188-checks-summary.json` |
+| 完整 wire 比较 | f1defa53e 对应五文件精确 SHA 的独立导出：渠道 v2 68、来源 22、HTTP 26，共 116 项通过；真实 Node/ws 连接和三篡改反例另有原件 | `wire-integrated-checks-summary.json` |
+| 源码锚点 | 原五脚本实际复现 8 个失配；修复后 72 个锚点全部匹配；未把静态匹配算作真实 mutant 判杀 | `source-anchor-checks-20261112T110851Z/summary.json` |
+| 审查执行器 | cb8 完整既有测试与两模型×四种 canonical/alias/unknown 组合通过；只接受当前声明模型及其已登记展示名 | `review-model-alias-scratch/RESULT.md` |
 
-所有历史失败原件保留，包括首轮系统头缺失、API/SMS 关闭失败、第一次 SMS 变异的编译错误、磁盘配额拒绝、四处格式失败和 r3 准备预检失败。只有 `sms-listener-stop-r2-negative.json` 是有效的 SMS 断言级负控；初次同名报告不能计通过。
+266 项 ignored 已逐名分类，不计通过。r7 的 26 个自有容器均已移除，589 个小型原件与 cb8 逐字节一致。历史构建、权限、格式、变异编译和预检失败继续保留。
 
 ## 独立审查
 
-GLM 与 DeepSeek 按产品/验收装置两个互不重叠范围审查，完整覆盖审查头 `029efa413` 的 60 个变更文件。16 角色均有实际 final，严格运行器为 15 PASS、1 PARTIAL（DeepSeek product sibling 的覆盖行格式不符）；PASS 仅表示审查有效完成，不表示无问题。
+r4 两谱系八角色均有有效 final，最高发现是 receipt Pid 形状 P1，已由 188249b11 修复并实测。逐条判断见 `review-r4-findings-triage.md`。
 
-26 条原始 P0/P1/P2 意见归并为 21 组，原件与逐条核对在 `review-findings-triage.json`、`.md`。已确认的源异常、Docker 快照、守卫、入口引用与同类监听器问题正在同批收口。v1 路径被误连到 v2、当前 HTTP profile 并不存在的空响应要求有具体反证；不据此放宽比较器。当前修复仍需两谱系增量复核，不能沿用旧头结果块冒充最终头通过。
+r5 八结果均保持 ERROR：七份因执行器把合法 canonical 模型名误拒，一份 DeepSeek boundary 是真实畸形响应。`3bf393ef1` 已最小修复模型名守卫，不改旧结果；当前代码须由修复后的执行器重新完成双谱系增量审查。
 
-## 正式验收仍缺
+## 还未闭合
 
-- 固定 TS 的 Telegram、Discord、Slack、钉钉：真实源码 tsx 与官方 dist 均出现 ESM bare `require` 错误，对应可选 SDK 也缺失。仅安装 SDK 不会修复该加载缺陷；`ts-reference/` 保留实际原件，未注入全局 require 或替代 SDK。
-- v2 应用层结果名为 `semanticComparison`。HTTP 同 socket 原字节绑定与 WS upgrade/帧头验证仍缺，不能把 TCP chunks 或语义一致当完整业务对拍通过。
-- 无稳定实体锚点的 UUID、业务头、轮询/心跳和调用次数保持原比较口径；不能为绿色结果删字段。
-- FROZEN 原字节保持。实际 `frozen-check.json` 还包含起点已有 registration-base blob 不匹配；需合法校准、复算、独立审查和登记，不能直接 `--write` 清除阻塞。
-- 当前最终头完整隔离回归、83 条迁移负控及新增监听器正/红/恢复控制、被影响的长耗时测试、独立双审尚待原件；默认 ignored 必须逐名处置，不能汇总为已通过。
-- 全部 150 入口、四 host、session、retirement、冷切回滚与真实使用验收未闭合。A7 先前被拒绝的范围保持 NOT_RUN，不重试或绕过。
-- 推送前重新 gitleaks；PR 保持 Draft；用户服务不切换。未通过的完整替换不标完成。
+1. 完整锚点自检、真实 Rust negative_anchor_selfcheck 入口、83 项迁移负控、两项 SMS 长耗时测试与 7 个监听器正/红/恢复控制；源码变化范围内的新头构建与验证。
+2. 新 wire 路径的完整渠道真实 TS/Native 双侧采集与正式消费者复算；116 个测试不能代替全部渠道验收，media/full-production 缺项和 BLOCKED 状态保留。
+3. 固定 TS 的 Telegram、Discord、Slack、钉钉源码 tsx 和官方 dist 实际遇到 ESM bare require 错误，且有可选 SDK 缺失。原错误保留，未注入全局 require 或替代 SDK。
+4. FROZEN 旧 registration-base 与新增装置的合法复算、双审和登记；不能用直接重写哈希清除阻塞，#2961 的授权不扩展到无关标准变化。
+5. 全部 150 入口、四 host、session、retirement、冷切回滚与真实使用验收。A7 已被安全审查拒绝的范围保持 NOT_RUN，不重试或绕过；人眼体验和最终签字仍待人工。
+6. 最终源版本的独立双审、推送前 gitleaks 和 Draft PR 整理。所有必需条件闭合前不入合并队列、不宣称完整替换通过。
 
-下一步：最终修复提交在 cb8 格式化、构建和完整回归，完成受影响负控与两谱系增量审查，写入当前运行索引，再按固定基线和既定批准程序推进剩余正式验收。
+下一步先关掉已复现的回归接线失败，再执行剩余有界测试与实际采集；每项结果按自己的源版本登记。

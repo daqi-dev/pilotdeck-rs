@@ -152,13 +152,24 @@ mutations = [
      '            .watcher\n'
      '            .lock()\n'
      '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());\n'
-     '        watcher.start();\n',
-     '        watcher.start();\n'
+     '        if let Err(error) = super::storage::run(move || {\n'
+     '            watcher.start();\n'
+     '            Ok(())\n'
+     '        })\n'
+     '        .await\n'
+     '        {\n',
+     '        let watcher_to_store = watcher.clone();\n'
+     '        let start_result = super::storage::run(move || {\n'
+     '            watcher.start();\n'
+     '            Ok(())\n'
+     '        })\n'
+     '        .await;\n'
      '        *self\n'
      '            .shared\n'
      '            .watcher\n'
      '            .lock()\n'
-     '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());\n',
+     '            .unwrap_or_else(|e| e.into_inner()) = Some(watcher_to_store);\n'
+     '        if let Err(error) = start_result {\n',
      REARM,
      '#2294 rearm: on_error disposes the failed watcher out of the slot'),
 ]

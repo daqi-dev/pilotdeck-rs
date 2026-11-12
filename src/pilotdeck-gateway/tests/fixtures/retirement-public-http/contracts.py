@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported CASES declares HTTP contract expectations, not source mutations
 """Exact retained public HTTP business contracts; no process or score shortcuts."""
 import base64,datetime,hashlib,json,re,io
 from collections import Counter

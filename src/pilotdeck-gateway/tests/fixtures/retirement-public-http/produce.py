@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported runtime collector with dynamic helper imports, no product source mutations
 """Collect one source-bound profile inside the common /app layout, then finalize outside."""
 import argparse,hashlib,importlib.util,json,os,subprocess,sys
 from pathlib import Path

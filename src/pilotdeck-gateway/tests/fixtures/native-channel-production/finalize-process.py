@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported observation sidecar finalizer, no product source mutations
 """Finalize truthful sidecar bindings after the fixture exits and Docker is cleaned.
 Run on cb8. Missing observations remain missing/false; never infer process ownership
 from producer success or fill an empty trace with claimed PASS values.

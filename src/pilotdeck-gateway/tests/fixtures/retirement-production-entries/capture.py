@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported runtime capture and snapshot hashes, no product source mutations
 """Sequential real Server captures using identical paths and ports on both sides.
 
 The outer collector owns the host-wide lease and network-none container. Each

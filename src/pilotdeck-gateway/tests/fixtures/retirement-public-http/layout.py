@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported isolated runtime path and mount layout, no product source mutations
 """Same logical runtime paths on every side; no business path rewriting."""
 from pathlib import Path
 RUNTIME={'source':'/app/source','bin':'/app/source/bin','home':'/app/home','project':'/app/project','tmp':'/app/tmp','workspaces':'/app/workspaces','controlPort':28610,'providerPort':28690}

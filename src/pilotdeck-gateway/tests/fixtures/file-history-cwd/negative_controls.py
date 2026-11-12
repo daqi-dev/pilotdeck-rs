@@ -19,10 +19,22 @@ PREFIX = 'storage::file_history::cwd_tests::'
 CWD = '''let cwd = std::env::current_dir().map_err(|error| {
             FileHistoryError::Fs(crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1)
         })?;'''
-TRACK = '''pub fn track_edit(&self, file_path: &str, message_id: &str) -> FileHistoryResult<()> {
+# The public methods delegate to these shared bodies; native authorized
+# track_edit_native has a separate transaction and is not the cwd oracle lane.
+TRACK = '''fn track_edit_inner(
+        &self,
+        file_path: &str,
+        message_id: &str,
+        target: Option<&AuthorizedHistorySource>,
+    ) -> FileHistoryResult<()> {
         let mut state = self.state.lock().unwrap();
         let abs_path = resolve_node_path(file_path)?;'''
-MARK = '''pub fn mark_edit_committed(&self, file_path: &str, message_id: &str) -> FileHistoryResult<()> {
+MARK = '''fn mark_edit_committed_inner(
+        &self,
+        file_path: &str,
+        message_id: &str,
+        target: Option<&AuthorizedHistorySource>,
+    ) -> FileHistoryResult<()> {
         let mut state = self.state.lock().unwrap();
         let abs_path = resolve_node_path(file_path)?;'''
 MUTATIONS = [

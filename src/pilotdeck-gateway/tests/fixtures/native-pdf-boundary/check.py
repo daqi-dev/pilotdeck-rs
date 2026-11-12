@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported private C-copy experiments enforce exact anchors before compiling both mutants
 """Compile the real C wrappers against locally built MuPDF; inject two failures."""
 import argparse
 import hashlib

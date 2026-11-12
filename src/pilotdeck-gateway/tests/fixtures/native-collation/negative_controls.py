@@ -39,7 +39,12 @@ MATRIX = PREFIX + 'native_matrix_matches_node'
 PAIRS = PREFIX + 'native_comparator_matches_node_all_pairs'
 mutations = [
     ('icu-vendor-registration-lost', BOUNDARY,
-     '    "vendor/icu_collator",', '    "vendor/unregistered-icu",',
+     'const VENDORED_PACKAGES: [&str; 6] = [\n'
+     '    "vendor/tiktoken-rs",\n'
+     '    "vendor/icu_collator",',
+     'const VENDORED_PACKAGES: [&str; 6] = [\n'
+     '    "vendor/tiktoken-rs",\n'
+     '    "vendor/unregistered-icu",',
      VENDOR_SCOPE, '#132 ICU vendor must be registered'),
     ('icu-test-target-restored', MANIFEST,
      '[dependencies.databake]',

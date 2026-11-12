@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported isolated HTTP capture orchestrator, no product source mutations
 """Run the eight retained HTTP5 profiles in identical isolated /app paths, one at a time."""
 import argparse,hashlib,importlib.util,json,os,signal,subprocess,sys,time
 from pathlib import Path

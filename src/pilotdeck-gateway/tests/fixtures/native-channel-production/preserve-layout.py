@@ -1,3 +1,4 @@
+# anchor-selfcheck: unsupported runtime observation layout preservation, no product source mutations
 """Preserve the actual stopped cur directory by rename, with original path/inode.
 This is the existing parity layout rule, not a cache or a path normalization.
 """

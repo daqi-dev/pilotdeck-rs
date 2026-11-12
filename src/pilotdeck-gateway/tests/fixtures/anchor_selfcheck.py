@@ -141,6 +141,8 @@ MARKER_PATTERN = re.compile(r'^#\s*anchor-selfcheck:\s*unsupported(?:\s+(.*))?$'
 # exempted helpers must remain free of these signals. The reason stays above;
 # neither a new filename nor a reason alone can hide a source mutation table.
 UNSUPPORTED_SIGNALS = {
+    'retirement-public-http/contracts.py': {'table:CASES'},  # HTTP expectation rows, no source replacement
+    'native-pdf-boundary/check.py': {'table:cases'},  # private C-copy experiments with their own exact anchors
     'native-witness/test_witness.py': set(),  # #1140 in-memory/raw-trace controls, no source mutation table
     # #1363: the expectations-shape controls corrupt an in-memory JSON copy
     # through a local `mutate` lambda. No product source table is involved, and
