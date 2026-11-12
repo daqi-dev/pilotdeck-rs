@@ -883,11 +883,30 @@ ROW_PINS = (
 
 
 def check_row_pins(rows):
-    """Refuse a run whose shared-assertion rows lost one to a both-tables edit."""
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
+
+    closure-r2 (MM concurrency #1, P1): the forward loop below is one-sided
+    -- it catches a pinned row that disappeared, but a row ADDED with a
+    sibling's assertion string and no ROW_PINS entry is the one drift nothing
+    guards since the structural census left with closure-r1 (the README
+    invariant-1 rule). The reverse direction is computed from this runtime
+    table: every row whose assertion string another row also carries must be
+    pinned, so the next row reusing a shared anchor refuses here instead of
+    silently widening the pool a both-tables drop can shrink unnoticed.
+    """
     names = {case.mutation for case in rows}
     for name in ROW_PINS:
         if name not in names:
             raise SystemExit(f'#2692 row pin names a row that is gone: {name}')
+    counts = {}
+    for case in rows:
+        counts[case.assertion] = counts.get(case.assertion, 0) + 1
+    shared = {assertion for assertion, total in counts.items() if total >= 2}
+    unpinned = sorted({case.mutation for case in rows
+                       if case.assertion in shared} - set(ROW_PINS))
+    if unpinned:
+        raise SystemExit('#2692 native-config shared-assertion rows missing '
+                         f'from ROW_PINS: {", ".join(unpinned)}')
 
 
 # #2065: `expect` / `expect_err` take `&str` and never interpolate, so a panic

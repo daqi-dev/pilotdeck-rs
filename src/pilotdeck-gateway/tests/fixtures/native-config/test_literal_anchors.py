@@ -136,6 +136,28 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertIn(f'missing=[{DROPPED_ROW!r}]', message,
                       f'#2692 fix-r10: the refusal names the missing row: {message!r}')
 
+    def test_check_row_pins_refuses_a_new_shared_row_left_unpinned(self):
+        # closure-r2 (MM concurrency #1, P1): the forward pin loop only
+        # catches a pinned row that disappeared. A row ADDED with a sibling's
+        # assertion string and no ROW_PINS entry is the one drift nothing
+        # guarded after the structural census left (closure-r1) -- the twin
+        # below reuses `permission-stub-revert`'s assertion, so the reverse
+        # check must refuse and name exactly the twin.
+        source = next(case for case in ROWS
+                      if case.mutation == 'permission-stub-revert')
+        twin = dataclasses.replace(source,
+                                   mutation='permission-stub-revert-twin')
+        with self.assertRaises(SystemExit,
+                               msg='#2692 closure-r2: an unpinned row '
+                                   'reusing a shared assertion must '
+                                   'refuse the run') as caught:
+            nc.check_row_pins(ROWS + [twin])
+        self.assertIn('#2692 native-config shared-assertion rows missing '
+                      'from ROW_PINS: permission-stub-revert-twin',
+                      str(caught.exception),
+                      '#2692 closure-r2: the refusal names the family and '
+                      'the unpinned twin')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
         # assertion string another row also carries used to survive a

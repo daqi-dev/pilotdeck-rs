@@ -211,13 +211,6 @@ ROW_PINS = (
 )
 
 
-def check_row_pins(rows):
-    """Refuse a run whose shared-assertion rows lost one to a both-tables edit."""
-    names = {row[0] for row in rows}
-    for name in ROW_PINS:
-        if name not in names:
-            refuse(f'#2692 row pin names a row that is gone: {name}')
-
 mutant_source = {'guard-config-not-provided': host_source,
                  'host-lease-release-skipped': host_source,
                  'cwd-host-unavailable-ok': host_source,
@@ -253,6 +246,42 @@ mutant_anchor = {
     'lease-acquisition-skipped': ('message', 'attachments must record lease_release and after_turn'),
     'always-acquire-lease': ('message', 'lease_release recorded without an attachment lease'),
 }
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
+
+    closure-r2 (MM concurrency #1, P1): the forward loop below is one-sided
+    -- it catches a pinned row that disappeared, but a row ADDED with a
+    sibling's assertion string and no ROW_PINS entry is the one drift nothing
+    guards since the structural census left with closure-r1 (the README
+    invariant-1 rule). The reverse direction is computed from this runtime
+    table. A row's assertion is the anchor `build()` actually binds -- the
+    marker column unless `mutant_anchor` overrides it; the location-kind
+    poison pair asserts a computed site, so their marker slot (which holds a
+    test name) is not a shareable assertion. Every row whose effective
+    assertion string another row also carries must be pinned.
+    """
+    names = {row[0] for row in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            refuse(f'#2692 row pin names a row that is gone: {name}')
+    anchors = []
+    counts = {}
+    for name, _, _, _, marker, _ in rows:
+        kind, anchor = mutant_anchor.get(name, ('message', marker))
+        if kind == 'location' or not isinstance(anchor, str):
+            continue
+        anchors.append((name, anchor))
+        counts[anchor] = counts.get(anchor, 0) + 1
+    shared = {anchor for anchor, total in counts.items() if total >= 2}
+    unpinned = sorted({name for name, anchor in anchors if anchor in shared}
+                      - set(ROW_PINS))
+    if unpinned:
+        refuse('#2692 turn-submit shared-assertion rows missing from '
+               f'ROW_PINS: {", ".join(unpinned)}')
+
+
 # #2692 fix-r7 (review sibling#1): --check also proves every bound test is
 # still declared in the one file that owns its module (adapter.check's
 # module-table gate, the same one native-blankkey / turn-read / turn-publish

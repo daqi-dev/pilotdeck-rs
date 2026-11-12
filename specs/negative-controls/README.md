@@ -171,12 +171,17 @@ rc 2 不同形，且 CARGO_HOME/PDRS_BASELINE 守卫先于选择执行，对齐�
    **行身份分母（#2692 fix-r13，DS+MM 两谱系同撞 P1）**：`registered` 只看得见单侧漂移。
    一行的断言串若同时被另一行携带（共享锚），从两张表**同时**删掉它仍保持名册对齐、
    幸存的兄弟行照样绑住共享锚——`--check` 假绿。修法是第三张表 `ROW_PINS`：凡断言串
-   被 ≥2 行共用的行必须入 pin 表，启动在 `registered` 之后核（native-blankkey-submit /
-   native-config / turn-submit 三家先例）。
+   被 ≥2 行共用的行必须入 pin 表，启动在 `registered` 之后核。closure-r2（MM
+   concurrency #1）起该要求在已迁移入口是**双向**机检的：`check_row_pins` 除核 pin 名
+   指向的行仍在表里，还由运行期表算出「断言串被 ≥2 行携带」的行集要求 ⊆ `ROW_PINS`，
+   新增一行复用既有断言串而未入 pin 表即拒跑（native-blankkey-submit / native-config /
+   turn-submit 三家，各配一条红腿）；全仓普查面已随撤件移除，未迁移入口暂不在机检
+   覆盖内，重建归 #3069。
    （r13 曾配 `tests/fixtures/test_shared_assertion_pins.py` 全仓结构普查；fix-r13 评审
    判其表名白名单有盲区——约 55 张 `MUTATIONS`/`CASES` 等命名的表被判 no-table
    静默放行，属尺子假通过——普查器组件随收口撤下，债表快照正本见提交 a00925dee，
-   重建归 #3069。）
+   重建归 #3069；重建时表名白名单取 `tests/fixtures/anchor_selfcheck.py` 的 `TABLES`
+   （已含 `cases`/`controls`/`runner_mutations`、匹配大小写无关），勿再自建。）
 2. **空结果永不返回 0**。收尾用 `verdict_exit(rows, key=…)`：至少一行且全部 KILLED 才 0；
    空选择、SURVIVED、INVALID、SKIPPED 一律 1。这是 `0/0 killed` 假绿的正面堵口。
 3. **守卫写成 `raise` / `refuse()`，一个都不依赖 `assert`**。`python3 -O` 与

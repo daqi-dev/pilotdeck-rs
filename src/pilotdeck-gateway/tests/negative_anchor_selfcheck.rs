@@ -92,9 +92,14 @@ const PREFLIGHT: &[Entry] = &[
     // retracted together with its script -- the fix-r13 review ruled its
     // table-name whitelist blind (~55 MUTATIONS/CASES-shaped tables read
     // as no-table and passed silently), a false pass of the ruler. The
-    // snapshot lives in commit a00925dee; the rebuild is #3069's. The
-    // retained pieces of that round (ROW_PINS tables, red legs, the skip
-    // judgment below) are described in specs/negative-controls/README.md.
+    // snapshot lives in commit a00925dee; the rebuild is #3069's. When it
+    // is rebuilt, the table-name whitelist must reuse the TABLES set of
+    // tests/fixtures/anchor_selfcheck.py (already covering cases /
+    // controls / runner_mutations, matched case-insensitively) instead of
+    // another hand-rolled one. Of that round's retained pieces, README
+    // documents only the ROW_PINS row-identity denominator and the
+    // turn-submit shape paragraphs; the skip judgment below stays
+    // defined here.
     Entry {
         script: "test_negative_process.py",
         args: &[

@@ -120,6 +120,29 @@ class RosterGate(unittest.TestCase):
         self.assertIn(f'missing=[{RENAMED_ROW!r}]', err,
                       f'#2692 fix-r12: the refusal names the shadowed row: {err!r}')
 
+    def test_check_refuses_a_new_shared_row_left_unpinned(self):
+        # closure-r2 (MM concurrency #1, P1): the forward pin loop only
+        # catches a pinned row that disappeared. A row ADDED with a sibling's
+        # assertion string and no ROW_PINS entry is the one drift nothing
+        # guarded after the structural census left (closure-r1). The twin
+        # reuses `timeout-status-skipped`'s marker on both tables (the roster
+        # stays aligned, so `registered()` passes), and the reverse check must
+        # refuse and name exactly the twin.
+        source = next(row for row in nc.mutants
+                     if row[0] == 'timeout-status-skipped')
+        twin = list(source)
+        twin[0] = 'timeout-status-skipped-unpinned-twin'
+        rows = nc.mutants + [tuple(twin)]
+        names = list(nc.EXPECTED_NAMES) + [twin[0]]
+        code, out, err = run_check(rows=rows, expected_names=names)
+        self.assertTrue(code == 2,
+                        f'#2692 closure-r2: an unpinned row reusing a shared '
+                        f'assertion must refuse --check: rc={code} out={out!r}')
+        self.assertIn('#2692 turn-submit shared-assertion rows missing from '
+                      f'ROW_PINS: {twin[0]}', err,
+                      '#2692 closure-r2: the refusal names the family and '
+                      'the unpinned twin')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
         # assertion string another row also carries used to survive a

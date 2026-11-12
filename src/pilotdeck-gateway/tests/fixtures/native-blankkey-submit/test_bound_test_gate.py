@@ -186,6 +186,29 @@ class BoundTestGate(unittest.TestCase):
         self.assertIn('#2692 the mutation roster has duplicate names', err,
                       '#2692 fix-r12: the refusal names the duplicate shape')
 
+    def test_check_refuses_a_new_shared_row_left_unpinned(self):
+        # closure-r2 (MM concurrency #1, P1): the forward pin loop only
+        # catches a pinned row that disappeared. A row ADDED with a sibling's
+        # assertion string and no ROW_PINS entry is the one drift nothing
+        # guarded after the structural census left (closure-r1). The twin
+        # reuses `submit-owner-uses-template-key`'s assertion on both tables
+        # (the roster stays aligned, so `registered()` passes), and the
+        # reverse check must refuse and name exactly the twin.
+        source = next(row for row in nc.mutations
+                      if row[0] == 'submit-owner-uses-template-key')
+        twin = list(source)
+        twin[0] = 'submit-owner-uses-template-key-twin'
+        rows = list(nc.mutations) + [tuple(twin)]
+        names = tuple(nc.EXPECTED_NAMES) + (twin[0],)
+        code, out, err = run_check(rows=rows, expected_names=names)
+        self.assertTrue(code == 2,
+                        f'#2692 closure-r2: an unpinned row reusing a shared '
+                        f'assertion must refuse --check: rc={code} out={out!r}')
+        self.assertIn('#2692 native-blankkey-submit shared-assertion rows '
+                      f'missing from ROW_PINS: {twin[0]}', err,
+                      '#2692 closure-r2: the refusal names the family and '
+                      'the unpinned twin')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # fix-r12 (review MM boundary P1): the fix-r11 drift leg only dropped
         # the runtime row, which `registered()` alone catches; a real

@@ -443,11 +443,32 @@ def mutate(case, original):
 
 
 def check_row_pins(rows):
-    """Refuse a run whose shared-assertion rows lost one to a both-tables edit."""
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
+
+    closure-r2 (MM concurrency #1, P1): the forward loop below is one-sided
+    -- it catches a pinned row that disappeared, but a row ADDED with a
+    sibling's assertion string and no ROW_PINS entry is the one drift nothing
+    guards since the structural census left with closure-r1 (the README
+    invariant-1 rule). The reverse direction is computed from this runtime
+    table: a row whose assertion string another row also carries (a list
+    counts per element, `_assertions`) must be pinned.
+    """
     names = {case.mutation for case in rows}
     for name in ROW_PINS:
         if name not in names:
             refuse(f'#2692 row pin names a row that is gone: {name}')
+    anchors = []
+    counts = {}
+    for case in rows:
+        for assertion in _assertions(case):
+            anchors.append((case.mutation, assertion))
+            counts[assertion] = counts.get(assertion, 0) + 1
+    shared = {assertion for assertion, total in counts.items() if total >= 2}
+    unpinned = sorted({name for name, assertion in anchors if assertion in shared}
+                      - set(ROW_PINS))
+    if unpinned:
+        refuse('#2692 native-blankkey-submit shared-assertion rows missing '
+               f'from ROW_PINS: {", ".join(unpinned)}')
 
 
 def main():
