@@ -116,17 +116,17 @@ python3 -I scripts/test-check-taskbook-segments.py        # 355 条正控 / 负�
 
 ## fixround-ledger.py — 长尾卡判据 5 的计数登记台账
 
-`state/decisions-20261110-longtail-closure-rule.md` 判据 5（同一失败第三次同一形状）靠人记会漏，所以登记与计数机读化（#3056）。**计数单位是键（链×谱系×轮号）**：`count` 先按键归并——每个键只贡献一次（取该键最严形态：补跑优先于首登），同轮「首登失败 + 补跑失败」两条只计 1，防单轮顶满停手阈值的假停手（#3056 fix-r2 修 1）。登记行是单行 JSON（键固定：`key/ts/status/resource_contention/rerun/superseded/note`），坏行 fail-closed——register / count / judge 遇无法解析或非 UTF-8 的行一律退出码 2，绝不跳过（跳过会把丢数据吞成计数偏低；register 侧不裸 `json.loads` 崩栈，rc 1 会冒充「触发阈值」）。
+`state/decisions-20261110-longtail-closure-rule.md` 判据 5（同一失败第三次同一形状）靠人记会漏，所以登记与计数机读化（#3056）。**计数单位是键（链×谱系×轮号）**：`count` 先按键归并——每个键只贡献一次（取该键最严形态：**计入类失败优先于补跑 PASS**，同档内补跑优先于首登——同键「首登计入类失败 + 补跑 PASS」仍计 1，补跑翻绿抹不掉已计入的失败，判据 5 停手信号不漏报〔#3056 fix-r3 修 2〕；同轮「首登失败 + 补跑失败」两条也只计 1，防单轮顶满停手阈值的假停手〔#3056 fix-r2 修 1〕）。登记行是单行 JSON（键固定：`key/ts/status/resource_contention/rerun/superseded/note`），坏行 fail-closed——register / count / judge 遇无法解析或非 UTF-8 的行一律退出码 2，绝不跳过（跳过会把丢数据吞成计数偏低；register 侧不裸 `json.loads` 崩栈，rc 1 会冒充「触发阈值」；register 全路径的 OSError——取锁 / 快照长度 / 解锁 / 关闭——同样干净文案 rc 2 或告警，不以 traceback rc 1 冒充停手信号）。
 
 ```bash
 python3 -I scripts/fixround-ledger.py validate-key '#2692/ds/r11'        # 0 合法 · 2 非法（形如 #<issue>/<谱系>/r<N>）
 python3 -I scripts/fixround-ledger.py register <台账.jsonl> '#2692/ds/r11' --status ERROR --contention [--rerun] [--note …]
-python3 -I scripts/fixround-ledger.py count <台账.jsonl>                 # 按键归并（每键一次，补跑形态优先）再按链×谱系累计计入类失败；任一 ≥2 退出码 1（判据 5 停手信号）
-python3 -I scripts/fixround-ledger.py judge <台账.jsonl>                 # 逐条分类（superseded / contention_first / contention_counted / available / unavailable_other）
-python3 -I scripts/test-fixround-ledger.py                               # 正控 / 负控 + 8 路并发竞态
+python3 -I scripts/fixround-ledger.py count <台账.jsonl>                 # 按键归并（每键一次：计入类最严优先，同档补跑优先）再按链×谱系累计计入类失败；任一 ≥2 退出码 1（判据 5 停手信号）
+python3 -I scripts/fixround-ledger.py judge <台账.jsonl>                 # 按键归并后逐键分类（行标注补跑/首登；contention_first / contention_counted / available / unavailable_other）
+python3 -I scripts/test-fixround-ledger.py                               # 正控 / 负控 + 8 路并发竞态 + 读写锁冒烟
 ```
 
 - **幂等键（义务 8）**：`#<issue>/<谱系>/r<N>`——链 × 谱系 × 轮号；同键**同形态**（都首次 / 都补跑）先登记者为准，后到的仍写入（审计可见）但标 `superseded=true`，计数不计——重复评论 / 重复登记不会把同一次失败数成两次；**同键补跑（`--rerun`）参与判重、不盲标 superseded**（盲标会把「补跑后仍争抢」永远压回 superseded，义务 10 的两分对同轮补跑不可达）。
-- **单写者与原子累加（义务 9）**：flock 排他 + O_APPEND 追加，读-判重-写在同一把锁内完成（board.md:791 跨进程丢行改 O_APPEND 的先例）；多进程并发登记同键不丢行、恰计 1。
-- **停手阈值**：同链×谱系**键归并后**计入类失败累计 ≥ 2 即 rc 1——判据 5 的机读停手信号（人据此停修转结构性 / 转人，脚本自己不停任何东西）。**键归并**：每个键只贡献一次（取该键最严形态，补跑优先于首登）——同轮「首登失败 + 补跑失败」两条只计 1，逐条累加会让单轮顶满阈值（假停手，#3056 fix-r2 修 1）。计入类 = contention_counted（补跑后仍争抢）+ unavailable_other（非争抢失败）；contention_first（首次争抢排除段）、superseded（重复登记）、available（PASS——不是失败）都不计。
-- **争抢二义收敛（义务 10）**：登记行带 `resource_contention`（run-review-roles.py 的机读字段：SlotTimeout / 429 配额 / 执行级 TIMEOUT）与 `rerun`（补跑标记）两字段，`judge` 分类：首次争抢（contention_first，排除段不计入、须补跑）与补跑后仍争抢（contention_counted，按前提③计入）分开——资源不足不会被静默排除到无限，也不会把首次争抢误计成判据 5 的第二次；`count` 用**同一个** `classify()`，两条命令的口径只有这一份。
+- **单写者与原子累加（义务 9）**：flock 排他 + O_APPEND 追加，读-判重-写在同一把锁内完成（board.md:791 跨进程丢行改 O_APPEND 的先例）；多进程并发登记同键不丢行、恰计 1。`count` / `judge` 的读路径取共享锁（LOCK_SH）快照（#3056 fix-r3 修 5）——不锁会在写者短写循环补写半行的窗口读到残行，坏行 fail-closed 把正常并发读误报成台账损坏。
+- **停手阈值**：同链×谱系**键归并后**计入类失败累计 ≥ 2 即 rc 1——判据 5 的机读停手信号（人据此停修转结构性 / 转人，脚本自己不停任何东西）。**键归并**：每个键只贡献一次，取该键最严形态——**计入类失败（contention_counted / unavailable_other）优先于 available**（同键「首登计入类失败 + 补跑 PASS」仍计 1，补跑成功抹不掉已计入的失败，#3056 fix-r3 修 2），同档内补跑优先于首登（同轮「首登失败 + 补跑失败」两条只计 1，逐条累加会让单轮顶满阈值——假停手，#3056 fix-r2 修 1）。计入类 = contention_counted（补跑后仍争抢）+ unavailable_other（非争抢失败）；contention_first（首次争抢排除段）、superseded（重复登记）、available（PASS——不是失败）都不计。
+- **争抢二义收敛（义务 10）**：登记行带 `resource_contention`（run-review-roles.py 的机读字段：SlotTimeout / 429 配额 / 执行级 TIMEOUT）与 `rerun`（补跑标记）两字段，`judge` 按键归并后分类：首次争抢（contention_first，排除段不计入、须补跑）与补跑后仍争抢（contention_counted，按前提③计入）分开——资源不足不会被静默排除到无限，也不会把首次争抢误计成判据 5 的第二次；`count` 用**同一个** `classify()` 与 `_merged_by_key()`，两条命令的分类与归并口径只有这一份。

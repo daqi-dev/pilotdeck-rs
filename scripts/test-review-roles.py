@@ -751,6 +751,32 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.check(mention_body, head, fp3):
             fails.append(f"修9 负控：非标题形态的提及不应触发修复轮判定（不要求 fixtype）：{gate.check(mention_body, head, fp3)}")
 
+        # fix-r3 修 1（DS boundary#1 P0 假 PASS 向 + DS boundary#2 假 FAIL 向）：标题回显收紧为
+        # 完整标题形态（类型词 + 可选 (scope) + 冒号〔半/全角〕或空白分隔 + #N + fix-rM）——
+        # 冒号形 `fix(scripts): #N fix-rM` / `fix: #N fix-rM` 进修复轮判读（旧 TITLE_ECHO 只认
+        # 类型词+空白，冒号形的 fixtype / pdrs-residual 整套被跳过 = 假 PASS）；散文行
+        # 「test 覆盖了 fix-r5 的场景」不再判成修复轮（旧口径只看行首类型词 = 假 FAIL）
+        if gate.fix_round_from_body("![ci](https://example.com/b.svg)\n\nfix(scripts): #3074 fix-r3：修闸门\n") != 3:
+            fails.append("fix-r3 正控：冒号形 fix(scripts): 标题回显应识别 fix-r3")
+        if gate.fix_round_from_body("## 概述\n\nfix: #3074 fix-r3：修闸门\n") != 3:
+            fails.append("fix-r3 正控：无 scope 冒号形 fix: 标题回显应识别 fix-r3")
+        if gate.fix_round_from_body("## 概述\n\nfix(tools)：#3056 fix-r2：修台账\n") != 2:
+            fails.append("fix-r3 正控：全角冒号标题回显应识别 fix-r2")
+        if gate.fix_round_from_body("## 概述\n\ntest 覆盖了 fix-r5 的场景\n") is not None:
+            fails.append("fix-r3 负控：类型词开头的散文行不应识别为修复轮（假 FAIL 向）")
+        if gate.fix_round_from_body("## 概述\n\nfixed #1 fix-r5 的对照\n") is not None:
+            fails.append("fix-r3 负控：类型词前缀（fixed）不是行首类型词")
+        colon_body = "![ci](https://example.com/b.svg)\n\nfix(scripts): #1 fix-r5：修闸门\n\n" \
+                     f"{s}\n{residual}Refs #1\n"
+        if gate.check(colon_body, head, fp3):
+            fails.append(f"fix-r3 正控：冒号形标题回显 + 齐字段应过闸：{gate.check(colon_body, head, fp3)}")
+        errs = gate.check(colon_body.replace(" fixtype=结构性", ""), head, fp3)
+        if not any("须带 fixtype" in e for e in errs):
+            fails.append(f"fix-r3 负控：冒号形标题回显缺 fixtype 应按修复轮拒收：{errs}")
+        prose_body = f"## 概述\n\ntest 覆盖了 fix-r5 的场景\n\n{plain_block}\nRefs #1\n"
+        if gate.check(prose_body, head, fp3):
+            fails.append(f"fix-r3 负控：散文行不算修复轮（缺 fixtype 的块不再被误拒）：{gate.check(prose_body, head, fp3)}")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
