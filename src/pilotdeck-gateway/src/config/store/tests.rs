@@ -2171,8 +2171,8 @@ fn read_dir_iteration_failure_obscures_the_sample() {
 /// accept any non-obscured folded status, so the `read = None` fold fell
 /// through to the complete path, was committed into `fingerprint`, and an
 /// untouched config false-reported once on the mixed tick and once more at
-/// recovery. Routed through the obscured handling, both ticks are quiet and
-/// the complete baseline is never polluted.
+/// recovery. Gated by the unknown-read twin instead, both ticks are quiet
+/// and the complete baseline is never polluted.
 #[test]
 fn a_mixed_tick_whose_folded_content_read_fails_reports_nothing() {
     let root = Root::new();
@@ -2184,10 +2184,10 @@ fn a_mixed_tick_whose_folded_content_read_fails_reports_nothing() {
         complete.is_some(),
         "#2122 F5 the startup sample is complete"
     );
-    // The mixed tick: the metadata sample is obscured (the type probe and
-    // its stat each consume one armed failure — a file watch stats itself
-    // twice per tick, D15), while the folded sample's stat succeeds and its
-    // content read fails. Nothing changes on disk.
+    // The mixed tick: the metadata sample is obscured (a file watch stats
+    // itself three times per tick, D15 — the two armed failures land on the
+    // type probe's and the metadata sample's stats), while the folded
+    // sample's stat succeeds and its content read fails. Nothing changes.
     arm_read_failures(&path, ReadOp::Stat, 2);
     arm_content_read_failures(&path, 1);
     assert!(
@@ -2255,7 +2255,7 @@ fn an_untouched_config_with_a_failing_first_content_read_reports_nothing() {
     assert_eq!(
         content_reads(&path),
         before,
-        "#2122 fix-r1 the failed read is not counted"
+        "#2122 fix-r1 the failed read is not counted as a successful read"
     );
     // Recovery with no change in between: quiet against the untouched
     // baseline, not a second false report.
