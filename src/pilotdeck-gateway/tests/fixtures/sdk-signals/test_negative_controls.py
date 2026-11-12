@@ -165,11 +165,16 @@ RELATIVE_TARGETS = tuple(sorted(
 # 字节采样。表里哪一行改指到别的文件，注入不再触发 / 断言采错对象，而
 # 本文件其余部分照绿——先在这里红，把漂移挡在选择处。
 _BY_NAME = {row[0]: row for row in _CATALOG.mutations}
-assert all(
-    _BY_NAME[name][1].relative_to(_CATALOG.root).as_posix() == REPLAY_RELATIVE
-    for name in SELECTION), (
-    '#2981 every selected row must target the shared replay harness '
-    + REPLAY_RELATIVE)
+# fix-r3（MM concurrency P2）：守卫写成显式 raise，不依赖 assert——`python3
+# -O` / PYTHONOPTIMIZE=1 会整条剥离 assert（fixtures README 三条硬要求之
+# 三），剥离后本前提钉静默消失；raise 在任何解释器档位都拒跑。
+if not all(
+        _BY_NAME[name][1].relative_to(_CATALOG.root).as_posix()
+        == REPLAY_RELATIVE
+        for name in SELECTION):
+    raise RuntimeError(
+        '#2981 every selected row must target the shared replay harness '
+        + REPLAY_RELATIVE)
 
 # The subprocess driver. It execs the real runner source with ``__file__``
 # inside the temporary tree and patches only the negative_process boundaries
@@ -491,7 +496,12 @@ class _RunnerDriver:
         stderr_text, tree, target_before, out)``; the runner's stdout belongs
         to the reader (nothing to capture on the process itself), its stderr
         is drained into ``stderr_text``, and the process is fully waited
-        before returning.
+        before returning. The parent never closes ``reader.stdin`` before
+        ``communicate()``: CPython's ``Popen._communicate`` flushes that stream
+        first, and on a closed file 3.9-3.12 raise ``ValueError`` (only 3.13+
+        swallow it — the CI's ubuntu-24.04 python is 3.12, so the close would
+        ERROR the case there). ``communicate()`` itself flushes and closes the
+        empty-input stdin, same semantics on every version.
         """
         base = self._new_base('pdrs-2981-pipe-')
         tree, tree_runner, out, before, env = self._stage(base)
@@ -502,7 +512,6 @@ class _RunnerDriver:
             [sys.executable, '-I', '-B', str(base / 'harness.py'), mode,
              str(tree_runner), str(FIXTURES), str(tree), str(out), *names],
             stdout=reader.stdin, stderr=subprocess.PIPE, text=True, env=env)
-        reader.stdin.close()
         head_stdout, _reader_stderr = reader.communicate(timeout=120)
         stderr_text = process.stderr.read()
         process.stderr.close()

@@ -1602,7 +1602,10 @@ class EnvironmentControls(unittest.TestCase):
         # 本轮实测 Ran 12、约 3 s），下限与 commands 同步——不钉则删掉 CI
         # 行全绿，正是 fix-r1 修过的洞。fix-r2（三出口腿 + exit 相位）
         # Ran 12→16（本机实测约 5 s），下限同步抬到 16。
-        
+        # #2981 fix-r3（MM sibling P1）：close-order pin 补出场侧冻结账本
+        # 证明用例（exit-ledger-drift，删 runner :539 那行此前整套照绿——
+        # 冻结件假 PASS），Ran 14→15（本轮实测约 2.7 s），下限同步抬到 15。
+
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1610,7 +1613,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 15),
             ('sdk-signals/test_negative_controls.py', 16),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主

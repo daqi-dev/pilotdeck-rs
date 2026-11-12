@@ -37,6 +37,12 @@ exactly like the issue-2495 / SessionRunnerTests precedents:
   recorded INVALID, the guard still restores the catalog, rc 2;
 - guard-exit-fault: the stub guard raises after the body completed — the
   revoke-everything half of the same accounting (#979);
+- exit-ledger-drift: ``_head_bytes`` fails on the exit-side frozen-ledger
+  proof (the ``#1885 r3`` re-prove after the last control) — until this case
+  no in-repo test triggered that proof: deleting its whole line left the
+  suite green (a frozen-device false PASS). Every completed row must still
+  land in the abort accounting, its diagnostic kept as a prefix, rc 2 —
+  the close-order sibling of the sdk-signals side's exit-phase case;
 - cancel: ``run_owned`` raises KeyboardInterrupt during the last control's
   negative run — the deterministic shape of a Ctrl-C, which is a
   BaseException the per-control ``except Exception`` must not swallow;
@@ -158,6 +164,7 @@ else:
                 raise RuntimeError('#1800 injected guard exit failure')
 
     calls = {'count': 0}
+    head_calls = {'count': 0}
 
     def fake_run_owned(command, **_kwargs):
         # The check command carries no phase label, so the phases are served
@@ -192,6 +199,18 @@ else:
             command, 0, 'product anchors: PASS\\n', '')
 
     def fake_head_bytes(actual_root, relative, _baseline):
+        index = head_calls['count']
+        head_calls['count'] += 1
+        if mode == 'exit-ledger-drift' and index >= 2:
+            # Calls 0-1 are the entry-side proof inside the guard (each
+            # assert_frozen_ledgers_match_head reads both ledgers: the
+            # close-order ledger first, then the #1145 rejection ledger);
+            # calls 2-3 are the exit-side proof after the last control, the
+            # `#1885 r3` re-prove on the way out. Failing there and nowhere
+            # else is what makes this the use case for that proof: delete it
+            # and this case goes green, and no earlier fault reaches it —
+            # every completed row must still land in the abort accounting.
+            raise OSError('#2981 injected exit ledger drift')
         return (Path(actual_root) / relative).read_bytes()
 
     negative_process.mutating_sources = fake_guard
@@ -463,6 +482,38 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
         self.assert_rows(summary, [HEALTHY_REASON + '; ' + failure,
                                    HEALTHY_REASON + '; ' + failure])
         self.assertIn('#1382 run did not complete', process.stderr)
+
+    def test_exit_ledger_drift_revokes_every_row_after_the_last_control(self):
+        # #2981 fix-r3（MM sibling P1）：runner 自己的出场侧冻结账本证明
+        # （#1885 r3，最后一个控制完成后的 assert_frozen_ledgers_match_head()）
+        # 此前无用例触发——删掉那一整行本文件照绿（冻结件假 PASS，与 sdk-signals
+        # 侧 fix-r2 补的 exit 相位用例同型）。本例让 _head_bytes 第 3 次调用起
+        # 抛（即出场侧读）：删掉那行本用例转绿，正是它要钉的洞。
+        process, summary, tree, before = self.run_pin('exit-ledger-drift')
+        self.assertEqual(process.returncode, 2,
+                         f'#2981 an exit-phase ledger drift must exit 2: '
+                         f'{process.stderr!r}{process.stdout!r}')
+        failure = 'run aborted: OSError: #2981 injected exit ledger drift'
+        # The exit-side proof fires after the LAST control completed, so both
+        # rows are recorded kills the accounting must revoke — each keeps
+        # its own healthy diagnostic as the prefix (#979).
+        self.assert_rows(summary, [HEALTHY_REASON + '; ' + failure,
+                                   HEALTHY_REASON + '; ' + failure])
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['INVALID'] * len(SELECTION),
+                         '#2981 an exit-phase ledger drift revokes every '
+                         'recorded kill')
+        self.assertIn('#1382 run did not complete: OSError: '
+                      '#2981 injected exit ledger drift', process.stderr,
+                      '#2981 the abort must name the exit-side ledger drift '
+                      'on stderr')
+        self.assertEqual(self.counts_line(process.stdout)['counts']['INVALID'],
+                         len(SELECTION))
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#2981 an exit-phase ledger drift happens after '
+                         'every control restored its own catalog row')
 
     def test_cancellation_voids_recorded_kills_and_unrun_rows(self):
         # KeyboardInterrupt is a BaseException the per-control ``except
