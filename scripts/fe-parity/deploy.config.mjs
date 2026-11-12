@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { baseline, requireUI, ownedPath } from './env.mjs';
 import { assertDeployExecutionEnv, deployCell, deployOrigin, formalProjects } from './deploy-matrix.mjs';
 import { realChromeLaunchOptions } from './real-browser.mjs';
@@ -15,7 +16,7 @@ export default requireUI('@playwright/test').defineConfig({
   outputDir: `${output}/test-results/old-${cell.id}`,
   // Auth composition specs do not complete onboarding; prepare their own
   // fixed test account through real APIs before unchanged specs authenticate.
-  globalSetup: new URL('./deploy-setup.mjs', import.meta.url).pathname,
+  globalSetup: fileURLToPath(new URL('./deploy-setup.mjs', import.meta.url)),
   use: { baseURL: deployOrigin, channel: 'chrome', headless: true,
     trace: 'on', screenshot: 'only-on-failure', video: 'off', serviceWorkers: 'block',
     launchOptions: realChromeLaunchOptions(process.env) },

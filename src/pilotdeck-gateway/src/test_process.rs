@@ -1848,15 +1848,12 @@ fn an_unreadable_stat_of_a_possible_child_fails_the_child_audit() {
     if std::fs::read_to_string(child_entry.join("stat")).is_ok() {
         let _ = child.kill();
         let _ = child.wait();
-        assert!(
-            !crate::test_permission_faults::require_permission_faults(),
-            "#2138 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the stat \
-             read (root or a permission-blind runner); this test needs a host that enforces mode \
-             bits (需要强制 mode 位的宿主)"
-        );
-        crate::test_skip_line::stderr_skip_line(
+        crate::test_permission_faults::skip_or_require(
             "#2138 skip: an_unreadable_stat_of_a_possible_child_fails_the_child_audit: \
              running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+            "#2138 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the stat \
+             read (root or a permission-blind runner); this test needs a host that enforces mode \
+             bits (需要强制 mode 位的宿主)",
         );
         return;
     }
@@ -2018,15 +2015,12 @@ fn an_unreadable_holder_of_this_user_fails_the_data_dir_audit() {
     // PDRS_REQUIRE_PERMISSION_FAULTS=1 (probe-only shape, as
     // tests/write_tools.rs).
     if std::fs::read_dir(blind.join("fd")).is_ok() {
-        assert!(
-            !crate::test_permission_faults::require_permission_faults(),
-            "#2138 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the listing \
-             (root or a permission-blind runner); this test needs a host that enforces mode bits \
-             (需要强制 mode 位的宿主)"
-        );
-        crate::test_skip_line::stderr_skip_line(
+        crate::test_permission_faults::skip_or_require(
             "#2138 skip: an_unreadable_holder_of_this_user_fails_the_data_dir_audit: \
              running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+            "#2138 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the listing \
+             (root or a permission-blind runner); this test needs a host that enforces mode bits \
+             (需要强制 mode 位的宿主)",
         );
         return;
     }

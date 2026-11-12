@@ -79,6 +79,12 @@ use std::{
 #[allow(dead_code)]
 #[path = "common/source_inputs.rs"]
 mod source_inputs;
+// #1937: the shared skip-line writer. `stderr_boundary_line` below used to
+// hand-copy it (the #448 probe that established handle writes bypass libtest's
+// capture); it now delegates so the call site enters the reverse guard's
+// writer scan like every other skip line.
+#[path = "common/skip_line.rs"]
+mod skip_line;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use source_inputs::*;
@@ -1151,11 +1157,11 @@ fn acknowledges_non_linux_boundary(value: Option<&std::ffi::OsStr>) -> bool {
 // #448 boundary lines must reach default `cargo test` output: libtest
 // captures the eprintln! macro for a passing test, so skip and note lines
 // are written through the stderr handle directly (probed on rustc 1.99.1:
-// handle writes bypass the capture; the macro's output does not).
+// handle writes bypass the capture; the macro's output does not). #1937:
+// the writer itself now lives in common/skip_line.rs; this name stays as
+// the boundary-flavored alias its three call sites already use.
 fn stderr_boundary_line(text: &str) {
-    use std::io::Write;
-    let _ = std::io::stderr().write_all(text.as_bytes());
-    let _ = std::io::stderr().flush();
+    skip_line::stderr_skip_line(text);
 }
 
 #[test]

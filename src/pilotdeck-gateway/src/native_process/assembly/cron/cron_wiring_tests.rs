@@ -396,7 +396,9 @@ async fn a_stopped_manager_rejects_the_six_management_methods() {
 /// stops before closeServer (channels), and both precede the session and
 /// project disposal. #2294 routes the cron manager behind the automation
 /// bundle, so the observer label the cleanup carries is the bundle's —
-/// "automation" — while the stop order itself is unchanged.
+/// "automation" — while the stop order itself is unchanged. #1725 item 15:
+/// the channel state flush rides the same observation surface as the stop it
+/// follows, so the trace carries it between the channels and the sessions.
 #[tokio::test]
 async fn cleanup_stops_automation_before_the_channels() {
     let (_scratch, requests) =
@@ -441,8 +443,8 @@ async fn cleanup_stops_automation_before_the_channels() {
     let recorded = order.lock().expect("#1326 cleanup order lock").clone();
     negative_assert_eq!(
         recorded,
-        ["automation", "channels", "session", "project"],
-        "#1326 automation (the bundle that owns cron) stops first, then the channels, sessions, and project"
+        ["automation", "channels", "flush", "session", "project"],
+        "#1326 automation (the bundle that owns cron) stops first, then the channels, flush, sessions, and project"
     );
 }
 

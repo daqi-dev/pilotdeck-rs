@@ -2612,6 +2612,135 @@ async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided
         .expect("#2562 test owner shutdown");
 }
 
+/// #2617: the submit path's `workspace_id` gate converts a lone-surrogate
+/// `projectKey` lossily — the #2083 close-path shape (session_dir.rs), same
+/// judge same fix. The TS resolver chain (`workspaceIdResolver(input.projectKey)`
+/// → `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot)`,
+/// createLocalGateway.ts:1026-1028) runs the key to completion: the legacy
+/// slug regex drops the surrogate unit (paths.ts:110), so a lone surrogate
+/// lands on the process cwd's project — not necessarily the configured one —
+/// and only the type check a non-string fails (#2562) is left. Node v22.22.0
+/// probes: submit-level
+/// `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out` (coordinator)
+/// and the resolver-level rerun
+/// `_tmp/20261111-2617-evidence/probe-submit-surrogate-resolver.out` (its
+/// "resolves like the fallback" flag is tautological: the script pinned
+/// `fallbackProjectRoot = process.cwd()`). The reject cell pins the unserved
+/// surrogate: the capability refusal, not the pre-#2617 `projectKey must be a
+/// valid path string.` error. The admit cell pins the residual #2083
+/// registered: a key whose lossy form names the configured project (a real
+/// path containing U+FFFD) is served — its fixture premise is `options.project`
+/// rewritten to that lossy path, with the surrogate unit in the key at the
+/// U+FFFD position — and answers that project's own storage id, recomputed
+/// with the same `SnapshotProjects` resolver the production path uses.
+#[tokio::test]
+async fn submit_workspace_id_surrogate_project_key_reaches_the_capability_gate() {
+    use crate::runtime::snapshot::SnapshotProjectResolver as _;
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    let (scratch, requests) = setup();
+    let storage_root = scratch.0.join("snapshot-storage");
+    let recorder = std::sync::Arc::new(
+        crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+            crate::storage::WorkspaceSnapshotConfig {
+                root: storage_root.to_string_lossy().into_owned(),
+                snapshot_root: storage_root.to_string_lossy().into_owned(),
+            },
+        ),
+    );
+    let services = |project: std::path::PathBuf,
+                    recorder: Option<
+        std::sync::Arc<crate::storage::ContentAddressedWorkspaceSnapshotRecorder>,
+    >| {
+        let mut options = requests.options.clone();
+        options.project = project;
+        super::services::Services {
+            options,
+            project: requests.project.clone(),
+            env: requests.env.clone(),
+            recorders: std::sync::Arc::default(),
+            owner: crate::runtime::session::SessionOwner::new(
+                crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(
+                    SnapshotFactory,
+                )),
+            ),
+            snapshot_recorder: recorder,
+            upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_: &pilotdeck_protocol::JsString| {
+                        Err(crate::upload::UploadError::dialog(
+                            "PROJECT_NOT_FOUND",
+                            "unavailable in test",
+                        ))
+                    },
+                    || Ok(vec![]),
+                ),
+            )),
+        }
+    };
+
+    // (1) Reject cell: the lone surrogate is an unserved key, so the
+    // capability gate answers — not the pre-#2617 type error.
+    let unserved_input = crate::metadata::object([(
+        "projectKey",
+        JsValue::String(JsString::from_utf16(vec![0xd800])),
+    )]);
+    let error = services(requests.options.project.clone(), Some(recorder.clone()))
+        .workspace_id(&unserved_input)
+        .expect_err("#2617 the surrogate projectKey is not the type error");
+    negative_assert_eq!(
+        error.code,
+        "CAPABILITY_UNAVAILABLE",
+        "#2617 the surrogate projectKey reaches the capability gate"
+    );
+    negative_assert_eq!(
+        error.message,
+        "The isolated native process serves only its configured project.",
+        "#2617 the surrogate projectKey keeps the isolation message"
+    );
+
+    // (2) Admit cell: the residual #2083 registered — the key's lossy form
+    // names the configured project, so the submit gate serves it and the
+    // recorder answers that project's workspace id.
+    let residual = format!("{}-pd-\u{FFFD}", requests.options.project.to_string_lossy());
+    let residual_units: Vec<u16> = residual
+        .encode_utf16()
+        .map(|unit| if unit == 0xFFFD { 0xD800 } else { unit })
+        .collect();
+    let residual_input = crate::metadata::object([(
+        "projectKey",
+        JsValue::String(JsString::from_utf16(residual_units)),
+    )]);
+    let served = services(std::path::PathBuf::from(&residual), Some(recorder))
+        .workspace_id(&residual_input)
+        .expect("#2617 the residual lossy form of the configured project is served")
+        .expect("#2617 the served residual project answers a workspace id");
+    negative_assert!(
+        served.to_utf8().is_ok(),
+        "#2617 the served workspace id is a valid UTF-8 string"
+    );
+    // fix-r1 (review P2): the admit cell discriminates — the served id is the
+    // residual project's own storage id (the same `SnapshotProjects` resolver
+    // the production path uses, services.rs), not just any valid UTF-8 string.
+    let expected = crate::runtime::snapshot::SnapshotProjects::new(
+        requests.options.home.clone(),
+        std::path::PathBuf::new(),
+    )
+    .workspace_id(&residual);
+    negative_assert_eq!(
+        served
+            .to_utf8()
+            .expect("#2617 the served workspace id is valid UTF-8"),
+        expected,
+        "#2617 the admit cell answers the residual project's own workspace id"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2617 test owner shutdown");
+}
+
 /// #1323 boundary P1: TS `/^-+|-+$/g` trims both ends of the legacy slug.
 #[test]
 fn legacy_project_id_trims_leading_dashes() {

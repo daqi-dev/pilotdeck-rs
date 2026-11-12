@@ -30,9 +30,12 @@ mod test_exact_receipt;
 mod test_negative_receipt;
 #[allow(dead_code)]
 // #1461 r5: renamed to the shared `test_` names — `src/test_process.rs`
-// (#[path]-included below) calls `crate::test_permission_faults` /
-// `crate::test_skip_line` from its two #2138 root-skip arms, and loading
-// the same file twice under two names trips `clippy::duplicate_mod`.
+// (#[path]-included below) calls `crate::test_permission_faults::
+// skip_or_require` from its two #2138 root-skip arms, so this crate root
+// must declare that module name (fix-r1: those arms no longer call
+// `crate::test_skip_line` directly — the note half travels through the
+// pair helper, and this crate has no `mod test_skip_line;` to reason
+// about any more).
 #[path = "common/permission_faults.rs"]
 mod test_permission_faults;
 #[allow(dead_code)]
@@ -40,8 +43,6 @@ mod test_permission_faults;
 mod test_process;
 #[path = "common/scratch.rs"]
 mod test_scratch;
-#[path = "common/skip_line.rs"]
-mod test_skip_line;
 
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
@@ -3442,16 +3443,12 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
         // must be able to open the manifest for writing.
         restore_manifest_writable()
             .expect("#1207 make the workspace manifest writable again before the skip");
-        if test_permission_faults::require_permission_faults() {
-            panic!(
-                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
-                 succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
-                 contract needs an unprivileged host (需要非特权宿主)"
-            );
-        }
-        test_skip_line::stderr_skip_line(
+        test_permission_faults::skip_or_require(
             "#1263 skip: 0444 does not block this caller (root or CAP_DAC_OVERRIDE); \
              the mid-deletion clear-failure contract needs an unprivileged host\n",
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
+             succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
+             contract needs an unprivileged host (需要非特权宿主)",
         );
         return;
     }

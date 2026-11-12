@@ -25,8 +25,6 @@ use std::process::Command;
 mod exact_receipt;
 #[path = "common/permission_faults.rs"]
 mod permission_faults;
-#[path = "common/skip_line.rs"]
-mod skip_line;
 
 #[derive(Default)]
 struct CaptureTransport(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
@@ -334,15 +332,16 @@ fn dump_request_write_failure_semantics() {
             let Some((broken, _noaccess)) = broken_tmpdir(&root, kind) else {
                 // #1263: a privileged host cannot provoke EACCES, so this case
                 // never ran. The switch turns that silent skip into a failure.
-                assert!(
-                    !permission_faults::require_permission_faults(),
-                    "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the {protocol}/{kind} \
-                     write-fail probe still succeeds (root or CAP_DAC_OVERRIDE); the \
-                     permission-denied contract needs an unprivileged host (需要非特权宿主)"
+                permission_faults::skip_or_require(
+                    &format!(
+                        "{protocol}/{kind} write-fail: skipped, euid is 0 (DAC does not apply)\n"
+                    ),
+                    &format!(
+                        "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the {protocol}/{kind} \
+                         write-fail probe still succeeds (root or CAP_DAC_OVERRIDE); the \
+                         permission-denied contract needs an unprivileged host (需要非特权宿主)"
+                    ),
                 );
-                skip_line::stderr_skip_line(&format!(
-                    "{protocol}/{kind} write-fail: skipped, euid is 0 (DAC does not apply)\n"
-                ));
                 continue;
             };
             let output = Command::new(std::env::current_exe().expect("#942 dump test binary path"))

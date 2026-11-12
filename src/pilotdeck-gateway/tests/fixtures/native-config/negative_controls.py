@@ -642,6 +642,41 @@ mutations = [
      '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
      'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
      '#2562 explicit null is not an error with the recorder on'),
+    # ── #2617: the submit path's string branch converts a lone-surrogate
+    # projectKey lossily — the #2083 close-path shape (`session_dir.rs`), same
+    # judge same fix (the TS resolver chain runs the key to completion without
+    # throwing — it lands on the process cwd's project, not necessarily the
+    # configured one; probes `_tmp/20261111-issue-2617-probe/
+    # probe-submit-surrogate.out` + `_tmp/20261111-2617-evidence/
+    # probe-submit-surrogate-resolver.out`, whose "resolves like the fallback"
+    # flag is tautological — the script pinned `fallbackProjectRoot =
+    # process.cwd()`). The first row re-adds the pre-#2617 `to_utf8`
+    # rejection, so the anchor's code assertion dies first; the second row
+    # disables the capability gate itself, so the anchor's reject-cell
+    # `.expect_err` dies on the served Ok; the third row serves another
+    # directory's id, so the admit cell's id-equality assertion is the kill
+    # point (it otherwise has no red side).
+    ('submit-surrogate-project-key-rejected', SERVICES,
+     '            let project = String::from_utf16_lossy(project.units());',
+     '            let project = project\n'
+     '                .to_utf8()\n'
+     '                .map_err(|_| failure("projectKey must be a valid path string."))?;',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey reaches the capability gate'),
+    ('submit-serve-gate-removed', SERVICES,
+     '            if !self.options.serves_project(&project) {',
+     '            if false && !self.options.serves_project(&project) {',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey is not the type error'),
+    # fix-r2 (MM sibling-2 / boundary-1): the admit cell's id-equality
+    # assertion had no red side — both rows above die in the reject cell.
+    # This row serves another directory's id (home instead of the configured
+    # project), so the admit cell's equality assertion is the only kill point.
+    ('submit-admit-cell-serves-wrong-id', SERVICES,
+     '            let project = self.options.project.to_string_lossy();',
+     '            let project = self.options.home.to_string_lossy();',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     "#2617 the admit cell answers the residual project's own workspace id"),
     # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
     # path — with the null arm dropped the admission refusal (isolated-project
     # message) answers before the method's own `?.trim()` gate, so the null
@@ -1301,19 +1336,13 @@ mutations = [
 # the derived counts in the paragraph above describe the #2065 table as it was.
 # #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
 # the counts moved to 51 rows / 41 literal-anchor entries.
-# #2207: the five #2090 gate-order tests joined the bound rows (an
-# admission-refusal mutant and a trim-gate mutant each), so the counts moved
-# to 80 rows / 62 literal-anchor entries.
-# #2199: the six config-family gate-order tests joined the same form, so the
-# counts moved to 92 rows / 64 literal-anchor entries.
-# #2199 fix-r1: the six admission-null-refused-config rows above (DS
-# sibling#1, the #2564 fix-r1 precedent re-applied to the config family)
-# moved the counts to 98 rows / 65 literal-anchor entries.
-# #2207 fix-r2: the four admission-null-refused session_dir rows above
-# (GLM r3 sibling#1) moved the counts to 102 rows / 65 literal-anchor entries.
-# #2207/#2199 fix-r3 (DS r6 sibling#1): the six admission/trim rows above
-# (per-spelling discriminative mutants) moved the counts to 108 rows /
-# 65 literal-anchor entries.
+# #2617 (rebase 改数，fix-r4 按 DS r6 双 P1 实测重算): the three #2617 rows
+# (two submit-surrogate + one admit-cell) joined the table with their three
+# MANAGEMENT_TESTS pins. The pre-rebase note derived counts from the stale
+# "108 rows / 65 entries" baseline; the rebase-time main table actually held
+# 118 rows / 72 literal-anchor entries, so with our +3 rows / +3 pins the
+# head 8ecbdee3b `--check` reads #1457 121 mutation anchors / #2065 75
+# literal anchors (2026-11-12 实跑).
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1380,6 +1409,9 @@ LITERAL_ANCHORS = [
     (CONFIG, '#2199 a null projectKey falls back like a missing one, '
              'so the sessionKey gate answers the blank key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey reaches the capability gate'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey is not the type error'),
+    (MANAGEMENT_TESTS, "#2617 the admit cell answers the residual project's own workspace id"),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),

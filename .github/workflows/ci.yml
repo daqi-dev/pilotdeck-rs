@@ -124,7 +124,11 @@ jobs:
         # #2136 fix-r38（MM sibling P2）：五个模块 r37 实测合计约 15 s，
         # 挂起时同样占满 job 默认 360 分钟；由 driver 守卫钉住。
         # r41（合并 main）：#2590 fix-r2 增第六模块（issue-2495，实测
-        # Ran 30、约 4 s），真跑钉与守卫已同步扩到六模块。
+        # Ran 30、约 4 s），真跑钉与守卫当时同步扩到六模块。
+        # #1800 fix-r1（PR #2979）：增第七模块（sdk-signals-close-order-pin），
+        # 真跑钉与守卫已同步扩到七模块；fix-r2 判决路径补两用例后 Ran 10，
+        # fix-r3 stdout 写失败 Ran 11、fix-r4 管道配对用例 Ran 12、fix-r5
+        # 判决+管道三态第三腿 Ran 13、fix-r6 三态×管道矩阵末格 Ran 14。
         timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
@@ -157,6 +161,11 @@ jobs:
           # 宿主清单，仓内 CI/scripts 无引用。接入本步（纯故障注入，无
           # cargo 名额，69 例实测约 0.4 s）。
           python3 -B -m unittest -v test_negative_suite
+          # #1800：close-order pin 自管循环的手写 abort 记账（撤销已记 KILLED、
+          # 未跑行补 INVALID、summary 仍落盘、rc 2）此前无任何仓内测试。此自测
+          # 钉三态退出契约两侧：中止侧（外部真持锁 / 恢复失败 / 取消）全 INVALID
+          # + rc 2，守卫前拒绝侧 rc 1 无 summary；不需要 cargo。
+          python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。
