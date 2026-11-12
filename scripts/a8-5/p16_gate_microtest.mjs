@@ -418,7 +418,10 @@ await section("T14", async () => {
       [probePath, "--base", resolve(scratch, "no-such-base"), "--out", resolve(scratch, "out")],
       { timeout: 30_000, encoding: "utf8" },
     );
-    assert.notEqual(child.status, 0, `#T14 直接执行不得静默 exit 0（status=${child.status}，守卫误判为非 main 的假通过面）`);
+    // fix-r10（DS r9 boundary#3，P2a）：notEqual(status, 0) 会把 status=null（30s 超时/信号杀）
+    // 也当「受控失败」放行——探针打印 P16 FAILED、落 JSON 后挂起的假绿面。收紧为
+    // status===1 且无信号：守卫坏（exit 3/0）仍由「stdout 无 P16 FAILED」「status≠1」双面覆盖。
+    assert.equal(child.status, 1, `#T14 直接执行须受控失败 exit 1（status=${child.status}，signal=${child.signal}；null=超时/信号面，不当受控失败）`);
     assert.ok((child.stdout ?? "").includes("P16 FAILED"), `#T14 直接执行须跑 main（P16 FAILED 信号；stdout=${JSON.stringify(child.stdout ?? "")}）`);
     assert.equal(existsSync(resolve(scratch, "out", "p16_stop_acceptance.json")), true, "#T14 main() 失败路径亦落 JSON（rec.dump 兜底）");
   } finally {
