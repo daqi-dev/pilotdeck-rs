@@ -71,7 +71,9 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-expectations/nega
 `.negative-source.lock`；锁被其他进程持有时等待 60 s 后以 rc 2 拒跑且
 无报告行（fail-closed，与「模块被掏空」在输出上不可区分）。锁只覆盖
 类建面：`--negative` 其后的变体循环读面经 setUp 记录桩、无锁，是登记
-盲区（#2795 fix-r9，见 legacy-migration-backlog.txt「二（续）」行=652-688）。
+盲区（#2795 fix-r9，见 legacy-migration-backlog.txt「二（续）」行=671-707；
+fix-r10 起该窗口与类建面调用行由 test_negative_roster_guards 的钉子按
+代码锚运行时核对，漂移必红）。
 这两条不得与同树的变异轮并发跑（#2795 fix-r8，评审 concurrency#2/#3）；
 该并发禁令也是变体循环盲区「登记不修」的前提——被违反时 KILLED 归因
 不独占，真 SURVIVED 变体可被记成假 KILLED（#2795 fix-r9，评审
