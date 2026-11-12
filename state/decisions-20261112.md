@@ -14,3 +14,15 @@
 - **执行**：仅在现有完整原字节验证之后改投影，旧两项合法重mask控制仅在批准范围迁移；保留缺wire、非法nonce/accept/mask、非随机字段、次数和顺序反控。人批不等于阶段通过；独立issue、两家非作者审查、真实数据复算和冻结登记不得省略，也不扩大A7权限。
 
 **可复用原则**：跨侧比较例外只处理已明确批准且已经原字节认证的具体字段；原件不重写，未列字段保留严格比较。机检断言落在 `scripts/gateway-parity/test_retirement_channel_v2.py` 的独立随机值正控及协议/业务/全序反控，登记边界见 `specs/gateway-parity/diffs/A8-CHANNEL-WS-RANDOM-001.md`。
+
+
+## #3068：按既有正文规范修复比较类型碰撞
+
+**状态：自决 · 待复核（AI 代批，待人复核）；修复既有判据实现，不新增相等例外。** 独立问题见 [#3068](https://github.com/daqi-dev/pilotdeck-rs/issues/3068)。
+
+- **卡在哪**：macmini-01 真实 chunked HTTP 的 JSON `{"raw":"X"}`（11 bytes）和普通文本 `X`（1 byte）均通过完整原 TCP/HTTP 校验，两个比较投影却相等；Content-Length 对照能按11/1判差。证据在 `_tmp/20261112-wave1-validation/wire-value-arbitration-r2/`，真实 `compare_pair` 因缺双引擎业务和落盘原件仍 NOT_RUN，不能扩大结论。
+- **谁受影响 / 能否撤回**：只影响新 channel-v2 的正文比较表示；产品实现、原始捕获、业务 oracle、models 和通用 Normalizer 不变。代码可由 Git 撤回，旧失败与捕获均保留。
+- **动不动尺子 / 意向**：修比较装置，目标是恢复 `specs/gateway-parity/normalization.md` 已规定的 JSON 语义与非 JSON 全文区分；不增加忽略字段或归一化授权，不改变 #3062 仅 key/Accept/mask 的人批范围，不改意向及原冻结字节。独立两家评审、真实复算与合法登记仍是交付前提。
+- **选项与后果 / 执行**：只修 wire 能挡文本误等，但 HTTP API 投影仍保留碰撞和非 UTF-8 异常。采用两层共同的 JSON/text/bytes 互斥包络，业务 JSON 必须嵌入其 JSON 包络，不能伪装内部文本标记。已锚 UUID/时钟仍在原内层形状归一。Node 实测拒绝的 NaN/±Infinity 按既有非 JSON 全文规则保留，合法数值溢出仍原 canonical 拒绝；重复 JSON key 保持固定 Node 与既有 Python 的后值覆盖，不擅改该语义。
+
+**可复用原则**：比较器的内部类型标记不能与业务输入共享无标签的表示空间。断言由完整 `compare_pair` 类型碰撞控制、Content-Length 对照、JSON 语义正控及 NaN/数值溢出边界落实；旧实现须在精确文本碰撞控制上实际失败，不能拿无关异常代替检出。

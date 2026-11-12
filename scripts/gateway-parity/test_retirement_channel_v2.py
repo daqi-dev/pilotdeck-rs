@@ -421,7 +421,7 @@ class ChannelV2Controls(unittest.TestCase):
     def test_feishu_text_dialog_and_post_final_are_real_outbound_shapes(self):
         result = observe(fixture('feishu'))
         calls = [row for stream in result['exchanges'] for row in stream if row['target'].startswith('/open-apis/')]
-        self.assertEqual([row['request']['msg_type'] for row in calls], ['text', 'text', 'post', 'text', 'text', 'post'])
+        self.assertEqual([row['request']['value']['msg_type'] for row in calls], ['text', 'text', 'post', 'text', 'text', 'post'])
 
     def test_feishu_live_post_edits_bind_successful_create_responses(self):
         result = observe(fixture('feishu', update_final=True))
@@ -1064,6 +1064,98 @@ def full_wire_fixture(channel='qq', *, nonce=b'the sample nonce', mask_key=b'\x1
 
 
 class WireProjectionControls(unittest.TestCase):
+    def test_http_text_sentinel_reaches_final_comparison(self):
+        self._compare_http_payloads([(b'{"raw":"X"}', b'X', True, False)])
+
+    def test_complete_pair_distinguishes_http_payload_types(self):
+        self._compare_http_payloads([
+            (b'{"rawBytesHex":"ff62"}', b'\xffb', True, False),
+            (b'{"wireKind":"text","value":"X"}', b'X', True, False),
+            (b'\xffb', b'\xffc', True, False),
+            (b'plain', b'other', True, False),
+            (b'NaN', b'Infinity', True, False),
+            (b'NaN', b'NaN', True, True),
+            (b'{"n":NaN}', b'{"n":null}', True, False),
+            # Existing JSON semantics remain, including duplicate-key last-wins.
+            (b'{"a":1,"a":2}', b'{"a":2}      ', True, True),
+            (b'{"a":2}', b' { "a": 2 } ', True, True),
+            # Content-Length still distinguishes otherwise equal JSON bodies.
+            (b'{"a":2}', b' { "a": 2 } ', False, False),
+        ])
+
+    def _compare_http_payloads(self, cases):
+        # Synthetic complete originals exercise the final selector, not just
+        # a helper. Live HTTP captures are separately retained as evidence.
+        def changed_response(records, body, chunked):
+            result = copy.deepcopy(records)
+            index = next(i for i, row in enumerate(result)
+                         if row['kind'] == 'mock-http-response'
+                         and row['headers'].get('content-type') == 'application/json')
+            response, wire = result[index], result[index - 1]
+            self.assertEqual(wire['kind'], 'fixture-tcp-write')
+            response['body'] = blob(body)
+            headers = response['headers']
+            headers.pop('content-length', None)
+            headers.pop('transfer-encoding', None)
+            if chunked:
+                headers['transfer-encoding'] = 'chunked'
+                framed = (f'{len(body):x}\r\n'.encode() + body + b'\r\n0\r\n\r\n')
+            else:
+                headers['content-length'] = str(len(body))
+                framed = body
+            response['actualHeaderText'] = ('HTTP/1.1 200 OK\r\n'
+                + ''.join(f'{key}: {value}\r\n' for key, value in headers.items()) + '\r\n')
+            wire['payload'] = blob(response['actualHeaderText'].encode('latin-1') + framed)
+            return result
+
+        left_raw, left_records, files = full_wire_fixture()
+        right_raw, right_records, right_files = full_wire_fixture(
+            nonce=b'another nonce 16', mask_key=b'abcd')
+        left_raw['engine'] = 'ts'
+        self.assertEqual(files, right_files)
+        originals = copy.deepcopy((left_raw, left_records, right_raw, right_records, files))
+        with tempfile.TemporaryDirectory() as temp:
+            roots = [Path(temp) / side for side in ('ts', 'native')]
+            for root in roots:
+                for original, data in files.items():
+                    path = root / Path(original).relative_to('/test/cur')
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+            for left, right, chunked, equal in cases:
+                with self.subTest(left=left, right=right, chunked=chunked):
+                    result = v2.compare_pair(
+                        left_raw, right_raw,
+                        changed_response(left_records, left, chunked),
+                        changed_response(right_records, right, chunked), files, files,
+                        ts_root=roots[0], native_root=roots[1])
+                    self.assertEqual(result['equal'], equal)
+                    self.assertEqual(set(result['differentFields']),
+                                     set() if equal else {'exchanges', 'wireHttpStreams'})
+                    self.assertFalse(result['formalAcceptance'])
+        self.assertEqual(originals, (left_raw, left_records, right_raw, right_records, files))
+
+    def test_comparison_json_envelope_keeps_parser_and_normalizer_boundaries(self):
+        compare = v2._load('compare', v2._apparatus / 'compare.py')
+        identity = '12345678-1234-4234-8234-123456789abc'
+        normalizer = compare.Normalizer()
+        normalizer.bind(identity, ('probe', 'known'))
+        known = {'entryId': identity, 'turnId': 'turn', 'sequence': 1,
+                 'type': 'probe', 'createdAt': 123}
+        projected = normalizer.value(v2._wire_value(json.dumps(known).encode()))
+        self.assertEqual(projected['wireKind'], 'json')
+        self.assertEqual(projected['value']['entryId'], normalizer.value(identity))
+        self.assertEqual(projected['value']['createdAt'], '<wall-clock>')
+        self.assertEqual(v2._wire_value('{"a":2}'.encode('utf-16')),
+                         v2._wire_value(b'{"a":2}'))
+        for token in (b'NaN', b'Infinity', b'-Infinity', b'{"n":NaN}'):
+            with self.subTest(token=token):
+                self.assertEqual(v2._wire_value(token),
+                                 {'wireKind': 'text', 'value': token.decode()})
+        # Valid JSON number syntax that overflows is still rejected at the
+        # existing canonical comparison boundary, not silently made text.
+        with self.assertRaises(ValueError):
+            v2.canonical(v2._wire_value(b'1e999'))
+
     def test_http_then_upgrade_keeps_same_socket_relationship(self):
         raw, http_records = http_wire_fixture()
         ws_raw, ws_records = ws_wire_fixture()

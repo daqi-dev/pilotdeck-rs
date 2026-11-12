@@ -996,10 +996,10 @@ def transport_projection(trace):
         require(request_headers.get('authorization', [None]) == [request['headers'].get('authorization')], 'HTTP_AUTHORIZATION')
         body = decoded(payload(request['body']))
         exchanges.setdefault(identity, []).append({'method': request['method'], 'target': request['url'],
-                          'requestHeaders': request_headers, 'request': body,
+                          'requestHeaders': request_headers, 'request': _wire_value(payload(request['body'])),
                           'statusLine': status, 'responseHeaders': {key: value for key, value in headers.items()
                           if key not in {'date', 'connection', 'keep-alive', 'transfer-encoding'}},
-                          'response': decoded(payload(response['body']))})
+                          'response': _wire_value(payload(response['body']))})
         if urlsplit(request['url']).path.startswith('/v1/'):
             models.setdefault(identity, []).append(body)
     channels, endpoints = {}, {}
@@ -1023,11 +1023,21 @@ def transport_projection(trace):
             'channelStreams': sorted(channels.values(), key=canonical)}
 
 
+def _non_json_constant(value):
+    raise ValueError('non-standard JSON constant: ' + value)
+
+
 def _wire_value(data):
+    # A user's JSON object must never impersonate the non-JSON fallback.
+    # Keep oracle decoding separate: only comparison payloads carry this tag.
     try:
-        return decoded(data)
-    except UnicodeDecodeError:
-        return {'rawBytesHex': data.hex()}
+        value = json.loads(data, parse_constant=_non_json_constant)
+    except (ValueError, UnicodeDecodeError):
+        try:
+            return {'wireKind': 'text', 'value': data.decode('utf-8')}
+        except UnicodeDecodeError:
+            return {'wireKind': 'bytes', 'value': data.hex()}
+    return {'wireKind': 'json', 'value': value}
 
 
 def wire_projection(raw, records):
