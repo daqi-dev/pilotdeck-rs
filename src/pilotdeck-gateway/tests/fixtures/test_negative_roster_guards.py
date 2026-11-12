@@ -113,6 +113,25 @@ TERMINATE_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGQUIT')
 MANAGER_SCRIPT = 'manager-gateway/negative_controls.py'
 ENTRY = FIXTURES / MANAGER_SCRIPT
 
+# Every register row's full ``EXPECTED_NAMES`` length, pinned to a literal
+# the module under test cannot influence (fix-r10, DS r9 + MM r9 sibling P1
+# -- the same #1666 family shape MODE_ROSTER and the session-domain 331 pin
+# closed in r9). The full-run mirror used to compare ``run.module.
+# EXPECTED_NAMES`` to itself: deleting a mutations row together with its
+# EXPECTED_NAMES entry shrinks both sides of the mirror and keeps it green.
+# These are the full roster lengths -- ``registered`` compares the whole
+# list, it never tail-cuts sentinel names -- measured against the source
+# literals, so a register row must not drift its roster without failing
+# here. A new register row joins this table in the same change (the
+# existence test below enforces the coverage in both directions).
+ROSTER_SIZE = {
+    MANAGER_SCRIPT: FULL_ROSTER,
+    'memory-gateway/negative_controls.py': 18,
+    'snapshot-projection/negative_controls.py': 20,
+    'sdk-mcp-session-tools/negative_controls.py': 9,
+    'issue-2495/negative_controls.py': 7,
+}
+
 # The defence's own signature in an entry's source: a mismatched run
 # publishes a file named roster-mismatch.json and nothing else. Matching
 # both quote styles keeps the register honest the way BASELINE_READ does
@@ -696,6 +715,13 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                         '#2804 SUCCESS_LINE must cover exactly the register '
                         f'(extra={sorted(set(SUCCESS_LINE) - set(ROSTER_GUARDED))} '
                         f'missing={sorted(set(ROSTER_GUARDED) - set(SUCCESS_LINE))})')
+        # fix-r10: the roster-size literals must cover the register the same
+        # way, so a row cannot join without its denominator pin and a stale
+        # pin cannot outlive its row.
+        self.assertTrue(set(ROSTER_SIZE) == set(ROSTER_GUARDED),
+                        '#2804 ROSTER_SIZE must cover exactly the register '
+                        f'(extra={sorted(set(ROSTER_SIZE) - set(ROSTER_GUARDED))} '
+                        f'missing={sorted(set(ROSTER_GUARDED) - set(ROSTER_SIZE))})')
         for script, markers in SUCCESS_LINE.items():
             with self.subTest(script=script):
                 self.assertTrue(len(markers) > 0,
@@ -725,6 +751,17 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                 summary = json.loads((run.out / 'summary.json').read_text())
                 rows = summary['controls'] if isinstance(summary, dict) else summary
                 key = 'mutation' if script == MANAGER_SCRIPT else 'name'
+                # Denominator pinned to the source literal first (fix-r10,
+                # DS r9 + MM r9 sibling P1, #1666 family): the mirror below
+                # compares run.module.EXPECTED_NAMES to itself, so a row
+                # deleted from the table and the roster together shrinks
+                # both sides and stays green. The literal must fail first.
+                self.assertTrue(len(run.module.EXPECTED_NAMES)
+                                == ROSTER_SIZE[script],
+                                f'#2804 {script}: the entry must carry its '
+                                f'literal {ROSTER_SIZE[script]}-name roster; '
+                                'truncating or emptying EXPECTED_NAMES must '
+                                'fail here instead of shrinking the mirror')
                 # Order-sensitive, like the production predicate: a run that
                 # records the right names in the wrong order is a mismatch
                 # the entries' ``recorded != expected`` would refuse.

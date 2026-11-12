@@ -7500,7 +7500,16 @@ JUDGES = {
         'aggregation-audit',
         calibrate_status_builtins_subscript_copy, False, ()),
 }
-if set(JUDGES) != {row[0] for row in MUTATIONS}:
+# #2743 fix-r10 (DS r9 sibling#2): a bare set comparison cannot see a
+# duplicated row. Delete one row, copy another -- with JUDGES kept in step
+# the two sets still match, the run records N-1 rows while the summary
+# prints 331/331 -- the same #1666 family shape the r9 meta-test pin
+# closed on the CI path. The sdk-signals shape (:501-504) pins uniqueness
+# and membership separately, so a direct entry run refuses at import.
+names = [row[0] for row in MUTATIONS]
+if len(set(names)) != len(names):
+    raise SystemExit('MUTATIONS rows must have unique names')
+if set(JUDGES) != set(names):
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
 
 # #892 fix-r18: the restore window must defer the fixture's own SIGTERM exit
