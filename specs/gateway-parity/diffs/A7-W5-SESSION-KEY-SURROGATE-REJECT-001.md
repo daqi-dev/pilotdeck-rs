@@ -66,13 +66,14 @@ wire sessionKey 原样进 `RunRef`，经生产 `assembly.rs` create_storage 链�
 `{trustedContext:"x",…}` → INVALID_TRUSTED_CONTEXT（:1188）、
 `{maxBudgetUsd:0,…}` → INVALID_MAX_BUDGET_USD（:1153）；实测
 `probe_ts_gates.log` 无 sessionKey 门）。注意这与 `set_permission_mode`
-**不同序**：后者是 mode → busy → sessionKey 门（`methods/config.rs`，
-busy 会话上答 SESSION_BUSY——#3033 记录的正是该差异），而 submit_turn 的
-门先于 busy 拒绝（同一代理拼写的 turn 在飞时仍答 INVALID_SESSION_KEY——
-夹具以同一拼写 `begin_turn` 直留 turn 槽，`admission.rs` 的 turn 预留按
-UTF-16 单元精确 `JsString` 查表，别名折叠是 `session_model_set` 的 #1872
-口径、submit_turn 不折叠）；其余 config 入口的代理分支次序见跟进单 #3051
-口径。先序钉
+**不同序**：后者是 mode → busy → sessionKey 门（`methods/config.rs`），其
+busy 门按**请求原始拼写**精确查 admission——「busy turn 登记在同一（代理）
+拼写」时答 SESSION_BUSY，#3033 记录的正是该分岔（该状态在 #1623 之后仅
+单测夹具可造）；而 submit_turn 的门先于 busy 拒绝（同一代理拼写的 turn 在飞
+时仍答 INVALID_SESSION_KEY——夹具以同一拼写 `begin_turn` 直留 turn 槽）。
+别名属主拼写两入口查表均落空、同答 INVALID_SESSION_KEY，不构成码差；别名
+属主口径差异（`session_model_set` 查属主、`set_permission_mode` 不查）见
+#1872，其余 config 入口的代理分支次序见跟进单 #3051 口径。先序钉
 `submit_turn_surrogate_gate_precedes_the_busy_refusal` 不受影响（busy 在
 validate 之后），`submit_turn_combined_invalid_keeps_the_ts_mode_code` 与
 `submit_turn_combined_invalid_keeps_the_ts_field_codes`（runId /
@@ -170,7 +171,12 @@ subagents/tasks 注册表，`task.session_id == *session_key` 精确 JsString
   矩阵——`session_model_set`/`session_model_clear`/`set_permission_mode`/
   `set_session_thinking`/`set_output_style`/`seed_read_state` 各一行，防任一
   调用点掉出共享守卫；负控侧不另加绑行，`session-key-surrogate-guard-removed-config`
-  变异会连带矩阵转红）；fix-r2 三门各一组（拒绝 + FFFD/成对代理对照）：
+  变异会连带矩阵转红）；`set_permission_mode` 的 busy→sessionKey 门次序由
+  同文件两个 pin 传递钉住——
+  `set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key`
+  （busy 会话上 blank key → SESSION_BUSY）与
+  `set_permission_mode_blank_key_answers_the_session_key_gate`（无 busy +
+  blank key → INVALID_SESSION_KEY；把 busy 分支挪到 key 门之后，前者转红）；fix-r2 三门各一组（拒绝 + FFFD/成对代理对照）：
   `runtime/turn/submit_tests.rs`
   `submit_turn_rejects_lone_surrogate_session_key`（error-event 形状 +
   session factory 未达）与 `submit_turn_keeps_fffd_and_paired_surrogate_keys`、
