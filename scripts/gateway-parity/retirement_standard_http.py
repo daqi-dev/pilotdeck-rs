@@ -112,13 +112,11 @@ def http_projection(row, normalizer):
         key = key.lower()
         if key not in OMITTED_HEADERS:
             headers.setdefault(key, []).append(value)
-    try:
-        body = json.loads(body)
-    except ValueError:
-        pass
-    return normalizer.value({'method': method, 'path': target,
-                             'requestBodyHex': request_body.hex(),
-                             'status': response.status, 'statusLine': status_line, 'headers': headers, 'body': body})
+    value = normalizer.value({'method': method, 'path': target,
+                              'requestBodyHex': request_body.hex(),
+                              'status': response.status, 'statusLine': status_line, 'headers': headers})
+    value['body'] = compare.http_body_projection(body, headers, normalizer)
+    return value
 
 
 def digest(value):

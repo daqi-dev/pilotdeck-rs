@@ -475,7 +475,7 @@ def validate(path, local_methods=()):
             body = b''.join(base64.b64decode(chunk['base64'], validate=True) for chunk in row['chunks']).decode('utf8')
             if body != row['body']:
                 fail('G2.recording', 'HTTP raw chunk bytes / body disagree')
-        if json.loads(http[0]['body']) != {'ok': True} or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
+        if not native_evidence.same_json(json.loads(http[0]['body']), {'ok': True}) or json.loads(http[1]['body']).get('token') != (path / 'home/server-token').read_text().strip():
             fail('G3.oracle', 'health / local token body incorrect')
         if not json.loads(http[2]['body']).get('projects') or json.loads(http[3]['body']).get('content') != 'gateway parity fixture\n':
             fail('G3.oracle', 'HTTP projects / file read fixture missing')
@@ -582,6 +582,32 @@ def entity_normalizer(path, frames):
     return normalizer
 
 
+def http_body_projection(body, headers, normalizer):
+    """Keep stream/text structure distinct from normalized JSON values."""
+    for key, values in headers.items():
+        if key.lower() != 'content-type':
+            continue
+        for value in values if isinstance(values, list) else [values]:
+            # Fetch joins repeated fields with commas. Quoted parameter commas
+            # are part of one value; the original headers remain untouched.
+            media_value = ''
+            for token in re.findall(r'"(?:\\.|[^"\\])*"|,|[^",]+', value) + [',']:
+                if token != ',':
+                    media_value += token
+                    continue
+                media_type = media_value.split(';', 1)[0].strip().lower()
+                if media_type in ('text/event-stream', 'application/x-ndjson', 'application/ndjson'):
+                    return {'kind': 'text', 'value': normalizer.value(body, ('body',))}
+                media_value = ''
+    try:
+        value = json.loads(body)
+    except ValueError:
+        return {'kind': 'text', 'value': normalizer.value(body, ('body',))}
+    # Normalize the original JSON container before adding our representation;
+    # text keeps its complete structure and only the existing UUID mapping.
+    return {'kind': 'json', 'value': normalizer.value(value, ('body',))}
+
+
 def projection(path, frames):
     normalizer = entity_normalizer(path, frames)
     projected = {}
@@ -601,12 +627,9 @@ def projection(path, frames):
     for row in load(path / 'scenarios/http/http.json', list):
         headers = {key: val for key, val in row['headers'].items() if key not in
                    ('date', 'connection', 'keep-alive', 'transfer-encoding')}
-        body = row['body']
-        try:
-            body = json.loads(body)
-        except ValueError:
-            pass
-        http.append(normalizer.value({'path': row['path'], 'status': row['status'], 'headers': headers, 'body': body}))
+        value = normalizer.value({'path': row['path'], 'status': row['status'], 'headers': headers})
+        value['body'] = http_body_projection(row['body'], row['headers'], normalizer)
+        http.append(value)
     return {'frames': projected, 'http': http, 'disk': disk(path, normalizer)}
 
 
@@ -629,7 +652,9 @@ def compare(left, right, local_methods=()):
         try:
             a, b = projection(left, recording['left']), projection(right, recording['right'])
             for surface, rule in [('frames', 'G4.frames'), ('http', 'G5.http'), ('disk', 'G6.disk')]:
-                if a[surface] != b[surface]:
+                different = (not native_evidence.same_json(a[surface], b[surface])
+                             if surface == 'http' else a[surface] != b[surface])
+                if different:
                     failures.append({'rule': rule, 'left': a[surface], 'right': b[surface]})
         except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, sqlite3.Error) as error:
             failures.append({'rule': 'G2.recording', 'detail': str(error)})
