@@ -154,31 +154,53 @@ def full_test(test):
     return test if test.startswith(('PlanTests.', 'AdapterTests.')) else 'PlanTests.' + test
 
 
+def _anchor_errors():
+    # #2795 fix-r13（评审修 2，双锁契约回归，自 preflight() 拆出——镜像 e2e
+    # fix-r12 的同形拆分）：全表锚点预检的检查面单独成函数，供两个锁窗共用
+    # ——变异臂与 --check-anchors 走 preflight() 自己的 60 s 锁窗；--memory
+    # 路径折进 rehearsal 的 900 s 锁窗（one() 首个 case、任何 child 之前一次）。
+    # 调用方必须持有树锁：兄弟变异运行器在自己的 write 与 restore 之间可能
+    # 把变异体留在盘上，无锁读会把核对错在它不拥有的源上（#2795 fix-r4
+    # 「读在锁内」）。
+    errors = []
+    for name, path, before, after, _test in cases:
+        text = path.read_text()
+        if text.count(before) != 1:
+            errors.append('STALE ANCHOR ' + name)
+        else:
+            try:
+                compile(text.replace(before, after, 1), str(path), 'exec')
+            except SyntaxError as error:
+                errors.append('INVALID compile ' + name + ': ' + str(error))
+    return errors
+
+
+def _anchor_report(errors):
+    # 任何锚点错误都是响亮的拒跑（2），干净则打唯一一行汇总。
+    if errors:
+        print('\n'.join(errors), file=sys.stderr)
+        raise SystemExit(2)
+    print(f'#1368 {len(cases)} unique anchors; all Python mutants compile')
+
+
 def preflight():
     # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：本文件已给变异臂加
     # tree_lock，唯独 preflight() 留在锁外——兄弟变异运行器在自己的 write 与
     # restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有的源上；
-    # 锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与后续 memory /
-    # mutating_sources 窗口是顺序关系，锁先释放再重取，无同进程嵌套。
+    # 锁忙 / 读失败是拒跑（2）。
+    # #2795 fix-r13（评审修 2）：本 60 s 锁窗只属于变异臂与 --check-anchors；
+    # --memory 路径不再先取这把锁（先取 60 再取 900 会把 #1398 契约钉的
+    # 「tree_lock 恰一次、timeout=900、锁先于 child」打破成两次取锁），其
+    # 全表预检折进 rehearsal 自己的 900 s 锁窗（one() 首个 case、任何 child
+    # 之前一次，见 _anchor_errors 的登记注释）。
     try:
         with tree_lock(root, timeout=60):
-            errors = []
-            for name, path, before, after, _test in cases:
-                text = path.read_text()
-                if text.count(before) != 1:
-                    errors.append('STALE ANCHOR ' + name)
-                else:
-                    try:
-                        compile(text.replace(before, after, 1), str(path), 'exec')
-                    except SyntaxError as error:
-                        errors.append('INVALID compile ' + name + ': ' + str(error))
+            errors = _anchor_errors()
     except (TimeoutError, OSError, UnicodeDecodeError) as error:
         print(f'tree lock or anchor read failed: '
               f'{type(error).__name__}: {error}', file=sys.stderr)
         raise SystemExit(2)
-    if errors:
-        raise SystemExit('\n'.join(errors))
-    print(f'#1368 {len(cases)} unique anchors; all Python mutants compile')
+    _anchor_report(errors)
 
 
 def passed(result):
@@ -234,7 +256,15 @@ def execution_environment():
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
-    preflight()
+    # #2795 fix-r13（评审修 2）：--memory 路径不先走 preflight 的 60 s 锁窗
+    # （先取 60 再取 900 会把 #1398 契约钉的「tree_lock 恰一次、timeout=900、
+    # 锁先于 child」打破成两次取锁——该契约尺子此前 mock 掉 preflight 而假
+    # 绿），其全表锚点预检折进 rehearsal 自己的 900 s 锁窗（one() 首个 case、
+    # 任何 child 之前一次）。变异臂与 --check-anchors 不变：preflight 仍先于
+    # 一切 case。
+    memory = '--memory' in sys.argv[1:]
+    if not memory:
+        preflight()
     if sys.argv[1:] == ['--check-anchors']:
         return 0
     parser = argparse.ArgumentParser()
@@ -247,6 +277,15 @@ def main():
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
     results = []
+    # #2795 fix-r13（评审修 2）：--memory 的全表锚点预检折进 rehearsal 的
+    # 900 s 锁窗——one() 只在锁内的循环里被调，首个 case 的任何 child 之前
+    # 先做一次（不另取 60 s 锁，读面仍在锁内）。变异臂不进此分支，预检仍在
+    # main() 的 60 s 锁窗里先于一切 case。
+    # began 是启动期边界（评审修 3 同族）：预检通过才算启动完成，启动期（取
+    # 锁 + 预检）的失败由 main 的拒跑分支收口（rc 2、不发布、撤走空的输出
+    # 目录）。
+    table_checked = False
+    began = False
 
     def run(label, test, mutant=None):
         command = ([sys.executable, '-I', __file__, '--memory-run', mutant] if mutant else
@@ -256,7 +295,14 @@ def main():
         return result
 
     def one(row):
+        nonlocal table_checked, began
         name, path, before, after, test = row
+        # #2795 fix-r13（评审修 2）：见 table_checked 的登记注释——--memory 的
+        # 全表预检在 rehearsal 锁窗内、首个 child 之前做一次。
+        if args.memory and not table_checked:
+            table_checked = True
+            _anchor_report(_anchor_errors())
+        began = True
         status, reason, compiled = 'INVALID', '', False
         try:
             text = path.read_text()
@@ -308,6 +354,27 @@ def main():
                 for row in selected:
                     one(row)
     except BaseException as error:
+        # #2795 fix-r13（评审修 3 同族跟改，镜像 e2e 同轮收口）：--memory 启动
+        # 期（900 s 取锁 + 全表锚点预检）的失败是拒跑，不是红跑——rc 2、家族
+        # 文案（锁忙/读失败时）、不发布 summary、撤走只含空壳的输出目录
+        # （specs/negative-controls/README.md「从未开跑 → 2 / 不发 summary 不留
+        # 认领形状」），也不再以 rc 1 + 一份看起来跑完了的全 INVALID summary
+        # 冒充红跑。启动期之后（began 已翻转）的守卫失败维持既有形状：作废已
+        # 跑行、发布 INVALID summary、退 1。注意 run_owned 超时抛的是
+        # subprocess.TimeoutExpired 而非 TimeoutError，不进拒跑分支；变异臂
+        # （非 memory）的守卫失败也维持既有 publish + 退 1 形状不变。
+        if args.memory and not began:
+            try:
+                out.rmdir()
+            except OSError:
+                pass
+            if isinstance(error, (TimeoutError, OSError, UnicodeDecodeError)):
+                print(f'tree lock or anchor read failed: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+            elif not isinstance(error, SystemExit):
+                print(f'memory rehearsal refused to start: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+            raise SystemExit(2)
         invalidate_completed(results, 'source guard: ' + str(error))
         for name, *_ in selected[len(results):]:
             results.append({'name': name, 'status': 'INVALID', 'compiled': False,

@@ -371,9 +371,11 @@ class PlanTests(unittest.TestCase):
                 return passed
             with tempfile.TemporaryDirectory(prefix='stimulus-memory-runner-') as tmp:
                 output = Path(tmp) / 'results'
+                # #2795 fix-r13：preflight 桩移除——两个 runner 的 --memory 路径
+                # 都不再调用 preflight()（预检折进 900 s 锁窗的 one() 首个 case），
+                # 旧桩是死桩，留着会再度遮住双锁回归（评审修 2 同族跟改）。
                 with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory', '--case', name]), \
                         mock.patch.object(runner, 'execution_environment', return_value={}), \
-                        mock.patch.object(runner, 'preflight'), \
                         mock.patch.object(runner, 'run_owned', side_effect=run), \
                         mock.patch.object(runner, 'wait_for_slot', side_effect=AssertionError(marker)), \
                         mock.patch('sys.stdout', new_callable=io.StringIO):
@@ -414,16 +416,172 @@ class PlanTests(unittest.TestCase):
 
             with tempfile.TemporaryDirectory(prefix='pdrs-1398-plan-') as tmp:
                 output = Path(tmp) / 'results'
+                # #2795 fix-r13（评审修 2）：不再 mock preflight——旧桩把唯一能
+                # 观测到「多取一次 60 s 锁」的代码路径 patch 掉，双锁回归下该
+                # 契约假绿；现在 --memory 路径的预检折进 900 s 锁窗，尺子直读。
                 with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory',
                                                    '--case', 'memory-rehearsal-without-lock']), \
                         mock.patch.object(runner, 'execution_environment', return_value={}), \
-                        mock.patch.object(runner, 'preflight'), \
                         mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
                         mock.patch.object(runner, 'run_owned', fake_run_owned), \
                         mock.patch('sys.stdout', new_callable=io.StringIO):
                     runner.main()
             self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
                             and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_preflights_anchors_inside_the_lock(self):
+        # #2795 fix-r13（评审修 4 同族跟改）：--memory 的全表锚点预检必须有钉子
+        # ——删掉 one() 里的预检块，锁窗/取锁次数契约不红，三重机检都抓不到
+        # 预检被挪出锁窗（回到 #2795 fix-r4 的缺陷形状）。本测试给预检加可观测
+        # 事件，断言「恰一次、在锁内、先于任何 child」。
+        marker = '#2795 memory rehearsal preflights the whole anchor table inside the lock, before any child'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('plan_memory_precheck', path)
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_errors():
+                order.append('precheck')
+                return []
+
+            def fake_report(errors):
+                order.append('report')
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess([], 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-2795-plan-precheck-') as tmp:
+                output = Path(tmp) / 'results'
+                with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory']), \
+                        mock.patch.object(runner, 'execution_environment', return_value={}), \
+                        mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
+                        mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                        mock.patch.object(runner, '_anchor_errors', fake_errors), \
+                        mock.patch.object(runner, '_anchor_report', fake_report), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO):
+                    runner.main()
+            self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
+                            and order[:3] == ['lock', 'precheck', 'report']
+                            and order.count('precheck') == 1
+                            and order.index('precheck') < order.index('child'), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_refuses_stale_anchor_table(self):
+        # #2795 fix-r13（评审修 3 同族 + 修 4「删块即红」负控）：--memory 启动期
+        # 撞上过期锚点表是拒跑（rc 2、不发布 summary、撤走输出目录、任何 child
+        # 未起），不是 rc 1 + 一份看起来跑完了的全 INVALID summary。删掉 one()
+        # 的预检块后本测试转红（stale 行作废为 INVALID 行、summary 照发、rc 1）。
+        marker = '#2795 memory rehearsal refuses a stale anchor table before any child runs'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('plan_memory_stale', path)
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+            # The stale bytes are built by concatenation so the literal never
+            # appears in this file (a self-anchoring row would count 1 and the
+            # precheck would pass); the target is the measurement fixture,
+            # never this test file itself.
+            stale = [('stale-anchor-probe', runner.measurement,
+                      'r13 stale anchor probe bytes ' + 'that appear nowhere', 'x',
+                      'test_memory_rehearsal_holds_tree_lock')]
+            launched = []
+
+            class recording_lock:
+                def __enter__(self):
+                    pass
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def fake_run_owned(command, **_keywords):
+                launched.append(list(command))
+                return subprocess.CompletedProcess([], 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-2795-plan-stale-') as tmp:
+                output = Path(tmp) / 'results'
+                with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory',
+                                                     '--case', 'stale-anchor-probe']), \
+                        mock.patch.object(runner, 'cases', stale), \
+                        mock.patch.object(runner, 'messages',
+                                          {'stale-anchor-probe': 'unused'}), \
+                        mock.patch.object(runner, 'execution_environment', return_value={}), \
+                        mock.patch.object(runner, 'tree_lock',
+                                          lambda *_a, **_k: recording_lock()), \
+                        mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO), \
+                        mock.patch('sys.stderr', new_callable=io.StringIO):
+                    try:
+                        runner.main()
+                        raised = None
+                    except SystemExit as exit_code:
+                        raised = exit_code
+                self.assertTrue(raised is not None and raised.code == 2
+                                and not launched
+                                and not (output / 'summary.json').exists()
+                                and not output.exists(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_refuses_a_busy_tree_lock(self):
+        # #2795 fix-r13（评审修 3①）：兄弟变异运行器持锁窗口（约 1500 s）长于
+        # 900 s 取锁上限时，忙锁是拒跑（rc 2 + 家族文案 + 不发布 summary +
+        # 撤走认领目录），不是 rc 1 + 全 INVALID summary。
+        marker = '#2795 memory rehearsal refuses a busy tree lock with rc 2 and no evidence'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('plan_memory_busy', path)
+            runner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(runner)
+            launched = []
+
+            class refusing_lock:
+                def __enter__(self):
+                    raise TimeoutError('probe: source lock busy')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def fake_run_owned(command, **_keywords):
+                launched.append(list(command))
+                return subprocess.CompletedProcess([], 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            with tempfile.TemporaryDirectory(prefix='pdrs-2795-plan-busy-') as tmp:
+                output = Path(tmp) / 'results'
+                with mock.patch.object(sys, 'argv', [str(path), str(output), '--memory',
+                                                     '--case', 'missing-cell']), \
+                        mock.patch.object(runner, 'execution_environment', return_value={}), \
+                        mock.patch.object(runner, 'tree_lock',
+                                          lambda *_a, **_k: refusing_lock()), \
+                        mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                        mock.patch('sys.stdout', new_callable=io.StringIO), \
+                        mock.patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                    try:
+                        runner.main()
+                        raised = None
+                    except SystemExit as exit_code:
+                        raised = exit_code
+                self.assertTrue(raised is not None and raised.code == 2
+                                and not launched
+                                and 'tree lock or anchor read failed: TimeoutError' in stderr.getvalue()
+                                and not (output / 'summary.json').exists()
+                                and not output.exists(), marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

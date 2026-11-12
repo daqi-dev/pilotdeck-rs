@@ -120,7 +120,9 @@ def _test_classes():
     parse used to run at import, outside every lock window — a sibling
     mutation round holds its own write/restore window on this very fixture
     (the manifest-count-minus-one row mutates it), so the first parse now
-    happens inside preflight()'s tree lock, before any case mutates a source.
+    happens inside a lock window before any case mutates a source: the
+    mutation arm's 60 s preflight() window, or (fix-r12/r13) the --memory
+    rehearsal's 900 s window through _anchor_errors() in one().
     """
     global TEST_CLASSES
     if TEST_CLASSES is not None:
@@ -156,9 +158,9 @@ def _anchor_errors():
     # #2795 fix-r12（双锁契约回归，自 preflight() 拆出）：全表锚点预检的
     # 检查面单独成函数，供两个锁窗共用——变异臂与 --check-anchors 走
     # preflight() 自己的 60 s 锁窗；--memory 路径折进 rehearsal 的 900 s
-    # 锁窗（one() 首行）。调用方必须持有 tree 锁：兄弟变异运行器在自己的
-    # write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它
-    # 不拥有的源上（#2795 fix-r4「读在锁内」）。
+    # 锁窗（one() 首个 case、任何 child 之前做一次）。调用方必须持有 tree
+    # 锁：兄弟变异运行器在自己的 write 与 restore 之间可能把变异体留在
+    # 盘上，无锁读会把核对错在它不拥有的源上（#2795 fix-r4「读在锁内」）。
     errors = []
     test_classes = _test_classes()
     for name, path, before, after, test in cases:
@@ -296,7 +298,13 @@ def main():
     # 任何 child 之前先做一次（等价 preflight() 的检查面，不另取 60 s
     # 锁；#1398 e2e 契约钉 tree_lock 恰好一次且 timeout=900、锁先于
     # child）。变异臂不进此分支，预检仍在 main() 里先于一切 case。
+    # #2795 fix-r13（评审修 3，两家 boundary/concurrency 四条同族收敛）：
+    # began 是 --memory 的启动期边界——预检通过才算启动完成；启动期（900 s
+    # 取锁 + 预检）的失败由 main 的拒跑分支收口（rc 2、家族文案、不发布
+    # summary、撤走 .claim 认领形状），不再是 rc 1 + 一份看起来跑完了的
+    # 全 INVALID summary。
     table_checked = False
+    began = False
     def publish():
         # Publish only after mutating_sources has verified restoration; a
         # cancellation below re-publishes every row as INVALID before raising.
@@ -315,13 +323,16 @@ def main():
         (out / (name + '.log')).write_text(result.stdout + result.stderr)
         return result
     def one(row):
-        nonlocal table_checked
+        nonlocal table_checked, began
         name, path, before, after, test = row
         # #2795 fix-r12（双锁契约回归）：见 table_checked 的登记注释——
         # --memory 的全表预检在 rehearsal 锁窗内、首个 child 之前做一次。
         if memory and not table_checked:
             table_checked = True
             _anchor_report(_anchor_errors())
+        # #2795 fix-r13（评审修 3）：预检通过才算启动完成（began 翻转），
+        # 此后任何守卫失败走「作废已跑行 + 发布 INVALID + rc 1」的既有形状。
+        began = True
 
         def restored():
             nonlocal status, reason
@@ -400,6 +411,30 @@ def main():
             for row in selected:
                 one(row)
     except BaseException as error:
+        # #2795 fix-r13（评审修 3，DS/MM boundary+concurrency 四条同族收敛）：
+        # --memory 启动期（900 s 取锁 + 全表锚点预检，即 began 翻转之前）的
+        # 失败是拒跑，不是红跑——rc 2、家族文案（锁忙/读失败时）、不发布
+        # summary、撤走只含 .claim 的认领目录（specs/negative-controls/
+        # README.md「从未开跑 → 2 / 不发 summary 不留认领形状」），同路径
+        # 重跑也不再撞 #953 的目录复用拒绝；stale 锚点的错误行已由
+        # _anchor_report 打到 stderr。启动期之后（began 已翻转）的守卫失败
+        # 维持既有形状：作废已跑行、发布 INVALID summary、退 1（非 Exception
+        # 重抛）。注意 run_owned 超时抛 subprocess.TimeoutExpired 而非
+        # TimeoutError，不进拒跑分支；变异臂（非 memory）不进此分支，其
+        # preflight 拒跑发生在 new_output_directory 之前，本就无目录可撤。
+        if memory and not began:
+            try:
+                (out / '.claim').unlink()
+                out.rmdir()
+            except OSError:
+                pass
+            if isinstance(error, (TimeoutError, OSError, UnicodeDecodeError)):
+                print(f'tree lock or anchor read failed: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+            elif not isinstance(error, SystemExit):
+                print(f'memory rehearsal refused to start: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+            raise SystemExit(2)
         # A guard failure or a cancellation voids every row; a swallowed
         # Ctrl-C would keep a stale green summary. The per-case with above
         # has already restored the bytes and released the lease; publish
