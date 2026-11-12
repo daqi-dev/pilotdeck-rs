@@ -3401,10 +3401,14 @@ async fn loader_mount_builds_api_server_channel() {
 /// `_tmp/20261112-issue-1833/impl-r1/node-probe/c2-parse-cors-probe.out`): a
 /// class-tagged object keeps its tag (`[object Set]` / `[object Map]`), a
 /// nested array joins (`["https://b", 2]` → `"https://b,2"`), an empty
-/// coercion drops. The array branch used to hardcode `[object Object]` — a
-/// third `[object …]` implementation beside `js_value`'s joiner and the
-/// config diagnostics; `corsOrigins` is only constructed by tests today, so
-/// this pins the potential surface before the loader starts passing it.
+/// coercion drops. `String({toString: null})` throws `TypeError`
+/// (`Cannot convert object to primitive value`, fix-r2 probe:
+/// `_tmp/20261026-issue-1833/fix-r2/node-probe/tostring-null-entry.out`), which
+/// the TS constructor propagates; resolve is infallible, so the entry drops
+/// instead. The array branch used to hardcode `[object Object]` — a third
+/// `[object …]` implementation beside `js_value`'s joiner and the config
+/// diagnostics; `corsOrigins` is only constructed by tests today, so this pins
+/// the potential surface before the loader starts passing it.
 #[test]
 fn parse_cors_origins_stringifies_entries_through_the_shared_joiner() {
     let mut set = JsObject::new();
@@ -3428,6 +3432,10 @@ fn parse_cors_origins_stringifies_entries_through_the_shared_joiner() {
         JsValue::Object(Default::default()),
         JsValue::Object(set),
         JsValue::Object(map),
+        // An own non-callable `toString` shadows the inherited one, so
+        // `String(item)` throws (fix-r2): the entry must drop out, not stay
+        // as a literal `[object Object]` origin.
+        crate::metadata::object([("toString", JsValue::Null)]),
         JsValue::String(JsString::from("")),
     ]);
     assert_eq!(

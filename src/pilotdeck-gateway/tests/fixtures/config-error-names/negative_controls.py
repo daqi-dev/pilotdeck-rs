@@ -17,6 +17,7 @@ import difflib
 import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 import sys
 
@@ -25,8 +26,9 @@ from negative_panic import named_test_failed, named_test_killed
 from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse, refuse_unusable_target, registered,
                                 select, verdict_exit)
-from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
-                              run_owned, wait_for_slot)
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, defer_signal_exit,
+                              mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 # Each independent mutant is applied to the original, never cumulatively.
@@ -72,11 +74,21 @@ mutations = [
      '    let _ = object;\n'
      '    "Object"'),
     ('parse-cors-object-literal', 'src/pilotdeck-gateway/src/channel/api_server/mod.rs',
-     '                crate::js_value::display(item).unwrap_or_default()',
+     '                crate::js_value::to_string_units_checked(item)\n'
+     '                    .map(|units| String::from_utf16_lossy(&units))\n'
+     '                    .unwrap_or_default()',
      '                match item {\n'
      '                    JsValue::Object(_) => "[object Object]".to_owned(),\n'
-     '                    _ => crate::js_value::display(item).unwrap_or_default(),\n'
+     '                    _ => crate::js_value::to_string_units_checked(item)\n'
+     '                        .map(|units| String::from_utf16_lossy(&units))\n'
+     '                        .unwrap_or_default(),\n'
      '                }'),
+    ('parse-cors-checked-reverted', 'src/pilotdeck-gateway/src/channel/api_server/mod.rs',
+     '                crate::js_value::to_string_units_checked(item)\n'
+     '                    .map(|units| String::from_utf16_lossy(&units))\n'
+     '                    .unwrap_or_default()',
+     '                crate::js_value::display(item)\n'
+     '                    .unwrap_or_default()'),
     ('store-reload-guard-broadened', 'src/pilotdeck-gateway/src/config/store.rs',
      '            if error.name == "PilotConfigError" && !error.requires_host {',
      '            if !error.requires_host {'),
@@ -95,6 +107,7 @@ EXPECTED_NAMES = (
     'helper-collapses-to-notprimitive', 'helper-collapses-to-stackoverflow',
     'schemaversion-coercion-check-dropped', 'language-coercion-check-dropped',
     'object-tag-hardcoded', 'parse-cors-object-literal',
+    'parse-cors-checked-reverted',
     'store-reload-guard-broadened', 'js-string-object-literal',
     'scalar-units-tag-dropped',
 )
@@ -130,6 +143,9 @@ TARGETS = {
     'parse-cors-object-literal': (
         'channel::api_server::tests::parse_cors_origins_stringifies_entries_through_the_shared_joiner',
         "#1833 entries must stringify like TS's value.map(String)"),
+    'parse-cors-checked-reverted': (
+        'channel::api_server::tests::parse_cors_origins_stringifies_entries_through_the_shared_joiner',
+        "#1833 entries must stringify like TS's value.map(String)"),
     'store-reload-guard-broadened': (
         'config::store::tests::binding_error_classes_keep_the_retained_reload_diagnostics',
         '#1833 a YAMLParseError reload keeps the retained diagnostics'),
@@ -156,6 +172,36 @@ refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 out = claim_dir(sys.argv[1])
 summary = []
 failures = []
+
+
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP/SIGQUIT so the finally blocks restore the
+    sources; the default disposition would leave a mutant in the tree
+    (#1833 fix-r2, mirror of manager-gateway's handler)."""
+    if defer_signal_exit(signum):
+        return
+    raise SystemExit(128 + signum)
+
+
+# Installed before the mutation window: a signal while `run_owned` waits for
+# cargo raises SystemExit, `run_owned`'s BaseException arm kills the cargo
+# process group, and `mutating_sources` restores the tree; a signal landing in
+# the restore itself is deferred by `restore_critical` and handed back by
+# `take_deferred_signal()` after the byte verification.
+signal.signal(signal.SIGTERM, terminate_cleanly)
+if hasattr(signal, 'SIGHUP'):
+    signal.signal(signal.SIGHUP, terminate_cleanly)
+if hasattr(signal, 'SIGQUIT'):
+    signal.signal(signal.SIGQUIT, terminate_cleanly)
+
+# fix-r2 (concurrency review #1): publish and restore through one atomic
+# rename, never a truncating in-place write — a SIGKILL mid-window must not
+# leave a half-written source (#1903, write_source_atomic). The mode is
+# snapshotted before the window: a mutant may delete the target, and the
+# fallback `stat` inside `write_source_atomic` would then not be the source's
+# own mode.
+modes = {root / filename: (root / filename).stat().st_mode & 0o7777
+         for _, filename, _, _ in run_rows}
 
 
 def run(full):
@@ -186,7 +232,9 @@ with mutating_sources(root, sorted({root / filename for _, filename, _, _ in run
         path = root / filename
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
-        content = original.decode()
+        # Explicit UTF-8 both ways (fix-r2, concurrency review #3): a non-UTF-8
+        # locale must not turn the mutation into an INVALID crash.
+        content = original.decode('utf-8')
         test, marker = TARGETS[name]
         try:
             occurrences = content.count(old)
@@ -200,7 +248,8 @@ with mutating_sources(root, sorted({root / filename for _, filename, _, _ in run
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh',
                                   timeout=CARGO_SLOTS_WAIT_SECONDS)
             (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-            path.write_text(changed)
+            write_source_atomic(root, path, changed.encode('utf-8'),
+                                mode=modes[path])
             code, log = run(test)
             (out / f'{name}.log').write_text(log)
             killed = (test in baseline_ok and code == 101
@@ -223,7 +272,7 @@ with mutating_sources(root, sorted({root / filename for _, filename, _, _ in run
                                 sourceSha256=before))
             failures.append(name)
         finally:
-            path.write_bytes(original)
+            write_source_atomic(root, path, original, mode=modes[path])
             restored = hashlib.sha256(path.read_bytes()).hexdigest()
             if restored != before:
                 raise RuntimeError(
