@@ -176,7 +176,7 @@ rc 2 不同形，且 CARGO_HOME/PDRS_BASELINE 守卫先于选择执行，对齐�
    concurrency #1）起该要求在已迁移入口是**双向**机检的：`check_row_pins` 除核 pin 名
    指向的行仍在表里，还由运行期表算出「共享身份被 ≥2 行携带」的行集要求 ⊆ `ROW_PINS`，
    新增一行复用既有共享身份而未入 pin 表即拒跑（closure-r4 起 native-blankkey-submit /
-   native-config / turn-submit / turn-read / turn-publish 五家全覆盖，各配红腿；前四家
+   native-config / turn-submit / turn-read / turn-publish 五家全覆盖，各配红腿；前三家
    共享身份是断言串——turn-read / turn-publish 行没有独立断言列，共享身份是绑定的
    测试名，闭包 r4 补齐）；turn-submit 的 location 形按 computed site 计，
    marker 槽里的测试名不参与共享判定（毒锁对的标记槽不作为共享断言）；全仓普查面

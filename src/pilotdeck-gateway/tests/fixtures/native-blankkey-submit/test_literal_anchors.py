@@ -19,6 +19,7 @@ import dataclasses
 import importlib.util
 import io
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -169,6 +170,69 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertEqual(len(seen['bound']), len(ROWS),
                          '#2692 fix-r12: the targeted run is still bound '
                          'against the whole table')
+
+    def test_rejects_an_empty_assertion_list_row(self):
+        # closure-r5 (DS sibling#1, P1): the native-config closure-r4 shape
+        # in this family's copy of the accessor -- after every consumer
+        # iterates per element, an `assertion=[]` row produces no anchors:
+        # it joins no count, no reverse pin and no literal-anchor loop, so
+        # --check counted the row in and stayed green while the kill round
+        # could only ever read it INVALID. The twin rides the pristine table
+        # otherwise, so the only refusal source is the accessor itself
+        # (this family's refuse() code, rc 2, stderr names the row).
+        source = next(case for case in ROWS
+                      if case.mutation == 'registry-skip-reverted')
+        twin = dataclasses.replace(
+            source, mutation='registry-skip-reverted-empty-twin', assertion=[])
+        self.assertRefused('#2692 empty assertion list',
+                           cases=ROWS + [twin],
+                           why='#2692 closure-r5: an empty assertion list '
+                               'must refuse the run')
+
+    def test_main_check_refuses_an_empty_assertion_list_row(self):
+        # closure-r5: the same injection through the real --check envelope
+        # must be a clean refusal -- this family's refuse() exits 2, stderr
+        # names the row, no traceback reaches the operator, and no count may
+        # print (the pre-fix false green counted the row in). The roster
+        # stays aligned (the twin joins EXPECTED_NAMES), so the refusal can
+        # only come from the accessor, after the duplicate-name and roster
+        # guards. The twin is built with dataclasses.replace + astuple,
+        # never positional tuple indices (the native-config closure-r4
+        # driver shape).
+        driver = (
+            "import dataclasses, importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('nc', sys.argv[1])\n"
+            "nc = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(nc)\n"
+            "source = next(row for row in nc.mutations\n"
+            "              if row[0] == 'registry-skip-reverted')\n"
+            "twin = dataclasses.replace(nc.Case(*source),\n"
+            "                           mutation='registry-skip-reverted-empty-twin',\n"
+            "                           assertion=[])\n"
+            "nc.mutations = list(nc.mutations) + [dataclasses.astuple(twin)]\n"
+            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin.mutation,)\n"
+            "sys.argv = ['negative_controls.py', '--check']\n"
+            "nc.main()\n")
+        done = subprocess.run(
+            [sys.executable, '-I', '-c', driver,
+             str(HERE.with_name('negative_controls.py'))],
+            cwd=nc.ROOT, capture_output=True, text=True)
+        # This family's refusal is the shared `negative_selection.refuse`
+        # shape (rc 2, `INVALID:` on stderr) -- native-config's rc 1
+        # SystemExit envelope does not apply here.
+        self.assertEqual(done.returncode, 2,
+                         f'#2692 closure-r5: the empty-list twin must refuse '
+                         f'--check: rc={done.returncode} out={done.stdout!r}')
+        self.assertNotIn('Traceback', done.stderr,
+                         '#2692 closure-r5: the refusal must be clean, '
+                         'not a traceback')
+        self.assertIn('#2692 empty assertion list: '
+                      'registry-skip-reverted-empty-twin',
+                      done.stderr,
+                      '#2692 closure-r5: the refusal names the empty-list twin')
+        self.assertNotIn('mutation anchors OK', done.stdout,
+                         '#2692 closure-r5: no count may print for a refused '
+                         'row (the pre-fix false green counted the row in)')
 
 
 if __name__ == '__main__':

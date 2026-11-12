@@ -272,6 +272,90 @@ class LiteralAnchorGuard(unittest.TestCase):
                          '#2692 closure-r4: no count may print for a refused '
                          'row (the pre-fix false green printed 132)')
 
+    def test_main_check_refuses_a_non_str_assertion_element_row(self):
+        # closure-r5 (DS sibling#3, P2): the accessor refuses three shapes --
+        # empty list, non-str element, non-str scalar -- but the closure-r4
+        # leg only pinned the empty list. This leg injects the non-str
+        # element shape (a sibling assertion plus an int rider) through the
+        # same real --check envelope; deleting the element branch of
+        # `_assertions` must go red here. Same envelope and family exit
+        # code as the empty-list leg above (SystemExit(str) turns into rc 1;
+        # the blankkey/turn-submit refuse() rc 2 does not apply to this
+        # family).
+        driver = (
+            "import dataclasses, importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('nc', sys.argv[1])\n"
+            "nc = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(nc)\n"
+            "source = next(row for row in nc.mutations\n"
+            "              if row[0] == 'permission-stub-revert')\n"
+            "case = nc.Case(*source)\n"
+            "twin = dataclasses.replace(\n"
+            "    case, mutation='permission-stub-revert-mixed-twin',\n"
+            "    assertion=[case.assertion, 3])\n"
+            "nc.mutations = list(nc.mutations) + [dataclasses.astuple(twin)]\n"
+            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin.mutation,)\n"
+            "sys.argv = ['negative_controls.py', '--check']\n"
+            "nc.main()\n")
+        done = subprocess.run(
+            [sys.executable, '-I', '-c', driver,
+             str(HERE.with_name('negative_controls.py'))],
+            cwd=nc.ROOT, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1,
+                         f'#2692 closure-r5: the non-str element twin must '
+                         f'refuse --check: rc={done.returncode} '
+                         f'out={done.stdout!r}')
+        self.assertNotIn('Traceback', done.stderr,
+                         '#2692 closure-r5: the refusal must be clean, '
+                         'not a traceback')
+        self.assertIn('#2692 non-str assertion element: '
+                      'permission-stub-revert-mixed-twin',
+                      done.stderr,
+                      '#2692 closure-r5: the refusal names the mixed twin')
+        self.assertNotIn('mutation anchors OK', done.stdout,
+                         '#2692 closure-r5: no count may print for a '
+                         'refused row')
+
+    def test_main_check_refuses_a_non_str_assertion_scalar_row(self):
+        # closure-r5 (DS sibling#3, P2): the third shape -- the assertion
+        # column replaced by a non-str scalar. Pre-guard this raised a bare
+        # TypeError inside `counts[case.assertion]`-adjacent code paths or
+        # silently mis-keyed; the accessor now refuses it before any
+        # consumer runs. Same envelope and family exit code as the legs
+        # above.
+        driver = (
+            "import dataclasses, importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('nc', sys.argv[1])\n"
+            "nc = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(nc)\n"
+            "source = next(row for row in nc.mutations\n"
+            "              if row[0] == 'permission-stub-revert')\n"
+            "twin = dataclasses.replace(nc.Case(*source),\n"
+            "                           mutation='permission-stub-revert-scalar-twin',\n"
+            "                           assertion=3)\n"
+            "nc.mutations = list(nc.mutations) + [dataclasses.astuple(twin)]\n"
+            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin.mutation,)\n"
+            "sys.argv = ['negative_controls.py', '--check']\n"
+            "nc.main()\n")
+        done = subprocess.run(
+            [sys.executable, '-I', '-c', driver,
+             str(HERE.with_name('negative_controls.py'))],
+            cwd=nc.ROOT, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1,
+                         f'#2692 closure-r5: the non-str scalar twin must '
+                         f'refuse --check: rc={done.returncode} '
+                         f'out={done.stdout!r}')
+        self.assertNotIn('Traceback', done.stderr,
+                         '#2692 closure-r5: the refusal must be clean, '
+                         'not a traceback')
+        self.assertIn('#2692 non-str assertion: '
+                      'permission-stub-revert-scalar-twin',
+                      done.stderr,
+                      '#2692 closure-r5: the refusal names the scalar twin')
+        self.assertNotIn('mutation anchors OK', done.stdout,
+                         '#2692 closure-r5: no count may print for a '
+                         'refused row')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
         # assertion string another row also carries used to survive a

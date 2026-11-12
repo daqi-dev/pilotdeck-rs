@@ -401,7 +401,29 @@ ROW_PINS = (
 
 
 def _assertions(case):
-    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+    # closure-r5 (DS sibling#1, P1): sync of the native-config closure-r4
+    # guard into this family's copy of the accessor. After closure-r3 made
+    # every consumer iterate per element, an EMPTY list row stopped crashing
+    # and instead produced no anchors: it joined no count, no reverse pin
+    # and no literal-anchor loop, so --check counted the row in and stayed
+    # green (the injected-twin false green recorded in closure-r4's RESULT
+    # for native-config, same shape here) while the kill round could only
+    # ever read it INVALID. Refuse the empty-list shape cleanly, and the
+    # shapes that would TypeError on the next line anyway (a non-str
+    # element, a non-str scalar assertion). This family's refusal is the
+    # shared `refuse()` shape (rc 2), not native-config's `raise
+    # SystemExit(str)` (rc 1).
+    assertion = case.assertion
+    if isinstance(assertion, list):
+        if not assertion:
+            refuse(f'#2692 empty assertion list: {case.mutation}')
+        for element in assertion:
+            if not isinstance(element, str):
+                refuse(f'#2692 non-str assertion element: {case.mutation}')
+        return assertion
+    if not isinstance(assertion, str):
+        refuse(f'#2692 non-str assertion: {case.mutation}')
+    return [assertion]
 
 
 def check_literal_anchors(cases, bound_rows=None):
