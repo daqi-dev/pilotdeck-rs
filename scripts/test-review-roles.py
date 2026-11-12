@@ -584,7 +584,8 @@ def _run(gate, rrr, out_base: Path) -> int:
             if not gate_errs(bad):
                 fails.append(f"闸门：{why} 应拒收")
 
-        # —— #3056 修复轮字段（义务 3/E/G）：--fixtype 落块、闸门按字面三值与首行 fix-rN 判定 ——
+        # —— #3056 修复轮字段（义务 3/E/G）：--fixtype 落块、闸门按字面三值与正文首行兜底判定
+        # （本组不传 --base/--repo，走 fix-r6 的本地无 head 路径：fixpr 正文首行自带 fix-rN）——
         rc, s = run("fixtype-struct", "ok", extra=("--fixtype", "结构性"))
         if rc != 0 or " fixtype=结构性 " not in s:
             fails.append(f"fixtype：--fixtype 结构性 应写进结果块 fixtype= 键（rc={rc}）")
@@ -734,11 +735,13 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not any("缺 issue 关联" in e for e in errs):
             fails.append(f"修8 负控：引用块里的 Refs #1 不算 issue 关联：{errs}")
 
-        # —— #3056 fix-r5 修 1（结构性换信号源；state/decisions-20261113.md「fix-r4 修 1 停点裁定」）：
-        # 主信号 = PR head 提交标题，正文回显扫描删除（行内词表判据 r2→r3→r4 三轮不收敛，fix-r4
-        # 停点报告用全量词表证明「结构化标题」与「类型词开头的散文」两群在行内无判别量），
-        # 正文只剩首行宽松兜底（fix-r4 修 3.5 边界钉见下，继续有效）——
-        # 正控（停点报告 §三 六形 + 冒号/全角/散文间隔形）全走标题路径
+        # —— #3056 fix-r5 修 1（结构性换信号源；state/decisions-20261113.md「fix-r4 修 1 停点裁定」）
+        # → fix-r6 扩为集合（DS boundary#1 P0 + concurrency#1 P1 双撞同根因）：主信号 = PR 范围
+        # 提交标题集合（git log --format=%s <base>..<head>，head 天然在集合内，不单独走一条路）；
+        # 正文回显扫描已删（行内词表判据 r2→r3→r4 三轮不收敛，fix-r4 停点报告用全量词表证明
+        # 「结构化标题」与「类型词开头的散文」两群在行内无判别量），正文只剩首行宽松兜底
+        # （fix-r4 修 3.5 边界钉见下，继续有效）——逐条标题判据的正控
+        # （停点报告 §三 六形 + 冒号/全角/散文间隔形）不变
         for t, want in [("fix(scripts) PR #3047 fix-r3：修 DS boundary#1 与 MM boundary#1 双撞", 3),
                         ("chore(tools) 分段检查器 fix-r1：堵四个假 PASS 面", 1),
                         ("chore(tools) fix-r21 WIP 快照：run-review-roles 接 minimax 通道", 21),
@@ -766,60 +769,113 @@ def _run(gate, rrr, out_base: Path) -> int:
             if gate.fix_round_from_body("## 概述\n\n" + prose + "\n") is not None:
                 fails.append(f"fix-r5 负控：正文非首行（散文/回显/提及）不应判修复轮：{prose[:44]!r}")
 
-        # 主信号走真实 git：独立夹具仓（不碰 run() 用的 wt），造目标标题提交后 check() 全链实测
+        # 主信号走真实 git（fix-r6 集合语义）：独立夹具仓（不碰 run() 用的 wt），提交链
+        # base → fix-r3 → fix-r5 → chore: sync board → 普通状态提交，不同 base..head 范围取
+        # 不同标题集合后 check() 全链实测
         wt2 = tmp / "repo-title"
         wt2.mkdir()
         g2 = ["git", "-C", str(wt2), "-c", "user.email=t@t", "-c", "user.name=t"]
         subprocess.run([*g2, "init", "-q"], check=True)
-        subprocess.run([*g2, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
 
         def titled2(msg: str) -> str:
             subprocess.run([*g2, "commit", "-q", "--allow-empty", "-m", msg], check=True)
             return subprocess.run([*g2, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 
-        h_pr = titled2("fix(scripts) PR #3047 fix-r3：r2 评审 P2 当轮修——casefold 只对别名表登记的两形生效")
-        h_plain = titled2("chore(state) 00:13 交接段：普通状态提交")
+        c_base = titled2("base")
+        h_r3 = titled2("fix(scripts) PR #3047 fix-r3：r2 评审 P2 当轮修——casefold 只对别名表登记的两形生效")
+        h_r5 = titled2("fix(scripts) #3074 fix-r5：修闸门")
+        h_sync = titled2("chore: sync board")
+        h_plain2 = titled2("chore(state) 00:13 交接段：普通状态提交")
         blk_t = ("<!-- pr-gate:v1 roles=sibling:PASS,concurrency:PASS,boundary:PASS,simplify:PASS "
                  "head={h} runner=zai model=glm-5.3-mb readonly=tools -->\n")
 
-        def gate2(body: str, h: str, repo: str = "") -> list[str]:
-            return gate.check(body, h, "", "", repo or str(wt2))
+        def gate2(body: str, h: str, b: str = "", repo: str = "") -> list[str]:
+            return gate.check(body, h, "", b, repo or str(wt2))
 
-        # fix-r4 双撞 P0 的最小复现转抓：`## 概述` 首行 + 回显行正文，旧口径 fix_round=None 整套
-        # 跳过（假 PASS）；新口径从 head 标题取主信号 → 判 fix-r3 → 缺 fixtype 按修复轮拒收
-        p0_body = ("## 概述\n\nfix(scripts) PR #3047 fix-r3：r2 评审 P2 当轮修\n\n"
-                   + blk_t.format(h=h_pr) + "Refs #1\n")
-        errs = gate2(p0_body, h_pr)
-        if not any("须带 fixtype" in e for e in errs):
-            fails.append(f"fix-r5 P0 转抓：`## 概述` 首行 + 回显正文 + head 标题 fix-r3 应按修复轮拒收缺 fixtype：{errs}")
-        errs = gate2(p0_body.replace("readonly=tools", "readonly=tools fixtype=结构性"), h_pr)
+        # 集合判据直接断言（任务书验 2）：多轮累积（fix-r3 + fix-r5 两提交在范围里）取 max=5；
+        # head（chore: sync board，无 fix-rN）天然在集合内，不单独走一条路
+        titles, terr = gate.pr_commit_titles(str(wt2), c_base, h_sync)
+        if terr or titles is None or gate.fix_round_from_titles(titles) != 5:
+            fails.append(f"fix-r6 集合判据：范围含 fix-r3+fix-r5 应取 max=5（terr={terr}，titles={titles}）")
+        # 范围只含单个命中标题时与 fix-r5 单标题判据等价（逐条判据不变）
+        for b, h, want in [(c_base, h_r3, 3), (h_r5, h_sync, None), (h_r5, h_plain2, None)]:
+            titles, terr = gate.pr_commit_titles(str(wt2), b, h)
+            if terr or titles is None or gate.fix_round_from_titles(titles) != want:
+                fails.append(f"fix-r6 集合判据：{b[:7]}..{h[:7]} 应判 {want}（terr={terr}，titles={titles}）")
+
+        # fix-r5 双撞 P0 的最小复现转抓（任务书验 5，DS boundary#1 静态场景）：head=`chore: sync
+        # board`、正文标准 `## 概述`、更早提交带 fix-r5 → 集合判修复轮 5 → 缺 fixtype 按修复轮拒收
+        p0_body = ("## 概述\n\nhead 提交标题不带 fix-rN 的多提交修复轮不再漏判。\n\n"
+                   + blk_t.format(h=h_sync) + "Refs #1\n")
+        errs = gate2(p0_body, h_sync, c_base)
+        if not any("fix-r5" in e and "fixtype" in e for e in errs):
+            fails.append(f"fix-r6 P0 转抓：head=chore:sync board + 更早提交 fix-r5 应按修复轮 5 拒收缺 fixtype：{errs}")
+        if not any("pdrs-residual" in e for e in errs):
+            fails.append(f"fix-r6 P0 转抓：fix-r5（N≥4）应同时要求 pdrs-residual：{errs}")
+        # 同一范围齐字段（fixtype + residual）应过闸
+        ok_body = (p0_body.replace("readonly=tools", "readonly=tools fixtype=结构性")
+                   + "<!-- pdrs-residual: 上轮洞是 head 单标题信号面，集合语义收口 -->\n")
+        errs = gate2(ok_body, h_sync, c_base)
         if errs:
-            fails.append(f"fix-r5 P0 转抓：head 标题判修复轮 + 齐字段（fix-r3<4 免 residual）应过闸：{errs}")
-        # 标题赢过正文首行旧回显（主信号优先，正文兜底不覆盖标题判定）
-        errs = gate2("fix(gateway) #1 fix-r5：正文首行是旧回显\n\n" + blk_t.format(h=h_pr) + "Refs #1\n", h_pr)
+            fails.append(f"fix-r6 正控：集合判修复轮 + 齐字段应过闸：{errs}")
+        # badge 首行（修 9 场景迁移）：集合路径不依赖正文首行形态
+        errs = gate2("![ci](https://example.com/b.svg)\n\n" + ok_body, h_sync, c_base)
+        if errs:
+            fails.append(f"fix-r6 正控：badge 首行 + 集合判修复轮 + 齐字段应过闸：{errs}")
+        # 多轮累积端到端（任务书验 2）：范围 = [fix-r3, fix-r5]，正文无 fix-rN → 轮号 5 不是 3
+        # （取错成 fix-r3 会免 residual 且报错写旧轮号）
+        acc_body = "## 概述\n\n多提交修复轮。\n\n" + blk_t.format(h=h_r5) + "Refs #1\n"
+        errs = gate2(acc_body, h_r5, c_base)
+        if not any("fix-r5" in e and "fixtype" in e for e in errs) or not any("pdrs-residual" in e for e in errs):
+            fails.append(f"fix-r6 多轮累积：fix-r3+fix-r5 在范围里应取 max=5（缺 fixtype/residual 拒收）：{errs}")
+        # 集合赢过正文首行旧回显（主信号优先，正文兜底不覆盖集合判定）
+        errs = gate2("fix(gateway) #1 fix-r5：正文首行是旧回显\n\n" + blk_t.format(h=h_r3) + "Refs #1\n", h_r3, c_base)
         if not any("fix-r3" in e for e in errs):
-            fails.append(f"fix-r5 主信号优先：head 标题 fix-r3 不得被正文首行 fix-r5 旧回显覆盖：{errs}")
-        # badge 首行（修 9 场景迁移）：标题路径不依赖正文首行形态
-        badge_body = "![ci](https://example.com/b.svg)\n\n" + p0_body
-        errs = gate2(badge_body.replace("readonly=tools", "readonly=tools fixtype=结构性"), h_pr)
-        if errs:
-            fails.append(f"fix-r5 正控：badge 首行 + head 标题 fix-r3 + 齐字段应过闸：{errs}")
-        # 普通标题 + 正文散文：判据不再看正文，非首行散文不触发修复轮字段
-        prose_body = "## 概述\n\ntest: #123 fix-r5 的场景已补\n\n" + blk_t.format(h=h_plain) + "Refs #1\n"
-        errs = gate2(prose_body, h_plain)
+            fails.append(f"fix-r6 主信号优先：集合判 fix-r3 不得被正文首行 fix-r5 旧回显覆盖：{errs}")
+        # 集合路径负控（任务书验 3）：范围标题全不带 fix-rN（base=fix-r5 提交、head=普通状态提交，
+        # 范围 = [chore: sync board, chore(state) 交接段]），正文散文提及 fix-r3 → 判非修复轮
+        neg_body = ("## 概述\n\nchore 更新 board：#1357 依赖普查完成，顺带记录了 fix-r3 的现场\n\n"
+                    + blk_t.format(h=h_plain2) + "Refs #1\n")
+        errs = gate2(neg_body, h_plain2, h_r5)
         if any("fixtype" in e or "residual" in e for e in errs):
-            fails.append(f"fix-r5 负控：普通标题 + 正文散文不应触发修复轮字段：{errs}")
-        # git 失败 fail-closed：未知提交 / --repo 不是仓库 / 空 subject 提交，都不得当「非修复轮」放行
-        for h_bad, repo_bad, why in [("f" * 40, str(wt2), "未知提交"),
-                                      (h_pr, str(tmp / "not-a-repo"), "repo 不是 git 仓库")]:
-            errs = gate.check(blk_t.format(h=h_bad) + "Refs #1\n", h_bad, "", "", repo_bad)
+            fails.append(f"fix-r6 负控：范围标题全无 fix-rN + 正文非首行散文提及 fix-r3 不应判修复轮：{errs}")
+        # 正文首行兜底不回退（任务书验 3 后半，fix-r5 现状语义保留）：范围全不命中时首行宽松口径
+        # 照旧——首行 `test: #123 fix-r5 的场景已补` 判修复轮 5（fix-r4 修 3.5 已知窄代价，钉住）
+        errs = gate2("test: #123 fix-r5 的场景已补\n\n" + blk_t.format(h=h_plain2) + "Refs #1\n", h_plain2, h_r5)
+        if not any("fix-r5" in e and "fixtype" in e for e in errs):
+            fails.append(f"fix-r6 兜底不回退：范围全不命中 + 正文首行 fix-r5 应按修复轮 5 要求 fixtype：{errs}")
+        # 无 --head 端到端负控（任务书验 4，concurrency#1 场景 a）：本地 --body-file 不传
+        # --head/--base → 主信号不可用，兜底只看正文首行（badge）→ 非修复轮——**这一收窄是
+        # 有意的**（fix-r5 删了非首行回显扫描、fix-r6 回补负控钉死），非首行回显不再识别
+        nohead_body = ("![ci](https://example.com/b.svg)\n\nfix(scripts): #1 fix-r5：修闸门\n\n"
+                       + blk_t.format(h="") + "Refs #1\n")
+        if gate.check(nohead_body, "", "", "", ""):
+            fails.append(f"fix-r6 收窄负控：无 --head 时 badge 首行 + 非首行回显应判非修复轮整体过闸"
+                         f"（不要求 fixtype，有意收窄钉死）：{gate.check(nohead_body, '', '', '', '')}")
+        # git 失败 fail-closed（集合路径，任务书验 6）：head/base 未知提交、repo 不是 git 仓库
+        # （目录存在但不 init——不存在的路径连 chdir 都失败，测不到「不是仓库」本身），都不得当
+        # 「非修复轮」放行
+        notrepo = tmp / "not-a-repo"
+        notrepo.mkdir()
+        for b_bad, h_bad, repo_bad, why in [(c_base, "f" * 40, str(wt2), "head 未知提交"),
+                                            ("e" * 40, h_sync, str(wt2), "base 未知提交"),
+                                            (c_base, h_sync, str(notrepo), "repo 不是 git 仓库")]:
+            errs = gate.check(blk_t.format(h=h_bad) + "Refs #1\n", h_bad, "", b_bad, repo_bad)
             if not any("不得当非修复轮放行" in e for e in errs):
-                fails.append(f"fix-r5 fail-closed 负控：{why} 应拒收并写明原因：{errs}")
+                fails.append(f"fix-r6 fail-closed 负控（集合路径）：{why} 应拒收并写明原因：{errs}")
+        # 空集（base==head）合法（任务书修点 3）：与 git 失败区分开——不 fail-closed，走兜底判
+        # 非修复轮，整体过闸
+        errs = gate.check(blk_t.format(h=h_plain2) + "Refs #1\n", h_plain2, "", h_plain2, str(wt2))
+        if errs:
+            fails.append(f"fix-r6 空集负控：base==head 是合法空集，不得当 git 失败 fail-closed 或误判修复轮：{errs}")
+        # 空 subject 提交（fix-r5 行为变化钉）：集合里只是一条不命中的标题（%s 输出空行被过滤），
+        # 不再像 fix-r5 的 head 单标题路径那样单独 fail-closed；范围只含空标题提交 → 空集 → 兜底
         subprocess.run([*g2, "commit", "-q", "--allow-empty", "--allow-empty-message", "-m", ""], check=True)
         h_empty = subprocess.run([*g2, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        errs = gate.check(blk_t.format(h=h_empty) + "Refs #1\n", h_empty, "", "", str(wt2))
-        if not any("不得当非修复轮放行" in e for e in errs):
-            fails.append(f"fix-r5 fail-closed 负控：空 subject 提交应拒收并写明原因：{errs}")
+        errs = gate.check(blk_t.format(h=h_empty) + "Refs #1\n", h_empty, "", h_plain2, str(wt2))
+        if errs:
+            fails.append(f"fix-r6 空 subject：范围只含空标题提交应走兜底判非修复轮、整体过闸"
+                         f"（不再像 fix-r5 单标题路径 fail-closed）：{errs}")
 
         # fix-r4 修 3.5（DS boundary#1 + MM boundary#2 P0 双撞后的边界钉）：首行与非首行
         # 的**有意不对称**——首行宽松（fix-r1 P0 硬要求：CJK 连写首行「修复fix-r5：」无类型词/
