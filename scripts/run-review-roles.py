@@ -34,6 +34,13 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate --serial
   python3 scripts/run-review-roles.py --diff-file X.patch --worktree . --out ... --roles boundary --dry-run
+修复轮（#3056 长尾收口卡「机检落点」）：
+  --fixtype 枚举式|结构性|不适用 —— 修法类型写进结果块 fixtype= 键（闸门按字面三值校验）；
+  --rerun —— 本轮是补跑（首跑争抢/超时后重跑）：status.json 每条 rec 标 rerun=true、summary 注明，
+  且必须换独立 out 目录（目录里已有 summary.md / status.json / <角色>.md 原件即拒跑，#3056 H——
+  齐块判定以原件为准，复跑不得覆盖）；结果块 head= 绑定当轮 head，head 变了即非复跑、按新头整块重起。
+  rec 增加 resource_contention（bool，#3056 义务 6）：名额排队超时（SlotTimeout）/ 429 配额（ERR_QUOTA）/
+  执行级 TIMEOUT 三项为 true，其余 false——判据 5 的争抢类排除不再靠人读 detail 文本。
 退出码：0 全部 PASS · 1 有非 PASS · 2 参数/前置错误
 """
 from __future__ import annotations
@@ -58,13 +65,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def patch_fingerprint(wt: str, base: str, head: str) -> str:
-    """补丁指纹与闸门比对共用 check-pr-gate.py 的同一实现（结果块 patch= 键）。"""
+def _gate_module():
+    """懒加载 check-pr-gate.py（补丁指纹与 fixtype 字面三值的同一正本，不复制常量）。"""
     spec = importlib.util.spec_from_file_location("check_pr_gate", ROOT / "scripts" / "check-pr-gate.py")
     gate = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(gate)
-    return gate.patch_fingerprint(wt, base, head)
+    return gate
+
+
+def patch_fingerprint(wt: str, base: str, head: str) -> str:
+    """补丁指纹与闸门比对共用 check-pr-gate.py 的同一实现（结果块 patch= 键）。"""
+    return _gate_module().patch_fingerprint(wt, base, head)
 TEMPLATE_DIR = ROOT / ".claude" / "workflows"
 COMMON = "review-common.md"
 ROLES = {
@@ -326,7 +338,8 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     err = out_dir / f"{role}{suffix}.err"
     started = time.time()
     rec: dict = {"role": role, "status": "ERROR", "detail": "", "counts": None, "cost_usd": None,
-                 "started": dt.datetime.now().isoformat(timespec="seconds")}
+                 "started": dt.datetime.now().isoformat(timespec="seconds"),
+                 "resource_contention": False}  # #3056 义务 6：争抢类机读（SlotTimeout / 429 配额 / TIMEOUT）
     cfg = Path(tempfile.mkdtemp(prefix=f"pdrs-review-cfg-{role}-"))
     env = {k: os.environ[k] for k in ENV_KEEP if k in os.environ}
     env.update(extra_env or {}, PWD=str(cwd), CLAUDE_CONFIG_DIR=str(cfg))  # 绑定 cwd 与 PWD（review-permissions）
@@ -399,6 +412,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
             proc.wait()
             rec["status"] = "TIMEOUT"
             rec["detail"] = f"超时 {timeout}s，已杀进程组"
+            rec["resource_contention"] = True  # #3056：执行级 TIMEOUT 属争抢类（通道慢/占用导致的超时）
         t.join(timeout=10)
 
     shutil.rmtree(cfg, ignore_errors=True)
@@ -440,6 +454,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["detail"] = f"{kind}：{why}（不是模型不符）"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
+        rec["resource_contention"] = kind == ERR_QUOTA  # #3056：429 / 配额耗尽属争抢类
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
     # 只有「这次真的没跑成」才按错误响应处理：流内出现过占位符、但最后是正常成功的 result
@@ -449,6 +464,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["detail"] = f"{kind}：{one_line(err_text) or '（错误响应没有内嵌原文）'}"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
+        rec["resource_contention"] = kind == ERR_QUOTA  # #3056：429 / 配额耗尽属争抢类
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
     # real_resp 为空（只有 <synthetic>/None 占位）时 issubset 恒真，守卫退化为只靠 usage 一条证据——
@@ -494,6 +510,10 @@ def main() -> int:
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")
     ap.add_argument("--env-file", type=Path, default=None, help="取钥文件；默认本检出或主仓根的 .env.local（测试用隔离 fixture）")
     ap.add_argument("--dry-run", action="store_true", help="只渲染任务书与命令，不起进程")
+    ap.add_argument("--fixtype", choices=_gate_module().FIXTYPE_VALUES, default=None,
+                    help="修复轮修法类型（#3056）：写进结果块 fixtype= 键；「不适用」仅当 diff 只碰文档白名单（闸门按 ci_scope 语义复算）")
+    ap.add_argument("--rerun", action="store_true",
+                    help="本轮是补跑（首跑争抢/超时后重跑）：rec 标 rerun=true；须换独立 out 目录（原件不得覆盖，#3056 H）")
     ap.add_argument("--serial", action="store_true",
                     help="角色逐个顺序跑（同一进程、同一 diff，产出单个四角色结果块）；并行全跑在本机会挂起时用")
     a = ap.parse_args()
@@ -521,6 +541,15 @@ def main() -> int:
         print(f"run-review-roles: 找不到 {a.claude_bin}", file=sys.stderr)
         return 2
     out.mkdir(parents=True, exist_ok=True)
+    # #3056 H（义务 7）：齐块判定以原件（<角色>.md / summary.md / status.json）为准——
+    # 目录里已有原件即拒跑（复跑/分批须换独立 out 目录，覆盖会让原轮证据变成复跑字节）。
+    originals = [p.name for p in out.iterdir()
+                 if p.is_file() and (p.name in ("summary.md", "status.json")
+                                     or re.fullmatch(r"(sibling|concurrency|boundary|simplify)(\.retry\d+)?\.md", p.name))]
+    if originals:
+        print(f"run-review-roles: out 目录已有评审原件 {sorted(originals)}——复跑/分批须换独立 out 目录（#3056 H，不得覆盖原件）",
+              file=sys.stderr)
+        return 2
 
     diff_path = out / "diff.patch"
     patch_kv = ""
@@ -578,7 +607,8 @@ def main() -> int:
         try:
             fd = acquire_slot(a.runner)
         except SlotTimeout as e:
-            results[r] = {"role": r, "status": "ERROR", "detail": str(e), "counts": None}
+            results[r] = {"role": r, "status": "ERROR", "detail": str(e), "counts": None,
+                          "resource_contention": True}  # #3056：名额排队超时属争抢类（首次排除、补跑后仍争抢计入）
             return
         try:
             results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model, a.budget_usd)
@@ -598,6 +628,9 @@ def main() -> int:
         for t in threads:
             t.join()
 
+    if a.rerun:
+        for r in results:
+            results[r]["rerun"] = True
     (out / "status.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     ok = all(results[r]["status"] == "PASS" for r in roles)
     tot = {k: sum((results[r]["counts"] or {}).get(k, 0) for r in roles) for k in ("P0", "P1", "P2", "P3")}
@@ -605,9 +638,11 @@ def main() -> int:
     # boundary 审 #2/#178（半修）：块内记录审计范围；gate 拒 partial 归 #178
     scope = "partial" if a.paths else "full"
     paths_kv = f" paths={','.join(a.paths)}" if a.paths else ""
+    fixtype_kv = f" fixtype={a.fixtype}" if a.fixtype else ""
+    rerun_kv = " rerun=true" if a.rerun else ""
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- pr-gate:v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} runner={a.runner} model={model} readonly=tools -->", "",
+        f"<!-- pr-gate:v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv}{fixtype_kv}{rerun_kv} runner={a.runner} model={model} readonly=tools -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:
@@ -616,6 +651,9 @@ def main() -> int:
         lines.append(f"| {r} | {results[r]['status']} | {c.get('P0', '-')} | {c.get('P1', '-')} | {c.get('P2', '-')} | "
                      f"{c.get('P3', '-')} | {results[r].get('seconds')} | {detail} |")
     lines += ["", f"原件：`{out.relative_to(ROOT)}/`（<角色>.md 为结论，.jsonl/.err 为原始流）"]
+    if a.rerun:
+        lines += ["", f"**复跑轮（--rerun，#3056 H）**：绑定当轮 head=`{head}`；本目录为复跑证据，原轮目录原件未动；"
+                      f"争抢类 rec 带 resource_contention（首次争抢排除、补跑后仍争抢按前提③计入）。"]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"run-review-roles: {'全部 PASS' if ok else '有非 PASS'}；P0={tot['P0']} P1={tot['P1']} P2={tot['P2']}；见 {out}/summary.md")
     return 0 if ok else 1

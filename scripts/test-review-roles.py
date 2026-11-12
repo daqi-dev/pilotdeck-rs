@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import importlib.util
 import json
 import os
@@ -200,7 +201,8 @@ def _run(gate, rrr, out_base: Path) -> int:
                     "CLAUDE_CODE_USE_VERTEX", "GITHUB_TOKEN", "ZAI_API_KEY", "MINIMAX_API_KEY",
                     "DEEPSEEK_API_KEY", "FAKE_MODE"}
 
-        def run(name: str, mode: str, runner: str = "zai", timeout: int = 20, model: str = "") -> tuple[int, str]:
+        def run(name: str, mode: str, runner: str = "zai", timeout: int = 20, model: str = "",
+                extra: tuple[str, ...] = ()) -> tuple[int, str]:
             # 污染的父环境：旧网关头、provider 选择器、他家令牌都不得传进评审进程
             (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL,
                                                        "aliases": dict(rrr.RESP_MODEL_ALIAS), "keys": {
@@ -217,7 +219,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", runner, "--claude-bin", str(fake),
                                  "--env-file", str(envfile),
                                  "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out), "--roles", ROLES,
-                                 "--timeout", str(timeout), *(["--model", model] if model else [])],
+                                 "--timeout", str(timeout), *(["--model", model] if model else []), *extra],
                                 capture_output=True, text=True, env=env)
             s = (out / "summary.md").read_text(encoding="utf-8") if (out / "summary.md").exists() else ""
             return cp.returncode, s
@@ -337,6 +339,30 @@ def _run(gate, rrr, out_base: Path) -> int:
         rc, s = run("timeout", "hang", timeout=2)
         if rc == 0 or "TIMEOUT" not in s or not gate_errs(s):
             fails.append(f"timeout：应判 TIMEOUT 且闸门拒收（rc={rc}）")
+        stt = json.loads((out_base / "timeout" / "status.json").read_text(encoding="utf-8"))
+        if not all(stt[r].get("resource_contention") is True for r in stt):  # #3056：执行级 TIMEOUT 属争抢类
+            fails.append(f"timeout：TIMEOUT 应标 resource_contention=true（实为 {[stt[r].get('resource_contention') for r in stt]}）")
+
+        # #3056 义务 6：名额排队超时（SlotTimeout）也是争抢类——resource_contention=true，不靠人读 detail
+        st_dir = Path(os.environ["PDRS_REVIEW_SLOT_DIR"]) / "minimax"
+        st_dir.mkdir(parents=True, exist_ok=True)
+        held = os.open(st_dir / "slot0", os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(held, fcntl.LOCK_EX)
+        try:
+            out = out_base / "slot-timeout"
+            cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "minimax", "--claude-bin", str(fake),
+                                 "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                                 "--out", str(out), "--roles", "simplify"],
+                                capture_output=True, text=True,
+                                env=dict(os.environ, PDRS_REVIEW_SLOTS_MINIMAX="1", PDRS_REVIEW_SLOT_TIMEOUT="0.5"))
+            stq = json.loads((out / "status.json").read_text(encoding="utf-8"))["simplify"]
+            if (cp.returncode == 0 or stq.get("status") != "ERROR" or "名额超时" not in stq.get("detail", "")
+                    or stq.get("resource_contention") is not True):
+                fails.append(f"slot-timeout：等名额超时应判 ERROR 且 resource_contention=true（rc={cp.returncode}、{stq}）")
+            print(f"slot-timeout: status={stq.get('status')} contention={stq.get('resource_contention')} detail={stq.get('detail')}")
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
+            os.close(held)
 
         # —— API 错误响应不得误报「模型不符」；断连重试一次；真模型不符仍要判出（11-06）——
         def run_one(name: str, conf: dict, extra: tuple[str, ...] = ()) -> tuple[int, dict, str, list[str]]:
@@ -365,7 +391,9 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append(f"api-quota：额度 429 不得重试（起了 {ev.count('start')} 次）")
         if "额度耗尽" not in s or "API Error:" not in s:
             fails.append(f"api-quota：结果行（summary 表格）应写出错误分类与原文：{s}")
-        print(f"api-quota: status={st.get('status')} attempts={ev.count('start')} detail={detail}")
+        if st.get("resource_contention") is not True:  # #3056 义务 6：429 配额属争抢类
+            fails.append(f"api-quota：429 应标 resource_contention=true（实为 {st.get('resource_contention')}）")
+        print(f"api-quota: status={st.get('status')} attempts={ev.count('start')} contention={st.get('resource_contention')} detail={detail}")
 
         # ② ECONNRESET：自动重试一次后 PASS；两次的原始流分别留档
         rc, st, s, ev = run_one("api-conn", {"mode": "api_error_conn_once", "conn_flag": str(tmp / "conn.flag")})
@@ -376,6 +404,8 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append(f"api-conn：应恰好重试一次（起了 {ev.count('start')} 次）")
         if "连接断开" not in detail or "ECONNRESET" not in detail:
             fails.append(f"api-conn：detail 应说明首次断连并带原文：{detail}")
+        if st.get("resource_contention") is not False:  # #3056 负控：断连（重试成功）不是争抢类
+            fails.append(f"api-conn：连接类不得标 resource_contention=true（实为 {st.get('resource_contention')}）")
         if "simplify:PASS" not in s or "roles=simplify:PASS" not in s:
             fails.append(f"api-conn：重试成功应产出 PASS 结果块：{s}")
         if not (out_base / "api-conn" / "simplify.retry1.jsonl").exists():
@@ -388,13 +418,17 @@ def _run(gate, rrr, out_base: Path) -> int:
         rc, st, s, ev = run_one("model-mismatch", {"mode": "wrong_resp"})
         if rc == 0 or st.get("status") != "ERROR" or "模型不符" not in st.get("detail", ""):
             fails.append(f"model-mismatch：正常响应但 model 不同仍须判模型不符（{st.get('status')}、{st.get('detail')}）")
-        print(f"model-mismatch: status={st.get('status')} detail={st.get('detail')}")
+        if st.get("resource_contention") is not False:  # #3056 负控：模型谱系问题不是争抢类
+            fails.append(f"model-mismatch：模型不符不得标 resource_contention=true（实为 {st.get('resource_contention')}）")
+        print(f"model-mismatch: status={st.get('status')} contention={st.get('resource_contention')} detail={st.get('detail')}")
 
         # ④ GLM 5 小时额度原文（1308 / Usage limit）同样归「额度耗尽」
         rc, st, s, ev = run_one("api-glm-quota", {"mode": "api_error_glm_quota"})
         if rc == 0 or "额度耗尽" not in st.get("detail", "") or "Usage limit" not in st.get("detail", ""):
             fails.append(f"api-glm-quota：GLM 1308 原文也须判额度耗尽（{st.get('status')}、{st.get('detail')}）")
-        print(f"api-glm-quota: status={st.get('status')} detail={st.get('detail')}")
+        if st.get("resource_contention") is not True:  # #3056：五小时配额耗尽同属争抢类
+            fails.append(f"api-glm-quota：GLM 1308 应标 resource_contention=true（实为 {st.get('resource_contention')}）")
+        print(f"api-glm-quota: status={st.get('status')} contention={st.get('resource_contention')} detail={st.get('detail')}")
 
         # ⑤ 两次都断连：只重试一次，判 ERROR 且写明「重试 1 次后仍失败」
         rc, st, s, ev = run_one("api-conn-always", {"mode": "api_error_conn_always"})
@@ -550,6 +584,75 @@ def _run(gate, rrr, out_base: Path) -> int:
             if not gate_errs(bad):
                 fails.append(f"闸门：{why} 应拒收")
 
+        # —— #3056 修复轮字段（义务 3/E/G）：--fixtype 落块、闸门按字面三值与首行 fix-rN 判定 ——
+        rc, s = run("fixtype-struct", "ok", extra=("--fixtype", "结构性"))
+        if rc != 0 or " fixtype=结构性 " not in s:
+            fails.append(f"fixtype：--fixtype 结构性 应写进结果块 fixtype= 键（rc={rc}）")
+        fp3 = gate.patch_fingerprint(str(wt), "HEAD~1", head)
+        residual = "<!-- pdrs-residual: 上轮漏网是边界暴露：仅修饰窗一词，修法本身成立 -->\n"
+
+        def fixpr(block: str, rnd: int = 5, res: str = residual) -> str:
+            return f"fix(gateway) #1 fix-r{rnd}：停泊补 waker\n\n{block}\n{res}Refs #1\n"
+
+        if gate.check(fixpr(s), head, fp3):
+            fails.append(f"fixtype 正控：fix-r5 块带 fixtype=结构性 + residual 应过闸：{gate.check(fixpr(s), head, fp3)}")
+        if gate.check(fixpr(s, rnd=3, res=""), head, fp3):
+            fails.append("fixtype 正控：fix-r3（N<4）不要求 residual 也应过闸")
+        for bad, why, want in [
+            (s.replace(" fixtype=结构性", ""), "修复轮缺 fixtype", "须带 fixtype"),
+            (s.replace("fixtype=结构性", "fixtype=结构派生"), "子类字样 结构派生", "字面三值"),
+            (s.replace("fixtype=结构性", "fixtype=结构性 fixtype=枚举式"), "fixtype 重复", "至多出现一次"),
+        ]:
+            errs = gate.check(fixpr(bad), head, fp3)
+            if not any(want in e for e in errs):
+                fails.append(f"闸门：{why} 应拒收并说明「{want}」：{errs}")
+        errs = gate.check(fixpr(s, res=""), head, fp3)
+        if not any("pdrs-residual" in e for e in errs):
+            fails.append(f"闸门：fix-r5 缺 residual 应拒收：{errs}")
+        errs = gate.check(fixpr(s, res="<!-- pdrs-residual:    -->\n"), head, fp3)
+        if not any("空白" in e for e in errs):
+            fails.append(f"闸门：residual 空白串应拒收：{errs}")
+        errs = gate.check(fixpr(s, res="<!-- pdrs-residual: 无上一轮 -->\n"), head, fp3)
+        if errs:
+            fails.append(f"闸门：residual 字面值「无上一轮」应放行：{errs}")
+
+        # G（#3056 阻塞前置）：多块凑双谱系须同头或同一补丁指纹（head 置空隔离出 G 判定本身）
+        b1 = s
+        b2 = s.replace(f"head={head}", "head=" + "1" * 40)
+        b3 = s.replace(f"head={head}", "head=" + "2" * 40).replace(f" patch={fp3}", " patch=" + "3" * 40)
+
+        def gbody(blocks: list[str]) -> str:
+            return f"fix(gateway) #1 fix-r5：多块拼谱系\n\n{''.join(blocks)}Refs #1\n{residual}"
+
+        if gate.check(gbody([b1, b1]), "", ""):
+            fails.append("G：同头两块应接受")
+        if gate.check(gbody([b1, b2]), "", ""):
+            fails.append("G：不同头但同一补丁指纹的两块应接受")
+        errs = gate.check(gbody([b2, b3]), "", "")
+        if not any("多块不一致" in e for e in errs):
+            fails.append(f"G：不同头且不同指纹的两块应拒收：{errs}")
+        # 义务 3：waiver 轮载体——修法类型写进豁免标记内，理由长度不计 fixtype 词汇
+        w_ok = "fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免：只改说明文字不碰代码 fixtype=结构性 -->\n" \
+               f"{residual}Refs #1\n"
+        if gate.check(w_ok, head):
+            fails.append(f"waiver 正控：fix-r5 豁免带 fixtype=结构性 + residual 应过闸：{gate.check(w_ok, head)}")
+        w_r3 = "fix(gateway) #1 fix-r3：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免：只改说明文字不碰代码 fixtype=枚举式 -->\nRefs #1\n"
+        if gate.check(w_r3, head):
+            fails.append(f"waiver 正控：fix-r3 豁免不要求 residual：{gate.check(w_r3, head)}")
+        for bad, want in [
+            ("fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免只改说明文字不碰代码 -->\n"
+             f"{residual}Refs #1\n", "须携带修法类型"),
+            ("fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免只改说明文字 fixtype=结构派生 -->\n"
+             f"{residual}Refs #1\n", "字面三值"),
+            ("fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 太短了 fixtype=结构性 -->\n"
+             f"{residual}Refs #1\n", "豁免理由太短"),
+            ("fix(gateway) #1 fix-r5：纯文档改动\n\n<!-- pr-gate:waiver 纯文档轮豁免：只改说明文字不碰代码 fixtype=结构性 -->\nRefs #1\n",
+             "pdrs-residual"),
+        ]:
+            errs = gate.check(bad, head)
+            if not any(want in e for e in errs):
+                fails.append(f"waiver 负控：应拒收并说明「{want}」：{errs}")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
@@ -605,7 +708,29 @@ def _run(gate, rrr, out_base: Path) -> int:
         if (cp.returncode == 0 or not gate_errs(s) or ends != 3 or f"{first}:TIMEOUT" not in s
                 or any(f"{r}:PASS" not in s for r in rest)):
             fails.append(f"serial-timeout：首角色超时后应照跑其余三角色并拒收（rc={cp.returncode}，完成 {ends}）")
+
+        # #3056 H（义务 7）：复跑须独立 out 目录（原件不得覆盖）、rec 标 rerun、summary 注明
+        rc, s = run("rerun-ok", "ok", extra=("--rerun", "--fixtype", "结构性"))
+        st_r = json.loads((out_base / "rerun-ok" / "status.json").read_text(encoding="utf-8"))
+        if rc != 0 or not all(st_r[r].get("rerun") is True for r in st_r):
+            fails.append(f"rerun：--rerun 应给每条 rec 标 rerun=true（rc={rc}、{[st_r[r].get('rerun') for r in st_r]}）")
+        if "rerun=true" not in s or "复跑轮" not in s:
+            fails.append("rerun：summary 结果块应带 rerun=true 并注明复跑轮（绑定当轮 head、原件未动）")
+        cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "zai", "--claude-bin", str(fake),
+                             "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                             "--out", str(out_base / "rerun-ok"), "--roles", ROLES, "--rerun"],
+                            capture_output=True, text=True, env=dict(os.environ))
+        if cp.returncode != 2 or "原件" not in cp.stderr:
+            fails.append(f"rerun-clobber：out 目录已有评审原件应 rc=2 拒跑（rc={cp.returncode}、{cp.stderr.strip()[:150]}）")
+        # 非法 fixtype 值：argparse 在起进程前拒绝（rc 2）
+        cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                             "--worktree", str(wt), "--base", "HEAD~1", "--out", str(out_base / "badfixtype"),
+                             "--roles", ROLES, "--dry-run", "--fixtype", "结构派生"],
+                            capture_output=True, text=True, env=dict(os.environ))
+        if cp.returncode != 2:
+            fails.append(f"fixtype：非法值「结构派生」应被 argparse 拒绝（rc={cp.returncode}）")
     _carry_tests(gate, fails)
+    _fixtype_path_tests(gate, fails)
     for f in fails:
         print("FAIL", f)
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
@@ -772,6 +897,67 @@ def _carry_tests(gate, fails: list[str]) -> None:
                               "--base", "main~1", "--repo", str(repo)], capture_output=True, text=True)
         if ok.returncode != 0 or "沿用" not in ok.stdout or bad.returncode != 1:
             fails.append(f"carry CLI：同指纹应 0、改过应 1（{ok.returncode}/{bad.returncode}）：{ok.stdout}{bad.stdout}")
+
+
+def _fixtype_path_tests(gate, fails: list[str]) -> None:
+    """#3056 义务 4/5：fixtype=不适用 的 diff 级路径检查（ci_scope 语义唯一口径，fail-closed）。
+
+    样例路径只写在临时 git 仓库里（不读仓库真实 state/board.md，已在 BOARD_RULER_ALLOWLIST 登记）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td)
+        g = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+
+        def git(*args: str) -> str:
+            return subprocess.run([*g, *args], check=True, capture_output=True, text=True).stdout.strip()
+
+        def commit(path: str, text: str, msg: str) -> str:
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(text)
+            git("add", path)
+            git("commit", "-q", "-m", msg)
+            return git("rev-parse", "HEAD")
+
+        git("init", "-q", "-b", "main")
+        base = commit("f.txt", "base\n", "base")
+        h_docs = commit("state/board.md", "b1\n", "docs-only")  # 只碰白名单路径（ci_scope DOCS_ONLY_PATH）
+        h_code = commit("scripts/x.py", "print(1)\n", "code")  # 碰代码路径
+
+        def fixbody(h: str, rnd: int = 4) -> str:
+            return (f"fix(scripts) #2 fix-r{rnd}：纯文档改动\n\n"
+                    f"<!-- pr-gate:v1 head={h} roles=sibling:PASS,concurrency:PASS,boundary:PASS,simplify:PASS "
+                    f"p0=0 p1=0 scope=full runner=zai model=glm-5.3-mb readonly=tools fixtype=不适用 -->\n"
+                    "<!-- pdrs-residual: 无上一轮 -->\nRefs #2\n")
+
+        # 正控：diff 只碰文档白名单 → 不适用 放行（真实数据复算，非写死值）
+        if gate.check(fixbody(h_docs), h_docs, "", base, str(repo)):
+            fails.append(f"fixtype-path 正控：docs-only diff 写不适用应放行：{gate.check(fixbody(h_docs), h_docs, '', base, str(repo))}")
+        # 负控：触及代码路径（scripts/）却写不适用 → 拒
+        errs = gate.check(fixbody(h_code), h_code, "", base, str(repo))
+        if not any("不限于文档白名单" in e for e in errs):
+            fails.append(f"fixtype-path 负控：触及代码路径却写不适用应拒收：{errs}")
+        # fail-closed：缺 --base/--repo 无法复算 → 拒（宁拒不漏）
+        errs = gate.check(fixbody(h_docs), h_docs, "", "", "")
+        if not any("fail-closed" in e for e in errs):
+            fails.append(f"fixtype-path：缺 base/repo 复算不出应 fail-closed 拒收：{errs}")
+        # N<4 同样按声明即查（与轮数判定解耦）；fix-r3 带不适用也走路径检查
+        if gate.check(fixbody(h_docs, rnd=3), h_docs, "", base, str(repo)):
+            fails.append("fixtype-path：fix-r3 docs-only + 不适用 应放行")
+        # waiver 载体带不适用：同样走 diff 级路径检查
+        w_na = ("fix(scripts) #2 fix-r4：纯文档改动\n\n"
+                "<!-- pr-gate:waiver 纯文档轮豁免：只改状态文件叙述 fixtype=不适用 -->\n"
+                "<!-- pdrs-residual: 无上一轮 -->\nRefs #2\n")
+        if gate.check(w_na, h_docs, "", base, str(repo)):
+            fails.append(f"fixtype-path 正控：waiver + 不适用（docs-only）应放行：{gate.check(w_na, h_docs, '', base, str(repo))}")
+        errs = gate.check(w_na, h_code, "", base, str(repo))
+        if not any("不限于文档白名单" in e for e in errs):
+            fails.append(f"fixtype-path 负控：waiver + 不适用（触代码路径）应拒收：{errs}")
+        # 非 fix 轮声明 fixtype=不适用（首行无 fix-rN）：声明即查——「不适用」断言 docs-only，可复算必须复算
+        na_plain = (f"<!-- pr-gate:v1 head={h_code} roles=sibling:PASS,concurrency:PASS,boundary:PASS,simplify:PASS "
+                    f"p0=0 p1=0 scope=full runner=zai model=glm-5.3-mb readonly=tools fixtype=不适用 -->\nRefs #2\n")
+        errs = gate.check(na_plain, h_code, "", base, str(repo))
+        if not any("不限于文档白名单" in e for e in errs):
+            fails.append(f"fixtype-path：非修复轮声明不适用（触代码路径）也应拒收：{errs}")
 
 
 if __name__ == "__main__":

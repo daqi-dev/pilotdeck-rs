@@ -84,6 +84,10 @@ def classify(env=None, cwd='.') -> bool:
 BOARD_RULER_ALLOWLIST = {
     'scripts/ci_scope.py': ('白名单常量与机检自身，只比较路径不读取文件', False),
     'scripts/test-ci-scope.py': ('分类器自测的样例路径', False),
+    'scripts/test-review-roles.py': ('闸门自测在临时 git 仓库里造样例 diff（含白名单路径）来测 fixtype=不适用 的路径检查，不读仓库的 state/board.md', False),
+    'scripts/check-taskbook-segments.py': ('任务书闸门自身：正文与报错文案字面引用 docs-only 白名单的精确路径，只比较路径不读取 board', False),
+    'scripts/fixround-ledger.py': ('计数台账：注释引用 board 行号先例（flock + O_APPEND 跨进程丢行改追加写的依据），不读取 board', False),
+    'scripts/README.md': ('目录文档的叙述性提及（白名单路径、board 行号先例），不是尺子', False),
     'scripts/pdrs-loop.sh': ('本地 worker 循环工具，不在 CI 任何 job 运行（ci_free 断言看守）', True),
     'scripts/next-task.sh': ('本地 worker 工具，不在 CI 任何 job 运行（ci_free 断言看守）', True),
     'scripts/test-pdrs-loop.sh': ('临时目录自造测试 board，不读仓库的 state/board.md', False),

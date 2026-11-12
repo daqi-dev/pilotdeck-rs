@@ -37,10 +37,20 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
   不许写成「无需 / 不用 / 不会 …」这类否定句，也不许写 URL 片段）+「第 N 段失败从哪继续」的最小学样
   （失败 / 继续 / 接续 / 恢复 / resume；同样不许写在否定句里）。
 
-退出码：0 通过（含「小包，无需分段」，`--recent` 扫过但没扫到也算 0）· 1 命中大包但分段表缺失/不全 ·
+退出码：0 通过（含「小包，无需分段」，`--recent` 扫过但没扫到也算 0）· 1 命中大包但分段表缺失/不全，
+或修复轮任务书缺必填字段 ·
 2 任务书读不了、为空、读取期间被改写、scope 行写坏，或 `--recent` 的递归扫描中断（「扫不了」不许
 冒充「没扫到」）· 3 用法错误（`--root` 只与 `--recent` 同用）
 （多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
+
+修复轮字段（#3056 长尾收口卡「机检落点」，置于 big/small 分支之前——小包同受检）：
+任务书路径段全匹配 fix-r<N> 即修复轮（ops dispatch-fix 生成于 _tmp/<日期>-issue-<N>/fix-rN/task.md），
+须含恰好一条 `<!-- pdrs-fixtype: 枚举式|结构性|不适用 [论证] -->`（独占一行；值只认字面三值，
+「结构派生 / 自动派生」等子类字样一律写「结构性」；枚举式附边界论证、结构性附词表核验，空白 /
+占位符不算）；fix-rN 的 N≥4 另须 `<!-- pdrs-residual: <非空判读> -->`（恰好一次；无上一轮时允许
+字面值「无上一轮」，空答不算答）。「不适用」的 diff 级路径合法性（只碰文档类路径，白名单只有
+state/board.md）由 PR 侧 scripts/check-pr-gate.py 按 scripts/ci_scope.py 的分类语义判定——任务书
+先于实现存在，本检查器不做路径判定。非修复轮任务书带这些标记不报错（模板 / 骨架可能含示例）。
 """
 
 import bisect
@@ -1168,6 +1178,82 @@ def check_segments(text):
     return problems
 
 
+# ---- 修复轮字段（#3056 长尾收口卡「机检落点」） ------------------------------
+# 修复轮信号 = 路径段全匹配 fix-r<N>（ops dispatch-fix 生成于 _tmp/<日期>-issue-<N>/fix-r<M>/task.md）。
+# 内容识别不可靠：任务书正文经常引用 fix-rN 字样（如本检查器的文档），不能当轮次信号。
+FIX_ROUND_PART = re.compile(r"fix-r(\d+)")
+# 修法类型只接受字面三值（卡「收口证明义务」节）；「结构派生/自动派生」等子类字样一律写 结构性
+FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
+# 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明
+FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
+RESIDUAL_RE = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
+RESIDUAL_NONE = "无上一轮"   # 字面值：没有上一轮时允许（空答不算答）
+
+
+def fix_round_from_path(path):
+    """路径里第一个全匹配 fix-r<N> 的段 → N；不是修复轮返回 None。"""
+    for part in Path(path).parts:
+        m = FIX_ROUND_PART.fullmatch(part)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def check_fix_fields(body, fix_round):
+    """修复轮任务书的必填字段检查（#3056）。body 须是去掉围栏后的正文（围栏里的示例不算声明）。
+
+    - `<!-- pdrs-fixtype: 枚举式|结构性|不适用 [论证] -->`：恰好一次；值须是字面三值；
+      枚举式附边界论证、结构性附词表核验（非空白、非占位符）；不适用在任务书侧不查路径
+      （任务书先于实现存在），diff 级合法性归 PR 侧 check-pr-gate.py（ci_scope 语义唯一口径）。
+    - fix-rN（N≥4）另须 `<!-- pdrs-residual: <非空> -->`：恰好一次、非空白、非占位符；
+      字面值「无上一轮」允许。
+    非修复轮（fix_round is None）返回空列表——字段存在也不报错（模板 / 骨架可能含示例）。
+    """
+    if fix_round is None:
+        return []
+    problems: list[str] = []
+    marks = FIXTYPE_RE.findall(body)
+    if not marks:
+        problems.append("修复轮任务书缺修法类型字段 `<!-- pdrs-fixtype: 枚举式|结构性|不适用 … -->`"
+                         "（三选一字面值；枚举式附边界论证、结构性附词表核验）")
+    elif len(marks) > 1:
+        problems.append(f"pdrs-fixtype 标记出现 {len(marks)} 次（至多一次）")
+    else:
+        inner = marks[0].strip()
+        if not inner:
+            problems.append("pdrs-fixtype 的值是空白串（三选一：枚举式 / 结构性 / 不适用；空答不算答）")
+        else:
+            parts = inner.split(None, 1)
+            value, arg = parts[0], (parts[1].strip() if len(parts) > 1 else "")
+            if value not in FIXTYPE_VALUES:
+                problems.append(f"修法类型「{value}」不是字面三值（枚举式 / 结构性 / 不适用）；"
+                                 "「结构派生 / 自动派生」等子类字样一律写「结构性」")
+            elif value in ("枚举式", "结构性"):
+                if not arg:
+                    problems.append(f"修法类型「{value}」缺论证（枚举式附边界论证、结构性附词表核验；空白不算）")
+                else:
+                    hit = placeholder_in(arg)
+                    if hit:
+                        problems.append(f"修法类型「{value}」的论证还是占位符：{_clip(hit)!r}（写实际论证）")
+    if fix_round >= 4:
+        marks = RESIDUAL_RE.findall(body)
+        if not marks:
+            problems.append(f"fix-r{fix_round}（N≥4）任务书缺上轮残差判读 `<!-- pdrs-residual: … -->`"
+                            f"（上一轮的洞是边界暴露还是修法本身缺陷；{RESIDUAL_NONE}时写字面值「{RESIDUAL_NONE}」）")
+        elif len(marks) > 1:
+            problems.append(f"pdrs-residual 标记出现 {len(marks)} 次（至多一次）")
+        else:
+            content = marks[0].strip()
+            if not content:
+                problems.append("pdrs-residual 内容是空白串（空答不算答；"
+                                f"无上一轮时写字面值「{RESIDUAL_NONE}」）")
+            elif content != RESIDUAL_NONE:
+                hit = placeholder_in(content)
+                if hit:
+                    problems.append(f"pdrs-residual 内容还是占位符：{_clip(hit)!r}（写实际判读）")
+    return problems
+
+
 SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> est_min=<待填> -->
 
 ## 分段交付（大包必填：每段一个可独立收货的交付）
@@ -1183,6 +1269,18 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 
 - 进度文件：`_tmp/<日期>-issue-<N>/progress.md`（每段开工 / 收工各追加一行 `S<n> start|done <时间> <HEAD>`）
 - 第 N 段失败：读 progress.md 最后一个 done 段，先 `git apply` 该段 final.patch 分片，再从 N+1 段继续；不重做已 done 段。
+"""
+
+# 骨架是填空题不是答案：修复轮字段段用占位形态写，原样贴进修复轮任务书会被打回（缺字段 / 占位符）。
+SKELETON += """修复轮任务书（路径在 `_tmp/<日期>-issue-<N>/fix-rN/task.md`）另须两件（#3056 长尾收口卡）：
+
+`<!-- pdrs-fixtype: <枚举式|结构性|不适用> <论证> -->` —— 三选一字面值：`枚举式` 附边界论证
+（词表封闭性论证，或反向负例清单证明修饰窗/边界不吞真发现）；`结构性` 附词表核验（须核到测试真实
+遍历的词表）；`不适用` 仅当 diff 只触及文档类路径（以 scripts/ci_scope.py 的分类语义为唯一口径，
+其白名单只有 `state/board.md` 一个精确路径）。
+
+`<!-- pdrs-residual: <上轮残差判读> -->` —— fix-rN 的 N≥4 必填：上一轮的洞是边界暴露还是修法
+本身缺陷；无上一轮时写字面值 `无上一轮`。
 """
 
 
@@ -1311,9 +1409,13 @@ def check_file(path, ignore_missing=False):
     cls = classify(body, text)
     if cls["big"] is None:
         return {"file": str(path), "rc": 2, "problems": [cls["reason"]], "class": cls}
+    # 修复轮字段检查置于 big/small 分支之前：小包（不分段的修复轮）同受检（#3056 义务 2）
+    fix_problems = check_fix_fields(body, fix_round_from_path(p))
     if not cls["big"]:
+        if fix_problems:
+            return {"file": str(path), "rc": 1, "problems": fix_problems, "class": cls}
         return {"file": str(path), "rc": 0, "problems": [], "class": cls}
-    problems = check_segments(body)
+    problems = check_segments(body) + fix_problems
     return {"file": str(path), "rc": 1 if problems else 0,
             "problems": problems, "class": cls}
 
