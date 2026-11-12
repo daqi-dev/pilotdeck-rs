@@ -414,7 +414,10 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     # 防静默换模型：init 只是本地选择值，还要核后端每条响应的 model 与 modelUsage（审的不是声明的那家，结论不计）
     resp = result.get("resp_models") or set()
     usage = set((result.get("modelUsage") or {}).keys()) if isinstance(result.get("modelUsage"), dict) else set()
-    expect = RESP_MODEL_ALIAS.get(model, model)
+    # llm-center 的响应 model 名不稳定：同一后端有时回规范名（DeepSeek-V4.1-Flash）、有时原样回请求名
+    # （deepseek-v4.1-flash-mb），都指同一家（2026-11-12 实测：13:09 通过的 run 两种混出、14:3x 的 run 全原样回）。
+    # 两形都算同一家；换谱系（别的名字）仍被 issubset 拒。
+    allowed = {RESP_MODEL_ALIAS.get(model, model), model}
     rec["cost_usd"] = result.get("total_cost_usd")  # 先取：下面每条早退分支都别再漏记花费（重试要合计两次）
     if model and result.get("init_model") != model:
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
@@ -447,8 +450,8 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["api_error_text"] = one_line(err_text)
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
-    if model and (real_resp != {expect} or not usage or usage != {model}):
-        rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
+    if model and (not real_resp.issubset(allowed) or not usage or not usage.issubset(allowed)):
+        rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}（合法形 {sorted(allowed)}）"
         return rec
     text = result.get("result") if isinstance(result.get("result"), str) else ""
     (out_dir / f"{role}.md").write_text(text or "", encoding="utf-8")
