@@ -31,3 +31,11 @@
 ### #3068 后续：内部比较表示统一，业务 oracle 不变
 
 自决 · 待复核（AI 代批，待人复核）。r9两条局部形状P1已用旧423a完整合成compare_pair实测：最终均判差，不把局部字段相等当成真实假通过，原评语保留。全仓读方核实只有内部温度断言读取comparison.models裸形状，entries只转存；因此将models与channelStreams的比较输出也统一JSON/text/bytes包络，减少双重解析及非法常量的非预期canonical异常。这里的models比较字段不同于raw.models业务oracle：后者及transport_observation的decoded认证仍不动。合法JSON语义、同socket请求/响应绑定、长度/顺序/头策略、已锚实体归一保持；空体/null/空字符串控制与同19HTTP/16WS原件复算判定实效。此前5f17记录描述其当时的裸models比较输出，后续以本段为准；不新增#3062例外，不移除冻结/双审前提。
+
+### #3072：Darwin GLib 补齐自身固定的 intl 源码
+
+自决 · 待复核（AI 代批，待人复核）。5f17真实Darwin严格Clippy因GLib2.86.1缺intl而exit101；原nodownload正确拒绝未登记fallback。采用GLib固定wrap中的proxy-libintl commit33934de09af6a6627eb44e310a8079df009abdbb，13,064-byte官方源码归档SHA4ab5af85ec6124cb526a15c58bbc0877d241807e30855779808dbf9292d861aa，仅Darwin解包并force该fallback；Linux仍gvdb，既有nls=disabled/nodownload保持。上游STUB_ONLY构建匹配本项目现有不启用翻译目录的范围，避免引入全局gettext依赖。五路径改动可Git撤回，原FAIL及新执行均独占保留。
+
+受影响的是产品图片原生库的源码闭包和精确source-profile登记：库存13→14，守卫只更新source-build/source-hashes两SHA，不放宽范围，不改变比较语义、意向或#3062授权。macmini候选五路径逐SHA相同，真实fmt/严格Clippy通过；52个staged库/别名、profile与otool闭包实核通过。真实库存正负控、GIF/PDF及生命周期定向用例和两家非作者终审仍须完成，Linux完整guard保持NOT_RUN。原件见本树_tmp/20261112-wave1-validation/darwin-libintl-source-candidate/，独立issue #3072。
+
+可复用原则：平台缺依赖时先补其上游锁定的最小源码闭包，精确登记和实际动态库来源必须一致；不能以本机恰好装有的库或解除禁下载来替代。断言复用现有image_archive_pin_rejects_mutation_extra_file_and_symlink，并以真实构建/profile重算和逐库依赖核验约束。

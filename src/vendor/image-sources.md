@@ -15,6 +15,7 @@
 | `mozjpeg-0826579.tar.gz` | [mozjpeg-0826579.tar.gz](https://codeload.github.com/mozilla/mozjpeg/tar.gz/08265790774cd0714832c9e675522acbe5581437) | `b680167bd5d9afebdd576a12f8c49d2c9066a3b92ef96a2b2c5f7829b8600fe5` | mozjpeg-08265790774cd0714832c9e675522acbe5581437/LICENSE.md, mozjpeg-08265790774cd0714832c9e675522acbe5581437/release/License.rtf | 来源 URL 原字节已复核 |
 | `ninja-1.12.1.tar.gz` | [ninja-1.12.1.tar.gz](https://github.com/ninja-build/ninja/archive/refs/tags/v1.12.1.tar.gz) | `821bdff48a3f683bc4bb3b6f0b5fe7b2d647cf65d52aeb63328c91a6c6df285a` | ninja-1.12.1/COPYING | 来源 URL 原字节已复核 |
 | `pcre2-10.44.tar.bz2` | [pcre2-10.44.tar.bz2](https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2) | `d34f02e113cf7193a1ebf2770d3ac527088d485d4e047ed10e5d217c6ef5de96` | pcre2-10.44/LICENCE, pcre2-10.44/cmake/COPYING-CMAKE-SCRIPTS, pcre2-10.44/COPYING | 来源 URL 原字节已复核 |
+| `proxy-libintl-33934de0.tar.gz` | [proxy-libintl33934de0](https://codeload.github.com/frida/proxy-libintl/tar.gz/33934de09af6a6627eb44e310a8079df009abdbb) | `4ab5af85ec6124cb526a15c58bbc0877d241807e30855779808dbf9292d861aa` | proxy-libintl-33934de09af6a6627eb44e310a8079df009abdbb/COPYING | GLib2.86.1原wrap固定revision；官方源13,064bytes、5普通UTF8文件已核 |
 | `vips-8.17.3.tar.xz` | [vips-8.17.3.tar.xz](https://github.com/libvips/libvips/releases/download/v8.17.3/vips-8.17.3.tar.xz) | `41e9a1439cd57dcc6d4435a085e2cfe181d9da1962fa84a484f09e8b536e4b77` | vips-8.17.3/LICENSE | 来源 URL 本轮超时；已保存原包按 SHA 验证 |
 | `zlib-ng-2.2.5.tar.gz` | [zlib-ng-2.2.5.tar.gz](https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.2.5.tar.gz) | `5b3b022489f3ced82384f06db1e13ba148cbce38c7941e424d6cb414416acd18` | zlib-ng-2.2.5/LICENSE.md | 来源 URL 原字节已复核 |
 
@@ -23,3 +24,5 @@ Rust 绑定来自 [libvips crate 2.3.0](https://static.crates.io/crates/libvips/
 GLib、libexif 及 libvips 等源码和对应许可随固定源包保留；具体第三方条件以各归档内 COPYRIGHT/COPYING/LICENSE/PATENTS 原件为准。原始构建工具 Meson、Ninja 和各解码库也随源码和许可一同提供。已从源码构建的动态库与应用二进制须作为同一 generation 一起安装，并记录库文件的哈希；源码、构建脚本和完整许可随源代码交付，使用户可从源码修改并重建新的 generation。实际二进制分发时必须同时携带适用的许可文本、版权和所需源码；此文不是对许可合规的最终法律结论。
 
 源归档与额外构建脚本受各自精确 SHA 和文件清单约束；修改需更新明确的源码 profile 并复验，不对其他 vendor 放行。Linux 相对路径加载和图片样本证据见测试记录；macOS 构建与安装路径应单独在其平台验证。
+
+Darwin 的 GLib 依赖使用其原 `proxy-libintl.wrap` 指定的固定源码，显式选择该私有 fallback；保留 `--wrap-mode=nodownload` 与 `-Dnls=disabled`。上游 Meson 以 `STUB_ONLY` 构建 gettext 接口，不加载外部 gettext；生成的 libintl 动态库与其他图片依赖一同进入当前 generation 的精确库清单。Linux 仍使用原 libc gettext 选择，不强制该 fallback。

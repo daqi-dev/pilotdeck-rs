@@ -12,6 +12,12 @@ tar -xzf "$P/libspng-0.7.4.tar.gz" -C "$S/src"
 tar -xzf "$P/libwebp-1.6.0.tar.gz" -C "$S/src"
 tar -xzf "$P/gvdb-2b42fc75.tar.gz" --strip-components=1 -C "$S/src/glib-2.86.1/subprojects/gvdb"
 tar -xjf "$P/pcre2-10.44.tar.bz2" -C "$S/src"
+GLIB_FALLBACKS=gvdb
+if [ "$(uname -s)" = Darwin ]; then
+    mkdir "$S/src/glib-2.86.1/subprojects/proxy-libintl"
+    tar -xzf "$P/proxy-libintl-33934de0.tar.gz" --strip-components=1 -C "$S/src/glib-2.86.1/subprojects/proxy-libintl"
+    GLIB_FALLBACKS=gvdb,proxy-libintl
+fi
 export CFLAGS='-O2 -fPIC' CXXFLAGS='-O2 -fPIC'
 export PATH="$S/build/ninja:$S/prefix/bin:$PATH"
 export PKG_CONFIG_PATH="$S/prefix/lib/pkgconfig:$S/prefix/share/pkgconfig"
@@ -31,7 +37,7 @@ cmake -S "$S/src/pcre2-10.44" -B "$S/build/pcre2" -DCMAKE_SKIP_INSTALL_RPATH=ON 
 cmake --build "$S/build/pcre2" --parallel "${NUM_JOBS:-1}"
 cmake --install "$S/build/pcre2"
 printf '%s\n' 'PHASE glib'
-python3 "$MESON" setup "$S/build/glib" "$S/src/glib-2.86.1" --prefix="$S/prefix" --libdir=lib --buildtype=release --default-library=shared --wrap-mode=nodownload --force-fallback-for=gvdb -Dintrospection=disabled -Dnls=disabled -Dlibmount=disabled -Dsysprof=disabled -Dlibelf=disabled -Dtests=false -Dinstalled_tests=false -Dglib_assert=false -Dglib_checks=false -Dglib_debug=disabled
+python3 "$MESON" setup "$S/build/glib" "$S/src/glib-2.86.1" --prefix="$S/prefix" --libdir=lib --buildtype=release --default-library=shared --wrap-mode=nodownload --force-fallback-for="$GLIB_FALLBACKS" -Dintrospection=disabled -Dnls=disabled -Dlibmount=disabled -Dsysprof=disabled -Dlibelf=disabled -Dtests=false -Dinstalled_tests=false -Dglib_assert=false -Dglib_checks=false -Dglib_debug=disabled
 python3 "$MESON" compile -C "$S/build/glib" -j"${NUM_JOBS:-1}"
 python3 "$MESON" install -C "$S/build/glib" --no-rebuild --tags bin-devel,devel,runtime
 printf '%s\n' 'PHASE mozjpeg'

@@ -1164,8 +1164,8 @@ fn pinned_image_archive_boundary(root: &Path) {
     }
     assert_eq!(
         expected.len(),
-        13,
-        "image archive profile must pin 13 files"
+        14,
+        "image archive profile must pin 14 files"
     );
     let actual: BTreeSet<_> = fs::read_dir(&directory)
         .expect("image source inventory")
@@ -1200,7 +1200,7 @@ fn registered_build_files(root: &Path) {
         ),
         (
             "src/pilotdeck-image-native/source-build.sh",
-            "935fff6d6678a3d3db111ba08bba27e1ea92de34587d933ec20f89fcad1e9698",
+            "e71d4bb3e570f272b9351e94015fc98bccc15bd6f92f7b95ec5b93734e1d0cb4",
         ),
         (
             "src/pilotdeck-image-native/strip-vips-extras.py",
@@ -1212,7 +1212,7 @@ fn registered_build_files(root: &Path) {
         ),
         (
             "src/pilotdeck-image-native/source-hashes.txt",
-            "b7e7e24bf3ac7c34a774a1b873efb9570721c9f6e4a090c9ffd8e4e1d2d360ac",
+            "d888a3248e424afefc13eae95c60c76e48f470a3f4528955efc336d1d93da9f3",
         ),
         (
             "src/vendor/libvips/build.rs",

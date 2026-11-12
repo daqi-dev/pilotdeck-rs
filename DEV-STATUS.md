@@ -72,4 +72,4 @@ r9两家各四角色完成，原2条P1/11条P2保留在 `r9-findings.md`。旧42
 5. 全部 150 入口、四 host、session、retirement、冷切回滚与真实使用验收。A7 已被安全审查拒绝的范围保持 NOT_RUN，不重试或绕过；人眼体验和最终签字仍待人工。
 6. 最终源版本的独立双审、推送前 gitleaks 和 Draft PR 整理。所有必需条件闭合前不入合并队列、不宣称完整替换通过。
 
-下一步提交表示一致性补充并做两家小增量复核；79项及19 HTTP/16 WS复算按精确文件SHA复用。macmini所有322 registry来源已核、CMake/pkgconf从源码私有构建，但首次真实Darwin严格检查暴露GLib intl闭包缺失，继续按锁定源码修复，不借全局库或解除wrap守卫。mbp2仍待恢复；Linux、完整渠道、冻结、宿主和退役验收分别按原规则推进。
+比较表示补充已提交推送43f10a210；r10两家八角色完成，channel增量无P0/P1，跨standard-http的P1推论及其余P2按原文保留并分别实测处置。79项及19 HTTP/16 WS复算按精确文件SHA复用。#3072已补GLib自身固定的proxy-libintl源码，仅Darwin强制此fallback；精确库存14份和两处源码SHA同步，nodownload及Linux选择不变。macmini独占5f17+五路径候选真实fmt/四包all-targets严格Clippy通过，52个私有库/别名及profile逐字节认证、otool依赖仅本generation或Apple系统库；库存、图片和生命周期Rust定向用例仍在编译，未计通过。无Git源导出只作本次构建验证，不当正式retirement binary。下一步完成这些实际用例与#3072双审；mbp2仍待恢复，Linux、完整渠道、冻结、宿主和退役验收分别按原规则推进。
