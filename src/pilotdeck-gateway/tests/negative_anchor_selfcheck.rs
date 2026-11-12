@@ -88,20 +88,13 @@ const PREFLIGHT: &[Entry] = &[
         discover: false,
         ran: true,
     },
-    // #2692 fix-r13 (DS + MM sibling/boundary, both families): the structural
-    // census. The one-table-at-a-time ROW_PINS fixes (r11 blankkey, r12
-    // turn-submit roster, r13 the two tables of this round) kept closing the
-    // same hole after a review tripped over it, so this preflight entry runs
-    // the family-wide rule: a readable mutation table whose assertion string
-    // another row also carries must pin those rows, and every other table /
-    // family-debt gap is a registered, live entry (ROW_PIN_GAPS /
-    // SHAPE_GAPS inside the script; #2133 owns clearing the debt).
-    Entry {
-        script: "test_shared_assertion_pins.py",
-        args: &[],
-        discover: false,
-        ran: true,
-    },
+    // #2692 closure-r1: the fix-r13 structural-census preflight entry was
+    // retracted together with its script -- the fix-r13 review ruled its
+    // table-name whitelist blind (~55 MUTATIONS/CASES-shaped tables read
+    // as no-table and passed silently), a false pass of the ruler. The
+    // snapshot lives in commit a00925dee; the rebuild is #3069's. The
+    // retained pieces of that round (ROW_PINS tables, red legs, the skip
+    // judgment below) are described in specs/negative-controls/README.md.
     Entry {
         script: "test_negative_process.py",
         args: &[
