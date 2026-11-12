@@ -1492,15 +1492,13 @@ fn permission_denied_is_not_reported_as_outside() {
         .is_some_and(|error| error.kind() == io::ErrorKind::PermissionDenied);
     if !denied {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-        if permission_faults::require_permission_faults() {
-            panic!(
-                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the mode-000 probe still \
-                 succeeds (root or CAP_DAC_OVERRIDE); the permission-denied contract needs an \
-                 unprivileged host (需要非特权宿主)"
-            );
-        }
         // #1263: the skip line must reach default `cargo test` output.
-        skip_line::stderr_skip_line("skip: user bypasses mode 000 (running as root)\n");
+        permission_faults::skip_or_require(
+            "skip: user bypasses mode 000 (running as root)\n",
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the mode-000 probe still \
+             succeeds (root or CAP_DAC_OVERRIDE); the permission-denied contract needs an \
+             unprivileged host (需要非特权宿主)",
+        );
         return;
     }
     let replay = Replay::new(&case, &JsValue::Object(JsObject::new()));

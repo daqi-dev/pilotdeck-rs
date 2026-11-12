@@ -1960,3 +1960,343 @@ async fn turn_ended_rejection_keys_by_the_template_spelling() {
         "#2692 the turn_ended rejection keys by the template spelling, not the router key"
     );
 }
+// #1623 方案 B at the turn entry (fix-r2): submit_turn is the main write
+// path — the wire sessionKey reaches `RunRef` raw (`string(field(...))` keeps
+// the UTF-16 units) and the assembly storage chain renders it through
+// `sanitize_session_id`, so pre-fix a lone-surrogate key appended into
+// `s\u{FFFD}`'s transcript (fix-r2 probe A,
+// `_tmp/20261111-issue-1623/fix-r2/probe_rust_prefix.log`). TS submitTurn has
+// no sessionKey gate at all (InProcessGateway.ts:764-845, measured
+// `probe_ts_gates.log`); the `validate()` rejection is the registered
+// A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence, and it fires before the
+// run registry and the session factory — the empty factory log below is the
+// proof the write path is short-circuited. Only the unpaired shape is
+// refused; the control test keeps the legal keys flowing.
+struct CountingFactory {
+    session: Arc<Session>,
+    keys: Mutex<Vec<JsString>>,
+}
+impl SessionFactory for CountingFactory {
+    fn create(
+        &self,
+        context: SessionContext,
+        _: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        self.keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .push(context.session_key);
+        let session = Arc::new(self.session.clone());
+        Box::pin(async move { Ok(LiveSessionHandle::new(session, None)) })
+    }
+    fn can_recreate(&self) -> bool {
+        false
+    }
+}
+/// The #1623 fix-r2 fixture: a submitter over the mock session whose factory
+/// records every sessionKey it is asked to create.
+fn counting_factory_submitter() -> (Arc<TurnSubmitter>, Arc<CountingFactory>, Arc<Log>) {
+    let log = Arc::new(Log::default());
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    let session = Arc::new(Session {
+        setup: json!({}),
+        status_recorder: None,
+        native: vec![],
+        submits: AtomicUsize::new(0),
+        log: log.clone(),
+        coordinator: coordinator.clone(),
+        accepted: Gate::new(),
+        terminal: Gate::new(),
+        end: Gate::new(),
+        aborted: AtomicBool::new(false),
+        failure_gate: Gate::new(),
+        pump_error_gate: Gate::new(),
+    });
+    session.accepted.open();
+    session.terminal.open();
+    session.end.open();
+    let factory = Arc::new(CountingFactory {
+        session: session.clone(),
+        keys: Mutex::new(Vec::new()),
+    });
+    let mut options = SessionOwnerOptions::new(factory.clone());
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    let services = Arc::new(Services {
+        session: session.clone(),
+        refreshed: AtomicBool::new(false),
+        prepare: Gate::new(),
+    });
+    let admission = Arc::new(Host {
+        session: session.clone(),
+        sdk: Gate::new(),
+        recovery: Gate::new(),
+    });
+    let host = Arc::new(GatewaySubmitHost::new(
+        services.clone(),
+        Arc::new(FakeReplacement {
+            session: session.clone(),
+        }),
+        admission.clone(),
+    ));
+    let submitter = Arc::new(TurnSubmitter {
+        owner,
+        coordinator,
+        registry: None,
+        host,
+        workspace_admissions: WorkspaceAdmissions::default(),
+        projector: Arc::new(
+            GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default())
+                .expect("#879 default projector"),
+        ),
+    });
+    (submitter, factory, log)
+}
+fn submit_turn_input(key: JsString) -> JsValue {
+    object([
+        ("sessionKey", JsValue::String(key)),
+        ("runId", "turn-r".into()),
+        ("message", "hello".into()),
+        ("channelKey", "test".into()),
+    ])
+}
+#[tokio::test]
+async fn submit_turn_rejects_lone_surrogate_session_key() {
+    use crate::{negative_assert, negative_assert_eq};
+    let (submitter, factory, log) = counting_factory_submitter();
+    let input = submit_turn_input(JsString::from_utf16(vec![0x73, 0xd800]));
+    collect(submitter.submit(input), log.clone()).await;
+    let visible = log
+        .visible
+        .lock()
+        .expect("#1623 submit fixture prerequisite");
+    let error = visible
+        .iter()
+        .find(|event| event["type"] == "error" && event["code"] == "INVALID_SESSION_KEY")
+        .expect("#1623 the surrogate key answers the entry gate's error event");
+    negative_assert_eq!(
+        error["message"],
+        json!(crate::native_process::SESSION_KEY_SURROGATE_MESSAGE),
+        "#1623 the entry rejection is the shared guard's message"
+    );
+    negative_assert_eq!(
+        error["recoverable"],
+        json!(true),
+        "#1623 the entry rejection keeps the validation error-event shape"
+    );
+    drop(visible);
+    negative_assert!(
+        factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .is_empty(),
+        "#1623 the gate fires before the session factory: the write path is short-circuited"
+    );
+}
+
+// #1623 controls: only the unpaired shape is refused. An explicit U+FFFD key
+// and a surrogate pair (an astral character) pass the entry gate and reach
+// the session factory with their raw UTF-16 units — the turn runs like any
+// other.
+#[tokio::test]
+async fn submit_turn_keeps_fffd_and_paired_surrogate_keys() {
+    use crate::negative_assert_eq;
+    for (label, units) in [
+        ("explicit-fffd", vec![0x73, 0xfffd]),
+        ("paired-surrogate", vec![0x73, 0xd800, 0xdc00]),
+    ] {
+        let (submitter, factory, log) = counting_factory_submitter();
+        let key = JsString::from_utf16(units);
+        let consumer = tokio::spawn(collect(
+            submitter.submit(submit_turn_input(key.clone())),
+            log.clone(),
+        ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .is_empty()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "#1623 the {label} key reaches the session factory"
+            );
+            tokio::task::yield_now().await;
+        }
+        let captured = factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")[0]
+            .clone();
+        let _ = consumer.await;
+        negative_assert_eq!(
+            captured.units(),
+            key.units(),
+            "#1623 the {label} key keeps its raw UTF-16 units through the entry gate"
+        );
+    }
+}
+
+// #1623 fix-r4 (boundary #2): the entry gate fires before the busy refusal.
+// The turn-submit oracle's third validation probe is exactly a lone-surrogate
+// `sessionKey` on a busy session (`validationProbes` `{sessionKey:"\ud800",
+// busy:true}`, tests/fixtures/turn-submit/oracle.json), and the recorded TS
+// answer there is `session_busy` — TS has no sessionKey gate at all. The
+// registered divergence must answer the gate first, so hold the session's
+// turn reservation, submit with the same surrogate key, and require the
+// INVALID_SESSION_KEY error-event with no `session_busy` event beside it.
+// Moving the gate after the busy branch turns this red: the busy answer
+// would then be the only event. The raw wire strings are scanned (not the
+// `collect` helper's serde round-trip) because the busy answer's message
+// echoes the raw surrogate units, which JSON parsers reject.
+#[tokio::test]
+async fn submit_turn_surrogate_gate_precedes_the_busy_refusal() {
+    use crate::negative_assert;
+    let (submitter, factory, _log) = counting_factory_submitter();
+    let key = JsString::from_utf16(vec![0x73, 0xd800]);
+    let _held = submitter
+        .owner
+        .begin_turn(&key, &"busy-run".into())
+        .expect("#1623 the busy fixture reserves the session's turn slot");
+    negative_assert!(
+        submitter.owner.has_active_turn(&key),
+        "#1623 the busy fixture marks the session busy before the submit"
+    );
+    let mut stream = submitter.submit(submit_turn_input(key));
+    let mut wire = Vec::new();
+    while let Some(event) = stream
+        .next()
+        .await
+        .expect("#1623 the busy-boundary submission drains")
+    {
+        wire.push(
+            stringify_json(&event)
+                .expect("#1623 the busy-boundary event stringifies")
+                .expect("#1623 the busy-boundary event stringifies"),
+        );
+    }
+    let gate = wire
+        .iter()
+        .find(|line| line.contains("\"code\":\"INVALID_SESSION_KEY\""))
+        .expect("#1623 the surrogate key answers the entry gate before the busy refusal");
+    negative_assert!(
+        gate.contains(crate::native_process::SESSION_KEY_SURROGATE_MESSAGE),
+        "#1623 the busy-session rejection keeps the entry gate's message"
+    );
+    negative_assert!(
+        wire.iter().all(|line| !line.contains("session_busy")),
+        "#1623 the busy session never answers before the entry gate"
+    );
+    negative_assert!(
+        factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .is_empty(),
+        "#1623 the gate fires before the session factory even on a busy session"
+    );
+}
+
+// #1623 fix-r8 (review P2 #1): for a combined-invalid input — a bogus `mode`
+// beside a lone-surrogate `sessionKey` — TS answers the mode error first
+// (`submitTurn` has no sessionKey gate; `probe_ts_gates.log`), as does
+// `set_permission_mode` (mode → busy → sessionKey gate, `methods/config.rs`).
+// The registered surrogate gate therefore sits after the mode/basePermissionMode
+// and runId checks: this input must answer INVALID_PERMISSION_MODE, not
+// INVALID_SESSION_KEY. Moving the gate ahead of the mode check turns this red.
+#[tokio::test]
+async fn submit_turn_combined_invalid_keeps_the_ts_mode_code() {
+    use crate::{negative_assert, negative_assert_eq};
+    let (submitter, factory, log) = counting_factory_submitter();
+    let mut input = submit_turn_input(JsString::from_utf16(vec![0x73, 0xd800]));
+    set(&mut input, "mode", "bogus".into());
+    collect(submitter.submit(input), log.clone()).await;
+    let visible = log
+        .visible
+        .lock()
+        .expect("#1623 submit fixture prerequisite");
+    let error = visible
+        .iter()
+        .find(|event| event["type"] == "error")
+        .expect("#1623 the combined-invalid submission answers an error event");
+    negative_assert_eq!(
+        error["code"],
+        json!("INVALID_PERMISSION_MODE"),
+        "#1623 a bogus mode outranks the surrogate sessionKey at the entry, as in TS"
+    );
+    negative_assert!(
+        !visible
+            .iter()
+            .any(|event| event["code"] == "INVALID_SESSION_KEY"),
+        "#1623 the surrogate gate stays behind the mode check for a combined-invalid input"
+    );
+    drop(visible);
+    negative_assert!(
+        factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .is_empty(),
+        "#1623 the validation short-circuit still precedes the session factory"
+    );
+}
+
+// #1623 fix-r9 (r8 review, both lineages): the surrogate gate now closes
+// validate(), so every field check outranks it — TS answers each of these
+// first for a combined-invalid input (oracle.json:1104-1123 runId, :1188
+// trustedContext, :1153 maxBudgetUsd). One row per field: with a
+// lone-surrogate sessionKey beside a field error, the field error must win.
+#[tokio::test]
+async fn submit_turn_combined_invalid_keeps_the_ts_field_codes() {
+    use crate::{negative_assert, negative_assert_eq};
+    for (label, field, value, code) in [
+        ("runId", "runId", "bad/id".into(), "INVALID_RUN_ID"),
+        (
+            "trustedContext",
+            "trustedContext",
+            "not-an-array".into(),
+            "INVALID_TRUSTED_CONTEXT",
+        ),
+        (
+            "maxBudgetUsd",
+            "maxBudgetUsd",
+            JsValue::Number(0.into()),
+            "INVALID_MAX_BUDGET_USD",
+        ),
+    ] {
+        let (submitter, factory, log) = counting_factory_submitter();
+        let mut input = submit_turn_input(JsString::from_utf16(vec![0x73, 0xd800]));
+        set(&mut input, field, value);
+        collect(submitter.submit(input), log.clone()).await;
+        let visible = log
+            .visible
+            .lock()
+            .expect("#1623 submit fixture prerequisite");
+        let error = visible
+            .iter()
+            .find(|event| event["type"] == "error")
+            .unwrap_or_else(|| panic!("#1623 the {label} combination answers an error event"));
+        negative_assert_eq!(
+            error["code"],
+            json!(code),
+            "#1623 the {label} error outranks the surrogate sessionKey at the entry, as in TS"
+        );
+        negative_assert!(
+            !visible
+                .iter()
+                .any(|event| event["code"] == "INVALID_SESSION_KEY"),
+            "#1623 the surrogate gate stays behind every field check for the {label} combination"
+        );
+        drop(visible);
+        negative_assert!(
+            factory
+                .keys
+                .lock()
+                .expect("#1623 submit fixture prerequisite")
+                .is_empty(),
+            "#1623 the validation short-circuit still precedes the session factory"
+        );
+    }
+}

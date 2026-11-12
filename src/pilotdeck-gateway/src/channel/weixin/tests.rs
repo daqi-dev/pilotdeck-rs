@@ -2,8 +2,10 @@
 //! channel flows against the TS golden and the mock ilink server live with
 //! the fixture under `tests/fixtures/weixin-channel/`.
 use super::*;
+use http_body_util::BodyExt;
 use pilotdeck_protocol::parse_json;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 fn js(text: &str) -> JsString {
     JsString::from(text)
@@ -470,6 +472,549 @@ fn credentials_defaults_follow_ts_path() {
     );
 }
 
+/// #1725 item 13: the single home knob. A caller that overrides only
+/// `credentials_home` gets the whole family derived from it — the
+/// credentials file at `<home>/weixin-credentials.json`, the mkdir
+/// target `<home>` itself, the attachment root `<home>/im-attachments` —
+/// and never touches the machine's real `~/.pilotdeck` (the TS baseline's
+/// shape: overriding `HOME` moves `CREDENTIALS_PATH`, the `saveCredentials`
+/// mkdir and the `im-attachments` root together; WeixinChannel.ts:32,142,
+/// 149,992).
+#[test]
+fn credentials_home_derives_the_whole_family() {
+    let root = Root::new();
+    let home = root.path().join(".pilotdeck");
+    let marker = SavedCredentials {
+        bot_token: "t-home-knob-1725".into(),
+        ..saved_credentials()
+    };
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(home.clone());
+    let channel = WeixinChannel::new(options);
+    channel.save_credentials(&marker);
+    // The file lands inside the injected home, under the TS file name.
+    let written = crate::test_negative_receipt::expect_ok(
+        std::fs::read_to_string(home.join("weixin-credentials.json")),
+        "#1725 the derived credentials file is readable",
+    );
+    crate::negative_assert!(
+        written.contains("t-home-knob-1725"),
+        "#1725 the credentials file derives from the home knob"
+    );
+    // Nothing leaked into the process's real `~/.pilotdeck` slot: the write
+    // with the marker must not be found at the HOME-derived default (a
+    // pre-existing real file is fine — only our marker content convicts).
+    let real_default = default_credentials_path();
+    crate::negative_assert!(
+        !std::fs::read_to_string(&real_default)
+            .unwrap_or_default()
+            .contains("t-home-knob-1725"),
+        "#1725 a home-only override never writes the real ~/.pilotdeck"
+    );
+    // An explicit `None` path keeps the derived location (the knob, not a
+    // defaulted `PathBuf`, owns the default).
+    let mut bare = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    bare.credentials_home = Some(home.clone());
+    bare.credentials_path = None;
+    let channel = WeixinChannel::new(bare);
+    channel.save_credentials(&marker);
+    crate::negative_assert!(
+        std::fs::read_to_string(home.join("weixin-credentials.json"))
+            .unwrap_or_default()
+            .contains("t-home-knob-1725"),
+        "#1725 no explicit path keeps the derived file location"
+    );
+}
+
+// ── #1725 items 14/16: JS-falsy goldens against a live loopback ilink ───────
+
+/// A minimal loopback ilink server (#1725 item 14): every request (path,
+/// body) is recorded, and a per-test responder produces the JSON body for the
+/// path. The client under test is the real `IlinkHttpClient`, so the falsy
+/// knobs are exercised over the real hyper request path, not a mock trait —
+/// the unit-level stand-in for the fixture replay harness.
+struct LoopbackIlink {
+    requests: Arc<Mutex<Vec<(String, String)>>>,
+    task: tokio::task::JoinHandle<()>,
+    port: u16,
+}
+
+/// The per-test responder: `(request path, request body) -> response body`.
+type LoopbackRespond = Arc<dyn Fn(&str, &str) -> String + Send + Sync>;
+
+impl LoopbackIlink {
+    /// Listens on an ephemeral loopback port; requests never leave the host.
+    async fn start(respond: LoopbackRespond) -> Self {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("#1725 loopback listen");
+        let port = listener
+            .local_addr()
+            .expect("#1725 loopback address")
+            .port();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server = requests.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let respond = respond.clone();
+                let requests = server.clone();
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(
+                        move |request: hyper::Request<hyper::body::Incoming>| {
+                            let respond = respond.clone();
+                            let requests = requests.clone();
+                            async move {
+                                let path = request.uri().path().to_string();
+                                let bytes = request
+                                    .into_body()
+                                    .collect()
+                                    .await
+                                    .map(|collected| collected.to_bytes())
+                                    .unwrap_or_default();
+                                let body = String::from_utf8_lossy(&bytes).into_owned();
+                                requests
+                                    .lock()
+                                    .expect("#1725 loopback requests mutex")
+                                    .push((path.clone(), body.clone()));
+                                Ok::<_, std::convert::Infallible>(
+                                    hyper::Response::builder()
+                                        .status(200)
+                                        .header("content-type", "application/json")
+                                        .body(http_body_util::Full::new(hyper::body::Bytes::from(
+                                            respond(&path, &body),
+                                        )))
+                                        .expect("#1725 loopback response"),
+                                )
+                            }
+                        },
+                    );
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+        Self {
+            requests,
+            task,
+            port,
+        }
+    }
+
+    fn base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// The recorded request paths, in order.
+    fn paths(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .expect("#1725 loopback requests mutex")
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// The recorded request bodies, in order.
+    fn bodies(&self) -> Vec<String> {
+        self.requests
+            .lock()
+            .expect("#1725 loopback requests mutex")
+            .iter()
+            .map(|(_, body)| body.clone())
+            .collect()
+    }
+
+    fn destroy(self) {
+        self.task.abort();
+    }
+}
+
+/// #1725 item 14 (`get_updates_buf`): client.js:26-28 —
+/// `if (resp.get_updates_buf)` — an empty buffer is falsy and must not clear
+/// the cursor. The knob had no falsifiable golden (the replay `FakeIlink`
+/// always echoes a cursor back, so both branches of the filter look alike);
+/// this loopback server hands the client a real `""` response, so a mutant
+/// that drops the emptiness filter accepts it and the cursor goes empty.
+#[tokio::test]
+async fn poll_with_an_empty_updates_buf_keeps_the_cursor() {
+    let script = Arc::new(Mutex::new(VecDeque::from([
+        r#"{"ret":0,"msgs":[],"get_updates_buf":"cursor-1"}"#.to_owned(),
+        r#"{"ret":0,"msgs":[],"get_updates_buf":""}"#.to_owned(),
+    ])));
+    let queue = script.clone();
+    let server = LoopbackIlink::start(Arc::new(move |path, _body| {
+        if path == "/ilink/bot/getupdates" {
+            queue
+                .lock()
+                .expect("#1725 updates script mutex")
+                .pop_front()
+                .unwrap_or_else(|| r#"{"ret":0,"msgs":[]}"#.to_owned())
+        } else {
+            r#"{"ret":0}"#.to_owned()
+        }
+    }))
+    .await;
+    let client = IlinkHttpClient::new(server.base_url(), "t-1".into());
+    client.poll().await.expect("#1725 first poll succeeds");
+    crate::negative_assert_eq!(
+        client.cursor(),
+        "cursor-1".to_owned(),
+        "#1725 a non-empty get_updates_buf advances the poll cursor"
+    );
+    client.poll().await.expect("#1725 second poll succeeds");
+    crate::negative_assert_eq!(
+        client.cursor(),
+        "cursor-1".to_owned(),
+        "#1725 an empty get_updates_buf is falsy and does not clear the poll cursor"
+    );
+    server.destroy();
+}
+
+/// #1725 item 14 (`typing_ticket`): client.js:81 — `if (config.typing_ticket)`
+/// — an empty ticket is falsy, so no sendtyping request is made. The server
+/// records every request: the non-empty positive control must show the
+/// sendtyping (carrying the ticket in its body), the empty one only the
+/// getconfig.
+#[tokio::test]
+async fn send_typing_with_an_empty_ticket_makes_no_request() {
+    let ticket_server = LoopbackIlink::start(Arc::new(|path, _body| match path {
+        "/ilink/bot/getconfig" => r#"{"ret":0,"typing_ticket":"tt-9"}"#.to_owned(),
+        _ => r#"{"ret":0}"#.to_owned(),
+    }))
+    .await;
+    let client = IlinkHttpClient::new(ticket_server.base_url(), "t-1".into());
+    client
+        .send_typing(&js("user-1"), &js("ctx-1"))
+        .await
+        .expect("#1725 send_typing with a ticket succeeds");
+    crate::negative_assert_eq!(
+        ticket_server.paths(),
+        vec![
+            "/ilink/bot/getconfig".to_owned(),
+            "/ilink/bot/sendtyping".to_owned(),
+        ],
+        "#1725 a non-empty typing_ticket issues the sendtyping request"
+    );
+    crate::negative_assert!(
+        ticket_server.bodies()[1].contains("tt-9"),
+        "#1725 the sendtyping carries the configured ticket"
+    );
+    ticket_server.destroy();
+
+    let empty_server = LoopbackIlink::start(Arc::new(|path, _body| match path {
+        "/ilink/bot/getconfig" => r#"{"ret":0,"typing_ticket":""}"#.to_owned(),
+        _ => r#"{"ret":0}"#.to_owned(),
+    }))
+    .await;
+    let client = IlinkHttpClient::new(empty_server.base_url(), "t-1".into());
+    client
+        .send_typing(&js("user-1"), &js("ctx-1"))
+        .await
+        .expect("#1725 send_typing without a ticket succeeds");
+    crate::negative_assert_eq!(
+        empty_server.paths(),
+        vec!["/ilink/bot/getconfig".to_owned()],
+        "#1725 an empty typing_ticket is falsy: no sendtyping request is made"
+    );
+    empty_server.destroy();
+}
+
+/// #1725 item 16 (client.rs half): auth.js:81-84 —
+/// `!status.ilink_bot_id || !status.bot_token` treats an empty string as "not
+/// returned", and `status.baseurl || baseUrl` falls back on empty. The three
+/// confirmed-branch shapes run against the real `login_with_qr` over a
+/// loopback server.
+#[tokio::test]
+async fn login_confirmed_fields_follow_js_falsy_semantics() {
+    let status_response = Arc::new(Mutex::new(
+        r#"{"status":"confirmed","bot_token":"tok-1","ilink_bot_id":"bot-1","baseurl":""}"#
+            .to_owned(),
+    ));
+    let status = status_response.clone();
+    let server = LoopbackIlink::start(Arc::new(move |path, _body| match path {
+        "/ilink/bot/get_bot_qrcode" => r#"{"qrcode":"qr-1","qrcode_img_content":"img"}"#.to_owned(),
+        "/ilink/bot/get_qrcode_status" => status.lock().expect("#1725 login status mutex").clone(),
+        _ => r#"{"ret":0}"#.to_owned(),
+    }))
+    .await;
+    let callbacks = || WeixinLoginCallbacks {
+        on_qr_code: Box::new(|_code: &JsString| {}),
+        on_status_change: Box::new(|_status: &str| {}),
+    };
+
+    // `status.baseurl || baseUrl`: an empty returned baseurl is falsy, so the
+    // login keeps the base URL it was called with.
+    let result = login_with_qr(callbacks(), &server.base_url())
+        .await
+        .expect("#1725 login with an empty returned baseurl succeeds");
+    crate::negative_assert_eq!(
+        result.base_url,
+        server.base_url(),
+        "#1725 an empty returned baseurl is falsy: the passed base URL stays"
+    );
+
+    // A non-empty returned baseurl wins.
+    *status_response.lock().expect("#1725 login status mutex") =
+        r#"{"status":"confirmed","bot_token":"tok-1","ilink_bot_id":"bot-1","baseurl":"https://other.example"}"#
+            .to_owned();
+    let result = login_with_qr(callbacks(), &server.base_url())
+        .await
+        .expect("#1725 login with a returned baseurl succeeds");
+    crate::negative_assert_eq!(
+        result.base_url,
+        "https://other.example".to_owned(),
+        "#1725 a non-empty returned baseurl replaces the passed base URL"
+    );
+
+    // `!status.bot_token`: an empty token is "not returned".
+    *status_response.lock().expect("#1725 login status mutex") =
+        r#"{"status":"confirmed","bot_token":"","ilink_bot_id":"bot-1","baseurl":""}"#.to_owned();
+    let error = login_with_qr(callbacks(), &server.base_url())
+        .await
+        .expect_err("#1725 an empty bot_token fails the login");
+    crate::negative_assert_eq!(
+        error.formatted(),
+        "Error: Login failed: server did not return required credentials".to_owned(),
+        "#1725 an empty bot_token is falsy: the login reports missing credentials"
+    );
+    server.destroy();
+}
+
+/// #1725 item 16 (mod.rs `load_credentials`): WeixinChannel.ts:980-988 —
+/// `if (!data.baseUrl || !data.botToken || !data.accountId) return null` —
+/// an empty string is falsy, so a field set to `""` counts as absent (and the
+/// optional `cursor` stays `None` on `""` instead of being restored empty).
+#[test]
+fn load_credentials_treats_empty_strings_as_absent() {
+    let root = Root::new();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    let channel = WeixinChannel::new(options);
+    let path = root.path().join("weixin-credentials.json");
+
+    for (name, text) in [
+        (
+            "baseUrl",
+            r#"{"baseUrl":"","botToken":"t-1","accountId":"a-1"}"#,
+        ),
+        (
+            "botToken",
+            r#"{"baseUrl":"http://127.0.0.1:9","botToken":"","accountId":"a-1"}"#,
+        ),
+        (
+            "accountId",
+            r#"{"baseUrl":"http://127.0.0.1:9","botToken":"t-1","accountId":""}"#,
+        ),
+    ] {
+        std::fs::write(&path, text).expect("#1725 seed credentials file");
+        crate::negative_assert!(
+            channel.load_credentials().is_none(),
+            "#1725 an empty {name} is falsy: the file is not credentials"
+        );
+    }
+
+    // A present cursor survives; an empty one does not come back as Some("").
+    std::fs::write(
+        &path,
+        r#"{"baseUrl":"http://127.0.0.1:9","botToken":"t-1","accountId":"a-1","cursor":""}"#,
+    )
+    .expect("#1725 seed credentials file");
+    let loaded = channel
+        .load_credentials()
+        .expect("#1725 non-empty credentials load");
+    crate::negative_assert!(
+        loaded.cursor.is_none(),
+        "#1725 an empty cursor is falsy: no cursor is restored"
+    );
+    std::fs::write(
+        &path,
+        r#"{"baseUrl":"http://127.0.0.1:9","botToken":"t-1","accountId":"a-1","cursor":"cur-1"}"#,
+    )
+    .expect("#1725 seed credentials file");
+    let loaded = channel
+        .load_credentials()
+        .expect("#1725 non-empty credentials load");
+    crate::negative_assert_eq!(
+        loaded.cursor.as_deref(),
+        Some("cur-1"),
+        "#1725 a non-empty cursor is restored"
+    );
+}
+
+/// The fake client behind the rebuild test: `set_cursor` records every call
+/// (the knob the falsy filter guards), and `poll` parks forever so nothing
+/// else in the channel moves while the test drives the rebuild by hand.
+struct RebuildRecordingClient {
+    cursor: Mutex<String>,
+    sets: Mutex<Vec<String>>,
+}
+impl RebuildRecordingClient {
+    fn new(cursor: &str) -> Arc<Self> {
+        Arc::new(Self {
+            cursor: Mutex::new(cursor.into()),
+            sets: Mutex::new(Vec::new()),
+        })
+    }
+}
+impl WeixinIlinkClient for RebuildRecordingClient {
+    fn cursor(&self) -> String {
+        self.cursor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+    fn set_cursor(&self, cursor: &str) {
+        self.sets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(cursor.to_owned());
+        *self.cursor.lock().unwrap_or_else(|e| e.into_inner()) = cursor.to_owned();
+    }
+    fn poll(&self) -> BoxFuture<Result<JsValue, WeixinClientError>> {
+        Box::pin(std::future::pending())
+    }
+    fn send_text_chunked(
+        &self,
+        _to_user_id: &JsString,
+        _text: &JsString,
+        _context_token: &JsString,
+        _max_length: usize,
+    ) -> BoxFuture<Result<usize, WeixinClientError>> {
+        Box::pin(async { Ok(1) })
+    }
+    fn send_typing(
+        &self,
+        _user_id: &JsString,
+        _context_token: &JsString,
+    ) -> BoxFuture<Result<(), WeixinClientError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// #1725 item 16 (mod.rs `rebuild_client_after_poll_error`):
+/// WeixinChannel.ts:968 — `this.client?.cursor || creds.cursor` — the empty
+/// string is falsy on both sides: an empty live cursor falls through to the
+/// saved one, and neither being truthy means no `set_cursor` at all (and no
+/// credentials rewrite).
+#[test]
+fn rebuild_client_after_poll_error_treats_empty_cursors_as_absent() {
+    // Case A: both cursors empty — no set, no credentials rewrite.
+    let root = Root::new();
+    let made: Arc<Mutex<Vec<Arc<RebuildRecordingClient>>>> = Arc::new(Mutex::new(Vec::new()));
+    let factory_made = made.clone();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    options.client_factory = Arc::new(move |_credentials: &SavedCredentials| {
+        let client = RebuildRecordingClient::new("");
+        factory_made
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(client.clone());
+        client
+    });
+    let channel = WeixinChannel::new(options);
+    let path = root.path().join("weixin-credentials.json");
+    std::fs::write(
+        &path,
+        r#"{"baseUrl":"http://127.0.0.1:9","botToken":"t-1","accountId":"a-1"}"#,
+    )
+    .expect("#1725 seed credentials file");
+    let first = RebuildRecordingClient::new("");
+    made.lock().unwrap().push(first.clone());
+    channel.lock_inner().client = Some(first);
+    channel.rebuild_client_after_poll_error(&WeixinClientError::fetch_failed());
+    crate::negative_assert_eq!(
+        made.lock().unwrap().len(),
+        2,
+        "#1725 a recoverable poll error rebuilds the client"
+    );
+    crate::negative_assert!(
+        made.lock().unwrap()[1].sets.lock().unwrap().is_empty(),
+        "#1725 neither cursor truthy: the rebuilt client gets no cursor"
+    );
+    let raw = std::fs::read_to_string(&path).expect("#1725 credentials file");
+    crate::negative_assert!(
+        !raw.contains("cursor"),
+        "#1725 nothing to save: the credentials file is not rewritten with a cursor"
+    );
+
+    // Case B: live cursor empty, saved cursor present — the saved one is set.
+    let root = Root::new();
+    let made: Arc<Mutex<Vec<Arc<RebuildRecordingClient>>>> = Arc::new(Mutex::new(Vec::new()));
+    let factory_made = made.clone();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    options.client_factory = Arc::new(move |_credentials: &SavedCredentials| {
+        let client = RebuildRecordingClient::new("");
+        factory_made
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(client.clone());
+        client
+    });
+    let channel = WeixinChannel::new(options);
+    let path = root.path().join("weixin-credentials.json");
+    std::fs::write(
+        &path,
+        r#"{"baseUrl":"http://127.0.0.1:9","botToken":"t-1","accountId":"a-1","cursor":"cur-9"}"#,
+    )
+    .expect("#1725 seed credentials file");
+    let first = RebuildRecordingClient::new("");
+    made.lock().unwrap().push(first.clone());
+    channel.lock_inner().client = Some(first);
+    channel.rebuild_client_after_poll_error(&WeixinClientError::fetch_failed());
+    crate::negative_assert_eq!(
+        made.lock().unwrap()[1].sets.lock().unwrap().clone(),
+        vec!["cur-9".to_owned()],
+        "#1725 an empty live cursor is falsy: the saved cursor is set instead"
+    );
+
+    // Case C: live cursor present — it wins, and the saved cursor is refreshed
+    // to it (`creds.cursor != cursor` → the file is rewritten).
+    let root = Root::new();
+    let made: Arc<Mutex<Vec<Arc<RebuildRecordingClient>>>> = Arc::new(Mutex::new(Vec::new()));
+    let factory_made = made.clone();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    options.client_factory = Arc::new(move |_credentials: &SavedCredentials| {
+        let client = RebuildRecordingClient::new("live-1");
+        factory_made
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(client.clone());
+        client
+    });
+    let channel = WeixinChannel::new(options);
+    let path = root.path().join("weixin-credentials.json");
+    std::fs::write(
+        &path,
+        r#"{"baseUrl":"http://127.0.0.1:9","botToken":"t-1","accountId":"a-1","cursor":"cur-9"}"#,
+    )
+    .expect("#1725 seed credentials file");
+    let first = RebuildRecordingClient::new("live-1");
+    made.lock().unwrap().push(first.clone());
+    channel.lock_inner().client = Some(first);
+    channel.rebuild_client_after_poll_error(&WeixinClientError::fetch_failed());
+    crate::negative_assert_eq!(
+        made.lock().unwrap()[1].sets.lock().unwrap().clone(),
+        vec!["live-1".to_owned()],
+        "#1725 a truthy live cursor is set on the rebuilt client"
+    );
+    let raw = std::fs::read_to_string(&path).expect("#1725 credentials file");
+    crate::negative_assert!(
+        raw.contains("live-1"),
+        "#1725 the refreshed cursor lands in the credentials file"
+    );
+}
+
 // ── #1821 turn-timeout watchdog integration ────────────────────────────────
 
 /// One recorded `abortTurn` call: `(sessionKey, runId, reason)`.
@@ -536,8 +1081,8 @@ impl WeixinGatewayPort for TimeoutPort {
 
 fn timeout_channel(port: Arc<TimeoutPort>, turn_timeout_ms: u64, root: &Root) -> WeixinChannel {
     let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
-    options.credentials_path = root.path().join("weixin-credentials.json");
-    options.credentials_dir = Some(root.path());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
     options.gateway = Some(port);
     options.live_reply = LiveReplyOptions {
         turn_timeout_ms,
@@ -677,8 +1222,8 @@ fn queued_turn(message: &str) -> QueuedWeixinTurn {
 
 fn channel_with_gateway(root: &Root, gateway: Arc<dyn WeixinGatewayPort>) -> WeixinChannel {
     let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
-    options.credentials_path = root.path().join("weixin-credentials.json");
-    options.credentials_dir = Some(root.path().to_path_buf());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
     options.gateway = Some(gateway);
     WeixinChannel::new(options)
 }
@@ -694,6 +1239,29 @@ async fn until<F: FnMut() -> bool>(what: &str, mut ready: F) {
     })
     .await
     .unwrap_or_else(|_| panic!("#1780 timed out waiting for {what}"));
+}
+
+/// `until` for a wait a mutation row is bound to: the deadline death must
+/// carry the row's registered assertion (a plain `panic!` writes no nonce
+/// receipt, and the host matrix would judge the kill INVALID) — `what` only
+/// reaches stderr, same shape as feishu's `until`.
+async fn until_bound(assertion: &str, what: &str, mut ready: impl FnMut() -> bool) {
+    match tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if ready() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    {
+        Ok(()) => {}
+        Err(_) => {
+            eprintln!("#1725 timeout waiting for {what}");
+            crate::negative_assert!(false, "{assertion}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -804,6 +1372,7 @@ async fn guard_releases_the_chat_through_a_poisoned_lock() {
     drop(ActiveChatSlot {
         channel: channel.clone(),
         user: user.clone(),
+        armed: true,
     });
     assert!(
         !channel.lock_inner().active_chats.contains(&user),
@@ -1002,4 +1571,754 @@ fn only_the_declared_size_guard_settles_without_io() {
         let message = parse_json(body).expect("#1822 predicate json");
         crate::negative_assert!(!settles_without_io(&message, max), "#1822 {tag}");
     }
+}
+
+// ── #1725 S2：并发收口 pins ─────────────────────────────────────────────
+
+use crate::runtime::project::RuntimeError;
+use crate::runtime::session::{
+    LiveSessionHandle, SessionContext, SessionFactory, SessionOwner, SessionOwnerOptions,
+    TurnCompletionHandle,
+};
+use crate::runtime::turn::coordinator::TurnEventCoordinator;
+use crate::runtime::turn::projector::{
+    GatewayAgentEventProjector, GatewayAgentEventProjectorOptions,
+};
+use crate::runtime::turn::submit::{
+    PreparedTurn, SubmitError, SubmitFuture, SubmitHost, SubmitWorkspace, TurnSubmitter,
+    WorkspaceAdmissions,
+};
+use crate::storage::RunRef;
+
+/// W1: the drainer that empties its queue gives the marker back in the same
+/// critical section as the final `shift_turn` (#1725#4; TS `runQueuedTurns`
+/// :544-547, the P4 probe anchor — no await between shift and the `finally`
+/// delete). The observable half on a single thread: a chat whose queue
+/// emptied is re-admitted immediately — a marker left behind would queue the
+/// next message with nobody to drain it. The atomicity itself is a
+/// cross-thread window with no await on either side of the fix, so it has no
+/// deterministic single-thread construction (the same class as the feishu
+/// resolve-fusion limitation registered in A8.3-CH-FEISHU-004-R2); the
+/// mutation rows pin what is reachable.
+#[tokio::test]
+async fn drained_chat_is_re_admitted_without_a_leftover_marker() {
+    let root = Root::new();
+    let gateway = Arc::new(RecordingGateway::default());
+    let channel = channel_with_gateway(&root, gateway.clone());
+    let user = js("chat-w1");
+
+    let _ = channel.enqueue_or_run(user.clone(), queued_turn("first"));
+    until("the first turn to reach submit_turn", || {
+        !gateway.submits().is_empty()
+    })
+    .await;
+    until_bound(
+        "#1725 a drained queue leaves the chat immediately re-admittable",
+        "the drained chat's marker to be released",
+        || !channel.lock_inner().active_chats.contains(&user),
+    )
+    .await;
+
+    // The marker is free, so the next message is admitted and drained at once.
+    let _ = channel.enqueue_or_run(user.clone(), queued_turn("second"));
+    until(
+        "the re-admitted chat's second turn to reach submit_turn",
+        || gateway.submits().len() >= 2,
+    )
+    .await;
+    crate::negative_assert_eq!(
+        gateway.submits(),
+        vec!["first".to_owned(), "second".to_owned()],
+        "#1725 a drained queue leaves the chat immediately re-admittable"
+    );
+}
+
+/// A poll client whose long-poll never returns: the stand-in for the request
+/// a `stop()` can only wait on (the real client's request is bounded by the
+/// ilink 35 s timeout; the fake has no bound, so only the channel-level stop
+/// bound can end the wait). `entered` flips when the first poll parks, so the
+/// test can tell "parked inside the request" from "never polled" — only the
+/// former leaves the abort nothing to interrupt.
+struct HangingPollClient {
+    entered: Arc<AtomicBool>,
+}
+impl WeixinIlinkClient for HangingPollClient {
+    fn cursor(&self) -> String {
+        String::new()
+    }
+    fn set_cursor(&self, _cursor: &str) {}
+    fn poll(&self) -> BoxFuture<Result<JsValue, WeixinClientError>> {
+        self.entered.store(true, Ordering::SeqCst);
+        Box::pin(std::future::pending())
+    }
+    fn send_text_chunked(
+        &self,
+        _to_user_id: &JsString,
+        _text: &JsString,
+        _context_token: &JsString,
+        _max_length: usize,
+    ) -> BoxFuture<Result<usize, WeixinClientError>> {
+        Box::pin(async { Ok(1) })
+    }
+    fn send_typing(
+        &self,
+        _user_id: &JsString,
+        _context_token: &JsString,
+    ) -> BoxFuture<Result<(), WeixinClientError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn poll_channel_with_log(
+    root: &Root,
+    logs: Arc<Mutex<Vec<String>>>,
+    poll_entered: Arc<AtomicBool>,
+) -> WeixinChannel {
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    options.client_factory = Arc::new(move |_credentials: &SavedCredentials| {
+        Arc::new(HangingPollClient {
+            entered: poll_entered.clone(),
+        }) as Arc<dyn WeixinIlinkClient>
+    });
+    let channel = WeixinChannel::new(options);
+    *channel.0.logger.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(Arc::new(move |level: &str, text: &str| {
+            logs.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(format!("{level}: {text}"));
+        }));
+    channel
+}
+
+fn saved_credentials() -> SavedCredentials {
+    SavedCredentials {
+        base_url: "http://127.0.0.1:9".into(),
+        bot_token: "t-1".into(),
+        account_id: "a-1".into(),
+        cursor: None,
+    }
+}
+
+/// W2/W3: after a `stop()` aborted the generation's cancellation, a late
+/// `start_polling_with_credentials` (the recovery watcher's or a credentials
+/// reload racing the stop) must not install a fresh poll behind the stopper's
+/// back. TS cannot restart there — the stopper awaits the recovery promise,
+/// and a settled `pollPromise` stays truthy until `stop` nulls it (the P1
+/// probe: `polls total=1`, `after-stop pollPromise=null`).
+#[tokio::test]
+async fn stopped_channel_does_not_restart_the_poll_loop() {
+    let root = Root::new();
+    let channel = poll_channel_with_log(
+        &root,
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(AtomicBool::new(false)),
+    );
+    channel.set_stop_wait_for_tests(Duration::from_millis(150));
+    channel.start_polling_with_credentials(saved_credentials());
+    crate::negative_assert!(
+        channel.lock_inner().poll_task.is_some(),
+        "#1725 the poll loop starts with credentials"
+    );
+
+    let stopped = channel.clone().stop("test").await;
+    crate::negative_assert!(stopped.is_ok(), "#1725 the channel stops");
+    crate::negative_assert!(
+        channel.lock_inner().poll_task.is_none(),
+        "#1725 stop takes the poll task with it"
+    );
+
+    // The late-recovery stand-in: the liveness checks it raced are all stale
+    // now, so only the abort recheck inside the start can refuse.
+    channel.start_polling_with_credentials(saved_credentials());
+    crate::negative_assert!(
+        channel.lock_inner().poll_task.is_none(),
+        "#1725 a stopped channel does not restart its poll loop"
+    );
+
+    // The recheck refuses only the *aborted* generation: a deliberate restart
+    // goes through `start()`, which installs a fresh cancellation before any
+    // polling (mirrored here by replacing the cancellation directly).
+    {
+        let mut inner = channel.lock_inner();
+        inner.abort = Some(Cancellation::new());
+    }
+    channel.start_polling_with_credentials(saved_credentials());
+    crate::negative_assert!(
+        channel.lock_inner().poll_task.is_some(),
+        "#1725 a deliberate restart after a fresh cancellation still polls"
+    );
+    let _ = channel.stop("cleanup").await;
+}
+
+/// W6: `stop()`'s wait for the poll task is bounded (#1725#7). The fake poll
+/// never returns, so only the channel-level bound can end the stop — and the
+/// stopper must warn rather than hang.
+#[tokio::test]
+async fn stop_is_bounded_when_the_poll_never_returns() {
+    let root = Root::new();
+    let logs = Arc::new(Mutex::new(Vec::new()));
+    let poll_entered = Arc::new(AtomicBool::new(false));
+    let channel = poll_channel_with_log(&root, logs.clone(), poll_entered.clone());
+    channel.set_stop_wait_for_tests(Duration::from_millis(150));
+    channel.start_polling_with_credentials(saved_credentials());
+    crate::negative_assert!(
+        channel.lock_inner().poll_task.is_some(),
+        "#1725 the hanging poll loop is running before the stop"
+    );
+    // Park the loop inside the request first: an un-polled task would see the
+    // abort at its next poll and exit on its own, leaving nothing for the
+    // stop bound to bound.
+    until("the poll loop to park inside the hanging request", || {
+        poll_entered.load(Ordering::SeqCst)
+    })
+    .await;
+
+    // The outer bound is the test's own: a stop that lost its wait bound
+    // would park on the hanging poll forever and die here, by name, instead
+    // of hanging the suite.
+    let stopped = crate::test_negative_receipt::expect_ok(
+        tokio::time::timeout(Duration::from_secs(5), channel.stop("test")).await,
+        "#1725 stop returns even when the poll loop never does",
+    );
+    crate::negative_assert!(stopped.is_ok(), "#1725 the bounded stop resolves");
+    crate::negative_assert!(
+        logs.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|line| line.contains("stop timed out waiting for the poll loop")),
+        "#1725 the bounded stop warns when it gives up waiting"
+    );
+}
+
+/// W8: a turn admitted with no gateway attached is dropped with a warn, not
+/// silently (TS `if (!this.gateway) return;` is silent; the log is the port's
+/// addition so a misassembled channel surfaces).
+#[tokio::test]
+async fn turn_without_a_gateway_warns_and_drops() {
+    let root = Root::new();
+    let logs = Arc::new(Mutex::new(Vec::new()));
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    let channel = WeixinChannel::new(options);
+    let sink = logs.clone();
+    *channel.0.logger.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(Arc::new(move |level: &str, text: &str| {
+            sink.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(format!("{level}: {text}"));
+        }));
+
+    let _ = channel.enqueue_or_run(js("chat-nogw"), queued_turn("lost"));
+    until("the gateway-less turn's warn to land", || {
+        logs.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|line| line.contains("no gateway attached, dropping turn"))
+    })
+    .await;
+    // The admission marker is still given back — the drop is a turn loss, not
+    // a dead chat.
+    until("the gateway-less chat's marker to be released", || {
+        !channel.lock_inner().active_chats.contains(&js("chat-nogw"))
+    })
+    .await;
+}
+
+/// W7 (rule): only the entry that is still *this* submission's receiver goes
+/// when a task retires — a task that outlived a newer submission for the same
+/// session key must leave the newer fence in place.
+#[test]
+fn retiring_an_in_flight_entry_spares_a_newer_submission() {
+    let key = js("weixin:chat=c:s1:general");
+    let mut in_flight = HashMap::new();
+    let (_old_sender, old_rx) = watch::channel(false);
+    let (_new_sender, new_rx) = watch::channel(false);
+    in_flight.insert(key.clone(), new_rx.clone());
+
+    retire_in_flight_entry(&mut in_flight, &key, &old_rx);
+    crate::negative_assert_eq!(
+        in_flight.len(),
+        1,
+        "#1725 the stale task's retirement spares the newer entry"
+    );
+
+    retire_in_flight_entry(&mut in_flight, &key, &new_rx);
+    crate::negative_assert_eq!(
+        in_flight.len(),
+        0,
+        "#1725 the current holder retires its own entry"
+    );
+
+    // Retiring into an absent key is a no-op, not a panic.
+    retire_in_flight_entry(&mut in_flight, &key, &new_rx);
+    crate::negative_assert_eq!(
+        in_flight.len(),
+        0,
+        "#1725 retiring with no entry leaves the table untouched"
+    );
+}
+
+/// The session factory behind the stub host: `normalize` short-circuits the
+/// turn before any session is needed, so a factory that always fails is the
+/// honest stub — reaching it would mean the port test lost control.
+struct UnreachedFactory;
+impl SessionFactory for UnreachedFactory {
+    fn create(
+        &self,
+        _context: SessionContext,
+        _previous: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        Box::pin(async {
+            Err(RuntimeError::new(
+                "#1725 port test: the session factory is never reached",
+            ))
+        })
+    }
+}
+
+/// The stub host: `normalize` refuses every turn at once, so the submission
+/// ends immediately and the port task reaches its in-flight retirement
+/// without any session machinery behind it.
+struct RefusingHost;
+impl SubmitHost for RefusingHost {
+    fn workspace(&self, _input: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
+        Ok(SubmitWorkspace {
+            id: None,
+            snapshots_required: false,
+            recorder: None,
+        })
+    }
+    fn failure_guard_config(&self) -> Option<JsValue> {
+        None
+    }
+    fn set_session_cwd(&self, _session: &JsString, _cwd: &JsString) -> Result<(), SubmitError> {
+        Ok(())
+    }
+    fn now_ms(&self) -> f64 {
+        0.0
+    }
+    fn abort_turn_timeout_ms(&self) -> u64 {
+        60_000
+    }
+    fn normalize<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Err(SubmitError::new("test", "refused at once")) })
+    }
+    fn route_input<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn admitted_preflight<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _run: &'a RunRef,
+        _completion: &'a TurnCompletionHandle,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn observe_event<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _event: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn preflight<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _run: &'a RunRef,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn has_sdk_config(&self) -> bool {
+        false
+    }
+    fn validate_sdk_config(&self, _config: &JsValue) -> Result<(), SubmitError> {
+        Ok(())
+    }
+    fn set_sdk_config<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _completion: &'a TurnCompletionHandle,
+    ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn finish_pump<'a>(&'a self, _run: &'a RunRef) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn prepare<'a>(
+        &'a self,
+        input: &'a JsValue,
+        _run: &'a RunRef,
+    ) -> SubmitFuture<'a, Result<PreparedTurn, SubmitError>> {
+        let input = input.clone();
+        Box::pin(async {
+            Ok(PreparedTurn {
+                model_selection: JsValue::Undefined,
+                input,
+                options: JsValue::Undefined,
+            })
+        })
+    }
+    fn commit_accepted_input<'a>(
+        &'a self,
+        _run: &'a RunRef,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn record_failure<'a>(
+        &'a self,
+        _run: &'a RunRef,
+        _status: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn reject_pending(&self, _session: &JsString, _reason: &str) -> Result<(), SubmitError> {
+        Ok(())
+    }
+    fn release_claim(&self, _session: &JsString, _run: &JsString) {}
+    fn after_turn(&self, _run: &RunRef) -> Result<(), SubmitError> {
+        Ok(())
+    }
+}
+
+/// W7 (wiring): the production port over a refusing submitter — the entry a
+/// submission claimed must be retired when the submission ends, or every
+/// session key pins its receiver forever (a `/new` rotates keys without
+/// bound).
+#[tokio::test]
+async fn finished_submission_retires_its_in_flight_entry() {
+    let port = NativeWeixinGatewayPort::new(Arc::new(TurnSubmitter {
+        owner: SessionOwner::new(SessionOwnerOptions::new(Arc::new(UnreachedFactory))),
+        coordinator: Arc::new(TurnEventCoordinator::new()),
+        projector: Arc::new(
+            GatewayAgentEventProjector::new(GatewayAgentEventProjectorOptions::default())
+                .expect("#1725 port test projector"),
+        ),
+        registry: None,
+        host: Arc::new(RefusingHost),
+        workspace_admissions: WorkspaceAdmissions::default(),
+    }));
+    let input = parse_json(
+        r#"{"sessionKey":"weixin:chat=c-w7:general","channelKey":"weixin","message":"hi"}"#,
+    )
+    .expect("#1725 port test input");
+
+    let stream = port.submit_turn(input);
+    crate::negative_assert_eq!(
+        port.in_flight_len(),
+        1,
+        "#1725 the submission claims its in-flight entry"
+    );
+    let mut stream = stream;
+    while let Some(_item) = stream.receiver.recv().await {}
+    until_bound(
+        "#1725 a finished submission stops occupying the in-flight table",
+        "the finished submission's in-flight entry to retire",
+        || port.in_flight_len() == 0,
+    )
+    .await;
+    crate::negative_assert_eq!(
+        port.in_flight_len(),
+        0,
+        "#1725 a finished submission stops occupying the in-flight table"
+    );
+}
+
+// ── #1725#3：state.rs flush/waiter pins ──────────────────────────────────
+
+/// A failing write target: the state file's path is a directory, so the
+/// atomic rename in `write_to_disk` fails (`EISDIR`) — the same failure the
+/// P3 probe manufactured in TS.
+fn failing_key(root: &Root, key: &str) {
+    std::fs::create_dir_all(root.path().join(format!("{key}.state.json")))
+        .expect("#1725 failing key dir");
+}
+
+/// W9a: `flush` starts every key's drain before any rejection is observed —
+/// TS `Promise.all(keys.map(ensureWrite))` (the P3 probe:
+/// `flush started drains for: b, a — every key attempted before any
+/// rejection: true`). A sequential `?` would return after the first failing
+/// key and leave the later keys unwritten.
+#[tokio::test]
+async fn flush_attempts_every_dirty_key_before_reporting_the_first_failure() {
+    let root = Root::new();
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
+    failing_key(&root, "a");
+    persistence.save(&js("a"), state_with_value(1.0));
+    persistence.save(&js("b"), state_with_value(2.0));
+
+    let outcome = persistence.flush().await;
+    crate::negative_assert!(
+        outcome.is_err(),
+        "#1725 flush reports the failing key's write error"
+    );
+    crate::negative_assert!(
+        read_state(&root.path().join("b.state.json")).is_some(),
+        "#1725 the key after the failing one is still written"
+    );
+}
+
+/// W9b: a waiter on an in-flight drain observes the drainer's failure — TS
+/// hands the waiter the drainer's own promise, so both reject (the P3 probe:
+/// `waiter rejected with the drainer's failure: true`). The drainer is parked
+/// after it claimed the key (the `park_next_drain` seam), the waiter joins
+/// while the entry is live, and only then does the write fail.
+#[tokio::test]
+async fn flush_waiter_observes_the_drainers_failure() {
+    let root = Root::new();
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
+    failing_key(&root, "a");
+    persistence.save(&js("a"), state_with_value(1.0));
+
+    let gate = persistence.park_next_drain();
+    let drainer = persistence.clone();
+    let drain_task = tokio::spawn(async move { drainer.flush().await });
+    tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+        .await
+        .expect("#1725 the drainer parked after claiming the key");
+    // The entry is live and claimed; this flush joins it as a waiter.
+    let waiter = persistence.clone();
+    let wait_task = tokio::spawn(async move { waiter.flush().await });
+    until("the waiter to join the parked drain", || {
+        persistence.in_flight_waiters(&js("a")) >= 1
+    })
+    .await;
+
+    gate.release.notify_one();
+    let drainer_outcome = tokio::time::timeout(Duration::from_secs(5), drain_task)
+        .await
+        .expect("#1725 the drainer settles after the release")
+        .expect("#1725 the drainer task joins");
+    let waiter_outcome = tokio::time::timeout(Duration::from_secs(5), wait_task)
+        .await
+        .expect("#1725 the waiter settles after the drainer")
+        .expect("#1725 the waiter task joins");
+    crate::negative_assert!(
+        drainer_outcome.is_err(),
+        "#1725 the drainer reports the write failure"
+    );
+    crate::negative_assert!(
+        waiter_outcome.is_err(),
+        "#1725 the waiter observes the drainer's failure, not a success"
+    );
+}
+
+/// W9c (`A8.3-CH-WEIXIN-FLUSH-001`): the TS `flush` is
+/// `Promise.all(keys.map(ensureWrite))` and rejects with the first
+/// *temporal* rejection — the probe `p1-weixin-flush-first-rejection` showed
+/// the real class reporting the temporally first of two failing keys (30/30
+/// rounds) and the reported error flipping with rejection time, not key
+/// order. Rust reports the first error in key order instead: the registered
+/// intentional deviation (a deterministic test surface; completion order is
+/// timing-dependent). This cell pins the Rust side of that registration: one
+/// flush, two failing keys whose error texts differ — `a`'s target is a
+/// directory (rename `EISDIR`), `z/sub`'s tmp path sits inside the missing
+/// directory `z` (write `ENOENT`) — and the reported error is `a`'s, the
+/// key-order first.
+#[tokio::test]
+async fn flush_reports_the_key_order_first_error_when_two_keys_fail_differently() {
+    let root = Root::new();
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
+    failing_key(&root, "a");
+    persistence.save(&js("a"), state_with_value(1.0));
+    persistence.save(&js("z/sub"), state_with_value(2.0));
+
+    let error = crate::test_negative_receipt::expect_err(
+        persistence.flush().await,
+        "#1725 a flush with two failing keys reports a write error",
+    );
+    crate::negative_assert!(
+        error.contains("Is a directory"),
+        "#1725 the flush error is the key-order first key's EISDIR, per A8.3-CH-WEIXIN-FLUSH-001"
+    );
+    // Defence in depth, not the bound assertion: the key-order-first error
+    // must not be the later key's write failure.
+    crate::negative_assert!(
+        !error.contains("No such file or directory"),
+        "#1725 the flush error is not the later key's ENOENT: {error}"
+    );
+}
+
+/// A channel bound to a credentials file the test owns, with no polling —
+/// `save_credentials`/`save_cursor` are synchronous fs and never touch the
+/// client factory.
+fn credentials_channel(root: &Root) -> WeixinChannel {
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    WeixinChannel::new(options)
+}
+
+/// #1725#2 (credentials half): the save holds the credentials lock for the
+/// whole write (a save blocked on the lock writes nothing), the final bytes
+/// are the TS `writeFileSync` shape byte for byte (same insertion-ordered
+/// JSON.stringify(…, null, 2) object, no trailing newline — the tmp hop must
+/// not change what lands), and the publish leaves no scratch file behind.
+#[test]
+fn save_credentials_takes_the_lock_and_publishes_atomically() {
+    let root = Root::new();
+    let channel = credentials_channel(&root);
+    let path = root.path().join("weixin-credentials.json");
+
+    // Holding the credentials lock pins the save's whole write: a concurrent
+    // save cannot have written the file yet.
+    let guard = channel
+        .0
+        .credentials_write
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let writer = {
+        let channel = channel.clone();
+        std::thread::spawn(move || channel.save_credentials(&saved_credentials()))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    crate::negative_assert!(
+        !path.exists(),
+        "#1725 a credentials save blocked on the lock writes nothing"
+    );
+    drop(guard);
+    writer
+        .join()
+        .expect("#1725 the blocked credentials save finishes");
+
+    let raw = crate::test_negative_receipt::expect_ok(
+        std::fs::read_to_string(&path),
+        "#1725 credentials file",
+    );
+    assert_eq!(
+        raw,
+        "{\n  \"baseUrl\": \"http://127.0.0.1:9\",\n  \"botToken\": \"t-1\",\n  \"accountId\": \"a-1\"\n}",
+        "#1725 the credentials bytes are the writeFileSync shape"
+    );
+    let leftovers: Vec<String> = std::fs::read_dir(root.path())
+        .expect("#1725 credentials dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".tmp"))
+        .collect();
+    crate::negative_assert!(
+        leftovers.is_empty(),
+        "#1725 the atomic credentials publish leaves no tmp file behind: {leftovers:?}"
+    );
+}
+
+/// The fake client behind the cursor save: only `cursor` matters here — the
+/// poll parks forever so nothing else in the channel moves while the test
+/// drives the save by hand.
+struct CursorClient(String);
+impl WeixinIlinkClient for CursorClient {
+    fn cursor(&self) -> String {
+        self.0.clone()
+    }
+    fn set_cursor(&self, _cursor: &str) {}
+    fn poll(&self) -> BoxFuture<Result<JsValue, WeixinClientError>> {
+        Box::pin(std::future::pending())
+    }
+    fn send_text_chunked(
+        &self,
+        _to_user_id: &JsString,
+        _text: &JsString,
+        _context_token: &JsString,
+        _max_length: usize,
+    ) -> BoxFuture<Result<usize, WeixinClientError>> {
+        Box::pin(async { Ok(1) })
+    }
+    fn send_typing(
+        &self,
+        _user_id: &JsString,
+        _context_token: &JsString,
+    ) -> BoxFuture<Result<(), WeixinClientError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// #1725#2 (cursor half): the cursor save's read-modify-write sits inside
+/// the credentials lock — the same lock `save_credentials` holds, so the two
+/// cannot interleave (one of the pair would be lost on any interleaving).
+/// While the save is blocked on the lock, a concurrent full rewrite lands;
+/// the save must re-read *after* acquiring the lock and publish the newer
+/// credentials plus its cursor, not the snapshot it would have loaded before
+/// the lock.
+#[tokio::test]
+async fn save_cursor_read_modify_write_holds_the_credentials_lock() {
+    let root = Root::new();
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_home = Some(root.path());
+    options.credentials_path = Some(root.path().join("weixin-credentials.json"));
+    options.client_factory = Arc::new(|_credentials: &SavedCredentials| {
+        Arc::new(CursorClient("cur-1".into())) as Arc<dyn WeixinIlinkClient>
+    });
+    let channel = WeixinChannel::new(options);
+    channel.set_stop_wait_for_tests(Duration::from_millis(150));
+    channel.start_polling_with_credentials(saved_credentials());
+    let path = root.path().join("weixin-credentials.json");
+    std::fs::write(
+        &path,
+        "{\n  \"baseUrl\": \"http://127.0.0.1:9\",\n  \"botToken\": \"t-1\",\n  \"accountId\": \"a-1\"\n}",
+    )
+    .expect("#1725 seed credentials file");
+
+    // Hold the credentials lock: the cursor save cannot run its
+    // read-modify-write at all — the file still has t-1 and no cursor.
+    let guard = channel
+        .0
+        .credentials_write
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let writer = {
+        let channel = channel.clone();
+        std::thread::spawn(move || channel.save_cursor())
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let raw = std::fs::read_to_string(&path).expect("#1725 credentials file mid-save");
+    crate::negative_assert!(
+        !raw.contains("cursor"),
+        "#1725 a cursor save blocked on the lock writes nothing"
+    );
+    crate::negative_assert!(
+        raw.contains("t-1"),
+        "#1725 the blocked save has not touched the file yet"
+    );
+
+    // The concurrent rewrite a `stop()`-side `save_credentials` would issue:
+    // newer token, newer account, still no cursor.
+    std::fs::write(
+        &path,
+        "{\n  \"baseUrl\": \"http://127.0.0.1:9\",\n  \"botToken\": \"t-2\",\n  \"accountId\": \"a-2\"\n}",
+    )
+    .expect("#1725 concurrent credentials rewrite");
+    drop(guard);
+    writer
+        .join()
+        .expect("#1725 the blocked cursor save finishes");
+
+    let raw = std::fs::read_to_string(&path).expect("#1725 credentials file after save");
+    crate::negative_assert!(
+        raw.contains("t-2"),
+        "#1725 the cursor save re-reads under the lock and keeps the newer credentials"
+    );
+    crate::negative_assert!(
+        raw.contains("a-2"),
+        "#1725 the cursor save preserves the concurrent rewrite's account"
+    );
+    crate::negative_assert!(
+        raw.contains("cur-1"),
+        "#1725 the cursor save still lands its own cursor"
+    );
+    crate::negative_assert!(
+        !raw.contains("t-1"),
+        "#1725 the stale pre-lock snapshot is not resurrected"
+    );
+    let _ = channel.stop("cleanup").await;
 }

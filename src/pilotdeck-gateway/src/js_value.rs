@@ -23,7 +23,7 @@
 //! throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
-use pilotdeck_protocol::{JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 /// Deepest array nesting that converts; conservative against V8's 2515.
 pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;
@@ -234,11 +234,19 @@ fn scalar_units(value: &JsValue, out: &mut Vec<u16>) {
         // (#1550 修 r6).
         JsValue::Object(o) => {
             out.extend("[object ".encode_utf16());
-            out.extend(o.native_tag().unwrap_or("Object").encode_utf16());
+            out.extend(object_tag(o).encode_utf16());
             out.push(u16::from(b']'));
         }
         JsValue::Array(_) => unreachable!("arrays are joined by to_string_units"),
     }
+}
+
+/// The tag `String(object)` prints inside `[object <tag>]`: a collapsed YAML
+/// collection keeps its class (`[object Set]`), anything else is a plain
+/// `Object`. One source for this joiner and the config layer's `format!`
+/// diagnostics — the two copies drifted once already (#1833 C1, #1550 修 r6).
+pub(crate) fn object_tag(object: &JsObject) -> &str {
+    object.native_tag().unwrap_or("Object")
 }
 
 /// `String(value)` with lone surrogates as U+FFFD (for Rust-side messages).

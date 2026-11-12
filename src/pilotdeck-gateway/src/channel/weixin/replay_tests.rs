@@ -729,11 +729,14 @@ async fn replay_case(case: &Value) -> Value {
             "server" => {
                 let config = js_event(&step["config"]);
                 let weixin = super::WeixinChannelOptions {
-                    credentials_path: credentials_path.clone(),
-                    // generate.mts points `HOME` at the scenario directory;
-                    // the Rust port redirects the mkdir target instead so a
-                    // replay never touches the machine's real `~/.pilotdeck`.
-                    credentials_dir: Some(scenario_dir.join(".pilotdeck")),
+                    credentials_path: Some(credentials_path.clone()),
+                    // generate.mts points `HOME` at the scenario directory
+                    // (`homedir()/.pilotdeck` = `<tmp>/.pilotdeck`, what the
+                    // golden's im-attachments paths record); the Rust port's
+                    // single home knob redirects the whole family instead,
+                    // so a replay never touches the machine's real
+                    // `~/.pilotdeck` (#1725 item 13).
+                    credentials_home: Some(scenario_dir.join(".pilotdeck")),
                     mapper: Arc::new(super::WeixinSessionMapper::new()),
                     client_factory: {
                         let fake_shared = fake.shared.clone();
@@ -1037,6 +1040,12 @@ fn recorded_expected_panics_when_absent() {
     recorded_expected(&json!({}));
 }
 
+/// The channel-scenario count the generator declares (`expectedCaseCount`);
+/// the count pin and the declaration pin read this one constant, so the two
+/// literals cannot drift apart (#1725 — the count moved 15→20 in #1822 and
+/// both sites had to be found by hand).
+const EXPECTED_CASE_COUNT: usize = 20;
+
 fn oracle_cases(oracle: &Value) -> Vec<&Value> {
     let cases = oracle["cases"]
         .as_array()
@@ -1052,10 +1061,14 @@ fn oracle_cases(oracle: &Value) -> Vec<&Value> {
         !channel.is_empty(),
         "#1328 weixin oracle cases must be non-empty"
     );
-    crate::negative_assert_eq!(channel.len(), 20, "#1328 weixin oracle case count");
+    crate::negative_assert_eq!(
+        channel.len(),
+        EXPECTED_CASE_COUNT,
+        "#1328 weixin oracle case count"
+    );
     crate::negative_assert_eq!(
         oracle["expectedCaseCount"],
-        json!(20),
+        json!(EXPECTED_CASE_COUNT),
         "#1328 weixin generator declaration"
     );
     crate::negative_assert_eq!(

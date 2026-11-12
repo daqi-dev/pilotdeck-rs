@@ -142,7 +142,8 @@ fix-r3 起变异段领锁超时同口径（rc 2 never-started；fix-r3b 起相�
 utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领形状；
 取得之后含还原窗口的失败作废已跑行、发布 summary 并退 1），
 名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
-参数、空输出槽或 `--compile-only` 即拒跑）。
+参数、空输出槽或 `--compile-only` 即拒跑；名册防线由
+`test_negative_roster_guards.py` 机检并进 CI）。
 以及 `native-blankkey-submit`（#2692 fix-r1/fix-r2 起按 `negative_selection`
 契约落形：`EXPECTED_NAMES` 静态名册 + `registered` 启动对表 + `claim_dir` +
 `missing_target`/`refuse_unusable_target` + `verdict_exit`，`--check` 进 CI、
@@ -306,3 +307,15 @@ target、无证据目录，实际可矩阵承载——纳入矩阵待登记表�
 每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
 AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。
+
+### 负控发现锚点 `DISCOVERY_ANCHORS`（#2133）
+
+与 `PENDING_BARE_ASSERTS` 同级的表级机器可检约定：宿主按 PR diff 给每个改动的
+`src/**/*.rs` 与 `fixtures/**` 文件生成键，再用字面 `git grep` 决定排程哪张表，
+因此表里构建的路径必须让键字面出现；做不到的表在模块级声明 `DISCOVERY_ANCHORS`
+逐条登记（没有这类拼接的写空元组），`src/pilotdeck-gateway/tests/fixtures/
+test_negative_discovery_anchors.py` 逐表断言，并由 CI 步「网关负控发现锚点自检
+（#2133）」执行（该步的同形接线守卫在
+`src/pilotdeck-gateway/tests/test_metadata_io_driver.py`）。键的推导规则、等价
+写法与 `KNOWN_BLIND` 跟进清单以 `src/pilotdeck-gateway/tests/fixtures/README.md`
+的「负控发现锚点 `DISCOVERY_ANCHORS`」节为正本，本节不复制第二份。

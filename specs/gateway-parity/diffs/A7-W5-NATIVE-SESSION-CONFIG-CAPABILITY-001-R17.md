@@ -5,169 +5,161 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
 ## 类别
 
-更正件（R 链，承接 `A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R16`；frontmatter
-`original` 按账本机器规则指基础 ID，与 R9-R16 同法，承接关系由文件名与正文表达）。
-三件事，均不放宽既有登记的判分：其一，更正 R15 差异④折叠带的**判据口径**——原实现按
-`container_depth`（最深叶子节点深度）计带，而 V8 `Array.prototype.join` 的递归阈值按
-**被 join 的数组个数**（与 `to_string_units` 的 frames 同口径）计；最内层为空数组时
-前者比后者少计 1，带外一层的记录被静默跳过而不是像 TS 那样让 load 失败（fix-r5 评审
-boundary#1）。其二，给差异④补**生产信号面**：带内跳过原为静默（唯一计数器
-`#[cfg(test)]`），下次 persist 重写文件即丢数据而生产零信号（评审 boundary#3，按
-CLAUDE.md 分级升 P0）。其三，登记差异①连带的新**答案形状**格：不可拼深键在 read 面的
-回显经迭代无上限序列化器完整作答，而 TS 侧返回路径的 `structuredClone` 在该深度抛错
-（评审 boundary#2）。fix-r6（评审 r6b）更正本件两处：带边界常量按**真实加载点**重测
-（前值 2621 是探针 harness 浅栈产物，实为 2560/2561），「答案形状」段的 clone 边界
-措辞按补测改写（不再主张未探的「≤2000 两侧都成」）。fix-r7（评审 r7）更正本件三处：
-带边界常量的实测覆盖从单一 initialize 链扩到**全部读链**（get / events / accept /
-50 帧同步前缀对照，四链与 boot 同界 2560/2561——评审 P1 担心的「get 链界更高」实测
-不成立）；「带内每次读都会在 clone 上抛」句按实测改准（折叠拼法 get 至 2557 层成、
-2558 起抛）；差异④「跳过 vs load 失败」的读面钉扩到 open 之后的 get / events /
-accept 三面。R15/R16 原字节不动，账本只追加。
+更正件（R 链，承接 `A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R13`；frontmatter
+`original` 按账本机器规则指基础 ID，与 R9-R13 同法，承接关系由文件名与正文表达）。
+登记 #2617 实现单（分支 `claude/issue-2617-projectkey-surrogate`，基线
+`3ca4e1f39f`，交付提交 `243f9f3da`，fix-r1 随 PR #2983 续）落地后 submit 门
+（R13「范围」点名 #2882 先探针后修的三读点之一）的答案格变化，并勘误 r1 注释里
+「TS 把孤立代理串 resolve 到配置项目」的判据表述（评审 MM boundary P1 + 协调者
+复核实测）：
 
-## 基线依据
+- 差异（submit 门非 UTF-8 串键）：修前 `Services::workspace_id`
+  （`services.rs`）的 `projectKey` 字符串分支是
+  `as_string + to_utf8().ok()`，孤立代理项串（`{"projectKey":"\ud800"}`）被
+  `gateway_submit_failed` + `projectKey must be a valid path string.` 拒绝
+  （#2562 定形的类型门报文）。修后字符串分支改
+  `String::from_utf16_lossy` 取真键（#2083 close 路径同法，非串类型仍走
+  #2562 类型门），`serves_project` 能力门一字不动：未服务键答
+  `CAPABILITY_UNAVAILABLE` + 隔离报文。
+- 勘误（判据表述）：r1 注释曾依据 worker 的 resolver 级复跑
+  （`probe-submit-surrogate-resolver.out` 的 `loneSurrogateResolvesLikeFallback:
+  true`）把 TS 结论写成「resolve 结果与 fallback（配置项目）的 slug 完全相同」。
+  该复跑脚本的 `fallbackProjectRoot = process.cwd()`（构造性恒真，只能证明
+  「落到 cwd 的 slug」）；协调者 submit 级探针
+  （`probe-submit-surrogate.out`，fallback 是独立临时项目）显示孤立代理串
+  实际落到**进程 cwd 的项目** slug（`Users-da-ws-pilotdeck-rs`），≠ fallback
+  项目 slug（`var-folders-…-fallback-project`），对照串 `"\ud800sub"` →
+  `…-sub`（slug 正则 `[^A-Za-z0-9._-]+` 把代理段收「-」后经首尾修剪丢弃）。
+  即：TS 对该键**不抛错、照常 resolve**（这一 r1 结论成立），但落点是 cwd 项目
+  而非必然是配置项目。
+- 分叉（与 #2083 close 路径已登记形状同族，非新增豁免）：两侧 identity 规则
+  不同——TS 按 storage id（slug）判，孤立代理串折叠到 cwd 项目 slug → 放行；
+  Rust 按原始路径恒等判，lossy 形（U+FFFD）≠ 配置项目 → `CAPABILITY_UNAVAILABLE`。
+  当 native 进程 cwd == `--project` 时 TS 落到配置项目继续服务、Rust 拒绝，
+  即「TS 放行 / Rust 拒」；是否按 storage-id identity 对齐属后续判定
+  （#2083 人拍选项 1 采纳的同一分差家族，本件沿用同判，不扩大）。
 
-Node v22.22.0（`process.versions` 记录于探针输出首行：`node v22.22.0
-"12.4.254.21-node.33" icu 78.2`），本 worker 树实测：
+R 号口径：R14 已在队双占（PR #2957 / #2913，另 `codex/a8-cli-integration`
+#2786 的远端 ref 亦持有），R15 为 PR #2960 与 #2786 占用，R16 为 #2786 占用
+（gh pr view 文件清单截断，实以 `git ls-tree` 远端 ref 为准）。本树全部 refs
+对 R17 无命中，本件取 R17，不与任何已知 ref 碰撞；缺号如实记于此，若 R17 车道
+后到导致撞号按账本规则出更正件（#2960 R15 先例同法）。编号取舍 AI 代批，
+待人复核（任务书原指 R14，开 PR 时 R14 已双占，为免合并队列 add/add 撞
+`enqueue-check-queued-same-path` 改取首个未占号）。
 
-- fix-r5 `_tmp/20261026-issue-2692/fix-r5/node-probe/`（HEAD `eeec6ec63`）：
-  `fold-band-stackdep.out` 固定调用栈前缀（0/10/50 帧）下二分搜索 `String()` 折叠
-  边界，标量叶与空内层数组两种形状**逐对相同**（2621/2621、2618/2618、2604/2604）
-  → V8 阈值不随叶子形状平移，`container_depth` 在空叶形状下恰好少计 1，评审#1 成立；
-  `fold-band.out`（其调用形态下）`structuredClone` 自 2100 层起抛。
-- fix-r6 `_tmp/20261026-issue-2692/fix-r6/node-probe/`（HEAD `d533ff9e8`，评审 r6b
-  boundary#1 的结构性修法）：`fold-band-loadpoint.out` 以基线 dist 的真
-  `FileRunRegistry`（constructor → initialize → withFileLock → refreshFromDisk →
-  key 模板，生产调用点，非裸函数、非 atDepth 包装）实测 1999/2000/2100 全成、
-  2615/2618/2621/2622/2630 全抛（两叶形逐对相同）；`fold-band-bisect.out` 同形态
-  二分得**精确边界 2560 折叠、2561 抛**。→ fix-r5 的 2621 是更浅调用栈（裸 `String()`
-  探针）下的值，真实加载点边界更低；「TS 能加载的形状不得转 load 失败」与「越带
-  load 失败」两臂在 2560/2561 处分工。
-- fix-r6 `clone-band.out`：直测 `structuredClone` 1999/2000/2100 全成（两叶形）、
-  2621 起全抛，`JSON.stringify` 3000 层仍成、模板拼法与 clone 同界 → fix-r5
-  「clone 自 2100 起抛」是其探针调用形态（更深栈）下的值，直测下边界在
-  (2100, 2621) 未探、随调用栈前缀漂移。
-- fix-r7 `_tmp/20261026-issue-2692/fix-r7/node-probe/`（HEAD `016d2647c`，评审 P1
-  的覆盖修法）：`fold-band-reads.out` 以基线真 `FileRunRegistry` 对**每条到达 key
-  模板的读链**二分——boot（initialize 链复跑，本宿主复现 2560/2561）、get / events /
-  accept 对 open 之后才落盘的快照各自重读（跨进程交接形态）、get+50 帧（50 层同步
-  递归底部调 get，对照「生产请求处理帧加深栈」的担忧）——五链 × 两叶形全部
-  **2560 折 / 2561 抛**：key 模板运行在 `refreshFromDisk` 的 await 后恢复帧里，栈与
-  词法调用方无关，前缀帧在 get 第一个 await 即弹出（对照腿实测同界）。
-  `fold-band-inband-reads.out`：带内（boot 装载）读深记录的真实行为——折叠拼法
-  get 在 2001/2100 层**成功返回记录**、2557 层止、**2558 起抛同一 RangeError**（get
-  调用形态下 clone 的边界），深拼法 get 同界 → 「带内每次读都会在 clone 上抛」不成立
-  （fix-r6 loadpoint 的 2100「deep-record read: ok」即已反例），Rust「跳过单条、其余
-  可读」是登记的 Rust 侧形状而非 TS 逐层对齐。
+## TS 依据
+
+固定基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`（`resources/PilotDeck`，
+只读），Node v22.22.0 / ICU 78.2。submit 链
+`workspaceIdResolver(input.projectKey)` →
+`resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot, pilotHome)`
+（`InProcessGateway.ts:954`、`createLocalGateway.ts:1026-1028`）。
+
+- 协调者 submit 级探针（主仓
+  `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out`）：
+  `lone-surrogate`（`"\ud800"`）→ ok，`"Users-da-ws-pilotdeck-rs"`
+  （**进程 cwd 的 slug**）；`lone-surrogate-fallback`（`"\ud800sub"`）→
+  `"Users-da-ws-pilotdeck-rs-sub"`；`ascii-control`（显式 fallback 临时项目）→
+  `"var-folders-…-T-p2617-probe-0TzGDg-fallback-project"`（与 cwd slug 不同，
+  证明孤立代理串不落 fallback 项目）。
+- resolver 级只读复跑（主仓
+  `_tmp/20261111-2617-evidence/probe-submit-surrogate-resolver.mjs` /
+  `.out`，worker cb8，同一 `paths.ts` resolver 链）：
+  `"\ud800"` 照常 resolve、无异常（`resolved` = cwd slug；其
+  `loneSurrogateResolvesLikeFallback:true` 因脚本 `fallbackProjectRoot =
+  process.cwd()` 为构造恒真，仅证「落到 cwd slug」，不证「落到配置项目」——
+  本件勘误的原始依据）。
+- TS 侧不抛错：`path.resolve` 收任意串（R13 :11-:13 已登记同族：空白 /
+  BOM-only / 孤立代理项串都是真键）。
 
 ## Rust 行为
 
-- 折叠带判据（`storage/run_registry.rs`）：`container_depth` 更名重写为
-  `array_nesting`——只计数组嵌套层数（每个被 join 的数组一层，对象为叶子，
-  `[object Object]` 不递归），与 `to_string_units` frames 同口径；`TS_KEY_FOLD_DEPTH`
-  fix-r6 按真实加载点实测改 2560（原 2621 为浅栈探针产物），fix-r7 把实测覆盖从单一
-  initialize 链扩到**全部读链**（boot / get / events / accept / get+50 帧同步前缀对照，
-  `fold-band-reads.out`：五链 × 两叶形全部 2560 折 / 2561 抛——key 模板运行在
-  `refreshFromDisk` 的 await 后恢复帧里，栈与词法调用方无关，生产请求帧在 get 首个
-  await 即弹出，故常量无需按调用点分带、维持 2560）。效果：2561 层起（空内叶与
-  标量叶同界）记录让读失败（`Maximum call stack size exceeded`），与 TS 的 boot
-  initialize / get / events / accept 五链 load 失败对齐（fix-r7 实测）；2001..2560 带内
-  两形状仍走既有「跳过单条、其余可读」登记形状——TS 侧折叠拼法 get 至 2557 层返回
-  记录、2558 起 clone 抛同一 RangeError（`fold-band-inband-reads.out`），并非
-  「带内每次读都抛」。
-- 生产信号面（差异④）：`read_snapshot` 跳过臂加进程级累计计数
-  `UNREKEYABLE_SKIPPED`（`AtomicUsize`，每跳过一条每读 +1），文件末尾
-  `pub fn unrekeyable_skips()`（`storage/mod.rs` re-export）供生产读取；每次
-  实际发生跳过的读向 stderr 发一行
-  `run registry <path>: skipped N un-rekeyable record(s); the next persist rewrites the file without them`
-  （计数经既有 per-snapshot `unrekeyable` 累加器驱动，紧跟记录循环之后、events 解析
-  之前）。**带语义不变**：跳过 vs TS load 失败的分工仍按 R15 登记待批，本件只补可
-  观测性，不改变哪条记录被跳过、哪条让 load 失败。
-- 答案形状（差异①连带格）：read 面回显响应经 `pilotdeck_protocol::stringify_json`
-  （迭代、无深度上限；`runtime/connection/mod.rs` 的 `send()` 与 `api_web.rs` 即全部
-  线上响应面）序列化，不走 `js_value::json_stringify`（2000 层保守上限，仅服务
-  provider bodies/tools/MCP，不在响应面）。3000 层深键的 miss 回显在 Rust 侧完整
-  成答；TS 侧返回路径经 `structuredClone`——clone 直测 1999/2000/2100 全成（两叶
-  形）、2621 起全抛；fix-r7 在真 get 调用形态下实测折叠拼法读 2557 层止、2558 起
-  抛（`fold-band-inband-reads.out`），边界随调用栈前缀漂移（fix-r5 探针形态下
-  2100 起抛）；机制按 ts-prodkey-probe cell e 推断，如实注明。已实测的分歧带：真
-  get 调用形态下 ≥2558 层的读（clone 抛、迭代序列化器成）；直测下 ≥2621 层的
-  回显；≤2100 直测两侧都成。
+修前（基线 `3ca4e1f39f`）：`services.rs` `workspace_id` 的 projectKey
+字符串分支 `as_string + to_utf8().ok()`，非 UTF-8 串键（孤立代理项）答
+`gateway_submit_failed` + `projectKey must be a valid path string.`（#2562
+nullish 读与类型门不动：null/缺键回落配置项目，非串类型照旧类型错）。
+
+修后（`243f9f3da`，fix-r1 后 `services.rs:1535`）：字符串分支
+`String::from_utf16_lossy(project.units())`（`session_dir.rs` #2083 同一
+转换），随后既有 `Options::serves_project` 原始路径恒等判定不动：未服务键
+（含孤立代理项的 lossy 形）答 `CAPABILITY_UNAVAILABLE` + `The isolated
+native process serves only its configured project.`。残余（residual，#2083
+已登记族）：键的 lossy 形命中配置项目（真实路径含 U+FFFD）时被服务，答该项目
+workspace id。
 
 ## 范围
 
-只覆盖评审 fix-r5 五条（boundary#1/#2/#3、sibling#3、P3#4/#5）、fix-r6 六条
-（boundary#1-5、sibling#1-2）与 fix-r7 五条（P1 全读链实测、P2 探针证据入树与
-路径登记、P2a 带内读措辞、P2 两家 --check 补 declares_test 门禁、P2a turn-read /
-turn-publish 拒跑信封）对应的判据口径更正、信号面、答案形状登记与负控装置维护。
-不覆盖、不改动：R15 差异④「跳过 vs load 失败」的分工语义与批准状态（仍是
-登记待批，人复核可否决）；带内跳过记录在 persist 重写时被丢弃这一行为本身（信号面
-只让丢弃可见，改丢不丢属结构性修法，待裁决）；`replacement.rs` pending/reservations
-字符串域折叠（sibling#1，已由 A7.8-INTERACTION-NONSTRING-OWNER-001-R1 登记，结构性
-修法挂 #1723）；`assembly/steer.rs` 生产者事件键（sibling#2，生产不可达：
-AsyncHookRegistry 唯一生产入口的 sessionKey 先过 `require_text`）；fix-r6 评审的
-P3 各条（sibling#3-8、boundary#6-8，含 `MAX_ARRAY_DEPTH < TS_KEY_FOLD_DEPTH` 的
-编译期断言——现值 2000 < 2560 成立）。不放宽判分、不新增判分豁免；两个序列化器
-不合并（回显面继续用迭代器，provider 面继续用保守上限）。
+覆盖：submit 路径 `Services::workspace_id` 的 `projectKey` 字符串分支一格
+（非 UTF-8 串键），及其机器判据（下节）。#2882 三读点中本件只关
+`services.rs` submit 门；`module_host.rs` `public_skills_create_input` 与
+`config.rs` `seed_read_state` 两读点仍在 #2882 待办。**同键两族两判（登记
+在案，不改）**：`management.rs` `admit_management_project` /
+`snapshot_restore` 的 `targetProjectKey` 门仍是 strict `to_utf8`（R8:28 /
+R13 已登记的 deferred，#2562 任务书 P3 记录在案）；`assembly/memory.rs` 的
+`serves_project` 亦仍 strict `to_utf8`（**本件首次登记**——R8:28 与 R13 的
+deferred 清单均未列此处，fix-r3 按 MM sibling 复核改准出处，此前误标
+「R8:28 / R13 已登记」）——残留键（lossy 形命中配置项目）在 submit /
+close / config 侧被服务、在这些门仍被拒。不放宽判分，不改
+#2562/#2272 已钉的 nullish 回落格与 #2083 已登记的入口层叠。
 
 ## 机器判据
 
-- 静态核（fix-r6 本树实测，HEAD `d533ff9e8`）：
-  `python3 -I src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/negative_controls.py --check`
-  → `#2692 15 mutation anchors OK; 14 literal anchors OK; 15 bound tests declared`
-  （exit 0）。名册 13→15 行（fix-r6 新增 `registry-band-leaf-depth`：带判据变异回
-  旧叶深口径、空内叶带外第一层被跳过、绑 reopen 测试的「past V8's fold band and
-  must fail the load」；`echo-capped-serializer`：`MAX_ARRAY_DEPTH` 抬到 5000 使
-  两口径坍缩、绑深键回显测试的「the capped provider-body serializer refuses the
-  same value」）；字面锚 13→14（新增 read_tests.rs 的两口径 pin；band-leaf-depth
-  行复用既有 pin）；`--check` 另核 15 个绑定测试名仍在声明文件里
-  （`bind_module_file` + `declares_test`，评审 boundary#5）。turn-read / turn-publish
-  的 `--check` 补 `before != after` 拒绝与 `declares_test`（含 `scenario!` 宏形态），
-  输出 `27 mutation anchors OK; 27 bound tests declared` / `19 + 19`。
-- 行为钉（三条测试）：
-  `storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
-  补空叶形状（fix-r6：2001/2560 跳过、2561 load 失败，两形状共用真实加载点边界，
-  空内叶 2561 是叶深口径的判别腿）；
-  `storage::run_registry_tests::unrekeyable_skips_advances_in_production_on_every_read`
-  （累计计数器每读递增）；
-  `runtime::turn::read::tests::deep_session_key_echo_survives_the_response_serializer`
-  （3000 层回显完整序列化 + 有上限序列化器拒绝同一值，钉两口径分工）。
-  fix-r6 两条新变异（`registry-band-leaf-depth` / `echo-capped-serializer`）本树
-  已逐条「应用 → `cargo test --no-run` → 点名测试变红于绑定断言 → 恢复」实测；
-  全量杀灭轮（需 cargo 与净树）由协调者在宿主跑，杀灭判据以 `EXPECTED_NAMES`
-  15 行为分母。
-- CI 接线（评审 sibling#3）：`negative-controls` job 的「绑定漂移自检」步补四行
-  `--check`——native-config、turn-submit（已有 `--check`，先前未接线）与 turn-read、
-  turn-publish（本轮新增只读 `--check`：锚点唯一性 + 名册无重复，零 cargo，同
-  #1433/#2391/#2495 先例；fix-r6 起另核 no-op 变异与绑定测试名）。fix-r7（评审
-  sibling#1）：native-config 的 `--check` 补 `bind_module_file` + `declares_test`
-  门禁（7 模块前缀表，输出增报 `70 bound tests declared`）；turn-submit 经
-  `_negkit/submit.py check(modules=…)` 同款门禁（同源消费者 failure-guard 一并
-  传表，其门禁在每次变更轮的 build() 亦跑）；turn-read / turn-publish 把源文件
-  读取与 declares_test 收进 `try/except (ValueError, OSError): refuse(...)` 信封
-  （缺文件 / 改名 → rc 2 `INVALID:`，#2391 契约，评审 concurrency#1）。
-- 读面钉（fix-r7，评审 P1）：
-  `storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
-  追加 open 之后落盘快照的读面腿：2560 层 get 跳过计数 + 锚记录可读、2561 层
-  get / events / accept 三面均 `Err`（`Maximum call stack size exceeded`）、快照
-  字节不变；带边界常量五链实测后维持 2560（探针输出
-  `_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-reads.out` 与
-  `fold-band-inband-reads.out`，与 fix-r6 三份一并随证据目录带回，sha256 见该轮
-  RESULT.md）。
-- 账本闸门：`check_frozen.py` 的 `check_diffs` 规则要求本件 frontmatter `original`
-  写基础 ID（已写 `-001`）；R15/R16 原字节不动。
+行号为 fix-r1 提交上的行号（交付提交 `243f9f3da` 之后）：
+
+- 用例（`management_tests.rs`）：
+  `submit_workspace_id_surrogate_project_key_reaches_the_capability_gate`
+  （`:2591`）两格——拒绝格：`JsString::from_utf16([0xd800])` 键断
+  `error.code == "CAPABILITY_UNAVAILABLE"` + 隔离报文逐字（含
+  「not the type error」前置断言钉住非 #2562 类型错）；放行格：residual
+  键（配置路径 + `-pd-` + U+FFFD 位为 0xD800）断 `Ok(Some(workspace id))`，
+  且 served id 逐字等于
+  `SnapshotProjects::new(home, cwd=空).workspace_id(residual)`（fix-r1
+  评审 P2 处置：放行格有鉴别力，不只是一段合法 UTF-8 字符串）。
+- 负控（`tests/fixtures/native-config/negative_controls.py` 新增三行）：
+  `submit-surrogate-project-key-rejected`（lossy 转换变异回
+  `to_utf8().ok()` 拒绝门，绑上述用例 code 断言）、
+  `submit-serve-gate-removed`（能力门 `if false &&` 失效，绑
+  「not the type error」前置断言）与 `submit-admit-cell-serves-wrong-id`
+  （id 计算变异取 `home` 而非 `options.project`，绑放行格等值断言——
+  fix-r2 评审 P2 处置：放行格此前零红侧）。`--check` →
+  `#1457 121 mutation anchors OK; #2065 75 literal anchors OK`（rebase 后
+  head `8ecbdee3b` 2026-11-12 实跑；分支旧树的 83/70 系 rebase 前输出，作废——
+  表内其余行为他单在 main 侧的登记，不属本件证据面）；正式全表
+  82/82 KILLED、0 SURVIVED **量于交付提交 `243f9f3da`**（本机磁盘闸窗口期
+  分轮跑完，合并口径 r2 15 + r3 2 + r4 9 + r5 56，各轮日志
+  `negctl-full-local-attempt{2,3,4}.log` 与 `negctl-full-r5-a1.log`；
+  attempt1 全 INVALID 是机器磁盘闸拒跑、非被测逻辑，不作证据；变异体 2 的
+  杀死载荷 `Some([97,56,45,109,97,105,110])` = setup 注册项目 id，证能力门是
+  唯一拒点）。fix 头定向复跑：fix-r1 两行 `negctl-fix-r1-targeted.log`
+  2/2 KILLED；fix-r2 三行（含新行）`negctl-fix-r2-targeted.log` 3/3 KILLED；
+  rebase 后 fix-r4 在 head `8ecbdee3b` 复跑三行（DS r6 sibling/boundary 双 P1
+  处置：数字不可复现处）`_tmp/20261112-issue-2617-fixr4/negctl-targeted.log`
+  3/3 KILLED（rc=0，2026-11-12 实测）。
+- 回归：`submit_workspace_id` 过滤 2/2（#2562 格）、`native_process::`
+  家族过滤在 head `8ecbdee3b` 复跑 397 passed / 0 failed / 54 ignored
+  （rc=0、恰一行 `test result:`，2026-11-12 实测
+  `_tmp/20261112-issue-2617-fixr4/family-rerun.out`；rebase 前旧头 `6e857a941`
+  的 390 passed（fixr3/family-rerun.out）随 main 侧他单新增用例作废；fix-r3 按 MM boundary
+  复核改数——早前 20261111 摘录 `native-process-family-postfix.out` 记
+  390 passed / 1 failed，失败用例
+  `settings_tests::reload_ticket_releases_after_settlement` 在本次 head
+  复跑通过（family-rerun.out:342），非可复现失败，旧「391/391」表述作废）、
+  gateway lib 全量 5371 passed / 2 failed / 237 ignored
+  （worker cb8 原始输出 `cargo-test-no-run.out` /
+  `gateway-lib-full-postfix.out`；2 失败之一为 feishu / wecom_callback
+  测试共用固定端口 18990 的套件内并发撞面 `EADDRINUSE`、另一为时序预算，
+  均隔离复跑通过——全量并行复跑须注意该 18990 撞面）。
+- 账本闸门：`diffs/` 只追加（本件为新增文件，R13 及更早字节未动），
+  `check_frozen.py --base origin/main` PASS（输出 30 entries，该计数指冻结
+  正文件的条目；`--print-ledger` 合并视图已含本件；fix-r2 头原始输出
+  `check-frozen-fix.out`）。
 
 ## 批准记录
 
-未批准，非已接受差异，待人复核（可否决）。2026-11-12，#2692 fix-r5 worker AI
-代登记。本件更正 R15 差异④的带判据口径（叶子深度 → join 帧数口径，空叶形状差 1 已
-实测钉死）、为该差异补生产信号面（计数器 + stderr 行，带语义与批准状态不变）、并新
-登记差异①连带的深键回显答案形状格（TS 侧机制按 cell e 推断、确切带未探，如实注明）。
-同日 fix-r6 worker 更正两处：带边界常量按真实加载点（constructor → initialize →
-withFileLock → refreshFromDisk → key 模板）实测从 2621 改 2560（浅栈探针产物），
-「答案形状」段 clone 边界措辞按 1999/2000/2100 补测改写（不再主张未探的
-「≤2000 两侧都成」）。同日 fix-r7 worker 再更正三处：带边界实测覆盖扩到全部读链
-（五链 × 两叶形同界 2560/2561，评审 P1 的「get 链界更高 / 生产链更低」两向担忧均
-实测不成立——key 模板在 `refreshFromDisk` 的 await 后恢复帧运行，栈与词法调用方
-无关）；「带内每次读都在 clone 上抛」措辞按实测改准（折叠拼法 get 至 2557 层成、
-2558 起抛）；两家漏跟的 `--check` 门禁与 turn-read / turn-publish 的拒跑信封随读面
-钉一并登记。人复核否决则循账本规则出 `-R18` 更正。
+未批准，非已接受差异，待人复核（可否决）。2026-11-11，#2617 实现单落地后
+AI 代登记（同轮更正 r1 注释的「落到配置项目」表述，评审 DS-sibling P1 /
+MM-boundary P1 的处置；R17 编号取舍见「类别」R 号口径，AI 代批待人复核）。
+差异本体为对齐性修复（非 UTF-8 串键不再吃 submit 特有的类型错、改走与
+#2083 同族的能力门判定），不新增豁免、不改判分语义、不动 #2562
+nullish/类型门。人复核若否决（如裁定 submit 门应按 storage-id identity
+对齐 TS、或 cwd 落点应另行登记），循账本规则出 `-R18` 更正。

@@ -3,7 +3,10 @@ use crate::{
     negative_assert, negative_assert_eq,
     runtime::{
         connection::{Call, RequestError},
-        turn::gateway::{GatewayRequests, tests::native_ws_fixture},
+        turn::gateway::{
+            GatewayRequests,
+            tests::{native_ws_fixture, native_ws_fixture_with_cleanup},
+        },
     },
     test_native_ws_sample::RFC6455_SAMPLE_NONCE,
 };
@@ -776,6 +779,13 @@ async fn upgrade_budget_boundary_matches_ts() {
 /// the 431 shape fails here with its id, and a stale list entry points at
 /// the cell to re-check — widening or dropping the predicate fails here
 /// instead of re-widening the replay's mask.
+/// #2789 (cluster 2): the predicate-inferred comparison above is blind to a
+/// stale entry — an id the oracle does not record admits nothing, so the
+/// inference stays green while the constant carries dead weight (and a future
+/// oracle reusing the id as a served cell would silently inherit the
+/// exemption). The sorted constant therefore also has to equal the sorted
+/// oracle 431 set directly; `native-ws-budget-cl0-stale` appends one
+/// unrecorded id, which only this leg catches.
 #[test]
 fn parser_admission_cells_cover_exactly_the_oracle_431s() {
     let recorded = budget_oracle();
@@ -799,9 +809,28 @@ fn parser_admission_cells_cover_exactly_the_oracle_431s() {
     oracle_431s.sort_unstable();
     negative_assert_eq!(
         admitted,
-        oracle_431s,
+        oracle_431s.clone(),
         "#2153 the content-length exemption covers exactly the oracle's 431 cells"
     );
+    let mut listed = listed_admission_cells();
+    listed.sort_unstable();
+    negative_assert_eq!(
+        listed,
+        oracle_431s,
+        "#2153 the exemption list itself is exactly the oracle's 431 cells, so a stale entry points at the cell to re-check"
+    );
+}
+
+/// #2789: the listed cells the direct set comparison reads — the constant,
+/// with the stale-entry mutant appending one id the oracle does not record.
+/// Only the direct leg of `parser_admission_cells_cover_exactly_the_oracle_431s`
+/// sees it: the predicate-inferred admitted set stays green on a stale entry.
+fn listed_admission_cells() -> Vec<&'static str> {
+    let mut listed = PARSER_ADMISSION_CELLS.to_vec();
+    if crate::mutants::on("native-ws-budget-cl0-stale") {
+        listed.push("plain-16123");
+    }
+    listed
 }
 
 /// #2153: the raw-pin anchors, standalone literals the native-ws-entry
@@ -3070,4 +3099,188 @@ async fn phased_drain_drop_aborts_runner() {
             .is_err(),
         "#2351 runner stop future is dropped without completing"
     );
+}
+
+/// #2557: a partial-head HTTP client — the connection that keeps the
+/// close-notice window's join set non-empty. It never upgrades, so the stop
+/// is consumed without closing it (`served_heads == 0` is never idle) and
+/// the close-notice watch the WS transport alone observes does not apply;
+/// its headers deadline is disarmed by the same stop (the #749 half
+/// handshake shape), it never submits a host job, and nothing but the strong
+/// abort reclaims it.
+async fn partial_head_survivor(address: SocketAddr) -> TcpStream {
+    let mut socket = TcpStream::connect(address)
+        .await
+        .expect("#2557 survivor connect");
+    socket
+        .write_all(b"GET /ws HTTP/1.1\r\n")
+        .await
+        .expect("#2557 survivor partial head write");
+    socket
+}
+
+/// #2557: the two merged `request_shutdown` re-issue sites in the S4 half —
+/// the revisit branch's (the interrupted marker) and the first run's (ahead
+/// of the abort join) — each need a deletion that turns this test red. The
+/// gated cleanup runs inside the host teardown drain, so its `entered`
+/// signal is exactly "the teardown request went out and the dedicated host
+/// thread acted on it"; nothing here awaits `stopped()`, so a request that
+/// never fires is a signal that never comes. Real clock like the interrupted
+/// revisit's: the host thread's cross-thread wake is what is awaited.
+#[tokio::test]
+async fn a_cancelled_owner_finish_still_requests_the_host_teardown() {
+    // Scenario A — the drop inside the close-notice window: the revisit's
+    // own re-issue is the only request that can follow.
+    {
+        let (entered, entered_rx) = oneshot::channel::<()>();
+        let (release, release_rx) = oneshot::channel::<()>();
+        let host = native_ws_fixture_with_cleanup(Arc::new(Requests::default()), async move {
+            let _ = entered.send(());
+            let _ = release_rx.await;
+            Ok(())
+        });
+        let server = NativeWsServer::bind(
+            "127.0.0.1:0"
+                .parse()
+                .expect("#2557 scenario A listen address"),
+            host,
+            "fixture-token".into(),
+            "probe".into(),
+        )
+        .await
+        .expect("#2557 scenario A fixture bind");
+        let address = server.local_addr().expect("#2557 scenario A address");
+        let (stop, stop_rx) = oneshot::channel::<()>();
+        let phased = server.run_phased(
+            async move {
+                let _ = stop_rx.await;
+            },
+            Duration::from_millis(100),
+        );
+        let survivor = partial_head_survivor(address).await;
+        // A completed handshake behind the survivor is the accept-loop
+        // barrier (the #749 shape): the FIFO accept guarantees the
+        // survivor's task is already in the connections set when the stop
+        // below fires, so the drain is really held open by it, not racing
+        // a backlog entry the loop never accepted.
+        let mut barrier = Client::connect(address).await;
+        barrier.close().await;
+        stop.send(()).expect("#2557 scenario A stop fires");
+        negative_assert!(
+            !timeout(DEADLINE, phased.drained())
+                .await
+                .expect("#2557 scenario A drain bounded"),
+            "#2557 the survivor holds the entry drain open"
+        );
+        // One poll parks the first finish at the window join — the only
+        // await point before the request: the marker is set, the notice is
+        // out, and no request has been sent.
+        let mut first = Box::pin(phased.finish());
+        negative_assert!(
+            poll_request(first.as_mut()).is_pending(),
+            "#2557 the first finish parks in the close-notice window"
+        );
+        drop(first);
+        let verdict = timeout(DEADLINE, phased.finish())
+            .await
+            .expect("#2557 scenario A revisit is bounded");
+        negative_assert!(
+            matches!(&verdict, Err(error) if error.to_string()
+                .contains("native WS owner finish was interrupted")),
+            "#2557 the revisit records the interrupted verdict"
+        );
+        // The #2557 direct-deletion witness (the revisit branch's re-issue
+        // deleted — no optional switch here, per the R6 correction entry
+        // (A8.5-SWITCH-MACHINE-001-R6) these two direct-deletion
+        // witnesses carry no fixture row): with it
+        // gone, no request ever goes out — the first run died inside the
+        // window and the unawaited `StopHost` drop request is all that is
+        // left while the phased run is alive.
+        negative_assert!(
+            matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
+            "#2557 the revisit re-issue requests the host teardown"
+        );
+        release.send(()).expect("#2557 scenario A cleanup release");
+        drop(survivor);
+    }
+    // Scenario B — the drop past the window, inside the abort join: the
+    // first run's own re-issue is the only request that has gone out, and it
+    // is asserted before any revisit could send one.
+    {
+        let (entered, entered_rx) = oneshot::channel::<()>();
+        let (release, release_rx) = oneshot::channel::<()>();
+        let host = native_ws_fixture_with_cleanup(Arc::new(Requests::default()), async move {
+            let _ = entered.send(());
+            let _ = release_rx.await;
+            Ok(())
+        });
+        let server = NativeWsServer::bind(
+            "127.0.0.1:0"
+                .parse()
+                .expect("#2557 scenario B listen address"),
+            host,
+            "fixture-token".into(),
+            "probe".into(),
+        )
+        .await
+        .expect("#2557 scenario B fixture bind");
+        let address = server.local_addr().expect("#2557 scenario B address");
+        let (stop, stop_rx) = oneshot::channel::<()>();
+        let phased = server.run_phased(
+            async move {
+                let _ = stop_rx.await;
+            },
+            Duration::from_millis(100),
+        );
+        let survivor = partial_head_survivor(address).await;
+        // The same accept-loop barrier as scenario A's.
+        let mut barrier = Client::connect(address).await;
+        barrier.close().await;
+        stop.send(()).expect("#2557 scenario B stop fires");
+        negative_assert!(
+            !timeout(DEADLINE, phased.drained())
+                .await
+                .expect("#2557 scenario B drain bounded"),
+            "#2557 the survivor again holds the entry drain open"
+        );
+        let mut first = Box::pin(phased.finish());
+        negative_assert!(
+            poll_request(first.as_mut()).is_pending(),
+            "#2557 the first finish parks in the window again"
+        );
+        // Let the window expire in real time: a paused clock would race
+        // its auto-advance against the host thread's cross-thread `entered`
+        // wake, which nothing virtual would deliver in time.
+        tokio::time::sleep(CLOSE_FRAME_WINDOW + Duration::from_millis(50)).await;
+        // The second poll runs the window's expiry through: the request
+        // ahead of the abort join fires synchronously, and the half parks in
+        // the join's await (the aborted survivor's reaping needs the
+        // scheduler, so this manual poll stays Pending).
+        negative_assert!(
+            poll_request(first.as_mut()).is_pending(),
+            "#2557 the first finish parks in the abort join past the request"
+        );
+        // The #2557 direct-deletion witness (the first run's re-issue
+        // deleted — no optional switch here, per the R6 correction entry
+        // (A8.5-SWITCH-MACHINE-001-R6) these two direct-deletion
+        // witnesses carry no fixture row): with it
+        // gone, no request has gone out — the half was cut before
+        // `host.shutdown`'s own request was reached, and the revisit below
+        // is what would have sent one. Anchored before that.
+        negative_assert!(
+            matches!(timeout(DEADLINE, entered_rx).await, Ok(Ok(()))),
+            "#2557 the pre-join re-issue requests the host teardown"
+        );
+        drop(first);
+        let verdict = timeout(DEADLINE, phased.finish())
+            .await
+            .expect("#2557 scenario B revisit is bounded");
+        negative_assert!(
+            matches!(&verdict, Err(error) if error.to_string()
+                .contains("native WS owner finish was interrupted")),
+            "#2557 the revisit still records the interrupted verdict"
+        );
+        release.send(()).expect("#2557 scenario B cleanup release");
+        drop(survivor);
+    }
 }

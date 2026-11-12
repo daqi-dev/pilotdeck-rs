@@ -433,6 +433,9 @@ const TWIN_EXEMPTIONS: &[(&str, &str)] = &[
     ("channel-unmigrated", LEGACY_RUNNER),
     ("channel-unmigrated-startup", LEGACY_RUNNER),
     ("commands-catalog", LEGACY_RUNNER),
+    // merge-main-r3: a main-side #1833 fixture (no twin on main either --
+    // main's small selfcheck never ran the census), kept LEGACY here.
+    ("config-error-names", LEGACY_RUNNER),
     ("config-store", LEGACY_RUNNER),
     ("connection-context", LEGACY_RUNNER),
     ("cron-schedule", LEGACY_RUNNER),
@@ -493,6 +496,9 @@ const TWIN_EXEMPTIONS: &[(&str, &str)] = &[
     ("mcp-hooks-spawn", LEGACY_RUNNER),
     ("mcp-http-corrupt-body", LEGACY_RUNNER),
     ("mcp-http-encoding", LEGACY_RUNNER),
+    // merge-main-r3: a main-side #2186 fixture (no twin on main either --
+    // main's small selfcheck never ran the census), kept LEGACY here.
+    ("mcp-resolver-lease", LEGACY_RUNNER),
     ("memory-gateway", LEGACY_RUNNER),
     ("memory-maintenance", LEGACY_RUNNER),
     ("metadata-from-env", LEGACY_RUNNER),

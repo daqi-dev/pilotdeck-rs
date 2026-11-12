@@ -298,7 +298,7 @@ async fn production_cleanup_matrix() {
         if ["release", "cancel", "never"].contains(&mode) {
             negative_assert_eq!(
                 calls.lock().expect("#1071 before cleanup calls").clone(),
-                vec!["automation", "channels", "session"],
+                vec!["automation", "channels", "flush", "session"],
                 "#1071 production cleanup waits for predecessor"
             );
             if mode != "never" {
@@ -325,9 +325,9 @@ async fn production_cleanup_matrix() {
             if mode == "never" {
                 // #1328: the channel assembly stops before the gateway
                 // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
-                vec!["automation", "channels", "session"]
+                vec!["automation", "channels", "flush", "session"]
             } else {
-                vec!["automation", "channels", "session", "project"]
+                vec!["automation", "channels", "flush", "session", "project"]
             },
             "#1071 production cleanup attempts both resources"
         );
@@ -359,16 +359,22 @@ async fn production_cleanup_matrix() {
         };
         // #1328: the native host stops its channel assembly before the gateway
         // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37). The TS
-        // probe (tests/fixtures/native-process/generate.mts) has no observer
-        // for that step, so its `calls` only carry the gateway disposals: the
-        // channels step is pinned here, on the Rust side, and dropped before
-        // the golden comparison. Making the generator emit a synthetic
-        // "channels" entry would turn the fixture into a mirror of this
-        // implementation instead of a reading of the baseline. #2294: the
+        // production-cleanup probe (tests/fixtures/native-process/generate.mts)
+        // has no observer for that step, so its `calls` only carry the gateway
+        // disposals: the channels step is pinned here, on the Rust side, and
+        // dropped before the golden comparison. Making the generator emit a
+        // synthetic "channels" entry would turn the fixture into a mirror of
+        // this implementation instead of a reading of the baseline. #2294: the
         // automation bundle now stops ahead of the channels
         // (PilotDeckServerShutdownBundle.ts:32) for the same reason — the
         // probe observes neither — so both native-only steps are pinned here
-        // and dropped together.
+        // and dropped together. #1725 item 15: the flush is now observed too
+        // (`channels` → `flush`, the closeServer → flushChannelState pair),
+        // and the order is no longer only this assembly's self-report: the
+        // same oracle's real `PilotDeckServerShutdownBundle` rows (the
+        // release/cancel `after` arrays) observed the baseline's own teardown
+        // order, and the mapped comparison below holds the native order to
+        // that real observation.
         negative_assert_eq!(
             actual_calls.first().copied(),
             Some("automation"),
@@ -379,11 +385,51 @@ async fn production_cleanup_matrix() {
             Some("channels"),
             "#1328 channel assembly stops before the gateway lifecycle disposal"
         );
-        let gateway_calls: Vec<&str> = actual_calls
+        negative_assert_eq!(
+            actual_calls.get(2).copied(),
+            Some("flush"),
+            "#1725 the channel state flush follows the channel stop"
+        );
+        // #1725 item 15: the real TS observation — the shutdown bundle's
+        // release row records `automation → server (closeServer) → flush
+        // (flushChannelState) → snapshot → gateway (disposeGateway) →
+        // telemetry` from the baseline itself. Map the native labels onto it
+        // (`channels` ↔ `server`, the session/project pair ↔ the one gateway
+        // disposal) and keep only the labels both sides have: the native
+        // teardown must walk them in the same order the baseline did.
+        let bundle_after = fixture["observations"]["release"]["after"]
+            .as_array()
+            .expect("#1725 TS shutdown bundle release row")
             .iter()
-            .copied()
-            .filter(|step| !matches!(*step, "automation" | "channels"))
-            .collect();
+            .filter_map(|value| value.as_str())
+            .filter(|step| ["automation", "server", "flush", "gateway"].contains(step))
+            .collect::<Vec<&str>>();
+        // The session/project pair is the native half of the one TS gateway
+        // disposal, so consecutive mapped labels collapse (the pair must stay
+        // adjacent for the collapse to be total — anything interleaved between
+        // the two disposals breaks the equality below on its own).
+        let mut native_mapped: Vec<&str> = Vec::new();
+        for mapped in actual_calls.iter().copied().filter_map(|step| match step {
+            "automation" => Some("automation"),
+            "channels" => Some("server"),
+            "flush" => Some("flush"),
+            "session" | "project" => Some("gateway"),
+            _ => None,
+        }) {
+            if native_mapped.last().copied() != Some(mapped) {
+                native_mapped.push(mapped);
+            }
+        }
+        negative_assert_eq!(
+            native_mapped,
+            bundle_after,
+            "#1725 teardown order matches the real TS shutdown bundle observation"
+        );
+        // #1725: consume the pinned native-only prefix positionally —
+        // dropping the steps by value would silently swallow an automation,
+        // channels or flush step that landed anywhere later in the order too,
+        // instead of only the first three the assertions above pinned.
+        let gateway_calls: Vec<&str> = actual_calls.iter().copied().skip(3).collect();
         negative_assert_eq!(
             json!(gateway_calls),
             *ts_calls,

@@ -54,7 +54,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (KILL_TIMEOUT, defer_signal_exit, mutating_sources,
                              restore_critical, run_owned, take_deferred_signal,
-                             wait_for_slot)
+                             wait_for_slot, write_source_atomic)
 from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -3723,7 +3723,1615 @@ MUTATIONS = [
      "                        bi50 = bi49\n"
      "                        bi50['setattr'](report, 'status', 'PASS')\n"
      "                    report['status'] = overall\n"),
+
+    # #1953 fix-r35 (issue A..G): the nine constructs the r34 resolver still
+    # read as clean.  Each one is a real write to the shared aggregator with a
+    # construct the analyser lost sight of.
+    ('calibrate-loop-backedge-alias', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import builtins\n"
+     "                        dict = builtins.dict\n"
+     "                        for i in (0, 1):\n"
+     "                            if i:\n"
+     "                                dict.update({'status': 'PASS'})\n"
+     "                            dict = report\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-sameline-restore', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import builtins\n"
+     "                        dict = report; dict.update({'status': 'PASS'}); "
+     "dict = builtins.dict\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-shared-seen-paths', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        a = setattr\n"
+     "                        h = a\n"
+     "                        h = a\n"
+     "                        h(report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-decorator-lambda-scope', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def outer():\n"
+     "        x = md\n"
+     "\n"
+     "        @((lambda y=x: (lambda f: (setattr(y, 'common', object()), f)[1]))())\n"
+     "        def inner():\n"
+     "            x = object()\n"
+     "\n"
+     "    outer()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-nonlocal-walrus-withdraw', GUARD_SOURCE,
+     "    if policy == 'round':\n",
+     "    if False:\n"
+     "        def middle():\n"
+     "            def inner():\n"
+     "                nonlocal common\n"
+     "                import types\n"
+     "                (common := types.SimpleNamespace(\n"
+     "                    aggregate_status=lambda *a: ('PASS', 0)))\n"
+     "            inner()\n"
+     "        middle()\n"
+     "    if policy == 'round':\n"),
+    ('calibrate-handle-list-literal', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, _n)]\n"
+     "    _hs[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-dict-literal', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = {'x': getattr(md, _n)}\n"
+     "    _hs['x']('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-yield', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    def _handles():\n"
+     "        yield getattr(md, _n)\n"
+     "    next(_handles())('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-handover', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _pdrs_attr_name = '__getattribute__'\n"
+     "    getattr(md, _pdrs_attr_name)('__dict__')['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-dictcomp-escape', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = {k: getattr(md, k) for k in (_n,)}\n"
+     "    _hs['__setattr__']('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-listcomp-escape', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _hs[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-aliased-escape', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _f = _hs[0]\n"
+     "    _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-write-attribute', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    getattr(md, '__getattribute__')('__setattr__')"
+     "('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-const-subscript-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _keys = ('__setattr__',)\n"
+     "    getattr(md, _keys[0])('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-match-capture-helper', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        match operator.setitem:\n"
+     "                            case h:\n"
+     "                                h(report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-comprehension-write-helper', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        [h(report, 'status', 'PASS')\n"
+     "                         for h in [operator.setitem]]\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-mixed-alias-binding', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        h = lambda *a: None\n"
+     "                        h = operator.setitem\n"
+     "                        h(report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-handle-container-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _other = _hs\n"
+     "    _other[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-mapping-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _hs[0]['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-list-const-subscript-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _keys = ['__doc__']\n"
+     "    _keys[0] = '__setattr__'\n"
+     "    getattr(md, _keys[0])('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comprehension-filter-write', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        [_r for _r in (1,)\n"
+     "                         if operator.setitem(report, 'status', 'PASS')]\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-match-capture-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    match md:\n"
+     "        case h:\n"
+     "            h.common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-match-capture-setattr-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    match md:\n"
+     "        case h:\n"
+     "            setattr(h, 'common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-attr-spelling', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.__getattribute__('__dict__')['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-name-spelling', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _key = '__dict__'\n"
+     "    md.__getattribute__(_key)['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-wrapped-container', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in list(_hs):\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-after-loop', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-slice', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs[:]:\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs.copy():\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-result-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _g = [_h for _h in (md,)]\n"
+     "    _g[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-rebind-if', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    if False:\n"
+     "        _h = None\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-after-match', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    match 0:\n"
+     "        case 0:\n"
+     "            _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-dict-result', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _g = {0: _h for _h in (md,)}\n"
+     "    _g[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-name-iter', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _items = (md,)\n"
+     "    _g = [_h for _h in _items]\n"
+     "    _g[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-return', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def _leak():\n"
+     "        _n = '__setattr__'\n"
+     "        _hs = [getattr(md, k) for k in (_n,)]\n"
+     "        for _h in _hs:\n"
+     "            pass\n"
+     "        return _h\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    _f = _h\n"
+     "    _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-starred-const-subscript-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _more = ('__setattr__',)\n"
+     "    _keys = ('__doc__', *_more)\n"
+     "    getattr(md, _keys[-2])('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-handle-relay', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _g = [_h for _h in _hs]\n"
+     "    _g[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-finally-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    try:\n"
+     "        for _h in _hs:\n"
+     "            pass\n"
+     "        raise RuntimeError()\n"
+     "        _h = None\n"
+     "    finally:\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-closure', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    def _inner():\n"
+     "        _h('common', object())\n"
+     "    _inner()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-shadowed-fresh', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    object = lambda: _hs[0]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    _h = object()\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-with-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    import contextlib as _cl\n"
+     "    with _cl.nullcontext(_h) as _f:\n"
+     "        _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-except-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    try:\n"
+     "        raise Exception(_h)\n"
+     "    except Exception as _e:\n"
+     "        _f = _e.args[0]\n"
+     "        _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-name-iter', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _items = (_hs[0],)\n"
+     "    for _h in _items:\n"
+     "        pass\n"
+     "    _f = _h\n"
+     "    _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-handle-relay-for', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _g = [_h for _h in _hs]\n"
+     "    for _f in _g:\n"
+     "        _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-handle-relay-chain', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _g = [_h for _h in _hs]\n"
+     "    _j = [_f for _f in _g]\n"
+     "    _j[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-assign-call', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _x = [_h('common', object())]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-def-default', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    def _inner(_x=_h('common', object())):\n"
+      "        pass\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-readonly-call-leak', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    print(_helper(_h))\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-nested-param', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    def _inner():\n"
+      "        def _unused(_h):\n"
+      "            pass\n"
+      "        _h('common', object())\n"
+      "    _inner()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-compare-call-leak', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    if _sink(_h) == 0:\n"
+      "        pass\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-outer-shadow-fresh', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    object = lambda: _hs[0]\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _h = object()\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-outer-shadow-print', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    print = _sink\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _g = lambda: print(_h)\n"
+      "    _g()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-ambiguous-literal', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _items = ()\n"
+      "    _items = (md,)\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    for _m in _items:\n"
+      "        _m.common = object()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-comp-element-call', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _g = [_h('common', object()) for _j in (md,)]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-call-attribute', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _h.__call__('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-call-attribute-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f = _h.__call__\n"
+      "    _f('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-false-filter-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _g = [_m for _m in (md,)"
+      " if setattr(_m, 'common', object()) if False]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-clear', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _h = object()\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-with-suppress', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    with suppress(ValueError):\n"
+      "        raise ValueError()\n"
+      "        _h = object()\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-shadow', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        print = _sink\n"
+      "        print(_h)\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-lambda-default', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f = lambda _x=_h('common', object()): None\n"
+      "    _f()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-def', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        def _h():\n"
+      "            pass\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-method-self', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _x = _h.__self__\n"
+      "    _x.common = object()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 11 (codex r7 five P0).
+    ('calibrate-for-target-conditional-literal-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _items = (md,)\n"
+      "    if _flag:\n"
+      "        _items = ()\n"
+      "    for _x in _items:\n"
+      "        _x.common = object()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-enclosing-binding-after-use', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _early():\n"
+      "        for _x in _items:\n"
+      "            _x.common = object()\n"
+      "    _items = (md,)\n"
+      "    _early()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-tuple-partial-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f, _x = _h, [_h('common', object())]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-comp-partial-shadow', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f = _h\n"
+      "    [_f('common', object()) for _h in (None,)]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-assert-msg', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    try:\n"
+      "        assert False, _h\n"
+      "    except AssertionError as _e:\n"
+      "        _e.args[0]('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 12 (codex r8 P0-1..P0-4): the round-11 class-body and
+    # enclosing-scope rules each answered one shape and missed the next.
+    ('calibrate-for-target-enclosing-call-between-rebinds', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _items = (md,)\n"
+      "    def _early():\n"
+      "        for _x in _items:\n"
+      "            _x.common = object()\n"
+      "    _early()\n"
+      "    _items = ()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-compound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        if _flag:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-method-closure', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _h = lambda *a: None\n"
+      "        def _method(self):\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-shadowed-constructor', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        object = lambda: _hs[0]\n"
+      "        _h = object()\n"
+      "        _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-import-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _mw\n"
+      "    def _mw_use():\n"
+      "        _mw(md, 'common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-copy-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _f = _h\n"
+      "        _f('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-nested-class-method', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _h = lambda *a: None\n"
+      "        class _D:\n"
+      "            def _method(self):\n"
+      "                _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 14 (codex r10 P0-1..P0-4): which binding a use reads
+    # is a flow question -- a branch, a loop back edge, a column on the same
+    # line, and a class-body block each decide it.
+    ('calibrate-for-target-conditional-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _cw\n"
+      "    if _flag:\n"
+      "        from builtins import print as _cw\n"
+      "    _cw(md, 'common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-loop-back-edge', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _lw\n"
+      "    for _x in ():\n"
+      "        _lw(md, 'common', object())\n"
+      "        from builtins import setattr as _lw\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-same-line-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _sw;"
+      " _sw(md, 'common', object());"
+      " from builtins import print as _sw\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-nested-copy-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    def _g():\n"
+      "        if True:\n"
+      "            _f = _h\n"
+      "        _f('common', object())\n"
+      "    _g()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-block-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        if True:\n"
+      "            _f = _h\n"
+      "        _f('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 15 (codex r14 P0-1 / P0-2 / P0-4): the enclosing
+    # binding is read at the call, an assignment whose right side names a
+    # write helper keeps the spelling one, and the first resolution of a
+    # module scope sees its loop back edges.  Each row failed before round 15.
+    ('calibrate-for-target-module-call-before-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _mc\n"
+      "    def _mc_use():\n"
+      "        _mc(md, 'common', object())\n"
+      "    _mc_use()\n"
+      "    from builtins import print as _mc\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-self-assignment', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _ms\n"
+      "    _ms = _ms\n"
+      "    def _ms_use():\n"
+      "        _ms(md, 'common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-loop-first-use', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _ml\n"
+      "    for _ml_x in ():\n"
+      "        _ml(md, 'common', object())\n"
+      "        from builtins import setattr as _ml\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 16 (codex r15 P0-1 / P0-2 / P0-3 / P0-4): one row per
+    # spelling the round-15 ruler still missed.  A write handle taken into a
+    # name and then handed through a duplicated unpack target, through a call
+    # site on a loop back edge, through a definition header (defaults run at
+    # module level), or through an assignment on a loop back edge.
+    ('calibrate-for-target-duplicated-unpack-target', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _du_use():\n"
+      "        _du = getattr(md, '__setattr__')\n"
+      "        _df, _df = None, _du\n"
+      "        _df('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-call-site-loop-edge', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _cw\n"
+      "    def _cw_use():\n"
+      "        _cw(md, 'common', object())\n"
+      "    for _cw_i in (0, 1):\n"
+      "        _cw_use()\n"
+      "        from builtins import setattr as _cw\n"
+      "    from builtins import print as _cw\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-default-value-call', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _dv\n"
+      "    def _dv_use():\n"
+      "        _dv(md, 'common', object())\n"
+      "    def _dv_holder(_x=_dv_use()):\n"
+      "        pass\n"
+      "    from builtins import print as _dv\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-assignment-back-edge', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _ab\n"
+      "    for _ab_i in (0, 1):\n"
+      "        _ab_x = _ab\n"
+      "        _ab_x(md, 'common', object())\n"
+      "        from builtins import setattr as _ab\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 17 (codex r16 P0-1 / P0-2 / P0-3, boundary r16 P0-2):
+    # the round-16 fix decided "is this name still the handle?" from the
+    # positionally latest binding alone.  A conditional overwrite, a same-named
+    # binding in a sibling function, and a constructor shadowed in the same
+    # scope each hid a real write.  One row per spelling, injected into the
+    # ruler's own source like the round-16 rows above.
+    ('calibrate-for-target-handle-conditional-overwrite', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _cb_use(flag):\n"
+      "        _cb = getattr(md, '__setattr__')\n"
+      "        if flag:\n"
+      "            _cb = lambda *a: None\n"
+      "        _cb('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-scoped-handle-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _sr_decoy():\n"
+      "        _sr = getattr(SESSION_DOMAIN, '__setattr__')\n"
+      "    def _sr_use():\n"
+      "        _sr = getattr(md, '__setattr__')\n"
+      "        _sr('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-shadowed-constructor', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _sc_use():\n"
+      "        _sc = getattr(md, '__setattr__')\n"
+      "        object = lambda: _sc\n"
+      "        _sc = object()\n"
+      "        _sc('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 18 (codex r17 P0-1 / P0-2 / P1-3, GLM sibling r17 P2):
+    # the round-17 relay guards read a container *copy* as a fresh value, the
+    # status ruler decoded only a directly bound handle, and the freshness
+    # guard ran only on two-argument calls.  One row per spelling; the first
+    # is injected into the ruler's own source like the round-17 rows, the two
+    # status rows replace a real status write in ``session_domain.py`` like
+    # every other ``calibrate-*-status`` row.
+    ('calibrate-for-target-handle-container-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _hc_use():\n"
+      "        _hc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _hc = list(_hc)\n"
+      "        for _h in _hc:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-status-bound-handle-alias-chain', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _g = getattr(report, '__setattr__')\n"
+     "                    _f = _g\n"
+     "                    _f('status', 'PASS')\n"),
+    ('calibrate-status-three-arg-handle-live', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _h = setattr\n"
+     "                    _h(report, 'status', 'PASS')\n"),
+    # #1953 fix-r1 round 19 (GLM boundary r17 P0-1): the callee that produces
+    # a bound handle may itself be an alias of ``getattr``.  The literal-only
+    # decode read the two-argument call as the unbound builtin and the status
+    # write vanished.
+    ('calibrate-status-getattr-alias-callee', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _ga = getattr\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 19 (codex r18 P0-1 / GLM boundary r18 P0-1): the
+    # copy may be wrapped twice or sliced, and the one-level decoder read it
+    # as a fresh value while the loop still called the handles.
+    ('calibrate-for-target-nested-container-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _nc_use():\n"
+      "        _nc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _nc2 = list(tuple(_nc))\n"
+      "        for _h in _nc2:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 20 (codex r19 P0-1): the handle is copied into another
+    # name *before* the source name is overwritten; resolving the hop at the
+    # final call read the later ``print`` and the status write vanished.
+    ('calibrate-status-alias-copied-before-overwrite', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _g = report.__setitem__\n"
+     "                    _f = _g\n"
+     "                    _g = print\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 20 (codex r19 P0-2): a container rebound to a fresh
+    # empty list and then filled in place still carries the handle to the copy.
+    ('calibrate-for-target-container-filled-after-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _nc_use():\n"
+      "        _nc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _nc = []\n"
+      "        _nc.append(getattr(md, '__setattr__'))\n"
+      "        _nc2 = list(_nc)\n"
+      "        for _h in _nc2:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    # #1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1): the
+    # handle factory reaches the call through an import alias, so the status
+    # write must still be seen.
+    ('calibrate-status-imported-getattr-factory', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    from builtins import getattr as _ga\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 22 (codex r21 P0-1 / P0-2, GLM boundary r21 P0-1 /
+    # P0-2): the builtins module itself reaches the call under an import
+    # alias, and one assignment of another value must not hide the factory
+    # spelling the import table records.
+    ('calibrate-status-builtins-module-alias', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    import builtins as _bi\n"
+     "                    _f = _bi.getattr(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    ('calibrate-status-factory-import-after-assignment', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _ga = print\n"
+     "                    from builtins import getattr as _ga\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    ('calibrate-status-factory-import-conditional-overwrite', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    from builtins import getattr as _ga\n"
+     "                    if overall:\n"
+     "                        _ga = dict\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 23 (GLM boundary r22 P1-2): ``bi = bi`` is a run-time
+    # no-op, so the module reading has to survive it.
+    ('calibrate-status-builtins-alias-self-assign', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    import builtins as _bi\n"
+     "                    _bi = _bi\n"
+     "                    _f = _bi.getattr(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 23 (GLM sibling r22 P2-3): the subscript spelling of
+    # a module name copied from ``__builtins__`` is the same status write.
+    ('calibrate-status-builtins-subscript-copy', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _bi = __builtins__\n"
+     "                    _bi['setattr'](report, 'status', 'PASS')\n"),
+    # #1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): the copy
+    # of a container that still carries handles stays a handle container when
+    # it reaches the loop under a third name.
+    ('calibrate-for-target-alias-of-container-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _nc_use():\n"
+      "        _nc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _nc2 = list(_nc)\n"
+      "        _nc3 = _nc2\n"
+      "        for _h in _nc3:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
+
 
 def calibrate_dict_namespace_update(rows):
     """#892 fix-r28: ``md.__dict__.update(common=<stub>)`` writes the mapping."""
@@ -4163,6 +5771,855 @@ def calibrate_partial_setdefault_prebound(rows):
 def calibrate_builtins_chain_fiftyone(rows):
     """#892 fix-r34: calibrate-builtins-chain-fiftyone."""
     return _unrouted_status(rows, 'calibrate-builtins-chain-fiftyone')
+
+
+def calibrate_loop_backedge_alias(rows):
+    """#1953 A: a loop back edge rebinds the alias after the use line, so the
+    line-only binding filter still handed out the name."""
+    return _unrouted_status(rows, 'calibrate-loop-backedge-alias')
+
+
+def calibrate_sameline_restore(rows):
+    """#1953 B: a same-line rebind and restore tied on ``(lineno, value)``, so
+    the pick broke by walk order instead of source order."""
+    return _unrouted_status(rows, 'calibrate-sameline-restore')
+
+
+def calibrate_shared_seen_paths(rows):
+    """#1953 C: one ``seen`` set shared by a name's sibling bindings let the
+    first path shadow the second."""
+    return _unrouted_status(rows, 'calibrate-shared-seen-paths')
+
+
+def calibrate_decorator_lambda_scope(rows):
+    """#1953 D: a decorator expression evaluated in the enclosing scope was
+    attributed to the decorated function's scope."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-decorator-lambda-scope flagged, '
+        'passed=False')
+
+
+def calibrate_nonlocal_walrus_withdraw(rows):
+    """#1953 E: the nonlocal withdrawal missed a ``NamedExpr`` (and match
+    captures) written into the outer name."""
+    return _must_call_shared(
+        rows, '_failure',
+        'aggregation-audit: calibrate-nonlocal-walrus-withdraw flagged, '
+        'passed=False')
+
+
+def calibrate_handle_list_literal(rows):
+    """#1953 F1: a handle stored in a list literal escaped the escape test."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-list-literal flagged, '
+        'passed=False')
+
+
+def calibrate_handle_dict_literal(rows):
+    """#1953 F2: a handle stored in a dict literal escaped the escape test."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-dict-literal flagged, '
+        'passed=False')
+
+
+def calibrate_handle_yield(rows):
+    """#1953 F3: a handle handed out through ``yield`` escaped the escape
+    test."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-yield flagged, passed=False')
+
+
+def calibrate_getattribute_handover(rows):
+    """#1953 G: ``__getattribute__`` read by a non-literal name hands over the
+    ``__dict__`` and was not in the read-handover set."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-handover flagged, '
+        'passed=False')
+
+
+def calibrate_handle_dictcomp_escape(rows):
+    """#1953 fix-r1 N: a dict comprehension carried the write handle past the
+    escape test, so the receiver stayed trusted."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-dictcomp-escape flagged, '
+        'passed=False')
+
+
+def calibrate_handle_listcomp_escape(rows):
+    """#1953 fix-r1 N2: the list-comprehension spelling of the same escape."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-listcomp-escape flagged, '
+        'passed=False')
+
+
+def calibrate_handle_aliased_escape(rows):
+    """#1953 fix-r1: laundering one handle out of the container into a plain
+    name (``f = hs[0]; f('common', <stub>)``) is the same hand-over."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-aliased-escape flagged, '
+        'passed=False')
+
+
+def calibrate_getattribute_write_attribute(rows):
+    """#1953 fix-r1 L (narrow positive): reading ``__doc__`` through
+    ``__getattribute__`` is a pure read, but asking it for ``__setattr__``
+    still hands the write over -- the pure-read exemption must not swallow
+    that."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-write-attribute flagged, '
+        'passed=False')
+
+
+def calibrate_getattr_const_subscript_write(rows):
+    """#1953 fix-r1 M (narrow positive): folding a constant subscript must not
+    blind the rule -- ``_keys = ('__setattr__',); getattr(md, _keys[0])`` is
+    still the write handle, only the read spelling is exempt."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattr-const-subscript-write flagged, '
+        'passed=False')
+
+
+def calibrate_match_capture_helper(rows):
+    """#1953 fix-r1 O: ``match`` pattern captures were absent from
+    ``_name_bindings``, so ``case h:`` stayed unresolved."""
+    return _unrouted_status(rows, 'calibrate-match-capture-helper')
+
+
+def calibrate_comprehension_write_helper(rows):
+    """#1953 fix-r1: a write performed inside a comprehension element is not a
+    statement, so the per-statement scan never saw it."""
+    return _unrouted_status(rows, 'calibrate-comprehension-write-helper')
+
+
+def calibrate_mixed_alias_binding(rows):
+    """#1953 fix-r1 P: a name with both a non-write and a write binding made
+    the resolution non-unique and it was dropped instead of failing closed."""
+    return _unrouted_status(rows, 'calibrate-mixed-alias-binding')
+
+
+def calibrate_handle_container_alias(rows):
+    """#1953 fix-r1 r1b: ``other = hs`` hands the whole container over, and
+    ``other[0](...)`` takes the same handle out of the second name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-container-alias flagged, '
+        'passed=False')
+
+
+def calibrate_handle_mapping_write(rows):
+    """#1953 fix-r1 r1b: the handle is not only called -- writing a mapping or
+    attribute through ``hs[0]`` writes the object it was taken from."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-mapping-write flagged, '
+        'passed=False')
+
+
+def calibrate_list_const_subscript_write(rows):
+    """#1953 fix-r1 r1b: a list literal is mutable, so folding ``_keys[0]``
+    into its initial value hid the write that replaced it."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-list-const-subscript-write flagged, '
+        'passed=False')
+
+
+def calibrate_comprehension_filter_write(rows):
+    """#1953 fix-r1 r1b: the write sat in a comprehension filter, which is
+    neither the element nor a statement."""
+    return _unrouted_status(rows, 'calibrate-comprehension-filter-write')
+
+
+def calibrate_match_capture_receiver(rows):
+    """#1953 fix-r1 r1b: ``case h:`` also aliases the *receiver*, so
+    ``h.common = <stub>`` writes the subject the pattern matched."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-match-capture-receiver flagged, '
+        'passed=False')
+
+
+def calibrate_match_capture_setattr_receiver(rows):
+    """#1953 fix-r1 r1b: same capture, handed to ``setattr`` rather than
+    written with an attribute store."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-match-capture-setattr-receiver flagged, '
+        'passed=False')
+
+
+def calibrate_getattribute_attr_spelling(rows):
+    """#1953 fix-r1 r1b: ``md.__getattribute__('__dict__')`` is the
+    attribute-spelling route to the same mapping ``getattr`` reaches."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-attr-spelling flagged, '
+        'passed=False')
+
+
+def calibrate_getattribute_name_spelling(rows):
+    """#1953 fix-r1 r2 (codex r2 P0): ``md.__getattribute__(_k)`` with ``_k``
+    bound to ``'__dict__'`` names the same mapping as the literal spelling; an
+    attribute name we cannot prove is a pure read must fail closed."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-name-spelling flagged, '
+        'passed=False')
+
+
+def calibrate_for_wrapped_container(rows):
+    """#1953 fix-r1 r1b: iterating ``list(hs)`` takes the handles out of the
+    container just as iterating ``hs`` does."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-wrapped-container flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_after_loop(rows):
+    """#1953 fix-r1 r4 (GLM boundary r2 P0): the loop target outlives the
+    loop, so using it as a handle after the ``for`` still writes ``md``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-after-loop flagged, '
+        'passed=False')
+
+
+def calibrate_for_slice(rows):
+    """#1953 fix-r1 r4: ``for h in hs[:]`` copies the container but hands out
+    the same handles."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-slice flagged, passed=False')
+
+
+def calibrate_for_copy(rows):
+    """#1953 fix-r1 r4: ``for h in hs.copy()`` hands out the same handles."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-copy flagged, passed=False')
+
+
+def calibrate_comp_result_receiver(rows):
+    """#1953 fix-r1 r4 (GLM boundary r2 P1): a comprehension that only relays
+    its target builds a container of the receiver, so taking an element out of
+    the result and writing it writes ``md``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-result-receiver flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_rebind_if(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): a conditional rebinding of the loop
+    target must not end the scan -- ``if False: _h = None`` is the attacker's
+    way to look like a cleanup while the handle stays live."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-rebind-if flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_after_match(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): the loop target used in a ``match`` case
+    after the loop still writes ``md``; the parent-chain scan missed it."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-after-match flagged, '
+        'passed=False')
+
+
+def calibrate_comp_dict_result(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): a dict comprehension relaying its target
+    builds a mapping of the receiver."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-dict-result flagged, passed=False')
+
+
+def calibrate_comp_name_iter(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): the comprehension's iterable may be a
+    name bound to a literal container."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-name-iter flagged, passed=False')
+
+
+def calibrate_for_target_return(rows):
+    """#1953 fix-r1 r7 (GLM boundary r3 P1): returning the loop target hands
+    the write handle to the caller."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-return flagged, passed=False')
+
+
+def calibrate_for_target_alias(rows):
+    """#1953 fix-r1 r7 (GLM boundary r3 P1): ``f = h; f('common', <stub>)``
+    writes through the copy of the handle."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-alias flagged, passed=False')
+
+
+def calibrate_starred_const_subscript(rows):
+    """#1953 fix-r1 r7 (GLM boundary r3 P1): a tuple with a starred element has
+    no static length, so its subscript cannot be folded to a known name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-starred-const-subscript-write flagged, '
+        'passed=False')
+
+
+def calibrate_comp_handle_relay(rows):
+    """#1953 fix-r1 r7 (GLM sibling r3 P2): a comprehension that relays a known
+    handle container hands the same handles out of its result."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-handle-relay flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_finally_rebind(rows):
+    """#1953 fix-r1 r8: a rebind after ``raise`` never runs; the finally call does."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-finally-rebind flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_closure(rows):
+    """#1953 fix-r1 r8: a nested definition closes over the loop target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-closure flagged, passed=False')
+
+
+def calibrate_for_target_shadowed_fresh(rows):
+    """#1953 fix-r1 r8: a rebound builtin name hands the handle back."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-shadowed-fresh flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_with_alias(rows):
+    """#1953 fix-r1 r8: the loop target handed to a ``with`` binding."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-with-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_except_alias(rows):
+    """#1953 fix-r1 r8: the loop target round-tripped through an exception."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-except-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_name_iter(rows):
+    """#1953 fix-r1 r8: a for statement over a name-bound literal."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-name-iter flagged, '
+        'passed=False')
+
+
+def calibrate_comp_handle_relay_for(rows):
+    """#1953 fix-r1 r8: a relayed handle container iterated by ``for``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-handle-relay-for flagged, '
+        'passed=False')
+
+
+def calibrate_comp_handle_relay_chain(rows):
+    """#1953 fix-r1 r8: a handle container relayed through two comprehensions."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-handle-relay-chain flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_assign_call(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-assign-call."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-assign-call flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_def_default(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-def-default."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-def-default flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_readonly_call_leak(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-readonly-call-leak."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-readonly-call-leak flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_nested_param(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-nested-param."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-param flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_compare_call_leak(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-compare-call-leak."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-compare-call-leak flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_outer_shadow_fresh(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-outer-shadow-fresh."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-outer-shadow-fresh flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_outer_shadow_print(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-outer-shadow-print."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-outer-shadow-print flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_ambiguous_literal(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-ambiguous-literal."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-ambiguous-literal flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_comp_element_call(rows):
+    """#1953 fix-r1 round 9: calibrate-for-target-comp-element-call."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-comp-element-call flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_call_attribute(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-call-attribute."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-call-attribute flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_call_attribute_alias(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-call-attribute-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-call-attribute-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_false_filter_write(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-false-filter-write."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-false-filter-write flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_clear(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-class-body-clear."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-clear flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_with_suppress(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-with-suppress."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-with-suppress flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_shadow(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-class-body-shadow."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-shadow flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_lambda_default(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-lambda-default."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-lambda-default flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_def(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-class-body-def."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-def flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_method_self(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-method-self."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-method-self flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_conditional_literal_rebind(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-conditional-literal-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-conditional-literal-rebind '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_enclosing_binding_after_use(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-enclosing-binding-after-use."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: '
+        'calibrate-for-target-enclosing-binding-after-use flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_tuple_partial_alias(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-tuple-partial-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-tuple-partial-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_comp_partial_shadow(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-comp-partial-shadow."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-comp-partial-shadow flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_assert_msg(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-assert-msg."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-assert-msg flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_enclosing_call_between_rebinds(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-enclosing-call-between-rebinds."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: '
+        'calibrate-for-target-enclosing-call-between-rebinds flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_compound(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-class-body-compound."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-compound flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_method_closure(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-class-method-closure."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-method-closure flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_shadowed_constructor(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-class-body-shadowed-constructor."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: '
+        'calibrate-for-target-class-body-shadowed-constructor flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_module_import_alias(rows):
+    """#1953 fix-r1 round 13: calibrate-for-target-module-import-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-import-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_copy_alias(rows):
+    """#1953 fix-r1 round 13: calibrate-for-target-class-body-copy-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-copy-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_nested_class_method(rows):
+    """#1953 fix-r1 round 13: calibrate-for-target-nested-class-method."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-class-method flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_conditional_rebind(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-conditional-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-conditional-rebind flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_loop_back_edge(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-loop-back-edge."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-loop-back-edge flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_same_line_rebind(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-same-line-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-same-line-rebind flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_block_alias(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-class-block-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-block-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_module_call_before_rebind(rows):
+    """#1953 fix-r1 round 15: calibrate-for-target-module-call-before-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-call-before-rebind '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_module_self_assignment(rows):
+    """#1953 fix-r1 round 15: calibrate-for-target-module-self-assignment."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-self-assignment '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_module_loop_first_use(rows):
+    """#1953 fix-r1 round 15: calibrate-for-target-module-loop-first-use."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-loop-first-use '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_duplicated_unpack_target(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-duplicated-unpack-target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-duplicated-unpack-target '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_module_call_site_loop_edge(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-module-call-site-loop-edge."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-call-site-loop-edge '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_default_value_call(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-default-value-call."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-default-value-call '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_assignment_back_edge(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-assignment-back-edge."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-assignment-back-edge '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_handle_conditional_overwrite(rows):
+    """#1953 fix-r1 round 17: calibrate-for-target-handle-conditional-overwrite."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-handle-conditional-overwrite '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_scoped_handle_receiver(rows):
+    """#1953 fix-r1 round 17: calibrate-for-target-scoped-handle-receiver."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-scoped-handle-receiver '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_shadowed_constructor(rows):
+    """#1953 fix-r1 round 17: calibrate-for-target-shadowed-constructor."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-shadowed-constructor '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_handle_container_copy(rows):
+    """#1953 fix-r1 round 18 (codex r17 P0-1): a constructor copy of a handle
+    container keeps the handles, so iterating it still hands a write over."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-handle-container-copy '
+        'flagged, passed=False')
+
+
+def calibrate_status_bound_handle_alias_chain(rows):
+    """#1953 fix-r1 round 18 (codex r17 P0-2): the status write is still a
+    write when the bound handle reaches the call through a second name."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_three_arg_handle_live(rows):
+    """#1953 fix-r1 round 18 (codex r17 P1-3 narrow positive): the freshness
+    guard must not clear a three-argument alias that still holds ``setattr``."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _h(report, 'status', 'PASS')")
+
+
+def calibrate_status_getattr_alias_callee(rows):
+    """#1953 fix-r1 round 19 (GLM boundary r17 P0-1): the handle factory is
+    the builtin ``getattr`` even when it reaches the call under another name."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_for_target_nested_container_copy(rows):
+    """#1953 fix-r1 round 19 (codex r18 P0-1 / GLM boundary r18 P0-1): a
+    container copied twice keeps the handles the original held."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-container-copy '
+        'flagged, passed=False')
+
+
+def calibrate_status_alias_copied_before_overwrite(rows):
+    """#1953 fix-r1 round 20 (codex r19 P0-1): the handle was copied into
+    another name before the source name was overwritten; the copy still
+    writes the status slot."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_for_target_container_filled_after_rebind(rows):
+    """#1953 fix-r1 round 20 (codex r19 P0-2): a container rebound to a fresh
+    empty list and then filled in place still hands the handle to the copy."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-container-filled-after-rebind '
+        'flagged, passed=False')
+
+
+def calibrate_status_imported_getattr_factory(rows):
+    """#1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1): the
+    handle factory is ``getattr`` even when it is imported under another name."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_for_target_alias_of_container_copy(rows):
+    """#1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): aliasing
+    a copy of a container that still carries handles does not make it fresh."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-alias-of-container-copy '
+        'flagged, passed=False')
+
+
+def calibrate_status_builtins_module_alias(rows):
+    """#1953 fix-r1 round 22 (codex r21 P0-1 / GLM boundary r21 P0-2): the
+    builtins module imported under another spelling is still the factory."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_factory_import_after_assignment(rows):
+    """#1953 fix-r1 round 22 (codex r21 P0-2): an assignment of another value
+    before the factory import must not hide the import event."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_factory_import_conditional_overwrite(rows):
+    """#1953 fix-r1 round 22 (GLM boundary r21 P0-1): a conditional overwrite
+    does not erase the factory spelling the import put in force."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_builtins_alias_self_assign(rows):
+    """#1953 fix-r1 round 23 (GLM boundary r22 P1-2): ``bi = bi`` keeps the
+    module reading the import put in force."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_builtins_subscript_copy(rows):
+    """#1953 fix-r1 round 23 (GLM sibling r22 P2-3): the subscript spelling of
+    a module name copied from ``__builtins__`` writes the same slot."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _bi['setattr'](report, 'status', 'PASS')")
+
+
+def calibrate_for_target_nested_copy_alias(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-copy-alias flagged, '
+        'passed=False')
 
 
 def _unrouted_status(rows, name):
@@ -4798,8 +7255,261 @@ JUDGES = {
         'aggregation-audit', calibrate_partial_setdefault_prebound, False, ()),
     'calibrate-builtins-chain-fiftyone': (
         'aggregation-audit', calibrate_builtins_chain_fiftyone, False, ()),
+    # #1953 fix-r35: see the MUTATIONS note above.
+    'calibrate-loop-backedge-alias': (
+        'aggregation-audit', calibrate_loop_backedge_alias, False, ()),
+    'calibrate-sameline-restore': (
+        'aggregation-audit', calibrate_sameline_restore, False, ()),
+    'calibrate-shared-seen-paths': (
+        'aggregation-audit', calibrate_shared_seen_paths, False, ()),
+    'calibrate-decorator-lambda-scope': (
+        'aggregation-audit', calibrate_decorator_lambda_scope, False, ()),
+    'calibrate-nonlocal-walrus-withdraw': (
+        'aggregation-audit', calibrate_nonlocal_walrus_withdraw, False, ()),
+    'calibrate-handle-list-literal': (
+        'aggregation-audit', calibrate_handle_list_literal, False, ()),
+    'calibrate-handle-dict-literal': (
+        'aggregation-audit', calibrate_handle_dict_literal, False, ()),
+    'calibrate-handle-yield': (
+        'aggregation-audit', calibrate_handle_yield, False, ()),
+    'calibrate-getattribute-handover': (
+        'aggregation-audit', calibrate_getattribute_handover, False, ()),
+    'calibrate-handle-dictcomp-escape': (
+        'aggregation-audit', calibrate_handle_dictcomp_escape, False, ()),
+    'calibrate-handle-listcomp-escape': (
+        'aggregation-audit', calibrate_handle_listcomp_escape, False, ()),
+    'calibrate-handle-aliased-escape': (
+        'aggregation-audit', calibrate_handle_aliased_escape, False, ()),
+    'calibrate-getattribute-write-attribute': (
+        'aggregation-audit', calibrate_getattribute_write_attribute, False, ()),
+    'calibrate-getattr-const-subscript-write': (
+        'aggregation-audit', calibrate_getattr_const_subscript_write, False, ()),
+    'calibrate-match-capture-helper': (
+        'aggregation-audit', calibrate_match_capture_helper, False, ()),
+    'calibrate-comprehension-write-helper': (
+        'aggregation-audit', calibrate_comprehension_write_helper, False, ()),
+    'calibrate-mixed-alias-binding': (
+        'aggregation-audit', calibrate_mixed_alias_binding, False, ()),
+    'calibrate-handle-container-alias': (
+        'aggregation-audit', calibrate_handle_container_alias, False, ()),
+    'calibrate-handle-mapping-write': (
+        'aggregation-audit', calibrate_handle_mapping_write, False, ()),
+    'calibrate-list-const-subscript-write': (
+        'aggregation-audit', calibrate_list_const_subscript_write, False, ()),
+    'calibrate-comprehension-filter-write': (
+        'aggregation-audit', calibrate_comprehension_filter_write, False, ()),
+    'calibrate-match-capture-receiver': (
+        'aggregation-audit', calibrate_match_capture_receiver, False, ()),
+    'calibrate-match-capture-setattr-receiver': (
+        'aggregation-audit', calibrate_match_capture_setattr_receiver, False, ()),
+    'calibrate-getattribute-attr-spelling': (
+        'aggregation-audit', calibrate_getattribute_attr_spelling, False, ()),
+    'calibrate-getattribute-name-spelling': (
+        'aggregation-audit', calibrate_getattribute_name_spelling, False, ()),
+    'calibrate-for-wrapped-container': (
+        'aggregation-audit', calibrate_for_wrapped_container, False, ()),
+    'calibrate-for-target-after-loop': (
+        'aggregation-audit', calibrate_for_target_after_loop, False, ()),
+    'calibrate-for-slice': (
+        'aggregation-audit', calibrate_for_slice, False, ()),
+    'calibrate-for-copy': (
+        'aggregation-audit', calibrate_for_copy, False, ()),
+    'calibrate-comp-result-receiver': (
+        'aggregation-audit', calibrate_comp_result_receiver, False, ()),
+    'calibrate-for-target-rebind-if': (
+        'aggregation-audit', calibrate_for_target_rebind_if, False, ()),
+    'calibrate-for-target-after-match': (
+        'aggregation-audit', calibrate_for_target_after_match, False, ()),
+    'calibrate-comp-dict-result': (
+        'aggregation-audit', calibrate_comp_dict_result, False, ()),
+    'calibrate-comp-name-iter': (
+        'aggregation-audit', calibrate_comp_name_iter, False, ()),
+    'calibrate-for-target-return': (
+        'aggregation-audit', calibrate_for_target_return, False, ()),
+    'calibrate-for-target-alias': (
+        'aggregation-audit', calibrate_for_target_alias, False, ()),
+    'calibrate-starred-const-subscript-write': (
+        'aggregation-audit', calibrate_starred_const_subscript, False, ()),
+    'calibrate-comp-handle-relay': (
+        'aggregation-audit', calibrate_comp_handle_relay, False, ()),
+    'calibrate-for-target-finally-rebind': (
+        'aggregation-audit', calibrate_for_target_finally_rebind, False, ()),
+    'calibrate-for-target-closure': (
+        'aggregation-audit', calibrate_for_target_closure, False, ()),
+    'calibrate-for-target-shadowed-fresh': (
+        'aggregation-audit', calibrate_for_target_shadowed_fresh, False, ()),
+    'calibrate-for-target-with-alias': (
+        'aggregation-audit', calibrate_for_target_with_alias, False, ()),
+    'calibrate-for-target-except-alias': (
+        'aggregation-audit', calibrate_for_target_except_alias, False, ()),
+    'calibrate-for-target-name-iter': (
+        'aggregation-audit', calibrate_for_target_name_iter, False, ()),
+    'calibrate-comp-handle-relay-for': (
+        'aggregation-audit', calibrate_comp_handle_relay_for, False, ()),
+    'calibrate-comp-handle-relay-chain': (
+        'aggregation-audit', calibrate_comp_handle_relay_chain, False, ()),
+    'calibrate-for-target-assign-call': (
+        'aggregation-audit', calibrate_for_target_assign_call, False, ()),
+    'calibrate-for-target-def-default': (
+        'aggregation-audit', calibrate_for_target_def_default, False, ()),
+    'calibrate-for-target-readonly-call-leak': (
+        'aggregation-audit', calibrate_for_target_readonly_call_leak, False, ()),
+    'calibrate-for-target-nested-param': (
+        'aggregation-audit', calibrate_for_target_nested_param, False, ()),
+    'calibrate-for-target-compare-call-leak': (
+        'aggregation-audit', calibrate_for_target_compare_call_leak, False, ()),
+    'calibrate-for-target-outer-shadow-fresh': (
+        'aggregation-audit', calibrate_for_target_outer_shadow_fresh, False, ()),
+    'calibrate-for-target-outer-shadow-print': (
+        'aggregation-audit', calibrate_for_target_outer_shadow_print, False, ()),
+    'calibrate-for-target-ambiguous-literal': (
+        'aggregation-audit', calibrate_for_target_ambiguous_literal, False, ()),
+    'calibrate-for-target-comp-element-call': (
+        'aggregation-audit', calibrate_for_target_comp_element_call, False, ()),
+    'calibrate-for-target-call-attribute': (
+        'aggregation-audit', calibrate_for_target_call_attribute, False, ()),
+    'calibrate-for-target-call-attribute-alias': (
+        'aggregation-audit', calibrate_for_target_call_attribute_alias, False, ()),
+    'calibrate-for-target-false-filter-write': (
+        'aggregation-audit', calibrate_for_target_false_filter_write, False, ()),
+    'calibrate-for-target-class-body-clear': (
+        'aggregation-audit', calibrate_for_target_class_body_clear, False, ()),
+    'calibrate-for-target-with-suppress': (
+        'aggregation-audit', calibrate_for_target_with_suppress, False, ()),
+    'calibrate-for-target-class-body-shadow': (
+        'aggregation-audit', calibrate_for_target_class_body_shadow, False, ()),
+    'calibrate-for-target-lambda-default': (
+        'aggregation-audit', calibrate_for_target_lambda_default, False, ()),
+    'calibrate-for-target-class-body-def': (
+        'aggregation-audit', calibrate_for_target_class_body_def, False, ()),
+    'calibrate-for-target-method-self': (
+        'aggregation-audit', calibrate_for_target_method_self, False, ()),
+    'calibrate-for-target-conditional-literal-rebind': (
+        'aggregation-audit', calibrate_for_target_conditional_literal_rebind,
+        False, ()),
+    'calibrate-for-target-enclosing-binding-after-use': (
+        'aggregation-audit',
+        calibrate_for_target_enclosing_binding_after_use, False, ()),
+    'calibrate-for-target-tuple-partial-alias': (
+        'aggregation-audit', calibrate_for_target_tuple_partial_alias,
+        False, ()),
+    'calibrate-for-target-comp-partial-shadow': (
+        'aggregation-audit', calibrate_for_target_comp_partial_shadow,
+        False, ()),
+    'calibrate-for-target-assert-msg': (
+        'aggregation-audit', calibrate_for_target_assert_msg, False, ()),
+    'calibrate-for-target-enclosing-call-between-rebinds': (
+        'aggregation-audit',
+        calibrate_for_target_enclosing_call_between_rebinds, False, ()),
+    'calibrate-for-target-class-body-compound': (
+        'aggregation-audit', calibrate_for_target_class_body_compound,
+        False, ()),
+    'calibrate-for-target-class-method-closure': (
+        'aggregation-audit', calibrate_for_target_class_method_closure,
+        False, ()),
+    'calibrate-for-target-class-body-shadowed-constructor': (
+        'aggregation-audit',
+        calibrate_for_target_class_body_shadowed_constructor, False, ()),
+    'calibrate-for-target-module-import-alias': (
+        'aggregation-audit', calibrate_for_target_module_import_alias, False, ()),
+    'calibrate-for-target-class-body-copy-alias': (
+        'aggregation-audit', calibrate_for_target_class_body_copy_alias, False, ()),
+    'calibrate-for-target-nested-class-method': (
+        'aggregation-audit', calibrate_for_target_nested_class_method, False, ()),
+    'calibrate-for-target-conditional-rebind': (
+        'aggregation-audit', calibrate_for_target_conditional_rebind, False, ()),
+    'calibrate-for-target-loop-back-edge': (
+        'aggregation-audit', calibrate_for_target_loop_back_edge, False, ()),
+    'calibrate-for-target-same-line-rebind': (
+        'aggregation-audit', calibrate_for_target_same_line_rebind, False, ()),
+    'calibrate-for-target-class-block-alias': (
+        'aggregation-audit', calibrate_for_target_class_block_alias, False, ()),
+    'calibrate-for-target-nested-copy-alias': (
+        'aggregation-audit', calibrate_for_target_nested_copy_alias, False, ()),
+    'calibrate-for-target-module-call-before-rebind': (
+        'aggregation-audit', calibrate_for_target_module_call_before_rebind,
+        False, ()),
+    'calibrate-for-target-module-self-assignment': (
+        'aggregation-audit', calibrate_for_target_module_self_assignment,
+        False, ()),
+    'calibrate-for-target-module-loop-first-use': (
+        'aggregation-audit', calibrate_for_target_module_loop_first_use,
+        False, ()),
+    'calibrate-for-target-duplicated-unpack-target': (
+        'aggregation-audit', calibrate_for_target_duplicated_unpack_target,
+        False, ()),
+    'calibrate-for-target-module-call-site-loop-edge': (
+        'aggregation-audit', calibrate_for_target_module_call_site_loop_edge,
+        False, ()),
+    'calibrate-for-target-default-value-call': (
+        'aggregation-audit', calibrate_for_target_default_value_call,
+        False, ()),
+    'calibrate-for-target-assignment-back-edge': (
+        'aggregation-audit', calibrate_for_target_assignment_back_edge,
+        False, ()),
+    'calibrate-for-target-handle-conditional-overwrite': (
+        'aggregation-audit', calibrate_for_target_handle_conditional_overwrite,
+        False, ()),
+    'calibrate-for-target-scoped-handle-receiver': (
+        'aggregation-audit', calibrate_for_target_scoped_handle_receiver,
+        False, ()),
+    'calibrate-for-target-shadowed-constructor': (
+        'aggregation-audit', calibrate_for_target_shadowed_constructor,
+        False, ()),
+    'calibrate-for-target-handle-container-copy': (
+        'aggregation-audit', calibrate_for_target_handle_container_copy,
+        False, ()),
+    'calibrate-status-bound-handle-alias-chain': (
+        'aggregation-audit', calibrate_status_bound_handle_alias_chain,
+        False, ()),
+    'calibrate-status-three-arg-handle-live': (
+        'aggregation-audit', calibrate_status_three_arg_handle_live,
+        False, ()),
+    'calibrate-status-getattr-alias-callee': (
+        'aggregation-audit', calibrate_status_getattr_alias_callee,
+        False, ()),
+    'calibrate-for-target-nested-container-copy': (
+        'aggregation-audit', calibrate_for_target_nested_container_copy,
+        False, ()),
+    'calibrate-status-alias-copied-before-overwrite': (
+        'aggregation-audit', calibrate_status_alias_copied_before_overwrite,
+        False, ()),
+    'calibrate-for-target-container-filled-after-rebind': (
+        'aggregation-audit', calibrate_for_target_container_filled_after_rebind,
+        False, ()),
+    'calibrate-status-imported-getattr-factory': (
+        'aggregation-audit', calibrate_status_imported_getattr_factory,
+        False, ()),
+    'calibrate-for-target-alias-of-container-copy': (
+        'aggregation-audit', calibrate_for_target_alias_of_container_copy,
+        False, ()),
+    'calibrate-status-builtins-module-alias': (
+        'aggregation-audit', calibrate_status_builtins_module_alias,
+        False, ()),
+    'calibrate-status-factory-import-after-assignment': (
+        'aggregation-audit', calibrate_status_factory_import_after_assignment,
+        False, ()),
+    'calibrate-status-factory-import-conditional-overwrite': (
+        'aggregation-audit',
+        calibrate_status_factory_import_conditional_overwrite,
+        False, ()),
+    'calibrate-status-builtins-alias-self-assign': (
+        'aggregation-audit',
+        calibrate_status_builtins_alias_self_assign, False, ()),
+    'calibrate-status-builtins-subscript-copy': (
+        'aggregation-audit',
+        calibrate_status_builtins_subscript_copy, False, ()),
 }
-if set(JUDGES) != {row[0] for row in MUTATIONS}:
+# #2743 fix-r10 (DS r9 sibling#2): a bare set comparison cannot see a
+# duplicated row. Delete one row, copy another -- with JUDGES kept in step
+# the two sets still match, the run records N-1 rows while the summary
+# prints 331/331 -- the same #1666 family shape the r9 meta-test pin
+# closed on the CI path. The sdk-signals shape (:501-504) pins uniqueness
+# and membership separately, so a direct entry run refuses at import.
+names = [row[0] for row in MUTATIONS]
+if len(set(names)) != len(names):
+    raise SystemExit('MUTATIONS rows must have unique names')
+if set(JUDGES) != set(names):
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
 
 # #892 fix-r18: the restore window must defer the fixture's own SIGTERM exit
@@ -5067,7 +7777,12 @@ def main():
                         changed = contents[source].replace(old, new, 1)
                         compile(changed, str(source), 'exec')
                         (output / f'{name}-compile.log').write_text('Python compile: PASS\n')
-                        source.write_text(changed)
+                        # One rename, never a truncating in-place write: a
+                        # SIGKILL in the write window must not leave a
+                        # half-written frozen source behind (#1903; the same
+                        # hardening same-json-surfaces pinned as #2425 and
+                        # manager-gateway as #2309 fix-r3).
+                        write_source_atomic(ROOT, source, changed.encode())
                         try:
                             run = run_check(case, mode)
                             returncode = run.returncode
@@ -5080,7 +7795,11 @@ def main():
                     except Exception as error:
                         verdict, detail = 'INVALID', f'{type(error).__name__}: {error}'
                     finally:
-                        source.write_bytes(originals[source])
+                        # Atomic per-case restore, same #1903 shape as the
+                        # publish above; mutating_sources' own exit side is
+                        # only the backstop, it cannot undo a half-written
+                        # file a SIGKILL already left.
+                        write_source_atomic(ROOT, source, originals[source])
                         require_restored(source, digests[source])
                     entry = {'mutation': name, 'mode': mode, 'verdict': verdict,
                              'detail': detail, 'returncode': returncode,
@@ -5092,8 +7811,11 @@ def main():
                         survived.append(entry)
                     print(f'{name}: {verdict} {detail}'.rstrip(), flush=True)
             finally:
+                # The backstop restore rewrites every guarded source once
+                # more after the loop; one rename each, never truncating
+                # (#1903, mirror of the per-case restore above).
                 for source in sources:
-                    source.write_bytes(originals[source])
+                    write_source_atomic(ROOT, source, originals[source])
             restored_case = output / 'restored-positive'  # must not pre-exist
             restored_error = None
             try:

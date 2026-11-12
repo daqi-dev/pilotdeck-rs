@@ -5,7 +5,7 @@ compilation and nonce receipts.
 No source replacement: use the shared tree lock + working-tree SHA contract.
 Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 
-The thirteen rows cover the machine's own contract on the matrix §四 failure
+The fourteen rows cover the machine's own contract on the matrix §四 failure
 semantics — the A2 halt branch, the A8 gate release point, the DC-1/A3 cap
 clause of the shared timeout predicate — the production wiring's A10 flush
 precondition, and the nine #2363 follow-ups: the halt walk's close-timeout
@@ -13,7 +13,9 @@ branch, the backstop spelling's own cap clause, the A6 management gate at
 the cron routing seam (the closed check, the dispatch's read half and the
 S1 face's drain), the halt walk's owner-finish timeout branch, the S4
 half's once-only verdict (the error-path early escape and the cancelled
-run's re-run), and the management gate registry's repeat-lookup reuse.
+run's re-run), and the management gate registry's repeat-lookup reuse —
+plus the #2557 follow-up: the final walk's own synchronous re-issue of
+the host teardown request in the final-cancellation cell.
 Each row's anchor is the receipt-emitting assertion inside
 the named test, so only that assertion's panic can kill its mutant.
 """
@@ -117,6 +119,14 @@ switches = [
     ('native-ws-finish-rerun', NATIVE_WS,
      WIRING_PREFIX + 'an_interrupted_owner_finish_is_not_rerun_by_the_revisit',
      '#2363 the interrupted owner finish is reported, not re-run'),
+    # #2557: the final walk's re-issue of the host teardown request — the
+    # synchronous guard deleted, so the final-cancellation cell (the final
+    # walk itself owning the first finish, cut off inside the close-notice
+    # window) defers the teardown request to the `StopHost` drop after the
+    # walk returns — a no-op on exits that skip Drop.
+    ('switch-halt-owner-skip-reissue', WIRING,
+     WIRING_PREFIX + 'the_final_cancellation_cell_still_requests_the_host_teardown',
+     '#2557 the final walk re-issues the host teardown request'),
 ]
 
 

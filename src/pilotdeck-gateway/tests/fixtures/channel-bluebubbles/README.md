@@ -12,9 +12,11 @@ TS 真实传入的字段）、BlueBubbles 服务器（`serverUrl` 指向 127.0.0
 `fetch`，本金样是 #1786 的无 stub 对照。不启动真实服务器、账号或网络。
 每个用例一个新的 BlueBubblesChannel 实例；mapper 用真 uuid（记录时遮罩）。
 
-端口段：环回假服务 **19461**（与 feishu 的 18960-18999、weixin 的
-18800-18921、wecom 的 18900-18921 区间均不重叠）。重放前若端口被占，测试
-报的是金样失败而不是被测代码回归，先 `lsof -nP -iTCP:19461` 核占用方。
+端口段：环回假服务 **19461**（主 replay）与组件钉 **19462-19465**（stop 闸门
+钉 / drop 钉 / panic 钉 / stray 钉各一；同一测试二进制并行跑，互不重叠，且与
+feishu 的 18960-18999、weixin 的 18800-18921、wecom 的 18900-18921 区间均不
+重叠）。重放前若端口被占，测试报的是金样失败而不是被测代码回归，先
+`lsof -nP -iTCP:19461` 核占用方。
 
 16 个场景的输入步骤与 TS 结果都在 `oracle.json`：缺配置（无 serverUrl）只报
 error 不起轮询、首轮回合-回复闭环、同 guid 二次投递不重执行、行过滤全集
@@ -83,8 +85,10 @@ submitTurn 报错（"Error: boom" 日志 + 兜底文案）、sendReply 500（mes
 ## 已登记差异与本金样的关系
 
 差异编号见 `specs/gateway-parity/`（002 无生产 InteractionPort · 003 stop 不
-drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸进程 ·
-006 无信号轮询 GET 的 300 s 总界；001-R2 摘除拒绝表条目）：
+drain，003-R1 更正其 Rust 侧收口描述 · 004 restart 同 guid 通道层再派发 ·
+005 非法 serverUrl 不炸进程 · 006 无信号轮询 GET 的 300 s 总界 · 007 未 stop
+丢弃（无在途轮询时即停；静默服务器在途窗口与 TS 泄漏同形，r2 已知缺口）+
+poll 任务 panic 无 `poll error` 日志；001-R2 摘除拒绝表条目）：
 
 - **002**：生产装载挂载装 `no_interaction()`，elicitation/permission 应答链在
   生产不可达；金样回放装真实 helper 支撑的 `HelperInteraction` + 脚本
@@ -101,8 +105,83 @@ drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸�
   `headersTimeout`（实测 301,257 ms）为总界收口，错误串保持 TS 同形的
   `TypeError: fetch failed`；组件钉子
   `http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default`
-  用暂停时钟（keeper + receipt 防空转）钉 300 s 定界与错误串，负控
-  `unbounded-timeout-dropped` 删界必被杀。
+  用暂停时钟（keeper + receipt 防空转）钉 300 s 定界与错误串，elapsed 钉
+  落在 `[300 s, 301 s)` 容忍带（#2285 r4 评论 4/⑤），receipt 等待带
+  10 s 墙钟看门狗与 `is_finished` 竞速（#2285 r4 ⑤，失败路径具名不挂起，
+  `clock_held` 改 Drop guard 任何退出都释放冻结时钟）。负控
+  `unbounded-timeout-dropped` 删界必被杀；`unbounded-timeout-drift-350s`
+  钉 (300 s, 400 s) 漂移盲区由 elapsed 断言具名杀、`unbounded-constant-changed`
+  钉常量值、`request-stalls-before-bytes` / `request-dies-before-receipt`
+  钉看门狗两支（#2285 r4 ④⑤）。
+
+## #2285 poll driver 收口（未 stop 丢弃 / JoinHandle / SEND_TIMEOUT / strays 纪元）
+
+- **② drop-without-stop**：TS 的形态是泄漏的 `setInterval`（unsupported
+  start-without-stop flow，本金样不覆盖）；Rust 收紧为 driver 任务只持
+  `Weak<Runtime>`，升级失败即退出——**仅限无在途轮询时**（r2 收窄，见 007）：
+  响应时长超过 `POLL_MS` 的服务器下，在途轮询持强 `Arc<Runtime>` 直到
+  `poll_messages` 返回，driver 每 2.5 s 续派、各请求各自 300 s 单次总界
+  （`UNDICI_DEFAULT_TIMEOUT` 是每请求的界不是泄漏的界）——强引用不归零
+  （无界自续）、`Runtime` 永不释放，与 TS 泄漏同形；该形状可钉（响应延迟
+  > `POLL_MS` 的 mock + stop 后轮询停增断言，~5–10 s 实时窗口），登记为
+  跟进（007，r3 修正预算结论）。
+  `poll_driver_exits_when_runtime_is_dropped`（用每请求都回包的 mock）钉
+  两个观察量（服务端轮询停增 + `Runtime` 释放），负控
+  `driver-weak-reverted` 回退强引用必被杀。已 stop / 正常 restart 的金样
+  路径行为不变（16 用例全绿）。
+- **③ JoinHandle / panic 检测**：interval 任务句柄保留（api_server
+  `Listener.task` 形态），`stop` 先 abort 再有界 await（20 s 上界，不引入
+  无界等待）；panic 早于 stop 时记 `error` 日志（stop 收口描述的更正见
+  003-R1）。per-tick 轮询任务保持 TS `void this.pollMessages()` 的逐字
+  fire-and-forget 形态。**已登记偏差（A8.3-CH-BLUEBUBBLES-007）**：TS 侧
+  `pollMessages` 的 try/catch 把失败记成 `poll error` 日志后继续轮询，Rust
+  侧 poll 任务 panic 被 tokio 吞掉、无日志（句柄按 TS 形态不保留），但
+  interval 继续轮询、`stop` 仍返回 Ok——行为面（轮询不停、running 闸门、
+  stop 可收）一致，仅缺错误日志；`poll_task_panic_does_not_stop_the_driver`
+  用脚本网关 turn-index 互斥量投毒注入 panic 钉该行为面（毒行排在脚本
+  槽位 1、落在 driver 首 tick 的 spawn 任务里，等到第 3 次 poll 才证明
+  interval 存活；判据同在第 3 次 poll 之后：`submit` 入口计数恰为 1 证明
+  投毒路径确实走到 `submit`、gateway 投影为空证明 panic 早于记录——旧时序
+  「第 2 次 poll 后立即断言投影为空」存在派发尚未执行的竞态假 PASS 窗口，
+  r2 移除；停后窗口只保留弱判据——stop 返回 Ok + 停后计数停增，看不见
+  幸存 driver，abort/reap 无专属判据见 003-R1），负控
+  `poll-task-inlined-into-driver`（per-tick spawn 改 inline → panic 落进
+  driver 任务 → 第 3 次 poll 永不到达）、`poison-turn-index-removed`
+  （去掉投毒 → 派发正常完成 → gateway 投影非空）必被杀。未 stop 丢弃
+  （无在途轮询时即停；静默服务器窗口同 TS 泄漏）一并登记在 007。
+- **① SEND_TIMEOUT**：`sendReply` 的 `AbortSignal.timeout(120_000)` 与
+  `MESSAGE_LIMIT` 同为进请求字节的常量，同口径处理——常量钉
+  `send_timeout_is_the_ts_abort_deadline` + 负控 `send-timeout-changed`。
+  **仅常量钉、调用点不钉**（豁免依据：`SEND_TIMEOUT` 全仓唯一使用点在
+  `mod.rs` 的 `request_bearer` 调用，常量钉 + 唯一使用点已由编译器接线
+  锁死；调用点行为钉需要暂停时钟 + 静默 POST 服务器 + keeper/receipt
+  看门狗整套装置（http_client 同款钉历经 #2285 r4 两轮才稳），超出本轮
+  预算，登记为 P2 跟进候选）。
+- **r2 ④ arm 清空 strays**：`arm()` 不再清 strays、改记用例纪元
+  （`strays: Vec<(epoch, request)>`），断言「stray 的 epoch == 观察到它的
+  用例」+「本纪元无 stray」。负控三条：`strays-foreign-epoch` 注入外纪元
+  stray（钉断言存在）；`arm-clear-reinserted` 回插 arm 内清空——由
+  `late_stray_survives_the_next_arm` 杀：真实迟请求（走环回 socket 进
+  disarmed 服务端、经 `mock.stray()` 落账，与泄漏 poll 同路径）必须存活过
+  下一次 arm 并保持原纪元；`late-stray-real-path` 在 replay 末尾 disarm
+  之后注入同样的真实迟请求——由第一个用例的「本纪元无 stray」杀，证明
+  真实路径的迟到请求会被具名记到用例头上。
+- **r2 ⑤ SETTLE（fix-r1 收口）**：disarm 前的排空从固定 50 ms 改为自扩展
+  重试（50 ms 一轮、**连续 2 轮静默**才终止、计数仍在动则续等、上限 6 轮
+  = 300 ms）：单个 50 ms 静默窗口不再终止排空——服务端任务被负载饿过第一
+  窗口时，已在途字节仍落在自己用例的 armed 窗口，而不是排空过早退出后
+  落成 stray（r1 假 FAIL 窗口收窄；仍是启发式，连续两轮饿住仍会掐断）。
+  「终止时刻」被钉为 200 ms（`elapsed == SETTLE*4`，连续两个静默窗）：
+  `drained_holds_through_a_single_silent_window`（暂停时钟：到达落在第
+  一、二窗口之间时必须被观察到，且排空恰在第 200 ms 终止）——该判据区分
+  不了「连续静默 + 计数仍在动则续等」与「无条件等 4 轮」（两者都在
+  200 ms 退出），「计数仍在动则续等 / 6 轮上限」的完整语义无判据（无条件
+  4 轮等待变体不被杀），登记为跟进补轨迹钉。负控
+  `drained-single-quiet` 回退单窗终止、`drained-quiet-not-reset` 回退连续
+  语义（去 `quiet = 0` 重置变累计静默，150 ms 即假终止）必被杀。超脚本
+  槽位的轮询只拿兜底 `{}`、在去重投影里不可见，扩展窗口不会改变绿快照；整体仍受 `DEADLINE`
+  20 s 总界约束（排空后的静默检查仍为固定 SETTLE，其语义是断言「 arrivals
+  停止」而非等待排空）。
 
 ## 重生成
 
@@ -144,6 +223,13 @@ v22.22.0 实测字面量。
 `negative_controls.py` 形态照 channel-feishu：`--check` 校验锚点；
 `OUT [mutation …]` 在落盘后的 HEAD 树上执行（`mutating_sources` 拒绝未提交的
 产品文件）。变异锚点覆盖 seen 去重删除、fromMe 闸反转、时间戳推进删除、
-`/new` 回复删除、sendReply running 闸删除、MESSAGE_LIMIT 改值、拒绝表回插
-bluebubbles、无信号轮询 GET 的 300 s 总界删除，以及 oracle 三重校验各一
-条；先 `--compile-only` 全过再交协调者跑 OUT。
+`/new` 回复删除、sendReply running 闸删除、MESSAGE_LIMIT 改值、SEND_TIMEOUT
+改值（#2285 ①）、driver 强引用回退（#2285 ②）、拒绝表回插 bluebubbles、
+无信号轮询 GET 的 300 s 总界删除、(300 s, 400 s) 漂移 350 s 与常量改值
+（#2285 r4 ④）、receipt 看门狗「字节前停摆 / 到达前死亡」两支（#2285 r4 ⑤）、
+strays 外纪元（#2285 r2 ④）、arm 清空回插与 replay 末尾真实迟请求
+（#2285 fix-r1 boundary #1）、per-tick 轮询 inline 进 driver（#2285 fix-r1
+sibling #2）、排空单窗终止回退（#2285 fix-r1 boundary #2）、排空连续
+语义回退（#2285 r2 `drained-quiet-not-reset`）、投毒移除（#2285 r2
+`poison-turn-index-removed`），以及 oracle
+三重校验各一条；先 `--compile-only` 全过再交协调者跑 OUT。
