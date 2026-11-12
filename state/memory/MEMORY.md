@@ -55,3 +55,4 @@
 - [混合署名口径](20261106-mixed-authorship.md) — 看板 impl 写家族并集；单一「主实现方」用最大 diff 行数方（可复算），评审按「参与过即作者」取补集（#1544 人批 C+B）
 - [macmini 仅 Wi-Fi](20261106-macmini-wifi-linkloss.md) — en0 无有线，长链断链会作废整批宿主/对拍；B 已让等待器 resume + 证据分轮次，根治仍需现场插网线（#1498 人批 B）
 - [大总管会话启动](20261107-coord-session-launch.md) — 起会话用 `claude --permission-mode bypassPermissions`；`--allow-dangerously-skip-permissions` 实测落 auto mode，分类器抖动会被误读成权限被拒
+- [词表判定不收敛](20261110-lexical-verdict-fix-nonconvergence.md) — 中文处置判定走结构派生不走词表枚举；r2–r6 五轮逐词补丁每轮同位置开新洞，评审词表建议只收形状不收方案

@@ -56,13 +56,13 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
    ⚠️ 评审 A 指出旧 `verify_a9.py` 的 E 规则失败只「旁报」、不进总判决（`:435`），场景靠 glob 取（`:423`）——**总判决必须同时要求：53 个场景齐全、两侧身份断言通过、所有适用的 E 规则通过**。
 3. **两侧同坏**：两边都空、两边都报同样的错——必须判 FAIL。
 4. **独立审查**：codex + opencode 双谱系各审一遍尺子与对照结果，记录在 `docs/reviews/001_ruler-recheck.md`（与本计划同号）。**最多两轮**；两轮后仍有 P0/P1/P2，停下交人仲裁，不再自己调。
-   （Issue #1 独立审查判据：仅「收敛到无 P0/P1/P2」结论行由冻结尺子 scripts/parity/check_ruler.py 校验（`independent_review` 子串匹配）；双谱系审查、最多两轮等其余内容不在机检范围，仍须人工核验。不适用 CLAUDE.md 问题分级 #2063-B 的 P2 处置制；伞单/节点收尾判据以 CLAUDE.md:81/:87 为准。）
+   （Issue #1 独立审查判据：结论句为精确字面量 `结论：**无 P0/P1/P2。**`——记录文件围栏外可见文本任意位置出现该子串即通过（非按行；尺子本体弱点见 #2245）——＋记录表内 P0/P1/P2 行均已处置（fail-closed，#2245 后不再只做结论句子串匹配）由冻结尺子 scripts/parity/check_ruler.py 校验（`independent_review`）；双谱系审查、最多两轮等其余内容不在机检范围，仍须人工核验。不适用 CLAUDE.md 问题分级 #2063-B 的 P2 处置制；伞单/节点收尾判据以 CLAUDE.md『问题分级』/『大步骤收尾自查』节为准。）
 
 **Issue #1 怎么算做完**
 - [ ] `python3 -I scripts/parity/check_ruler.py` 输出一份 JSON，四项对照各一个布尔值，**全为 true**；结果与原始数据路径写进 `exp004`
 - [ ] `acceptance.md`、`normalization.md` 写好后**先交人批**，批了才冻结；`FROZEN.md` 记录 `specs/parity/` 全部规约 **以及 `scripts/parity/` 下全部比较器与驱动代码**的 sha256；`python3 -I scripts/parity/check_frozen.py` 校验全部哈希。冻结后改任何一份都要另开 issue、由人批
 - [ ] 双谱系审查收敛到无 P0/P1/P2（最多两轮，见上）
-  （Issue #1 独立审查判据：仅「收敛到无 P0/P1/P2」结论行由冻结尺子 scripts/parity/check_ruler.py 校验（`independent_review` 子串匹配）；双谱系审查、最多两轮等其余内容不在机检范围，仍须人工核验。不适用 CLAUDE.md 问题分级 #2063-B 的 P2 处置制；伞单/节点收尾判据以 CLAUDE.md:81/:87 为准。）
+  （Issue #1 独立审查判据同上：精确字面量 `结论：**无 P0/P1/P2。**` 子串＋表内 P0/P1/P2 行均已处置，由 scripts/parity/check_ruler.py 校验；伞单/节点收尾判据以 CLAUDE.md『问题分级』/『大步骤收尾自查』节为准。）
 - [ ] CI `check` 绿（本 issue 不碰 Rust 代码，但 PR 照常走闸）
 
 ### Issue #2 · 搬入旧 Rust sidecar（在 Issue #1 合并之后）
