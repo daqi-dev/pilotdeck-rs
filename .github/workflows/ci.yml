@@ -149,9 +149,14 @@ jobs:
           # #2795 fix-r6（评审 boundary#3）：session-domain-expectations 的
           # SetupClassReadSurface（--negative 元控入口的类级 setUp 读面，
           # fix-r3 收口）此前不在 CI——设备被改动没人红。同形接入本步
-          # （issue-2495 同款，纯 Python 不需要 cargo 名额，15 例实测 < 1 s，
-          # 含真实 tree_lock 驱动与 setUpClass 记录桩接缝）。
+          # （issue-2495 同款，纯 Python 不需要 cargo 名额，fix-r7 后 16 例
+          # 实测 < 1 s，含真实 tree_lock 驱动与 setUpClass 记录桩接缝）。
           python3 -B -m unittest -v session-domain-expectations/test_meta_controls.py
+          # #2795 fix-r7（评审 sibling#3）：共享执行器 negative_suite.py 的
+          # 机检（含 fix-r6 的 matrix_main --check 忙锁拒跑用例）此前仅靠
+          # 宿主清单，仓内 CI/scripts 无引用。接入本步（纯故障注入，无
+          # cargo 名额，69 例实测约 0.4 s）。
+          python3 -B -m unittest -v test_negative_suite
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。

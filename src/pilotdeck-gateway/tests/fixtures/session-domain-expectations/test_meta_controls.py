@@ -101,8 +101,8 @@ class DriftTests(unittest.TestCase):
         # #2795 fix-r6（评审 concurrency#2）：真入口（unittest.main）保持真锁：
         # 锁忙 → 装置 SystemExit(2)，实测（Python 3.12.3）确认 SystemExit 穿过
         # unittest._handleClassSetUp（只捕 Exception）整进程退出 rc 2、无报告，
-        # 是既定的 fail-closed 形态；元控 --negative 入口不取真锁，
-        # 见 _meta_class_setup。
+        # 是既定的 fail-closed 形态；元控 --negative 入口同保真锁
+        # （fix-r7 concurrency#1），见 _meta_class_setup。
         with negative_process.anchor_read_window(
                 gate.ROOT, 'session-domain-expectations meta-controls'):
             cls.expectations = gate.panel_table('EXPECTATION_CASES')
@@ -434,10 +434,13 @@ class SetupClassReadSurface(unittest.TestCase):
     驱动真实的 setUpClass：只把 negative_process.tree_lock 换成记录桩
     （装置内部经 negative_process 全局查 tree_lock），读面记名判红；
     busy 时装置必须 SystemExit(2) + 统一文案（与名册驱动的拒跑形态同形）。
-    fix-r6 补第三钉（评审 concurrency#2）：--negative 元控入口经
-    _meta_class_setup 复用记录桩，不依赖真锁空闲；真入口保真锁
-    （锁忙 = SystemExit(2) fail-closed，实测 unittest 对 setUpClass 的
-    SystemExit 不出报告、整进程退出）。
+    fix-r6 曾补第三钉（评审 concurrency#2，fix-r7 concurrency#1 推翻其
+    「--negative 不依赖锁空闲」前提）：--negative 元控入口经
+    _meta_class_setup 自换记录桩——生产路径的 panel_table 读因此无锁。
+    fix-r7 起元控入口同保真装置（锁忙 = SystemExit(2) fail-closed，
+    实测 unittest 对 setUpClass 的 SystemExit 不出报告、整进程退出），
+    钉在 test_negative_entry_keeps_the_real_tree_lock /
+    test_negative_entry_refuses_when_the_tree_lock_is_busy。
     """
 
     def test_setup_class_reads_panels_inside_the_tree_lock(self):
@@ -477,45 +480,88 @@ class SetupClassReadSurface(unittest.TestCase):
                         '#2795 meta-controls: a refused setUpClass must read '
                         f'no panel bytes: {events!r}')
 
-    def test_negative_entry_does_not_depend_on_the_real_lock(self):
-        """#2795 fix-r6（评审 concurrency#2）：--negative 元控入口的锁 seam。
+    def test_negative_entry_keeps_the_real_tree_lock(self):
+        """#2795 fix-r7（评审 concurrency#1）：--negative 元控入口不绕真锁。
 
-        真入口（unittest.main）保真锁；但 ``--negative`` 跑整套变体，不应依赖
-        ``.negative-source.lock`` 空闲（setUp 换记录桩的同一理由）。真锁忙时
-        （外层 busy 桩模拟兄弟持锁）元控的类建面必须照常完成——若
-        ``_meta_class_setup`` 退回直接调 setUpClass（真锁），busy 桩会
-        SystemExit(2)，本用例红。
+        fix-r6 的 ``_meta_class_setup`` 曾在 --negative 生产路径默认把真
+        ``tree_lock`` 换成记录桩：setUpClass 的 ``panel_table`` 读 PANEL
+        （gateway-entry-guard 变异的同一 controls/session_domain.py）变无锁
+        读——兄弟 runner 的 write/restore 窗口内，18 个变体的
+        KILLED/SURVIVED/INVALID 可基于不拥有的字节。生产路径必须保真装置：
+        这里外层换成记录桩并驱动真实 ``_meta_class_setup()``——若入口又
+        在内部自换桩（fix-r6 形态），外层桩收不到调用、判读红。
         """
-        busy = []
-        with patch.object(negative_process, 'tree_lock',
-                          _RecordingTreeLock(busy, busy=True)):
-            events = _meta_class_setup()
-        self.assertTrue(events[:1] == ['lock-enter'] and events[-1:] == ['lock-exit']
-                        and 'unlocked-read' not in events,
+        events = []
+        lock = _RecordingTreeLock(events)
+        with patch.object(negative_process, 'tree_lock', lock), \
+                _pinned_anchor_reads(events, lock):
+            _meta_class_setup()
+        unlocked = [event for event in events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked and events[:1] == ['lock-enter']
+                        and events[-1:] == ['lock-exit'],
                         '#2795 meta-controls: the --negative entry must run '
-                        f'its class setup through the stub seam even with a '
-                        f'busy real lock: {events!r}')
-        self.assertTrue(busy == [],
-                        '#2795 meta-controls: the busy real lock must never '
-                        f'be reached by the meta entry: {busy!r}')
+                        'its class setup through the real device (whatever '
+                        f'lock negative_process holds): {events!r}')
+        self.assertTrue(lock.calls == [((gate.ROOT,), {'timeout': 60})],
+                        '#2795 meta-controls: the --negative entry must lock '
+                        f'the repo root with the 60 s bounded wait: '
+                        f'{lock.calls!r}')
+
+    def test_negative_entry_refuses_when_the_tree_lock_is_busy(self):
+        """#2795 fix-r7（评审 concurrency#1 + sibling#4）：锁忙拒跑在元控入口。
+
+        生产 --negative 路径保真装置：锁忙 → ``anchor_read_window`` 的
+        SystemExit(2) + 统一拒跑文案（fail-closed 拒跑，不是 18 行变体
+        照跑，也不是逃出逐项 try 的 traceback rc 1——与「拒跑=rc 2」的
+        相位分界一致）。这里驱动真实 ``negative_checks()``（:584 调用点，
+        ``--negative`` 分支本体）：若 ``_meta_class_setup`` 退回内部换桩，
+        busy 真锁被绕过、类建面照常完成、无 SystemExit，判读红。
+        """
+        busy = _RecordingTreeLock([], busy=True)
+        errors = io.StringIO()
+        output = io.StringIO()
+        try:
+            with patch.object(negative_process, 'tree_lock', busy), \
+                    contextlib.redirect_stderr(errors), \
+                    contextlib.redirect_stdout(output):
+                negative_checks()
+        except SystemExit as refusal:
+            caught = refusal
+        else:
+            caught = None
+        self.assertTrue(caught is not None and caught.code == 2,
+                        '#2795 meta-controls: a busy tree lock must refuse '
+                        'the --negative entry with rc 2, got '
+                        f'{None if caught is None else caught.code!r}')
+        self.assertTrue(
+            'session-domain-expectations meta-controls: '
+            'tree lock or anchor read failed' in errors.getvalue()
+            and 'TimeoutError' in errors.getvalue(),
+            '#2795 meta-controls: the --negative refusal must use the '
+            f'shared device message and name the lock wait: '
+            f'{errors.getvalue()!r}')
+        self.assertTrue(output.getvalue() == '',
+                        '#2795 meta-controls: a refused --negative entry '
+                        'must not report any variant rows: '
+                        f'{output.getvalue()!r}')
 
 
 def _meta_class_setup():
-    """The ``--negative`` meta entry's class setup: the recording-stub seam.
+    """The ``--negative`` meta entry's class setup: the real device, no seam.
 
-    #2795 fix-r6（评审 concurrency#2）：真入口（unittest.main）的 setUpClass
-    保真锁——锁忙时装置 SystemExit(2) 是既定 fail-closed（实测确认 SystemExit
-    穿过 unittest._handleClassSetUp、整进程退出、无报告）；但 ``--negative``
-    元控跑整套 18 个变体，不必也不该依赖 ``.negative-source.lock`` 空闲
-    （setUp 换记录桩的同一理由）。这里在调用 setUpClass 期间把装置内部的
-    ``negative_process.tree_lock`` 换成记录桩——装置行为本身不变，只有锁
-    的实现被替换。返回桩记录的事件（机检：
-    test_negative_entry_does_not_depend_on_the_real_lock）。
+    #2795 fix-r7（评审 concurrency#1）：fix-r6 版本在这里默认把装置内部的
+    ``negative_process.tree_lock`` 换成记录桩——生产 --negative 路径的
+    ``panel_table`` 读因此无锁：兄弟变异轮（gateway-entry-guard 写
+    ``scripts/gateway-parity/controls/session_domain.py``，PANEL 本体）的
+    write/restore 窗口内，18 个变体的判杀可基于不拥有的字节；锁忙也走
+    不到装置的 SystemExit(2)，类建面失败以 traceback rc 1 逃出，与
+    「拒跑=rc 2」的相位混淆。生产路径保真装置（锁忙即拒跑 rc 2）；
+    测试需要记录桩（不落锁文件、不依赖锁空闲）时在调用点外层 patch
+    ``negative_process.tree_lock``（SetupClassReadSurface 同形），入口
+    不得自换。
     """
-    events = []
-    with patch.object(negative_process, 'tree_lock', _RecordingTreeLock(events)):
-        DriftTests.setUpClass()
-    return events
+    DriftTests.setUpClass()
 
 
 def negative_checks():

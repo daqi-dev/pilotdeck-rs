@@ -1315,8 +1315,12 @@ def _anchor_read_window_alias_call(tree):
 # （含别名）/ 旧三拼写文案」，既无装置也无文案的检查入口是签名盲区——
 # 评审按两种字面形状取样 11 站（native-cron 等），本扫描按 AST 形状收口：
 # 凡检查门——「args == ['--check'] / ['--check-anchors']」字面等值比较
-# （if / 条件表达式，右值单元素常量序列）或 argparse 形态的
-# ``if args.check:`` 属性门（同族：读面多经 ``mutant_switch.preflight``
+# （if / 条件表达式，右值单元素常量序列）、argparse 形态的
+# ``if args.check:`` 属性门，或 fix-r7（boundary#1 + sibling#1）补的三种
+# 真实拼写——「'--check-anchors' in sys.argv」成员测试、「args in
+# (["--check"], ["--check-anchors"])」别名元组成员测试、「mode ==
+# '--check-anchors'」字符串常量比较（含 BoolOp/UnaryOp 嵌套，见
+# _has_check_mode_gate）——（同族：读面多经 ``mutant_switch.preflight``
 # 委托进 _shared/mutant_switch.py，文件级看不见 read_text，故门形状即
 # 家族形状）——且文件内无装置调用（含别名）、无旧文案、无 matrix_main
 # 分发（共享 --check 的锁由 negative_suite 的装置持有）、无 tree_lock 锁
@@ -1368,34 +1372,53 @@ def _code_names(tree):
     return names
 
 
-def _has_check_mode_gate(tree):
-    """A check-mode gate: ``<argv-ish> == ['--check']`` / ``['--check-anchors']``.
+_CHECK_MODE_FLAGS = ('--check', '--check-anchors')
 
-    The review's sampled shape, generalized over the argv spelling
-    (``args`` / ``sys.argv[1:]`` / a mode variable) and over both statement
-    and conditional-expression positions. #2795 fix-r6 sibling sweep: the
-    argparse spelling (``parser.add_argument('--check',
-    action='store_true')`` + ``if args.check:``) is the same family gate —
-    the review's 11-station sample happened to be all literal compares,
-    but the argparse stations' ``mutant_switch.preflight`` before the gate
-    is the same bare sibling-read window (fix #3 followed its named entry;
-    these are its same-shape siblings, registered not fixed).
+
+def _names_check_mode(node):
+    """A constant naming the check mode, or a sequence built only from them.
+
+    ``['--check']``, ``("--check", "--check-anchors")`` and
+    ``(['--check'], ['--check-anchors'])`` are the gate payloads the tree
+    spells; a sequence mixing in any other literal does not name the check
+    mode (widening that stays fail-closed — it would only add registrations,
+    never lose a live gate).
+    """
+    if isinstance(node, ast.Constant) and node.value in _CHECK_MODE_FLAGS:
+        return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return bool(node.elts) and all(_names_check_mode(elt) for elt in node.elts)
+    return False
+
+
+def _has_check_mode_gate(tree):
+    """A check-mode gate: a compare or attribute test naming the mode.
+
+    Every spelling the tree actually uses, each pinned by a review round:
+    ``<argv-ish> == ['--check']`` (single-element constant sequence — the
+    fix-r6 predicate's only compare shape), the argparse
+    ``if args.check:`` attribute gate, the membership tests
+    ``'--check-anchors' in sys.argv`` and ``args in (["--check"],
+    ["--check-anchors"])``, and the bare string compare
+    ``mode == '--check-anchors'`` (#2795 fix-r7, boundary#1 + sibling#1:
+    the fix-r6 predicate was blind to the last three and four live stations
+    sailed past the scan). The gate matches at any ``if`` /
+    conditional-expression position and through BoolOp / UnaryOp nesting:
+    the compare walk covers the whole test expression, not just its top.
     """
     for node in ast.walk(tree):
         if not isinstance(node, (ast.If, ast.IfExp)):
             continue
-        test = node.test
-        if isinstance(test, ast.Compare) and isinstance(test.ops[0], ast.Eq) \
-                and len(test.comparators) == 1:
-            right = test.comparators[0]
-            if (isinstance(right, (ast.List, ast.Tuple)) and len(right.elts) == 1
-                    and isinstance(right.elts[0], ast.Constant)
-                    and right.elts[0].value in ('--check', '--check-anchors')):
-                return True
-        for sub in ast.walk(test):
+        for sub in ast.walk(node.test):
             if isinstance(sub, ast.Attribute) and sub.attr in ('check',
-                                                                'check_anchors'):
+                                                               'check_anchors'):
                 return True
+            if not isinstance(sub, ast.Compare):
+                continue
+            for op, right in zip(sub.ops, sub.comparators):
+                if isinstance(op, (ast.Eq, ast.In)) and (
+                        _names_check_mode(sub.left) or _names_check_mode(right)):
+                    return True
     return False
 
 
@@ -1423,8 +1446,16 @@ def bare_check_preflight_signature(text):
 
 def _has_gate_literal(text):
     # The regex half of the gate detector for sources ast cannot parse: the
-    # literal compare and the argparse attribute spellings, both fail-closed.
-    return bool(re.search(r'''==\s*\[\s*['"]--check(?:-anchors)?['"]\s*\]''', text)
+    # literal compare (constant sequence or bare string, either order), the
+    # membership test and the argparse attribute spelling, all fail-closed
+    # (#2795 fix-r7: the first two shapes only — the membership spelling
+    # needs no AST to spot, and an unparseable gate file must not sail past).
+    check = r'''['"]--check(?:-anchors)?['"]'''
+    return bool(re.search(r'''==\s*\[\s*''' + check + r'''\s*\]''', text)
+                or re.search(r'''==\s*''' + check, text)
+                or re.search(check + r'''\s*==''', text)
+                or re.search(check + r'''\s+in\s+''', text)
+                or re.search(r'''\bin\b[^\n]*''' + check, text)
                 or re.search(r'''if\s+\w+\.check(?:_anchors)?\b''', text))
 
 
@@ -1924,10 +1955,18 @@ class BareCheckPreflightBacklog(unittest.TestCase):
 
     def test_the_bare_scan_detects_each_kill_shape(self):
         # The scan predicate's every half, demonstrated on a synthetic tree
-        # (never the real one): a bare gate+read entry is flagged — in both
-        # gate spellings (literal compare and the argparse ``if args.check:``
-        # form); the same entry behind an aliased device import, behind the
-        # legacy message, and behind a matrix_main dispatch are not.
+        # (never the real one): a bare gate+read entry is flagged — in every
+        # gate spelling the tree actually uses (literal compare, the argparse
+        # ``if args.check:`` form, the ``'--check-anchors' in sys.argv``
+        # membership test, the bare ``mode == '--check-anchors'`` string
+        # compare and the ``args in (["--check"], ["--check-anchors"])``
+        # alias-tuple membership — #2795 fix-r7, boundary#1 + sibling#1: the
+        # fix-r6 predicate only saw the first two shapes and four live
+        # stations sailed past); the same entry behind an aliased device
+        # import, behind the legacy message, behind a matrix_main dispatch,
+        # and a file whose gate is bare but which holds a tree_lock elsewhere
+        # (the 「二（续）」manual-registration shape — fix-r7, sibling#2) are
+        # not.
         with tempfile.TemporaryDirectory(prefix='negctl-2795r6-scan-') as base:
             base = Path(base)
             bare = base / 'new-bare' / 'negative_controls.py'
@@ -1959,18 +1998,58 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                              "    for row in rows:\n"
                              "        check_anchor(row, row[1].read_text())\n"
                              "print('tree lock or anchor read failed: demo')\n")
-            dispatched = base / 'new-dispatched' / 'negative_controls.py'
-            dispatched.parent.mkdir()
-            dispatched.write_text("from negative_suite import matrix_main\n"
-                                 "if args == ['--check']:\n"
-                                 "    return matrix_main(ROOT, __file__, 'x', rows)\n")
+            in_argv_bare = base / 'new-in-argv-bare' / 'negative_controls.py'
+            in_argv_bare.parent.mkdir()
+            in_argv_bare.write_text("import sys\n"
+                                    "if '--check-anchors' in sys.argv:\n"
+                                    "    sources = {path: path.read_text()\n"
+                                    "               for path in paths}\n")
+            mode_compare_bare = base / 'new-mode-compare-bare' / 'negative_controls.py'
+            mode_compare_bare.parent.mkdir()
+            mode_compare_bare.write_text("if mode == '--check-anchors':\n"
+                                         "    for row in rows:\n"
+                                         "        check_anchor(row, row[1].read_text())\n")
+            tuple_membership_bare = \
+                base / 'new-tuple-membership-bare' / 'negative_controls.py'
+            tuple_membership_bare.parent.mkdir()
+            tuple_membership_bare.write_text(
+                "args = sys.argv[1:]\n"
+                "if args in (['--check'], ['--check-anchors']):\n"
+                "    for row in rows:\n"
+                "        check_anchor(row, row[1].read_text())\n")
+            boolop_bare = base / 'new-boolop-bare' / 'negative_controls.py'
+            boolop_bare.parent.mkdir()
+            boolop_bare.write_text("import sys\n"
+                                   "if args == ['--check'] or "
+                                   "'--check-anchors' in sys.argv:\n"
+                                   "    for row in rows:\n"
+                                   "        check_anchor(row, row[1].read_text())\n")
+            tree_locked = base / 'new-tree-locked' / 'negative_controls.py'
+            tree_locked.parent.mkdir()
+            tree_locked.write_text("from negative_process import tree_lock\n"
+                                   "if '--check-anchors' in sys.argv:\n"
+                                   "    for row in rows:\n"
+                                   "        check_anchor(row, row[1].read_text())\n"
+                                   "with tree_lock(ROOT, timeout=900):\n"
+                                   "    pass\n")
             found = _bare_check_entries(base)
         self.assertTrue(found == {'new-bare/negative_controls.py',
-                                  'new-argparse-bare/negative_controls.py'},
+                                  'new-argparse-bare/negative_controls.py',
+                                  'new-in-argv-bare/negative_controls.py',
+                                  'new-mode-compare-bare/negative_controls.py',
+                                  'new-tuple-membership-bare/'
+                                  'negative_controls.py',
+                                  'new-boolop-bare/negative_controls.py'},
                         '#2795 fix-r6: the bare-check scan must flag the '
                         'gate+read entry with no discipline of its own in '
-                        'either gate spelling (literal compare, argparse '
-                        f'attribute), and only those: {sorted(found)}')
+                        'every gate spelling (literal compare, argparse '
+                        'attribute, argv membership, bare string compare, '
+                        'alias-tuple membership, BoolOp nesting), and only '
+                        'those — an entry behind a device import (aliased or '
+                        'not), the legacy message, a matrix_main dispatch, or '
+                        'a tree_lock held elsewhere in the file is the '
+                        'registered manual-exemption shape: '
+                        f'{sorted(found)}')
 
 
 class BackgroundPanicRunRefusal(unittest.TestCase):

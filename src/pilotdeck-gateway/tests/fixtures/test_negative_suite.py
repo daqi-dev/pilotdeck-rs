@@ -1429,7 +1429,11 @@ class MatrixMainStartupTests(unittest.TestCase):
         # 读面包进 anchor_read_window，但忙锁拒跑这一半没有机检——装置将来
         # 被改动（吞掉锁异常继续读）不会有人红。这里驱动真实 matrix_main 的
         # --check 分支：忙锁 → SystemExit(2) + 装置统一拒跑文案 + 点名锁
-        # 等待异常，且不占证据目录（多夹具把该分支当自己的锚点预检）。
+        # 等待异常。fix-r7（评审 boundary#3）：--check 分支没有 mkdir 面
+        # （连输出目录参数都不收），「拒跑不占证据目录」那半边的契约由
+        # test_negative_roster_guards.py 的 BackgroundPanicRunRefusal 钉
+        # （真实会建目录的 run 分支）；此前收尾的 out.exists() 断言恒真，
+        # 已删。
         class BusyLock:
             def __call__(self, *args, **kwargs):
                 return self
@@ -1457,8 +1461,6 @@ class MatrixMainStartupTests(unittest.TestCase):
                              'never an unlocked read or a red run')
             self.assertIn('tree lock or anchor read failed', errors.getvalue())
             self.assertIn('TimeoutError', errors.getvalue())
-            self.assertFalse((root / 'out').exists(),
-                             '#2795 a refused check leaves no evidence directory')
 
 
 class ResultRowSchemaTests(unittest.TestCase):

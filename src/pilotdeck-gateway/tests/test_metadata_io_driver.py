@@ -1573,6 +1573,13 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main c3100a2b7 带入 #2590 fix-r2）：-O 步新增第六模块
         # issue-2495/test_negative_controls.py（r41 实测 Ran 30、约 4 s），
         # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
+        # #2795 fix-r7（评审 sibling#3）：fix-r6 给本步接了第七模块
+        # session-domain-expectations/test_meta_controls.py 但两处 driver 钉
+        # 没跟上——删掉 ci.yml 那行不红、模块被掏空也不红，正是该步自身
+        # 理由的同源反例。同轮把 test_negative_suite（共享执行器
+        # negative_suite.py 的机检，69 例约 0.4 s，无 cargo）从「仅宿主
+        # 清单」接进 CI，两条新命令一并钉进 commands 与下限（改后实测
+        # Ran 16 / Ran 69）。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1580,6 +1587,8 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
+            ('session-domain-expectations/test_meta_controls.py', 16),
+            ('test_negative_suite', 69),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -1608,9 +1617,10 @@ class EnvironmentControls(unittest.TestCase):
                 registered_conditional_skips.get(module, ()))
         self.assertLessEqual(
             time.monotonic() - started, self.optimize_guards_step_budget,
-            '#1666 the five -O self-test modules together must fit the -O '
-            'step budget (%d s); five near-miss modules must not outlive '
-            'the CI step they pin' % self.optimize_guards_step_budget)
+            '#1666 the %d -O self-test modules together must fit the -O '
+            'step budget (%d s); near-miss modules must not outlive '
+            'the CI step they pin'
+            % (len(minimums), self.optimize_guards_step_budget))
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：#1570 的自测步守卫同样只钉步存在，
@@ -1664,12 +1674,17 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main）：#2590 fix-r2 给本步加了第六条命令
         # （issue-2495/test_negative_controls.py），一并钉入 commands——
         # 删掉它同样必须红。
+        # #2795 fix-r7（评审 sibling#3）：fix-r6 的第七条
+        # （session-domain-expectations/test_meta_controls.py）与本轮接入的
+        # 第八条（test_negative_suite）同样钉入——删掉任一条必须红。
         commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
                     'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_run_guards',
                     'python3 -B -m unittest -v network-timing/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_roster_guards',
-                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py')
+                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
+                    'python3 -B -m unittest -v session-domain-expectations/test_meta_controls.py',
+                    'python3 -B -m unittest -v test_negative_suite')
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
@@ -2477,18 +2492,32 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_optimize_guards_self_test_ci_regressions_are_rejected(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性步（#1666/#1734）的变异负控，
-        # 与 #994 / #2133 同形。该步是 run 块（五条命令），删掉其中任一条
-        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部五条」的断言上；
-        # if / continue-on-error / 错 cwd 按步名锚定插入或改值。
+        # 与 #994 / #2133 同形。该步是 run 块（命令逐轮增补，fix-r7 起八条），
+        # 删掉其中任一条（以 #2309 roster-guards 为代表）必须杀在「必须跑全部
+        # 命令」的断言上；if / continue-on-error / 错 cwd 按步名锚定插入或改值。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
         command = 'python3 -B -m unittest -v test_negative_roster_guards'
+        meta_command = ('python3 -B -m unittest -v '
+                        'session-domain-expectations/test_meta_controls.py')
+        suite_command = 'python3 -B -m unittest -v test_negative_suite'
+        required = '#1666 required CI job must run the -O invariance self-tests'
         cases = [(name_, workflow.replace(old, new, 1), message)
                  for name_, old, new, message in (
             ('optimize-self-test-removed', command + '\n', '',
-             '#1666 required CI job must run the -O invariance self-tests'),
+             required),
             ('optimize-self-test-commented', command, '# ' + command,
-             '#1666 required CI job must run the -O invariance self-tests'),
+             required),
+            # #2795 fix-r7（评审 sibling#3）：两条新命令的删行/注释形——
+            # fix-r6 接线时 commands 没跟上，删掉第七条曾不红。
+            ('meta-controls-self-test-removed', meta_command + '\n', '',
+             required),
+            ('meta-controls-self-test-commented', meta_command,
+             '# ' + meta_command, required),
+            ('suite-self-test-removed', suite_command + '\n', '',
+             required),
+            ('suite-self-test-commented', suite_command,
+             '# ' + suite_command, required),
             ('optimize-self-test-skipped', name_line,
              name_line + '        if: false\n',
              '#1666 the -O self-test step must be unconditional and required'),
