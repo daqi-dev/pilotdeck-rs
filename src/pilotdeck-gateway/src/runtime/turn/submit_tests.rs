@@ -2146,3 +2146,47 @@ async fn submit_turn_surrogate_gate_precedes_the_busy_refusal() {
         "#1623 the gate fires before the session factory even on a busy session"
     );
 }
+
+// #1623 fix-r8 (review P2 #1): for a combined-invalid input — a bogus `mode`
+// beside a lone-surrogate `sessionKey` — TS answers the mode error first
+// (`submitTurn` has no sessionKey gate; `probe_ts_gates.log`), and the same
+// batch's config family orders the same way (mode → busy → sessionKey gate).
+// The registered surrogate gate therefore sits after the mode/basePermissionMode
+// and runId checks: this input must answer INVALID_PERMISSION_MODE, not
+// INVALID_SESSION_KEY. Moving the gate ahead of the mode check turns this red.
+#[tokio::test]
+async fn submit_turn_combined_invalid_keeps_the_ts_mode_code() {
+    use crate::{negative_assert, negative_assert_eq};
+    let (submitter, factory, log) = counting_factory_submitter();
+    let mut input = submit_turn_input(JsString::from_utf16(vec![0x73, 0xd800]));
+    set(&mut input, "mode", "bogus".into());
+    collect(submitter.submit(input), log.clone()).await;
+    let visible = log
+        .visible
+        .lock()
+        .expect("#1623 submit fixture prerequisite");
+    let error = visible
+        .iter()
+        .find(|event| event["type"] == "error")
+        .expect("#1623 the combined-invalid submission answers an error event");
+    negative_assert_eq!(
+        error["code"],
+        json!("INVALID_PERMISSION_MODE"),
+        "#1623 a bogus mode outranks the surrogate sessionKey at the entry, as in TS"
+    );
+    negative_assert!(
+        !visible
+            .iter()
+            .any(|event| event["code"] == "INVALID_SESSION_KEY"),
+        "#1623 the surrogate gate stays behind the mode check for a combined-invalid input"
+    );
+    drop(visible);
+    negative_assert!(
+        factory
+            .keys
+            .lock()
+            .expect("#1623 submit fixture prerequisite")
+            .is_empty(),
+        "#1623 the validation short-circuit still precedes the session factory"
+    );
+}

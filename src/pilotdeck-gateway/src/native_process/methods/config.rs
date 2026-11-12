@@ -1662,6 +1662,73 @@ mod tests {
         config_blank_key_gate_order("seed_read_state", seed_cell_params).await;
     }
 
+    /// #1623 fix-r8 (review P2 #3): the lone-surrogate refusal rides the
+    /// shared `require_session_key`, so every config entry — not only
+    /// `session_model_set` — must answer it. One row per call site: a future
+    /// edit that drops any of the six off the shared guard fails here, which
+    /// the single-method case (`session_model_set` alone) could not catch.
+    /// The extras mirror the `*_cell_params` builders — the family checks its
+    /// own fields first where it does (e.g. `set_permission_mode`'s mode
+    /// check), so a valid payload is required to reach the key gate.
+    #[tokio::test]
+    async fn config_family_surrogate_key_gate_matrix() {
+        let (_scratch, r) = setup_fixture();
+        let seed_file = r.options.project.join("gate-order-seed.txt");
+        std::fs::write(&seed_file, "seeded\n").expect("#1623 surrogate matrix seed file");
+        let mtime_ms = std::fs::metadata(&seed_file)
+            .expect("#1623 surrogate matrix seed metadata")
+            .modified()
+            .expect("#1623 surrogate matrix seed mtime")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("#1623 surrogate matrix seed mtime is after the epoch")
+            .as_millis() as f64;
+        let matrix: Vec<(&str, Vec<(&'static str, JsValue)>)> = vec![
+            (
+                "session_model_set",
+                vec![("selection", selection("model", "test", "test"))],
+            ),
+            ("session_model_clear", vec![]),
+            ("set_permission_mode", vec![("mode", "default".into())]),
+            (
+                "set_session_thinking",
+                vec![(
+                    "thinking",
+                    object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+                )],
+            ),
+            ("set_output_style", vec![("name", JsValue::Null)]),
+            (
+                "seed_read_state",
+                vec![
+                    ("path", "gate-order-seed.txt".into()),
+                    ("mtime", JsValue::Number(mtime_ms)),
+                ],
+            ),
+        ];
+        for (method, extra) in matrix {
+            let mut fields: Vec<(&'static str, JsValue)> = vec![(
+                "sessionKey",
+                JsValue::String(JsString::from_utf16(vec![0x73, 0xd800])),
+            )];
+            fields.extend(extra);
+            let error = r
+                .session_config_request(method.into(), object(fields))
+                .await
+                .expect_err(&format!("#1623 {method} answers the surrogate gate"));
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#1623 the surrogate key is a sessionKey error"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                "sessionKey must not contain an unpaired surrogate.",
+                "#1623 every entry keeps the shared guard's message"
+            );
+        }
+        teardown(&r).await;
+    }
+
     #[tokio::test]
     async fn session_model_set_rejects_active_turn() {
         let (_scratch, r) = setup_fixture();
