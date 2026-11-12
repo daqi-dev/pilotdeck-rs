@@ -777,6 +777,17 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.check(prose_body, head, fp3):
             fails.append(f"fix-r3 负控：散文行不算修复轮（缺 fixtype 的块不再被误拒）：{gate.check(prose_body, head, fp3)}")
 
+        # fix-r4 修 3.5（DS boundary#1 + MM boundary#2 P0 双撞后的边界钉）：首行与非首行
+        # 的**有意不对称**——首行宽松（fix-r1 P0 硬要求：CJK 连写首行「修复fix-r5：」无类型词/
+        # 无 #N，收紧即假 FAIL）意味着类型词开头的散文行**出现在首行**时也会判修复轮（已知窄代价：
+        # 该 PR 会被要求 fixtype/pdrs-residual，多一道误拒而非漏检）；同一行出现在非首行位置则不判
+        # （上「test 覆盖了 fix-r5 的场景」负控钉住）。两向都钉死，防后续轮再把首行收紧回去。
+        if gate.fix_round_from_body("test 覆盖了 fix-r5 的场景\n") != 5:
+            fails.append("fix-r4 修3.5 边界钉：类型词开头的散文行在**首行**位置应判修复轮 5（首行宽松是 "
+                         "fix-r1 P0 硬要求，有意保留；非首行同款负控见上）")
+        if gate.fix_round_from_body("## 概述\n\ntest 覆盖了 fix-r5 的场景\n") is not None:
+            fails.append("fix-r4 修3.5 边界钉：同一散文行在非首行位置不应判修复轮")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):

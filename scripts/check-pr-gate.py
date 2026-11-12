@@ -86,7 +86,15 @@ WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) +
 
 def fix_round_from_body(body: str):
     """正文第一个非空行里的 fix-r<N>；首行没有则继续扫首个完整标题形态（TITLE_ECHO，见其
-    注释）的行；都没有则 None。首行与正文都不回显标题会漏判（fail-open，见 docstring 规则 4）。"""
+    注释）的行；都没有则 None。首行与正文都不回显标题会漏判（fail-open，见 docstring 规则 4）。
+
+    首行宽松 / 非首行严格的不对称是**有意的两难取舍**（#3056 fix-r4 修 3.5，MM boundary#2 P2）：
+    首行必须宽松（任何含 fix-r<N> 的首个非空行都判修复轮），否则 fix-r1 P0 的 CJK 连写首行
+    （「修复fix-r5：」——无类型词、无 #N，TITLE_ECHO 的结构装不下它）会整轮判没（假 PASS）；
+    非首行必须严格（完整标题形态），否则「test 覆盖了 fix-r5 的场景」这类正文散文会判成
+    修复轮（假 FAIL）。已知窄代价：散文行恰为首个非空行时按宽松口径判修复轮（要求 fixtype，
+    假 FAIL 向），负控见 test-review-roles.py「fix-r4 修 3.5」——钉住边界，防止后续轮次把
+    首行也收紧成 TITLE_ECHO 时误伤该 P0 口径。"""
     first = True
     for line in body.split("\n"):
         s = line.strip()
