@@ -29,6 +29,12 @@ its bound libtest parent must fail at the matching "#1723 ..." assertion:
   poll window reads as stopped again. Bound to the predicate's own
   contract test, which constructs RerunOutput directly: the race window
   is too narrow to drive deterministically through rerun_exact.
+* fsize-unit-constant-trusted — the ulimit -f unit probe trusts a
+  compile-time constant again instead of the bytes it measured (2048 B is
+  wrong on every measured host), so a drifted unit table must fail
+  closed. Bound to owned_rerun_hits_the_kernel_output_cap: the probe runs
+  before any rerun, so the bound parent dies at the probe's own
+  assertion.
 
 Every row runs its positive control, compiles the mutant (a mutant that
 does not compile is INVALID, never a kill), runs the bound parent, then
@@ -36,9 +42,12 @@ restores and re-runs the positive control; rows are recorded
 KILLED/SURVIVED/INVALID with their reason and summarized at the end — no
 first-failure abort. Rows bound to a Linux-only parent
 (#[cfg(target_os = "linux")]) are recorded SKIPPED on other hosts instead
-of INVALID — the exact filter cannot select the parent there, so the
-mutation is unreachable, not unfired. A run with zero KILLED rows still
-exits nonzero: nothing was verified.
+of INVALID — but only after observing the premise, never assuming it: the
+anchor count is checked on every host, and a `cargo test --list --exact`
+run must select zero tests before a row is recorded SKIPPED. A premise
+the listing disproves (a relaxed cfg, a renamed test) is INVALID and
+fails the run, never a silent skip plus exit 0. A run with zero KILLED
+rows still exits nonzero: nothing was verified.
 """
 import argparse
 import difflib
@@ -46,6 +55,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -132,6 +142,14 @@ MUTATIONS = [
      '!self.timed_out && !self.overflow',
      'test_process::finished_on_its_own_branches_on_the_outcome_not_the_clock',
      "#1723 a rerun that finished on its own inside the deadline's window is not a stop"),
+    # The unit probe trusts a compile-time constant again instead of the
+    # bytes it measured: a drifted unit table (2048 B is wrong on every
+    # measured host) must fail closed before any rerun runs.
+    ('fsize-unit-constant-trusted', SOURCE,
+     'landed > 0 && landed < 4096 && RERUN_OUTPUT_LIMIT % landed == 0',
+     'landed == 2048',
+     'test_process::owned_rerun_hits_the_kernel_output_cap',
+     "#1723 the wrapping shell's ulimit -f unit is"),
 ]
 
 
@@ -198,13 +216,66 @@ def main():
             return 'KILLED', 'bound test failed at its #1723 assertion'
         return 'INVALID', 'no attributable runtime failure (build error, wrong panic, or missing test)'
 
+    # fix-r3 (boundary#2/concurrency#2): a SKIPPED row's premise — the exact
+    # filter cannot select the bound parent on this host — is observed, not
+    # assumed. One listing per bound parent, cached: the listing compiles the
+    # test binary, so it pays the same cargo slot the rows themselves do.
+    listed = {}
+
+    def list_selects(test):
+        """(error, selects): `error` is None when the listing ran; `selects`
+        is whether the exact filter can select `test` on this host.
+        `--list` prints one `name: test` line per selectable test; a parent
+        the filter cannot select prints none (`0 tests, 0 benchmarks`)."""
+        if test not in listed:
+            slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600, interval=10)
+            save(f'{test}-list.slots.log', slots.stdout + slots.stderr)
+            try:
+                result = run_owned([
+                    'cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                    *CARGO_TARGETS[test],
+                    '--', '--list', '--exact', test,
+                ], cwd=ROOT, env=env, timeout=900)
+            except subprocess.TimeoutExpired as error:
+                listed[test] = (f'--list timed out after {error.timeout}s', None)
+                return listed[test]
+            log = result.stdout + result.stderr
+            save(f'{test}-list.log', log)
+            save(f'{test}-list.exit', f'{result.returncode}\n')
+            if result.returncode != 0 or 'could not compile' in log:
+                listed[test] = (f'--list exited {result.returncode}', None)
+            else:
+                listed[test] = (None, f'{test}: test' in result.stdout)
+        return listed[test]
+
     summary = []
     for name, source, old, new, test, assertion in selected:
         if not IS_LINUX and test in LINUX_ONLY_TESTS:
-            reason = (f'bound parent {test} is #[cfg(target_os = "linux")]; '
-                      f'unreachable on {sys.platform}')
-            summary.append({'name': name, 'status': 'SKIPPED', 'reason': reason})
-            print(f'{name}: SKIPPED: {reason}', flush=True)
+            # fix-r3 (boundary#2/concurrency#2): verify the skip premise
+            # instead of trusting the static whitelist — and run the
+            # host-independent anchor check for SKIPPED rows too, so a
+            # drifted anchor does not wait for a Linux host to surface.
+            with mutating_sources(ROOT, [source], baseline=args.baseline) as snapshots:
+                content = snapshots[source].decode()
+            count = content.count(old)
+            if count != 1:
+                status, reason = 'INVALID', f'anchor count {count}'
+            else:
+                error, selects = list_selects(test)
+                if error is not None:
+                    status, reason = 'INVALID', f'cannot observe the skip premise: {error}'
+                elif selects:
+                    status, reason = 'INVALID', (
+                        'skip premise broken: the exact filter selects the bound parent '
+                        f'{test} on {sys.platform}; fix the cfg or LINUX_ONLY_TESTS')
+                else:
+                    status, reason = 'SKIPPED', (
+                        f'bound parent {test} is #[cfg(target_os = "linux")]; unreachable '
+                        f'on {sys.platform} (verified: --list --exact selects no test)')
+            save(f'{name}.json', json.dumps(
+                {'name': name, 'status': status, 'reason': reason}, indent=2) + '\n')
+            summary.append({'name': name, 'status': status, 'reason': reason})
+            print(f'{name}: {status}: {reason}', flush=True)
             continue
         with mutating_sources(ROOT, [source], baseline=args.baseline) as snapshots:
             original = snapshots[source]
