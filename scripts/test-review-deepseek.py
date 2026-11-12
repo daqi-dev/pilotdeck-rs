@@ -32,7 +32,9 @@ def _load(name: str, path: Path):
 rd_mod = _load("rd", SCRIPT)
 rrr_mod = _load("rrr", SCRIPT.parent / "run-review-roles.py")
 RAW_NAME = rd_mod.DEFAULT_MODEL  # 原样请求名 deepseek-v4.1-flash-mb
-OTHER_CANON = next(v for k, v in rrr_mod.RESP_MODEL_ALIAS.items() if k != RAW_NAME)  # 别家（GLM）规范名
+OTHER_CANON = next((v for k, v in rrr_mod.RESP_MODEL_ALIAS.items() if k != RAW_NAME), None)  # 别家（GLM）规范名
+if OTHER_CANON is None:  # 别名表收缩到只剩 DS 一项时给干净的 FAIL，而不是 import 阶段 StopIteration 崩栈
+    raise SystemExit("FAIL: run-review-roles.RESP_MODEL_ALIAS 只剩 DS 一项，别家负控无从取值")
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -188,7 +190,11 @@ def main() -> int:
     # llm-center 同一后端两种回显形（2026-11-12 实测）：原样回请求名也算同一家；别家的规范名仍拒
     case("响应原样回显请求名 → 照常落盘", (200, ok_body(good, model=RAW_NAME)), 0,
          expect_out=good, contract=True)
+    case("响应仅大小写不同 → 照常落盘", (200, ok_body(good, model=MODEL.swapcase())), 0,
+         expect_out=good, contract=True)
     case("响应是别家规范名 → 不落盘", (200, ok_body(good, model=OTHER_CANON)), 1,
+         expect_msg="响应模型")
+    case("响应是别家原样请求名 → 不落盘", (200, ok_body(good, model=next((k for k in rrr_mod.RESP_MODEL_ALIAS if k != RAW_NAME), "other-model"))), 1,
          expect_msg="响应模型")
     case("响应缺 stop_reason → 判形状异常", (200, b'{"model": "%s", "content": [{"type": "text", "text": "OK"}]}' % MODEL.encode()),
          1, expect_msg="缺 stop_reason")
