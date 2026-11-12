@@ -1163,7 +1163,7 @@ async fn socket_requests_match_typescript_framing() {
             "{name}: body"
         );
     }
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(&directory);
 }
 
@@ -1289,7 +1289,7 @@ async fn rust_client_and_server_round_trip() {
     );
     client.clear(&key()).await.unwrap();
     assert!(client.list(&key()).await.unwrap().is_empty());
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(&directory);
 }
 

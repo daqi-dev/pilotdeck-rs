@@ -1757,7 +1757,7 @@ pub struct GatewayUserDialogStoreHttpServer {
     /// before the watch notification so a response body that finishes while
     /// `close()` is running records that the close raced with it (#702 P1).
     shutdown_started: Arc<AtomicBool>,
-    task: Option<tokio::task::JoinHandle<()>>,
+    task: Option<tokio::task::JoinHandle<io::Result<()>>>,
 }
 impl fmt::Debug for GatewayUserDialogStoreHttpServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1774,14 +1774,19 @@ impl GatewayUserDialogStoreHttpServer {
     /// waits for in-flight requests to finish, like Node v22 `server.close()`
     /// (which runs `closeIdleConnections()` before `net.Server.close()` and
     /// invokes its callback once every connection has ended).
-    pub async fn close(mut self) {
+    pub async fn close(mut self) -> Result<()> {
         self.shutdown_started.store(true, Ordering::SeqCst);
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(true);
         }
         if let Some(task) = self.task.take() {
-            let _ = task.await;
+            task.await.map_err(|error| {
+                DialogError::Io(io::Error::other(format!(
+                    "user-dialog HTTP server shutdown task failed: {error}"
+                )))
+            })??;
         }
+        Ok(())
     }
 }
 
@@ -3308,6 +3313,15 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
     let listener = TcpListener::bind((host.as_str(), port.unwrap_or(0)))
         .await
         .map_err(DialogError::Io)?;
+    start_gateway_user_dialog_store_http_server_on_listener(handler, host, listener, limits)
+}
+
+fn start_gateway_user_dialog_store_http_server_on_listener(
+    handler: GatewayUserDialogStoreHttpHandler,
+    host: String,
+    listener: TcpListener,
+    limits: ServeLimits,
+) -> Result<GatewayUserDialogStoreHttpServer> {
     let address = listener.local_addr().map_err(DialogError::Io)?;
     let handler = Arc::new(handler);
     // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum. The parser's
@@ -3556,6 +3570,13 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                 Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             }
         }
+        // Stop the shared listening socket before draining accepted peers:
+        // a forked child may still own a duplicate of this descriptor.
+        #[cfg(target_os = "linux")]
+        let listener_shutdown =
+            socket2::SockRef::from(&listener).shutdown(std::net::Shutdown::Both);
+        #[cfg(not(target_os = "linux"))]
+        let listener_shutdown: io::Result<()> = Ok(());
         drop(listener);
         // Node's close callback waits until every connection has ended. The
         // per-connection request/header timeouts already bound an abandoned
@@ -3574,6 +3595,8 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                 }
             }
         }
+        // A close failure must not skip accepted-connection cleanup.
+        listener_shutdown
     });
     Ok(GatewayUserDialogStoreHttpServer {
         url: format!("http://{host}:{}{STORE_PATH_PREFIX}", address.port()),

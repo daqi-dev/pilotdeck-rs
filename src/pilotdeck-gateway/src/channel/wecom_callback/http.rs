@@ -120,7 +120,7 @@ impl ListenError {
 pub(crate) struct Listener {
     port: u16,
     shutdown: watch::Sender<bool>,
-    task: Mutex<Option<JoinHandle<()>>>,
+    task: Mutex<Option<JoinHandle<std::io::Result<()>>>>,
 }
 
 impl Listener {
@@ -128,11 +128,13 @@ impl Listener {
         self.port
     }
 
-    pub(crate) async fn stop(&self) {
+    pub(crate) async fn stop(&self) -> std::io::Result<()> {
         let _ = self.shutdown.send(true);
         let task = self.task.lock().expect("#1336 listener task").take();
         if let Some(task) = task {
-            let _ = task.await;
+            task.await.map_err(std::io::Error::other)?
+        } else {
+            Ok(())
         }
     }
 }
@@ -168,10 +170,17 @@ pub(crate) async fn listen_with(
     let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port))
         .await
         .map_err(|error| ListenError::from_bind(&error, port))?;
-    let bound = listener
-        .local_addr()
-        .map_err(|error| ListenError::from_bind(&error, port))?
-        .port();
+    start_listener(runtime, listener, timeouts, accepted)
+        .map_err(|error| ListenError::from_bind(&error, port))
+}
+
+pub(super) fn start_listener(
+    runtime: Arc<Runtime>,
+    listener: TcpListener,
+    timeouts: Timeouts,
+    accepted: Option<Accepted>,
+) -> std::io::Result<Listener> {
+    let bound = listener.local_addr()?.port();
     let (shutdown, mut shutdown_rx) = watch::channel(false);
     let task = tokio::spawn(async move {
         let mut connections = tokio::task::JoinSet::new();
@@ -273,6 +282,15 @@ pub(crate) async fn listen_with(
         // In-flight requests finish; idle keep-alive connections were closed
         // by `graceful_shutdown` when the watch flipped.
         while connections.join_next().await.is_some() {}
+        // Preserve this lane's listener release after the connection drain.
+        // On Linux, disable the socket before dropping our fd so an inherited
+        // CLOEXEC duplicate cannot keep it listening after stop returns.
+        #[cfg(target_os = "linux")]
+        let shutdown = socket2::SockRef::from(&listener).shutdown(std::net::Shutdown::Both);
+        drop(listener);
+        #[cfg(target_os = "linux")]
+        shutdown?;
+        Ok(())
     });
     Ok(Listener {
         port: bound,

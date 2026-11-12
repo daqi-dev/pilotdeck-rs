@@ -974,7 +974,9 @@ impl ChannelHandle for ListenerHandle {
             runtime.log("info", &format!("wecom_callback: stopping ({reason})"));
             let listener = listener.lock().expect("#1336 listener handle").take();
             if let Some(listener) = listener {
-                listener.stop().await;
+                listener.stop().await.map_err(|error| {
+                    ChannelError::error(format!("wecom_callback: stop failed: {error}"))
+                })?;
             }
             Ok(())
         })

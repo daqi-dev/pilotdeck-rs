@@ -1437,6 +1437,77 @@ async fn request_timeout_answers_408_and_releases_stop() {
     );
 }
 
+/// Exercise the real accept/drain task through the production channel handle,
+/// retaining a duplicate of its listening socket until after stop and rebind.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
+    for served_request in [false, true] {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))
+            .await
+            .unwrap();
+        let bound = listener.local_addr().unwrap();
+        let address = ("127.0.0.1", bound.port());
+        let duplicate = socket2::SockRef::from(&listener).try_clone().unwrap();
+        let mut options = JsObject::new();
+        for (key, value) in [
+            ("corpId", "corp-x"),
+            ("agentId", "agent-1"),
+            ("secret", "corp-secret"),
+            ("token", "callback-token"),
+            (
+                "encodingAesKey",
+                "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY",
+            ),
+        ] {
+            options.insert(key.into(), JsValue::String(JsString::from(value)));
+        }
+        options.insert("port".into(), JsValue::Number(f64::from(bound.port())));
+        let channel = WeComCallbackChannel::new(
+            WeComCallbackOptions::from_object(&options, QYAPI),
+            Arc::new(NoInteraction),
+        );
+        let listener = http::start_listener(
+            channel.runtime.clone(),
+            listener,
+            http::Timeouts::default(),
+            Some(channel.runtime.accepted.clone()),
+        )
+        .unwrap();
+        let handle = ListenerHandle {
+            runtime: channel.runtime.clone(),
+            listener: Arc::new(Mutex::new(Some(listener))),
+        };
+        if served_request {
+            let mut socket = TcpStream::connect(address).await.unwrap();
+            socket
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            timeout(DEADLINE, socket.read_to_end(&mut response))
+                .await
+                .expect("the callback listener answers before stop")
+                .unwrap();
+            assert!(response.starts_with(b"HTTP/1.1 400 "));
+        }
+        timeout(DEADLINE, handle.stop("duplicate-listener"))
+            .await
+            .expect("the listener and accepted connections stop")
+            .expect("the listener shutdown succeeds");
+        assert!(
+            TcpStream::connect(address).await.is_err(),
+            "stop must disable the shared listener; served_request={served_request}"
+        );
+        let replacement = TcpListener::bind(bound)
+            .await
+            .expect("the stopped listener's exact address can be rebound with its duplicate alive");
+        assert!(duplicate.local_addr().is_ok(), "the duplicate is still owned");
+        drop(replacement);
+        drop(duplicate);
+    }
+}
+
 /// A listener on `port` with the given timers and no interaction port; the
 /// dispatch path is never reached by the stalling helpers below.
 async fn stalled_server(port: u16, timeouts: http::Timeouts) -> Listener {
@@ -1508,7 +1579,9 @@ async fn stop_after_stalled_request(
     let read = timeout(Duration::from_secs(3), client.read_to_end(&mut buf)).await;
     let complete = matches!(read, Ok(Ok(_)));
     let response = if buf.is_empty() { None } else { Some(buf) };
-    let drained = timeout(budget, listener.stop()).await.is_ok();
+    let drained = timeout(budget, listener.stop())
+        .await
+        .is_ok_and(|result| result.is_ok());
     let _ = client.shutdown().await;
     drop(client);
     until("#1336 stalled listener teardown", || {
@@ -1570,7 +1643,7 @@ async fn oversize_post_closes_at_the_cap_with_zero_bytes() {
     drop(client);
     let drained = timeout(Duration::from_secs(10), listener.stop())
         .await
-        .is_ok();
+        .is_ok_and(|result| result.is_ok());
     crate::negative_assert!(drained, "#1941 the oversize connection does not pin stop()");
     until("#1941 oversize listener teardown", || {
         std::net::TcpListener::bind(("127.0.0.1", PORT)).is_ok()
@@ -1617,7 +1690,7 @@ async fn post_up_to_the_cap_is_still_read() {
     );
     let drained = timeout(Duration::from_secs(10), listener.stop())
         .await
-        .is_ok();
+        .is_ok_and(|result| result.is_ok());
     crate::negative_assert!(drained, "#1941 the at-cap listener stops cleanly");
     until("#1941 at-cap listener teardown", || {
         std::net::TcpListener::bind(("127.0.0.1", PORT)).is_ok()

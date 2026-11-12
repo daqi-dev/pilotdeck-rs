@@ -2571,46 +2571,54 @@ async fn start_listening_log_and_bind_failure_returns_noop() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let duplicate = socket2::SockRef::from(&listener).try_clone().unwrap();
-    let shared = Arc::new(server::ServerShared {
-        host: "127.0.0.1".into(),
-        port: f64::from(address.port()),
-        api_key: ApiKey::Off,
-        model_name: DEFAULT_MODEL_NAME.into(),
-        cors_origins: Vec::new(),
-        gateway: None,
-        mapper: Arc::new(SessionMapper::new()),
-        active: Arc::default(),
-        uuid: Arc::new(|| FIXED_UUID.into()),
-        timeout: DEFAULT_REQUEST_TIMEOUT,
-        body_read_timeout: DEFAULT_BODY_READ_TIMEOUT,
-        accepted: None,
-        log: None,
-    });
-    let (stop, stopping) = watch::channel(false);
-    let task = tokio::spawn(server::accept_loop(listener, shared, stopping));
-    assert_eq!(
-        exchange(address, &ReqSpec::get("/health")).await.status,
-        Some(200)
-    );
+    for serve_request in [false, true] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let duplicate = socket2::SockRef::from(&listener).try_clone().unwrap();
+        let shared = Arc::new(server::ServerShared {
+            host: "127.0.0.1".into(),
+            port: f64::from(address.port()),
+            api_key: ApiKey::Off,
+            model_name: DEFAULT_MODEL_NAME.into(),
+            cors_origins: Vec::new(),
+            gateway: None,
+            mapper: Arc::new(SessionMapper::new()),
+            active: Arc::default(),
+            uuid: Arc::new(|| FIXED_UUID.into()),
+            timeout: DEFAULT_REQUEST_TIMEOUT,
+            body_read_timeout: DEFAULT_BODY_READ_TIMEOUT,
+            accepted: None,
+            log: None,
+        });
+        let (stop, stopping) = watch::channel(false);
+        let task = tokio::spawn(server::accept_loop(listener, shared, stopping));
+        if serve_request {
+            assert_eq!(
+                exchange(address, &ReqSpec::get("/health")).await.status,
+                Some(200)
+            );
+        }
 
-    stop.send_replace(true);
-    tokio::time::timeout(Duration::from_secs(2), task)
-        .await
-        .expect("the listener and accepted connections stop")
-        .expect("the accept task completes")
-        .expect("the listener shutdown succeeds");
-    assert!(
-        TcpStream::connect(address).await.is_err(),
-        "stop must disable the listening socket, not only drop one descriptor"
-    );
-    assert!(
-        duplicate.local_addr().is_ok(),
-        "the duplicate is still owned"
-    );
-    drop(duplicate);
+        stop.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("the listener and accepted connections stop")
+            .expect("the accept task completes")
+            .expect("the listener shutdown succeeds");
+        assert!(
+            TcpStream::connect(address).await.is_err(),
+            "stop must disable the listening socket, not only drop one descriptor"
+        );
+        assert!(
+            duplicate.local_addr().is_ok(),
+            "the duplicate is still owned"
+        );
+        let rebound = TcpListener::bind(address)
+            .await
+            .expect("the stopped port can be rebound while the duplicate is alive");
+        drop(rebound);
+        drop(duplicate);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

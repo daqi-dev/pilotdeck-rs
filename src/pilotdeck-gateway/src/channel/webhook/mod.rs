@@ -162,7 +162,7 @@ struct State {
 
 struct StopSlot {
     stop: watch::Sender<bool>,
-    accept: JoinHandle<()>,
+    accept: JoinHandle<io::Result<()>>,
 }
 
 struct Ctx {
@@ -263,8 +263,10 @@ impl WebhookChannel {
             // connections, which `serve_connection_native_with_shutdown`
             // closes at their idle deadline or in-flight completion.
             let _ = slot.stop.send(true);
-            let _ = slot.accept.await;
-            Ok(())
+            slot.accept
+                .await
+                .map_err(|error| ChannelError::error(format!("webhook: stop failed: {error}")))?
+                .map_err(|error| ChannelError::error(format!("webhook: stop failed: {error}")))
         })
     }
 }
@@ -419,7 +421,11 @@ impl ChannelAdapter for WebhookChannel {
 
 async fn start_listener(
     ctx: &Arc<Ctx>,
-) -> io::Result<(std::net::SocketAddr, watch::Sender<bool>, JoinHandle<()>)> {
+) -> io::Result<(
+    std::net::SocketAddr,
+    watch::Sender<bool>,
+    JoinHandle<io::Result<()>>,
+)> {
     let port = ctx.port;
     if !port.is_finite() || port.fract() != 0.0 || !(0.0..=65535.0).contains(&port) {
         return Err(io::Error::other(format!(
@@ -436,7 +442,11 @@ async fn start_listener(
     Ok((bound, stop, accept))
 }
 
-async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Receiver<bool>) {
+async fn accept_loop(
+    listener: TcpListener,
+    ctx: Arc<Ctx>,
+    mut stop: watch::Receiver<bool>,
+) -> io::Result<()> {
     let mut connections: Vec<JoinHandle<()>> = Vec::new();
     loop {
         let socket = tokio::select! {
@@ -510,10 +520,18 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
         connections.push(served);
         connections.retain(|handle| !handle.is_finished());
     }
+    // Closing one fd cannot disable a Linux listening socket while a forked
+    // child still holds its CLOEXEC duplicate before exec. Disable the shared
+    // socket at the existing listener-close point, then drain accepted peers.
+    #[cfg(target_os = "linux")]
+    let shutdown = socket2::SockRef::from(&listener).shutdown(std::net::Shutdown::Both);
     drop(listener);
     for connection in connections {
         let _ = connection.await;
     }
+    #[cfg(target_os = "linux")]
+    shutdown?;
+    Ok(())
 }
 
 struct WebhookHandle {

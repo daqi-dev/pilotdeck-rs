@@ -285,6 +285,7 @@ impl NativeWsServer {
             switch_close,
             drain_budget,
             accept_error: None,
+            listener_error: None,
             drained: None,
             finished: None,
             finish_started: false,
@@ -341,8 +342,9 @@ struct PhasedInner {
     switch_close: bool,
     drain_budget: Duration,
     accept_error: Option<std::io::Error>,
-    /// `None` until the accept loop and drain ran; `Some(false)` is the
-    /// expired-budget shape `finish()` must report.
+    listener_error: Option<std::io::Error>,
+    /// `None` until the accept loop and drain ran; `Some(false)` forbids S2
+    /// takeover when the listener could not close or the drain budget expired.
     drained: Option<bool>,
     /// Once-only `finish()`: the death-march path after a halted machine
     /// calls it a second time and must observe the recorded result.
@@ -438,11 +440,21 @@ impl PhasedInner {
             }
         };
         self.accept_error = accept_error;
-        self.listener = None;
+        if let Some(listener) = self.listener.take() {
+            // A forked child can retain a duplicate descriptor. Closing only
+            // our descriptor would still admit new connections at S2.
+            #[cfg(target_os = "linux")]
+            {
+                self.listener_error = socket2::SockRef::from(&listener)
+                    .shutdown(std::net::Shutdown::Both)
+                    .err();
+            }
+            drop(listener);
+        }
         if let Some(stop_http) = self.stop_http.take() {
             let _ = stop_http.send(true);
         }
-        if crate::mutants::on("native-ws-skip-drain") {
+        if crate::mutants::on("native-ws-skip-drain") && self.listener_error.is_none() {
             self.drained = Some(true);
             self.finished = Some(Ok(()));
             return;
@@ -459,7 +471,7 @@ impl PhasedInner {
         })
         .await
         .is_ok();
-        self.drained = Some(drained);
+        self.drained = Some(drained && self.listener_error.is_none());
     }
 
     /// The S4 half: A5 close notice, bounded frame flush, strong abort, host
@@ -534,6 +546,8 @@ impl PhasedInner {
         }
         let result = if let Some(error) = shutdown.err().map(|error| error.to_string()) {
             Err(error)
+        } else if let Some(error) = self.listener_error.take() {
+            Err(format!("native WS listener shutdown failed: {error}"))
         } else if !self.drained.unwrap_or(false)
             && !crate::mutants::on("native-ws-drain-false-success")
         {

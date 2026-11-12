@@ -2824,6 +2824,56 @@ async fn double_stop_resolves_without_a_listener() {
         .expect("#1334 second stop ok");
 }
 
+/// A real duplicated descriptor models a child between fork and exec. Exercise
+/// the production ChannelHandle stop with both an unused and a served socket.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
+    for served_request in [false, true] {
+        let channel = WebhookChannel::new(test_options());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let duplicate = socket2::SockRef::from(&listener).try_clone().unwrap();
+        let (stop, stopping) = watch::channel(false);
+        let accept = tokio::spawn(accept_loop(listener, channel.ctx.clone(), stopping));
+        {
+            let mut state = channel.ctx.state.lock().unwrap();
+            state.bound = Some(address);
+            state.server = Some(StopSlot { stop, accept });
+        }
+        let handle = WebhookHandle {
+            ctx: channel.ctx.clone(),
+        };
+        if served_request {
+            let mut socket = TcpStream::connect(address).await.unwrap();
+            socket
+                .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            timeout(DEADLINE, socket.read_to_end(&mut response))
+                .await
+                .expect("the webhook listener answers before stop")
+                .unwrap();
+            assert!(response.starts_with(b"HTTP/1.1 200 "));
+        }
+        timeout(DEADLINE, handle.stop("duplicate-listener"))
+            .await
+            .expect("the listener and accepted connections stop")
+            .expect("the listener shutdown succeeds");
+        assert!(
+            TcpStream::connect(address).await.is_err(),
+            "stop must disable the shared listener; served_request={served_request}"
+        );
+        let replacement = TcpListener::bind(address)
+            .await
+            .expect("the stopped listener's exact address can be rebound with its duplicate alive");
+        assert!(duplicate.local_addr().is_ok(), "the duplicate is still owned");
+        drop(replacement);
+        drop(duplicate);
+    }
+}
+
 #[tokio::test]
 async fn replacement_channel_rebinds_the_released_port() {
     let first_gateway = Arc::new(MockGateway::from_scripts(&[]));

@@ -2977,6 +2977,57 @@ async fn phased_runner_exited(phased: &PhasedRun) {
     .expect("#2351 runner exit is bounded");
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn phased_drain_closes_listener_with_a_duplicate_descriptor() {
+    let host = native_ws_fixture(Arc::new(Requests::default()));
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .unwrap();
+    let address = server.local_addr().unwrap();
+    let duplicate = socket2::SockRef::from(&server.listener)
+        .try_clone()
+        .expect("retain the same listening socket across S2");
+    let (stop, stopped) = oneshot::channel();
+    let phased = server.run_phased(
+        async move {
+            stopped.await.expect("deliver the S2 stop request");
+        },
+        DEADLINE,
+    );
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    client.close().await;
+    drop(client);
+    stop.send(()).unwrap();
+    assert!(
+        timeout(RESPONSE_LIVENESS, phased.drained())
+            .await
+            .expect("S2 drain completes"),
+        "the real accepted connection drained successfully"
+    );
+    assert!(
+        TcpStream::connect(address).await.is_err(),
+        "S2 must stop accepting even while a duplicate descriptor survives"
+    );
+    let successor = TcpListener::bind(address)
+        .await
+        .expect("S2 permits a successor to bind while the duplicate survives");
+    timeout(RESPONSE_LIVENESS, phased.finish())
+        .await
+        .expect("S4 completes")
+        .expect("S4 reports successful cleanup");
+    assert!(duplicate.local_addr().is_ok(), "the duplicate remains owned");
+    drop(successor);
+    drop(duplicate);
+}
+
 #[tokio::test]
 async fn phased_drain_waiter_cancellation_preserves_success() {
     let (stop, stopped) = oneshot::channel();

@@ -355,7 +355,8 @@ async fn issue_1395_production_hyper_reads_have_capacity() {
     .expect("#1395 production pipeline terminates within bound");
     tokio::time::timeout(BOUND, server.close())
         .await
-        .expect("#1395 production server close deadline");
+        .expect("#1395 production server close deadline")
+        .expect("#1395 production server closes successfully");
     assert_production_reads(&probe);
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -392,7 +393,8 @@ async fn issue_1395_shutdown_with_pending_or_cancelled_body_is_bounded() {
         }
         tokio::time::timeout(BOUND, server.close())
             .await
-            .expect("#1395 unfinished or cancelled body cannot hang shutdown");
+            .expect("#1395 unfinished or cancelled body cannot hang shutdown")
+            .expect("#1395 unfinished or cancelled body closes successfully");
         assert_production_reads(&probe);
         println!("#1395 pending_body cancel_peer={cancel_peer} close=completed");
         let _ = std::fs::remove_dir_all(directory);

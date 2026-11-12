@@ -319,22 +319,26 @@ async fn client(stream: TcpStream, state: Arc<State>) -> Result<(), ToolError> {
     Ok(())
 }
 pub(super) struct Server {
-    listener: TcpListener,
+    listener: Option<TcpListener>,
     state: Arc<State>,
     clients: JoinSet<Result<(), ToolError>>,
 }
 impl Server {
     pub fn new(listener: TcpListener, state: Arc<State>) -> Self {
         Self {
-            listener,
+            listener: Some(listener),
             state,
             clients: JoinSet::new(),
         }
     }
     pub async fn serve(&mut self) -> Result<(), ToolError> {
+        let listener = self
+            .listener
+            .as_ref()
+            .ok_or_else(|| ToolError::failed("execute_code RPC listener is closed."))?;
         loop {
             tokio::select! {
-                result=self.listener.accept(),if self.clients.len()<MAX_CLIENTS=>{
+                result=listener.accept(),if self.clients.len()<MAX_CLIENTS=>{
                     let (stream,peer)=result.map_err(|e|ToolError::failed(e.to_string()))?;
                     if !peer.ip().is_loopback() {return Err(ToolError::failed("Non-loopback execute_code RPC client."));}
                     let state=self.state.clone();self.clients.spawn(async move {client(stream,state).await});
@@ -353,12 +357,28 @@ impl Server {
     pub async fn shutdown(&mut self) -> Result<(), ToolError> {
         self.clients.abort_all();
         let drain = async { while self.clients.join_next().await.is_some() {} };
-        tokio::time::timeout(std::time::Duration::from_secs(2), drain)
+        let drained = tokio::time::timeout(std::time::Duration::from_secs(2), drain)
             .await
             .map_err(|_| {
                 ToolError::failed("execute_code nested tool cancellation could not be confirmed.")
-            })?;
-        Ok(())
+            });
+        let listener_shutdown = if let Some(listener) = self.listener.take() {
+            // Preserve client cancellation/drain ordering, but release the
+            // listening socket before the caller starts workspace cleanup.
+            #[cfg(target_os = "linux")]
+            let result = socket2::SockRef::from(&listener).shutdown(std::net::Shutdown::Both);
+            #[cfg(not(target_os = "linux"))]
+            let result: std::io::Result<()> = Ok(());
+            drop(listener);
+            result.map_err(|error| {
+                ToolError::failed(format!("execute_code RPC listener shutdown failed: {error}"))
+            })
+        } else {
+            Ok(())
+        };
+        // A client-drain failure must not leave the listener open.
+        drained?;
+        listener_shutdown
     }
 }
 #[cfg(test)]
@@ -377,6 +397,65 @@ mod bounds_tests {
         }
         assert!(!response_fits(&object([("data", value)])));
     }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn shutdown_closes_listener_with_a_duplicate_descriptor() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let duplicate = socket2::SockRef::from(&listener)
+            .try_clone()
+            .expect("retain the same listening socket across shutdown");
+        let root = super::super::Workspace::create().unwrap();
+        let state = Arc::new(State::new(
+            Arc::new(|_| Box::pin(async { unreachable!() })),
+            Some("secret".into()),
+            vec![],
+            "outer".into(),
+            50,
+            super::super::tests::make_context(
+                &root.path,
+                crate::runtime::network::Cancellation::new(),
+            ),
+        ));
+        let mut server = Server::new(listener, state);
+        let mut peer = BufReader::new(TcpStream::connect(address).await.unwrap());
+        {
+            let serving = server.serve();
+            tokio::pin!(serving);
+            let response = async {
+                peer.get_mut().write_all(b"{}\n").await.unwrap();
+                let mut line = String::new();
+                peer.read_line(&mut line).await.unwrap();
+                let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(value["code"], "invalid_rpc_token");
+            };
+            tokio::select! {
+                result = &mut serving => panic!("RPC serving stopped before the response: {result:?}"),
+                result = tokio::time::timeout(std::time::Duration::from_secs(60), response) => {
+                    result.expect("the real accepted RPC client receives its response");
+                }
+            }
+        }
+        server.shutdown().await.expect("shutdown completes");
+        assert!(server.clients.is_empty(), "the accepted client was joined");
+        assert!(
+            TcpStream::connect(address).await.is_err(),
+            "shutdown must stop accepting even while a duplicate descriptor survives"
+        );
+        let successor = TcpListener::bind(address)
+            .await
+            .expect("shutdown permits rebinding while the duplicate survives");
+        assert!(duplicate.local_addr().is_ok(), "the duplicate remains owned");
+        server.shutdown().await.expect("repeated shutdown is harmless");
+        assert!(
+            server.serve().await.is_err(),
+            "a stopped server cannot accept again"
+        );
+        drop(peer);
+        drop(successor);
+        drop(duplicate);
+    }
+
     #[tokio::test]
     async fn shutdown_waits_for_owned_client_future_to_drop() {
         struct Dropped(Arc<std::sync::atomic::AtomicBool>);

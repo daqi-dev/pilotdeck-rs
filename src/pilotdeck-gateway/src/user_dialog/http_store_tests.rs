@@ -620,7 +620,7 @@ async fn oversized_headers_receive_node_431_bytes() {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     stream.write_all(request.as_bytes()).await.unwrap();
     expect_terminal_bytes(&mut stream, NODE_431, "431 oversized header").await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -656,7 +656,7 @@ async fn oversized_headers_are_rejected_like_node() {
         response, NODE_431,
         "Node's 431 is the 67-byte constant, not hyper's content-length/date shape"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -683,7 +683,7 @@ async fn under_limit_headers_are_not_431() {
         !response.starts_with(NODE_431),
         "under-limit header was answered with Node's 431 bytes"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -711,7 +711,7 @@ async fn many_small_headers_are_not_capped_at_the_documented_two_thousand() {
         405,
         "2,400 sub-16KiB fields must reach the handler, not 431"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -753,7 +753,7 @@ async fn leading_value_ows_beyond_the_raw_cap_reaches_the_handler() {
             "#1555 the OWS request closes with its `Connection: close` response"
         );
     }
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -788,7 +788,7 @@ async fn four_thousand_ninety_seven_small_fields_reach_the_handler() {
         closed,
         "#1555 the many-field request closes with its `Connection: close` response"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -832,7 +832,7 @@ async fn small_field_count_is_bounded_by_the_node_budget_not_a_field_cap() {
         "#1555 one more field reaches Node's `>=` budget and must be the exact 67-byte 431"
     );
     assert!(closed, "#1555 the budget 431 must end the connection");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -859,7 +859,7 @@ async fn leading_ows_does_not_exempt_the_counted_budget() {
         closed,
         "#1555 the counted-budget 431 must end the connection"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -893,7 +893,7 @@ async fn leading_ows_head_still_parses_a_valid_request() {
         payload.contains("\"version\":1,"),
         "#1555 the list response body must be intact behind the OWS-dropped head"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -928,7 +928,7 @@ async fn cr_in_value_is_rejected_like_node() {
             "#1555 the parser 400 must end the connection ({shape:?})"
         );
     }
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -957,7 +957,7 @@ async fn cr_in_value_past_the_raw_bound_keeps_the_registered_431() {
          (Node answers its 400 for every length; registered in R7)"
     );
     assert!(closed, "#1555 the guard 431 must end the connection");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -995,7 +995,7 @@ async fn header_guard_counts_name_and_value_like_node() {
         "2,730x `aaaaa: x` count 16,380 bytes plus the target/Host/Connection"
     );
     assert!(closed, "the 431 must end the connection");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1032,7 +1032,7 @@ async fn header_guard_boundary_matches_node_16384() {
         exchange_until_eof(port, fail.as_bytes(), Duration::from_secs(5)).await;
     assert_eq!(response, NODE_431, "16,384 counted bytes must be 431");
     assert!(closed, "the 431 must end the connection");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1062,7 +1062,7 @@ async fn request_target_counts_toward_node_header_budget() {
     let mut fail = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     fail.write_all(&request(16_378)).await.unwrap();
     expect_terminal_bytes(&mut fail, NODE_431, "target pushes the head to 16,384").await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1095,7 +1095,7 @@ async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
         String::from_utf8_lossy(&response)
     );
     assert!(closed, "the 431 must end the connection");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1122,7 +1122,45 @@ async fn header_guard_raw_cap_uses_node_431_bytes() {
         "#1555 the guard must own the 431 bytes for whitespace it still forwards"
     );
     assert!(closed, "the 431 must end the connection");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn close_closes_listener_with_a_duplicate_descriptor() {
+    let (store, directory) = file_store("close-duplicate-listener");
+    let handler = create_gateway_user_dialog_store_http_handler(store, TOKEN).unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let duplicate = socket2::SockRef::from(&listener)
+        .try_clone()
+        .expect("retain the same listening socket across close");
+    let server = start_gateway_user_dialog_store_http_server_on_listener(
+        handler,
+        "127.0.0.1".into(),
+        listener,
+        ServeLimits::default(),
+    )
+    .unwrap();
+    let response = exchange(address.port(), &http_post(&list_body()))
+        .await
+        .expect("the real listener serves an authenticated list request");
+    assert_eq!(status(&response), 200);
+    tokio::time::timeout(RESPONSE_PHASE_BUDGET, server.close())
+        .await
+        .expect("close completes")
+        .expect("close reports successful cleanup");
+    assert!(
+        TcpStream::connect(address).await.is_err(),
+        "close must stop accepting even while a duplicate descriptor survives"
+    );
+    let successor = TcpListener::bind(address)
+        .await
+        .expect("a successor can bind while the duplicate survives");
+    assert!(duplicate.local_addr().is_ok(), "the duplicate remains owned");
+    drop(successor);
+    drop(duplicate);
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1140,7 +1178,9 @@ async fn close_closes_idle_keep_alive_connections() {
     // This task owns the original listener. Its identity survives port reuse by
     // another test, unlike a fresh TCP connect after close() releases the port.
     let accept_loop = server.task.as_ref().unwrap().abort_handle();
-    let closing = tokio::spawn(async move { server.close().await });
+    let closing = tokio::spawn(async move {
+        server.close().await.expect("HTTP store server closes");
+    });
     let mut byte = [0u8; 1];
     let read = tokio::time::timeout(Duration::from_secs(2), idle.read(&mut byte))
         .await
@@ -1187,7 +1227,7 @@ async fn assert_idle_keep_alive_connection_closes() {
         "the keep-alive timer did not fire promptly: {:?}",
         started.elapsed()
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1231,7 +1271,7 @@ async fn default_idle_keep_alive_connection_closes_after_six_seconds() {
         "closed before Node's keepAliveTimeout + buffer: {:?}",
         started.elapsed()
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1274,7 +1314,7 @@ async fn partial_next_request_resets_keep_alive_inactivity_timer() {
         .await
         .expect("the reset keep-alive timer never fired");
     assert_eq!(read.unwrap(), 0, "expected EOF after the reset timer");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1309,7 +1349,7 @@ async fn next_request_headers_timeout_starts_at_first_byte() {
         "the header timer did not fire promptly: {:?}",
         started.elapsed()
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1347,7 +1387,7 @@ async fn keep_alive_timeout_does_not_close_active_request() {
         .await
         .expect("the keep-alive timer killed an active request body");
     assert_eq!(status(&response), 200, "{response:?}");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1447,7 +1487,7 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
     assert!(head.contains("keep-alive: timeout=5\r"), "{head}");
 
     drop((persistent, closing, head_request));
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1479,7 +1519,7 @@ async fn early_response_raw(tag: &str, request: &[u8], expected: u16) {
         closed,
         "{tag}: the server left the connection open after an unread-body response"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1586,7 +1626,7 @@ async fn oversized_chunked_body_rejection_closes_connection() {
     let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(10)).await;
     assert_close_without_keep_alive(&response, 413, "unread-413-chunked");
     assert!(closed, "the connection stayed open after a chunked 413");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1656,7 +1696,7 @@ async fn http_10_requests_close_like_node() {
         head.contains("content-length: 25"),
         "#1947 the 1.1 reply keeps its content-length: {head}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1762,7 +1802,9 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
         .expect("the request never reached dispatch")
         .expect("entered channel closed");
     let accept_loop = server.task.as_ref().unwrap().abort_handle();
-    let close_task = tokio::spawn(async move { server.close().await });
+    let close_task = tokio::spawn(async move {
+        server.close().await.expect("HTTP store server closes");
+    });
     // The connection future is parked on `spawn_blocking`, so the shutdown
     // branch is polled while the request is still in flight and the response
     // head has not been decided yet. This is an ordering yield, not a deadline
@@ -1908,7 +1950,7 @@ async fn head_requests_arm_idle_timer_and_release_permits() {
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2169,7 +2211,7 @@ async fn client_read_shutdown_still_releases_head_connection_permit() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     drop(stream);
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2460,7 +2502,7 @@ async fn default_host_listens_on_loopback() {
     let port = url::Url::parse(server.url()).unwrap().port().unwrap();
     let response = exchange(port, &http_get(true)).await.unwrap();
     assert_eq!(status(&response), 405);
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2489,7 +2531,7 @@ async fn anonymous_oversized_body_is_rejected_before_reading() {
         "the server waited for the body: {:?}",
         started.elapsed()
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2514,7 +2556,7 @@ async fn assert_partial_headers_receive_node_408() {
         "headersTimeout did not fire promptly: {:?}",
         started.elapsed()
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2546,7 +2588,7 @@ async fn idle_connection_receives_node_408_bytes() {
     let (server, port) = start_limited(store, limits).await;
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     expect_terminal_bytes(&mut stream, NODE_408, "408 zero-byte connection").await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2569,7 +2611,7 @@ async fn complete_request_within_headers_timeout_is_not_408() {
         !response.starts_with(NODE_408),
         "a complete request must not receive the 408 bytes"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2590,7 +2632,7 @@ async fn next_request_oversized_headers_receive_node_431_bytes() {
     );
     stream.write_all(request.as_bytes()).await.unwrap();
     expect_terminal_bytes(&mut stream, NODE_431, "431 oversized follow-up head").await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2617,7 +2659,7 @@ async fn client_close_mid_headers_sends_no_408_and_server_recovers() {
         !response.starts_with(NODE_408),
         "a client close must not be reported as a timeout"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2637,7 +2679,9 @@ async fn shutdown_does_not_turn_a_partial_head_into_408() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let closing = tokio::spawn(async move { server.close().await });
+    let closing = tokio::spawn(async move {
+        server.close().await.expect("HTTP store server closes");
+    });
     let mut byte = [0u8; 1];
     match tokio::time::timeout(Duration::from_millis(250), stream.read(&mut byte)).await {
         Ok(Ok(0)) => {}
@@ -2664,7 +2708,9 @@ async fn shutdown_zero_byte_connection_sends_no_408() {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let closing = tokio::spawn(async move { server.close().await });
+    let closing = tokio::spawn(async move {
+        server.close().await.expect("HTTP store server closes");
+    });
     let mut byte = [0u8; 1];
     match tokio::time::timeout(Duration::from_millis(250), stream.read(&mut byte)).await {
         Ok(Ok(0)) | Ok(Err(_)) => {}
@@ -2703,7 +2749,7 @@ async fn client_close_mid_body_sends_no_408_and_server_recovers() {
         !response.starts_with(NODE_408),
         "a client close must not be reported as a timeout"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2796,7 +2842,7 @@ async fn half_closed_peers_receive_node_bytes() {
         !complete.starts_with(NODE_400),
         "a complete request must not be answered with the incomplete-request 400"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2822,7 +2868,9 @@ async fn shutdown_with_partial_body_finishes_at_request_timeout() {
     stream.write_all(head.as_bytes()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let closing = tokio::spawn(async move { server.close().await });
+    let closing = tokio::spawn(async move {
+        server.close().await.expect("HTTP store server closes");
+    });
     let mut response = Vec::new();
     tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut response))
         .await
@@ -2866,7 +2914,7 @@ async fn slow_request_bodies_are_closed_after_request_timeout() {
         response, NODE_408,
         "#1232 the body requestTimeout must be Node's 51-byte 408"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2948,7 +2996,7 @@ async fn pipelined_oversized_head_during_body_writes_node_431_only() {
         "#1232 a pipelined oversized head during a body answers with only the Node 431",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -2981,7 +3029,7 @@ async fn pipelined_oversized_head_single_burst_writes_node_431_only() {
         "#1232 a single-burst pipelined oversized head answers with only the Node 431",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3013,7 +3061,7 @@ async fn pipelined_oversized_head_with_declared_body_writes_node_431_only() {
         "#1232 a pipelined oversized head that declares a body answers with only the Node 431",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3051,7 +3099,7 @@ async fn chunked_pipelined_oversized_head_writes_node_431_only() {
         "#1232 a pipelined oversized head behind a chunked body answers with only the Node 431",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3092,7 +3140,7 @@ async fn chunked_oversized_trailer_writes_node_431_only() {
         "#1232 an oversized chunked trailer is the Node 431 on the message's own budget",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3130,7 +3178,7 @@ async fn chunk_extensions_do_not_blind_the_pipelined_guard() {
         "#1232 chunk extensions must not hide a pipelined oversized head",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3179,7 +3227,7 @@ async fn pipelined_under_limit_head_is_served_and_connection_reusable() {
         200,
         "#1232 the connection must stay usable after the pipelined exchange: {third:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3234,7 +3282,7 @@ async fn chunked_pipelined_under_limit_head_is_served() {
         200,
         "#1232 the chunked connection must stay usable: {third:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3283,7 +3331,7 @@ async fn duplicate_content_length_pipelined_head_hits_node_431_backstop() {
         "#1232 the backstop must still answer an oversized head with Node's 431 bytes",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3319,7 +3367,7 @@ async fn pipelined_head_budget_resets_per_message() {
         400,
         "#1232 the second head must start from a fresh per-message budget, not 431: {served_second:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3362,7 +3410,7 @@ async fn large_bodies_do_not_trip_the_header_guard() {
         200,
         "#1232 the connection must stay usable after a large body: {second:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3430,7 +3478,7 @@ async fn keep_alive_multi_token_te_large_chunked_body_is_served() {
         200,
         "#1232 the connection must stay usable after a served multi-token Transfer-Encoding request: {third:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3501,7 +3549,7 @@ async fn keep_alive_duplicate_content_length_large_body_is_served() {
         200,
         "#1232 the connection must stay usable after a served duplicate-Content-Length request: {third:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3570,7 +3618,7 @@ async fn pipelined_oversized_after_step_aside_te_single_burst_writes_served_resp
         "#1277 the single-burst oversized head behind a stepped-aside request ends the connection with the Node 431",
     )
     .await;
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3667,7 +3715,7 @@ async fn oversized_head_over_hyper_buffer_after_step_aside_writes_hyper_431() {
         "#1232 the stepped-aside answer is still a 431: {:?}",
         String::from_utf8_lossy(&response)
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -3990,7 +4038,7 @@ async fn connection_cap_answers_overflow_with_503_and_recovers() {
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4053,7 +4101,7 @@ async fn overflow_connections_do_not_block_the_accept_loop() {
     }
     assert!(served, "a released permit never served a request again");
     drop(held);
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4079,7 +4127,7 @@ async fn request_body_limit_rejects_oversized_content_length_before_reading() {
         let expected = if authorization.is_some() { 413 } else { 401 };
         assert_eq!(status(&response), expected, "{name}: early status");
     }
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4101,7 +4149,7 @@ async fn request_body_limit_rejects_oversized_chunked_bodies() {
         413,
         "chunked body over the cap must be 413"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4118,7 +4166,7 @@ async fn request_body_at_the_limit_is_accepted() {
         200,
         "a body of exactly the limit must be accepted"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4387,7 +4435,7 @@ async fn large_list_responses_are_not_truncated_by_the_header_buffer_cap() {
         payload.len()
     );
     assert!(payload.contains(&prompt), "large response body is complete");
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4536,7 +4584,7 @@ async fn concurrent_blocking_puts_do_not_stall_the_accept_loop() {
     store.condvar.notify_all();
     assert_eq!(status(&first.await.unwrap().unwrap()), 200);
     assert_eq!(status(&second.await.unwrap().unwrap()), 200);
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4569,7 +4617,7 @@ async fn close_waits_for_in_flight_requests() {
     let finished = Arc::new(AtomicBool::new(false));
     let flag = finished.clone();
     let closing = tokio::spawn(async move {
-        server.close().await;
+        server.close().await.expect("HTTP store server closes");
         flag.store(true, Ordering::SeqCst);
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -4741,7 +4789,9 @@ async fn shutdown_during_large_response_reuses_advertised_keep_alive() {
             length > 12 * 1024 * 1024,
             "{note}: the response body must be large enough to still be flushing: {length}"
         );
-        let close_task = tokio::spawn(async move { server.close().await });
+        let close_task = tokio::spawn(async move {
+            server.close().await.expect("HTTP store server closes");
+        });
         // close() is observed while the body is still in the write path; the
         // client deliberately has not read a body byte yet.
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -4862,7 +4912,7 @@ async fn early_close_response_survives_byte_at_a_time_sender() {
         text.contains("payload_too_large"),
         "the early rejection body must be delivered: {text}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -4887,7 +4937,9 @@ async fn early_close_response_survives_shutdown_with_unread_body() {
     writer.write_all(&[b'x'; 64 * 1024]).await.unwrap();
     // Let the unauthenticated precheck write its 401 before close() lands.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let close_task = tokio::spawn(async move { server.close().await });
+    let close_task = tokio::spawn(async move {
+        server.close().await.expect("HTTP store server closes");
+    });
     let writer_task = tokio::spawn(async move {
         let chunk = [b'x'; 1024];
         loop {
@@ -5022,6 +5074,6 @@ async fn header_budget_peak_rss() {
         codes.iter().all(|code| *code == 405),
         "#1555 the probe cell must reach the handler (405): {codes:?}"
     );
-    server.close().await;
+    server.close().await.expect("HTTP store server closes");
     let _ = std::fs::remove_dir_all(directory);
 }
