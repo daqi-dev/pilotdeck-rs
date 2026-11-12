@@ -79,14 +79,18 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   都停在指纹记下的那个 tick 编号」这一格。每次采样先比对元数据（含每次写入与 `utimes` 都会
   刷新的 ctime、inode）：元数据未变则不读内容（#1739）。不完整采样不提交 metadata 指纹，
   按「什么失败」分两档（#1792 r1/r2）：条目或目录的 `NotFound` 是完整观测，缺失本身计入
-  指纹；打开或读取配置文件失败把该条目内容哈希成 `None`，按指纹差至多报一次（#1792，
-  `transient_read_failure_is_retried_until_the_content_is_seen`）；stat / `read_dir`
+  指纹；打开或读取配置文件失败把该条目内容折叠成 `None`，先与最后一次完整采样同批同刻
+  折叠的 unknown-read 孪生比较（#2122 fix-r1）：折叠相等（可观测状态未动）则不报也不
+  提交、清掉 metadata 短路（下一拍重试读），失败拍与恢复拍都静默；不等或无孪生基线
+  （状态动了）才按 #1792 报一次、持续失败静默、恢复再报一次
+  （`transient_read_failure_is_retried_until_the_content_is_seen`）；stat / `read_dir`
   的其它失败算被遮蔽采样，不提交任何指纹（含折叠指纹），只与上一遮蔽采样比较后上报可观测
   变化，读恢复后与最后一次完整采样比较、有差才报（#1792 r2，登记见
   `A6.3-CONFIG-POLL-001-R1.md`），同一不可读状态不会 reload 风暴、持续遮蔽也不会永久
   静默。#1987 收窄了这段口径的三格（启动采样不提交 metadata 短路 A2；遮蔽**过渡拍**
   另把 target 与最后一次完整采样比较 A1，与 R1 字面的差异待人批，见 issue #2094；
-  metadata 拍遮蔽而同拍折叠拍完整时按完整观测处理 A4），细节见
+  metadata 拍遮蔽而同拍折叠拍完整时按完整观测处理 A4；此三格之外，#2122 fix-r1 又把
+  内容读失败收进上文的 unknown-read 孪生门），细节见
   `src/config/store.rs` 模块文档。完整语义下漏检只有一格：改写后
   ctime 未跨 tick，且 len / is_dir / mtime / inode / dev 也都没变；精确表述见
   `src/config/store.rs` 模块文档。
@@ -122,9 +126,10 @@ claiming poll 必须让出调度、就地载入即杀；#1987 新增
 （B6 测试的武装预算此前差一拍，第二条断言实际跑在完整拍上）、启动又提交
 metadata 短路（A2 断言须在首拍 `changed()` 之前才能杀——报变化拍恒置 None）、
 折叠拍内容未知的混合拍又走完整路径（守卫收成 `!= Complete`）、截断列表未走到
-target 被当作 target 消失（未观测臂返回空折叠值）；#2122 fix-r1 再改锚新增
-7 行：内容未知拍改由「unknown-read 孪生」门收口（`mixed-content-tick-committed`
-行随守卫改动改锚孪生门，`&& false` 关门即恢复 F5 完整路径直落）、孪生门放宽
+target 被当作 target 消失（未观测臂返回空折叠值）；#2122 fix-r1 改锚 1 行、新增
+6 行（共 7 行改动）：内容未知拍改由「unknown-read 孪生」门收口
+（`mixed-content-tick-committed` 行随守卫改动改锚孪生门，`&& false` 关门即恢复
+F5 完整路径直落）、孪生门放宽
 `&& true`（真实改写后的持续读失败被吞掉应报的那一次）、第二调用点遮蔽守卫放宽回
 `!= Complete`（两采样间内容未知折叠进遮蔽链、欠报真实变更）、混合拍遮蔽守卫放宽
 回 `!= Complete`（遮蔽链混进内容未知折叠、形状翻转误报）、报变化的完整拍不提交
