@@ -548,9 +548,18 @@ def classify(result, mutant):
     # the false-kill shapes the twin controls in test_negative.py pin.
     # Each run is one exact test, so `named_test_killed`'s `<unnamed>`
     # widening covers assertions on threads the test spawned itself.
+    # #1087 fix-r3 (boundary #3): the strict judge is necessary but not
+    # sufficient — it accepts an aborted run that never reached libtest's
+    # summary, and it does not bind the panic's location to the mutant's
+    # own file. Both pre-fix-r2 constraints are restored on top of it.
     if (
         result.returncode != 0
         and named_test_killed(log, mutant['test'], mutant['anchor'])
+        and 'test result: FAILED' in log
+        and any(
+            'panicked at ' in line and mutant['test_file'] in line
+            for line in log.splitlines()
+        )
     ):
         return 'KILLED', 'bound test failed at its named assertion'
     return 'INVALID', 'missing bound runtime failure (wrong panic or missing test)'
@@ -605,6 +614,8 @@ def main():
         return result
 
     def record(mutant, status, reason):
+        # #1087 fix-r3 (boundary #1): the row stays in memory only — the
+        # disk summary is published once, after the guarded restore.
         results.append(dict(
             name=mutant['name'],
             test=mutant['test'],
@@ -613,14 +624,59 @@ def main():
             status=status,
             reason=reason,
         ))
+        print(f"{mutant['name']}: {status}: {reason}", flush=True)
+
+    def publish():
+        """Publish the one final summary atomically (#1087 fix-r3, boundary #1).
+
+        Called exactly once per run, after ``mutating_sources`` restored and
+        byte-verified every guarded source — or from the abort handler,
+        after the same guard unwound. The old per-row truncating
+        ``write_text`` left a partial all-KILLED summary on disk when a
+        cancellation killed the run mid-suite, and an interrupt inside the
+        write could leave an empty or half-written JSON document.
+        """
         counts = {
             state: sum(row['status'] == state for row in results)
             for state in ('KILLED', 'SURVIVED', 'INVALID')
         }
-        (output / 'summary.json').write_text(
+        tmp = output / 'summary.json.tmp'
+        tmp.write_text(
             json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n'
         )
-        print(f"{mutant['name']}: {status}: {reason}", flush=True)
+        tmp.replace(output / 'summary.json')
+        return counts
+
+    def void_pending(error):
+        """Void the recorded rows and publish one INVALID summary (boundary #1).
+
+        An abort inside the guarded window — a cancellation, a timeout, a
+        restore failure or the source guard refusing the tree — is not a
+        verdict: the rows recorded so far are voided, the remaining mutants
+        are recorded INVALID, and the single summary is published after the
+        guard unwound. The process then exits 3 — deliberately different
+        from 2 (the usage refusals above) so a reader can tell an aborted
+        run from one that never started.
+        """
+        prefix = ('source guard' if isinstance(error, SourceBaselineError)
+                  else 'runner')
+        reason = f'{prefix}: {type(error).__name__}: {error}'
+        for row in results:
+            row['status'] = 'INVALID'
+            row['reason'] = (f"{row['reason']}; voided: {reason}"
+                             if row['reason'] else f"voided: {reason}")
+        for mutant in selected[len(results):]:
+            record(mutant, 'INVALID', reason)
+        publish()
+        print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+        if isinstance(error, SystemExit):
+            # Normalize: 128+signum and any other raw code must not decide
+            # how a coordinator reads this run (a 256/-256 code truncates to
+            # a zero process status on POSIX).
+            raise SystemExit(3) from error
+        if not isinstance(error, Exception):
+            raise
+        return 3
 
     try:
         with mutating_sources(
@@ -688,31 +744,16 @@ def main():
     except SourceBaselineError as error:
         # The new orchestration file is not in HEAD yet: refuse, never fake a
         # status. 提交后由协调者在宿主跑.
-        for mutant in selected[len(results):]:
-            record(mutant, 'INVALID', f'source guard: {error}')
-        counts = {
-            state: sum(row['status'] == state for row in results)
-            for state in ('KILLED', 'SURVIVED', 'INVALID')
-        }
-        print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
-              f'INVALID={counts["INVALID"]}', flush=True)
-        return 3
+        return void_pending(error)
     except Exception as error:  # noqa: BLE001 - never stop before summarizing
         # Timeout, restore failure or any unexpected runner error: account for
         # every remaining mutant instead of aborting on the first one.
-        for mutant in selected[len(results):]:
-            record(mutant, 'INVALID', f'runner error: {type(error).__name__}: {error}')
-        counts = {
-            state: sum(row['status'] == state for row in results)
-            for state in ('KILLED', 'SURVIVED', 'INVALID')
-        }
-        print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
-              f'INVALID={counts["INVALID"]}', flush=True)
-        return 3
-    counts = {
-        state: sum(row['status'] == state for row in results)
-        for state in ('KILLED', 'SURVIVED', 'INVALID')
-    }
+        return void_pending(error)
+    except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+        void_pending(error)
+    # Reaching here means mutating_sources restored every guarded file and
+    # verified it against the baseline bytes. Only now may a summary exist.
+    counts = publish()
     print(
         f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
         f'INVALID={counts["INVALID"]}',

@@ -4,7 +4,8 @@
 
 ``_shared/negative_control.py`` decides KILLED vs PASS inside ``run()`` with
 ``raise`` guards (``running 1 test``, ``test result: ok. 1 passed``, the
-``negative_panic.named_test_killed`` kill criterion, and the exit code).
+``test result: FAILED`` summary, the ``negative_panic.named_test_killed``
+kill criterion, and the exit code).
 Before #1666 they were ``assert`` statements, and ``python3 -O`` strips every
 ``assert``: a mutant that never compiled or never ran the bound test was then
 recorded KILLED -- a ruler passing without measuring anything. The static
@@ -25,6 +26,11 @@ test's own ``... FAILED`` status line plus the diagnostic inside that test's
 own panic payload. The false-kill shapes the old whole-log substring check
 accepted (the diagnostic echoed by the test's own stdout, a sibling thread's
 panic) are pinned as refusal cases here.
+
+#1087 fix-r3 (boundary #2): the strict judge alone accepts an aborted run --
+a partial transcript that already printed the bound test's FAILED line and
+its panic block but never reached libtest's summary. The restored
+``test_missing_failed_summary_is_not_a_kill`` pins that refusal.
 
 Every refusal case's input lets all *other* guards pass, so reverting one
 guard to ``assert`` leaves exactly that case with no exception under ``-O``
@@ -116,7 +122,7 @@ class OptimizeStripsAssertHere(unittest.TestCase):
 
 
 class SharedRunnerVerdictGuards(unittest.TestCase):
-    """Four ``raise`` guards in ``run()`` decide KILLED vs PASS; prove they fire."""
+    """The ``raise`` guards in ``run()`` decide KILLED vs PASS; prove they fire."""
 
     def drive(self, output, code, diagnostic):
         """Spawn ``python3 -O`` driving the real ``run()`` with a fake cargo."""
@@ -169,6 +175,18 @@ class SharedRunnerVerdictGuards(unittest.TestCase):
     def test_missing_pass_summary_is_not_a_pass(self):
         result = self.drive('running 1 test\n', 0, None)
         self.assertGuardRaised(result, "expected 'test result: ok. 1 passed' in the output")
+
+    def test_missing_failed_summary_is_not_a_kill(self):
+        # #1087 fix-r3 (boundary #2), restored for the strict judge: the
+        # transcript carries everything the strict #813 judge needs (the
+        # bound test's own FAILED status line and the diagnostic inside its
+        # own panic block) but libtest never reached its summary -- an
+        # aborted run is not a kill decision. Reverting this guard to
+        # `assert` lets the aborted run fall through to KILLED under -O.
+        transcript = kill_transcript(f'{DIAGNOSTIC} bound assertion message')
+        aborted = transcript.split('test result: FAILED.')[0]
+        result = self.drive(aborted, 101, DIAGNOSTIC)
+        self.assertGuardRaised(result, "expected 'test result: FAILED' in the output")
 
     def test_zero_exit_with_diagnostic_is_not_a_kill(self):
         result = self.drive(kill_transcript(f'{DIAGNOSTIC} bound assertion message'), 0,

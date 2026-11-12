@@ -304,107 +304,169 @@ env['CARGO_TARGET_DIR'] = target
 command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_envelope']
 results = []
+# #1087 fix-r3 (boundary #1): bound before the guarded window so the
+# cancellation handler can always publish, even when the abort happened
+# before the baseline run recorded anything.
+baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
 
 
-def write_summary(baseline):
-    (out / 'summary.json').write_text(json.dumps(
-        {'baseline': baseline, 'cases': results}, indent=2) + '\n')
+def write_summary(current_baseline):
+    """Publish the one final summary atomically (#1087 fix-r3, boundary #1).
+
+    Called exactly once per run, after ``mutating_sources`` restored and
+    byte-verified every guarded source — or from the cancellation handler,
+    after the same guard unwound. The old per-row truncating ``write_text``
+    left a partial all-KILLED summary on disk when a cancellation killed the
+    run mid-suite, and an interrupt inside the write could leave an empty or
+    half-written JSON document.
+    """
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(json.dumps(
+        {'baseline': current_baseline, 'cases': results}, indent=2) + '\n')
+    tmp.replace(out / 'summary.json')
 
 
-with mutating_sources(root, [source]) as originals:
-    original = originals[source].decode()
-    # An anchor that this list did not follow is a harness defect, not a
-    # classified cell: INVALID/exit 1 still blames the wrong thing and lets a
-    # broken control hide behind an environment or compile fault. Refuse
-    # before compiling.
-    stale = []
-    for name, _path, before, _after, _test in all_cases:
-        count = original.count(before)
-        if count != 1:
-            stale.append((name, source.relative_to(root).as_posix(), count))
-    if stale:
-        report = '\n'.join(
-            f'STALE ANCHOR {name}: {count} matches in {relative}'
-            for name, relative, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='', flush=True)
-        print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run',
-              flush=True)
-        sys.exit(2)
-    baseline_ok = False
-    baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
-    try:
+def _void_pending(error):
+    """Void the recorded rows and publish one INVALID summary (boundary #1).
+
+    A cancellation or crash inside the guarded window is not a verdict: the
+    rows recorded so far are voided, the remaining selected cases are
+    recorded INVALID, and the single summary is published after the guard
+    restored the tree. The process then exits 3 — deliberately different
+    from 2 ("never started", the stale-anchor refusal below) so a reader can
+    tell a cancelled run from one that never ran.
+    """
+    reason = f'runner: {type(error).__name__}: {error}'
+    for row in results:
+        row['outcome'] = 'INVALID'
+        row['reason'] = (f"{row['reason']}; voided: {reason}"
+                         if row['reason'] else f"voided: {reason}")
+    for name, _path, before, after, test in cases[len(results):]:
+        results.append({'name': name, 'test': test, 'outcome': 'INVALID',
+                        'reason': reason, 'returncode': None,
+                        'anchor': before, 'replacement': after})
+    write_summary(baseline)
+    print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+    if isinstance(error, SystemExit):
+        # Normalize: 128+signum and any other raw code must not decide how a
+        # coordinator reads this run (a 256/-256 code truncates to a zero
+        # process status on POSIX).
+        raise SystemExit(3) from error
+    if not isinstance(error, Exception):
+        raise
+    raise SystemExit(3) from error
+
+
+
+try:
+    with mutating_sources(root, [source]) as originals:
+        original = originals[source].decode()
+        # An anchor that this list did not follow is a harness defect, not a
+        # classified cell: INVALID/exit 1 still blames the wrong thing and lets a
+        # broken control hide behind an environment or compile fault. Refuse
+        # before compiling.
+        stale = []
+        for name, _path, before, _after, _test in all_cases:
+            count = original.count(before)
+            if count != 1:
+                stale.append((name, source.relative_to(root).as_posix(), count))
+        if stale:
+            report = '\n'.join(
+                f'STALE ANCHOR {name}: {count} matches in {relative}'
+                for name, relative, count in stale) + '\n'
+            (out / 'stale-anchors.log').write_text(report)
+            print(report, end='', flush=True)
+            print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run',
+                  flush=True)
+            sys.exit(2)
+        baseline_ok = False
         try:
-            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            slots_text = slots.stdout + slots.stderr
-            run = run_owned(command, cwd=root, env=env, timeout=600)
-            log = slots_text + run.stdout + run.stderr
-            returncode = run.returncode
-        except subprocess.TimeoutExpired as error:
-            log = (error.stdout or '') + (error.stderr or '')
-            returncode = None
-        (out / 'baseline.log').write_text(log)
-        passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
-        baseline_ok = returncode == 0 and passed is not None
-        baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
-                    'returncode': returncode}
-        print(f'baseline: {"PASS" if baseline_ok else "FAIL"} exit={returncode}', flush=True)
-        write_summary(baseline)
-        if not baseline_ok:
-            print('baseline failed; mutants not run', flush=True)
-            raise SystemExit(1)
-
-        for name, path, before, after, test in cases:
-            slots_text = ''
-            log = ''
-            returncode = None
             try:
                 slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 slots_text = slots.stdout + slots.stderr
-                # Snapshot bytes come only from mutating_sources; the mutation
-                # itself is a single exact anchor replacement.
-                # #1087 fix-r2: every guarded-source write in the window is
-                # one atomic rename (#1903 rule, shared with
-                # ``mutating_sources``) — a truncating ``write_bytes`` killed
-                # mid-write leaves an empty or half-written product source.
-                write_source_atomic(root, path,
-                                     original.replace(before, after).encode(),
-                                     mode=path.stat().st_mode & 0o7777)
-                try:
-                    run = run_owned(
-                        command + [test, '--', '--exact'],
-                        cwd=root, env=env, timeout=600)
-                    log = run.stdout + run.stderr
-                    returncode = run.returncode
-                finally:
-                    # Same #1087 fix-r2 window: the in-loop restore is also
-                    # one rename, never a truncating write_bytes.
-                    write_source_atomic(root, path, originals[path],
-                                        mode=path.stat().st_mode & 0o7777)
+                run = run_owned(command, cwd=root, env=env, timeout=600)
+                log = slots_text + run.stdout + run.stderr
+                returncode = run.returncode
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
-            except Exception as error:  # noqa: BLE001 - report, never hide a cell
-                log = f'{type(error).__name__}: {error}\n'
+            (out / 'baseline.log').write_text(log)
+            passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
+            baseline_ok = returncode == 0 and passed is not None
+            baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
+                        'returncode': returncode}
+            print(f'baseline: {"PASS" if baseline_ok else "FAIL"} exit={returncode}', flush=True)
+            if not baseline_ok:
+                print('baseline failed; mutants not run', flush=True)
+                raise SystemExit(1)
+
+            for name, path, before, after, test in cases:
+                slots_text = ''
+                log = ''
                 returncode = None
-            outcome = classify(log, returncode, EXPECTED[name], test)
-            # A red baseline makes every mutation's "failure" untrustworthy.
-            if outcome == 'KILLED' and not baseline_ok:
-                outcome = 'INVALID'
-            (out / f'{name}.log').write_text(
-                'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
-                slots_text + log + f'\nexit={returncode}\n')
-            results.append({'name': name, 'test': test, 'outcome': outcome,
-                            'returncode': returncode, 'anchor': before, 'replacement': after})
-            write_summary(baseline)
-            print(f'{name}: {outcome} exit={returncode}', flush=True)
-    finally:
-        for path, data in originals.items():
-            # Same #1087 fix-r2 window: the final restore is also one rename,
-            # never a truncating write_bytes.
-            write_source_atomic(root, path, data,
-                                mode=path.stat().st_mode & 0o7777)
-            assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+                try:
+                    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                    slots_text = slots.stdout + slots.stderr
+                    # Snapshot bytes come only from mutating_sources; the mutation
+                    # itself is a single exact anchor replacement.
+                    # #1087 fix-r2: every guarded-source write in the window is
+                    # one atomic rename (#1903 rule, shared with
+                    # ``mutating_sources``) — a truncating ``write_bytes`` killed
+                    # mid-write leaves an empty or half-written product source.
+                    write_source_atomic(root, path,
+                                         original.replace(before, after).encode(),
+                                         mode=path.stat().st_mode & 0o7777)
+                    try:
+                        run = run_owned(
+                            command + [test, '--', '--exact'],
+                            cwd=root, env=env, timeout=600)
+                        log = run.stdout + run.stderr
+                        returncode = run.returncode
+                    finally:
+                        # Same #1087 fix-r2 window: the in-loop restore is also
+                        # one rename, never a truncating write_bytes.
+                        write_source_atomic(root, path, originals[path],
+                                            mode=path.stat().st_mode & 0o7777)
+                except subprocess.TimeoutExpired as error:
+                    log = (error.stdout or '') + (error.stderr or '')
+                    returncode = None
+                except Exception as error:  # noqa: BLE001 - report, never hide a cell
+                    log = f'{type(error).__name__}: {error}\n'
+                    returncode = None
+                outcome = classify(log, returncode, EXPECTED[name], test)
+                # A red baseline makes every mutation's "failure" untrustworthy.
+                if outcome == 'KILLED' and not baseline_ok:
+                    outcome = 'INVALID'
+                (out / f'{name}.log').write_text(
+                    'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
+                    slots_text + log + f'\nexit={returncode}\n')
+                results.append({'name': name, 'test': test, 'outcome': outcome,
+                                'reason': '', 'returncode': returncode,
+                                'anchor': before, 'replacement': after})
+                print(f'{name}: {outcome} exit={returncode}', flush=True)
+        finally:
+            for path, data in originals.items():
+                # Same #1087 fix-r2 window: the final restore is also one rename,
+                # never a truncating write_bytes.
+                write_source_atomic(root, path, data,
+                                    mode=path.stat().st_mode & 0o7777)
+except SystemExit as error:
+    if error.code == 1:
+        # The deliberate baseline failure: the guard already restored and
+        # byte-verified the tree while unwinding the with-block; publish the
+        # baseline row and keep the "ran and failed" exit code.
+        write_summary(baseline)
+        raise
+    if error.code == 2:
+        # The deliberate stale-anchor refusal: nothing was measured, so
+        # nothing is published — "never started" leaves no summary behind.
+        raise
+    _void_pending(error)
+except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+    _void_pending(error)
+# Reaching here means mutating_sources restored every guarded file and
+# verified it against the baseline bytes. Only now may a summary exist.
+write_summary(baseline)
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']
 survived = [row['name'] for row in results if row['outcome'] == 'SURVIVED']

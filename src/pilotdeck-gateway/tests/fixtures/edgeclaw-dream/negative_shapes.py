@@ -23,8 +23,12 @@ locates each mutant's target in ``oracle.json`` from its recorded signature and
 accepts a kill only when the named test's own ``FAILED`` status line is present
 and that exact ``case=<id>`` sits inside that test's own panic payload (#1087
 shared criterion; a marker in a sibling test's panic, captured stdout, or build
-output is not evidence). A mutant tripped by an earlier sibling case (the P1
-from review-r1), an unrelated panic, or a build failure is not a kill.
+output is not evidence). For a throw case the expected error kind
+(``expected TypeError`` / ``expected RangeError``) must sit in the same
+payload — the row's recorded ``_throws`` column, back in force since the fix-r3
+review (boundary #4): a panic carrying only ``case=<id>`` is a wrong-kind
+failure. A mutant tripped by an earlier sibling case (the P1 from review-r1),
+an unrelated panic, or a build failure is not a kill.
 
 Signatures are matched after decoding the fixture's JS-value sentinels:
 ``{"$undefined": true}`` is a *value*, not an object with no keys. Matching raw
@@ -53,7 +57,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
+from negative_panic import named_test_killed, panic_evidence
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
                               write_source_atomic)
 
@@ -366,15 +370,25 @@ cases = [
                 }''',
      'clusters_match_ts', 'validateExclusiveClusters', deep_reason, 'RangeError'),
 ]
-def assertion_failure(log, test, case_id):
+def assertion_failure(log, test, case_id, throws_name):
     # #1087: only the named test's own FAILED status line plus the bound
     # case id inside that test's own panic payload kills (negative_panic
     # judges both). The old whole-log `case=...` substring also matched a
     # sibling test's panic, captured stdout and build output — the
     # false-kill shapes the twin controls in test_negative.py pin.
+    # #1087 fix-r3 (boundary #4): a throw case must also die the way the
+    # oracle says — the replay's own panic text names the expected error
+    # kind (`expected TypeError` / `expected RangeError`, helpers.rs
+    # replay), so the kind is bound to the same payload as the case id.
+    # A panic that carries only `case=<id>` is a wrong-kind failure, not
+    # the kill the mutant is booked to prove.
     if 'could not compile' in log:
         return False
-    return named_test_killed(log, test, f'case={case_id}')
+    if not named_test_killed(log, test, f'case={case_id}'):
+        return False
+    if throws_name is None:
+        return True
+    return f'expected {throws_name}' in panic_evidence(log, test)
 
 
 def main(argv=None):
@@ -460,7 +474,7 @@ def main(argv=None):
             print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
             sys.exit(1)
 
-        for name, _path, before, after, test, _fn, _signature, _throws in cases:
+        for name, _path, before, after, test, _fn, _signature, throws_name in cases:
             if only and name not in only:
                 continue
             reason = None
@@ -482,8 +496,12 @@ def main(argv=None):
                     log = run.stdout + run.stderr
                     (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
                     if not (run.returncode != 0
-                            and assertion_failure(log, test, case_ids[name])):
-                        reason = f'did not fail case={case_ids[name]} in {test}'
+                            and assertion_failure(log, test, case_ids[name],
+                                                  throws_name)):
+                        expected = (f' (expected {throws_name})'
+                                    if throws_name else '')
+                        reason = (f'did not fail case={case_ids[name]}'
+                                  f'{expected} in {test}')
                 finally:
                     # Same #1087 fix-r2 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes.

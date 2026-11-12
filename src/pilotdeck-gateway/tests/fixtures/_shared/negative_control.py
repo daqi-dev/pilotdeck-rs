@@ -141,8 +141,16 @@ def run(name, command, env, cwd=SRC, diagnostic=None, test=None):
         # that test's own panic payload (negative_panic judges both). The old
         # whole-log `expected` / `diagnostic in output` checks also matched a
         # sibling test's panic, captured stdout and build output.
+        # #1087 fix-r3 (boundary #2): the strict judge alone accepts an
+        # aborted run -- a partial transcript that already printed the bound
+        # test's FAILED line and its panic block but never reached libtest's
+        # own summary. An aborted run is not a kill decision, so the FAILED
+        # summary line stays a separate requirement.
         if test is None:
             raise RuntimeError(f'{name}: a diagnostic run must name the bound test')
+        if 'test result: FAILED' not in output:
+            expected = 'test result: FAILED'
+            raise RuntimeError(f'{name}: expected {expected!r} in the output')
         if code == 0 or not named_test_killed(output, test, diagnostic):
             raise RuntimeError(f'{name}: the bound test {test} did not fail with the '
                                f'expected diagnostic {diagnostic!r} (exit={code})')

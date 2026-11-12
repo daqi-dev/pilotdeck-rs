@@ -119,6 +119,12 @@ class ShapesJudgeControls(unittest.TestCase):
     ``case=<id>`` substring anywhere in the log, so a sibling test's panic,
     captured stdout, or build output could stand in for the mutant's own
     assertion. The delivered judge routes through negative_panic.
+
+    #1087 fix-r3 (boundary #4): a throw case is killed only when the replay's
+    own panic text names the expected error kind (``expected TypeError`` /
+    ``expected RangeError``) inside the same payload — the recorded ``_throws``
+    column is bound back into the judge. A panic carrying only the case id
+    (the wrong-kind shape) is not the booked kill.
     """
 
     def setUp(self):
@@ -149,8 +155,59 @@ class ShapesJudgeControls(unittest.TestCase):
         """The positive shape: the named test's own case-id panic."""
         test = 'mutation_matches_ts'
         log = self._panic_log(test, 'mutation/ applyMutation case=applyMutation#3: expected 2, got 3')
-        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3') is True,
+        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3', None) is True,
                         '#1087 the named test\'s own case-id panic must kill')
+
+    def test_expected_error_kind_panic_kills(self):
+        """#1087 fix-r3 (boundary #4): the throw-case positive shape.
+
+        A guard removed by a mutant makes the replay hit its own ``other``
+        arm: the payload names the case id and the expected error kind.
+        """
+        test = 'clusters_match_ts'
+        payload = ('clusters/ validateExclusiveClusters case='
+                   'validateExclusiveClusters#12 expected TypeError '
+                   '"Cannot read properties of undefined (reading \'map\')", '
+                   'got Ok(...) args=...')
+        log = self._panic_log(test, payload)
+        self.assertTrue(
+            self.runner.assertion_failure(log, test, 'validateExclusiveClusters#12',
+                                           'TypeError') is True,
+            '#1087 the expected-error-kind panic must kill the booked case')
+
+    def test_wrong_error_kind_is_not_a_kill(self):
+        """#1087 fix-r3 (boundary #4): the wrong error kind is not a kill.
+
+        The case id is inside the named test's own panic payload, but the
+        kind the oracle expects (TypeError) is not — the mutant flipped the
+        error shape, which is a different contract than the one booked.
+        """
+        test = 'clusters_match_ts'
+        payload = ('clusters/ validateExclusiveClusters case='
+                   'validateExclusiveClusters#12 expected RangeError '
+                   '"Maximum call stack size exceeded", got Ok(...) args=...')
+        log = self._panic_log(test, payload)
+        self.assertTrue(
+            self.runner.assertion_failure(log, test, 'validateExclusiveClusters#12',
+                                           'TypeError') is False,
+            '#1087 a wrong-error-kind panic is not the booked kill')
+
+    def test_case_id_without_expected_kind_is_not_a_kill(self):
+        """#1087 fix-r3 (boundary #4): case id alone is not a throw-case kill.
+
+        A kind-flip failure dies through the replay's ``assert_eq!`` on the
+        error name: the custom message carries the case id but never names
+        the expected kind.
+        """
+        test = 'clusters_match_ts'
+        payload = ('assertion at tests/edgeclaw_dream_helpers.rs:296:21 failed: '
+                   'clusters/ validateExclusiveClusters case='
+                   'validateExclusiveClusters#12')
+        log = self._panic_log(test, payload)
+        self.assertTrue(
+            self.runner.assertion_failure(log, test, 'validateExclusiveClusters#12',
+                                           'TypeError') is False,
+            '#1087 a case id without the expected kind is not the booked kill')
 
     def test_captured_stdout_is_not_a_kill(self):
         """A case id printed to captured stdout is not a kill."""
@@ -167,7 +224,7 @@ class ShapesJudgeControls(unittest.TestCase):
             'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
             'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n'
         )
-        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3') is False,
+        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3', None) is False,
                         '#1087 a case id in captured stdout is not a kill')
 
     def test_sibling_panic_is_not_a_kill(self):
@@ -184,14 +241,14 @@ class ShapesJudgeControls(unittest.TestCase):
             'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
             'test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n'
         )
-        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3') is False,
+        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3', None) is False,
                         "#1087 a sibling test's panic is not a kill")
 
     def test_bare_assert_eq_without_case_id_is_not_a_kill(self):
         """A bare ``assert_eq!`` diff without the bound case id is not a kill."""
         test = 'mutation_matches_ts'
         log = self._panic_log(test, 'assertion `left == right` failed\n  left: 2\n right: 3')
-        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3') is False,
+        self.assertTrue(self.runner.assertion_failure(log, test, 'applyMutation#3', None) is False,
                         '#1087 a bare assert_eq! diff without the case id is not a kill')
 
 

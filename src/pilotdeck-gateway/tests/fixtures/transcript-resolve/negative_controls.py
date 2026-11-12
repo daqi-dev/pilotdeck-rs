@@ -9,7 +9,22 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
+
+
+def classify(returncode, log, test, assertion):
+    """The shared strict #813 verdict for one mutant row (#1087 fix-r3).
+
+    The named test's own ``FAILED`` status line plus the bound assertion's
+    message inside that test's own panic payload (``named_test_killed`` judges
+    both). The old whole-log substring check (``f'test {test} ... FAILED' in
+    log`` plus ``assertion in log``) also matched a sibling test's panic,
+    captured stdout and build output. A compile failure stays excluded
+    explicitly: it is never evidence of a kill.
+    """
+    return (returncode == 101 and 'could not compile' not in log
+            and named_test_killed(log, test, assertion))
 
 
 def main():
@@ -124,8 +139,7 @@ def main():
                 content.splitlines(True), changed.splitlines(True), fromfile=str(source), tofile=str(source))))
             source.write_text(changed)
             result, log = run(f'{name}-negative', test)
-            killed = (result.returncode == 101 and f'test {test} ... FAILED' in log
-                      and assertion in log and 'could not compile' not in log)
+            killed = classify(result.returncode, log, test, assertion)
         # Restoration and SHA validation belong to mutating_sources, including on failure.
         assert source.read_bytes() == original, 'source not restored'
         # Keep the clean rerun under the same tree guard used by every runner.
