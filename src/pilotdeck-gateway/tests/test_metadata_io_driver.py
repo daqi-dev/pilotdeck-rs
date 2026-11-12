@@ -1597,6 +1597,10 @@ class EnvironmentControls(unittest.TestCase):
         # #1800 fix-r5（DS boundary P2a）：三态第三腿（invalid-verdict-pipe，
         # 判决路径 INVALID + counts 行管道故障）Ran 12→13，下限同步抬到
         # 13——管道分支折进 os._exit(0) 的坏改法必须红。
+        # #2981：增第八模块 sdk-signals/test_negative_controls.py（close-order
+        # pin 的同型最近兄弟，该 runner 手写 abort 记账此前无仓内测试；
+        # 本轮实测 Ran 12、约 3 s），下限与 commands 同步——不钉则删掉 CI
+        # 行全绿，正是 fix-r1 修过的洞。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1605,6 +1609,7 @@ class EnvironmentControls(unittest.TestCase):
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
             ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
+            ('sdk-signals/test_negative_controls.py', 12),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -1633,8 +1638,8 @@ class EnvironmentControls(unittest.TestCase):
                 registered_conditional_skips.get(module, ()))
         self.assertLessEqual(
             time.monotonic() - started, self.optimize_guards_step_budget,
-            '#1666 the seven -O self-test modules together must fit the -O '
-            'step budget (%d s); seven near-miss modules must not outlive '
+            '#1666 the eight -O self-test modules together must fit the -O '
+            'step budget (%d s); eight near-miss modules must not outlive '
             'the CI step they pin' % self.optimize_guards_step_budget)
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
@@ -1692,13 +1697,16 @@ class EnvironmentControls(unittest.TestCase):
         # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：第七条命令
         # （sdk-signals-close-order-pin/test_negative_controls.py）同步钉入
         # commands——子集判断下多一条不红，不钉则删掉 CI 里这行仍全绿。
+        # #2981：第八条命令（sdk-signals/test_negative_controls.py）同钉入，
+        # 与下限同一改动落地。
         commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
                     'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_run_guards',
                     'python3 -B -m unittest -v network-timing/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_roster_guards',
                     'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
-                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py')
+                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py',
+                    'python3 -B -m unittest -v sdk-signals/test_negative_controls.py')
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
