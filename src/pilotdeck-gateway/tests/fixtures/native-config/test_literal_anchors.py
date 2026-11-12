@@ -158,6 +158,71 @@ class LiteralAnchorGuard(unittest.TestCase):
                       '#2692 closure-r2: the refusal names the family and '
                       'the unpinned twin')
 
+    def test_check_row_pins_counts_a_list_assertion_per_element(self):
+        # closure-r3 (DS sibling#1 + concurrency#1 + boundary#1, three-way
+        # P2): the reverse check counted `case.assertion` directly, so a row
+        # whose assertion is a list -- a shape `Case.assertion` supports and
+        # `check_literal_anchors` already iterates per element -- aborted
+        # with `TypeError: unhashable type: 'list'` instead of refusing, and
+        # per-element sharing never judged. The twin below reuses
+        # `permission-stub-revert`'s shared assertion as one list element;
+        # the reverse check must refuse and name exactly the twin.
+        source = next(case for case in ROWS
+                      if case.mutation == 'permission-stub-revert')
+        twin = dataclasses.replace(
+            source, mutation='permission-stub-revert-list-twin',
+            assertion=[source.assertion, '#1872 an unshared list rider'])
+        with self.assertRaises(SystemExit,
+                               msg='#2692 closure-r3: a list assertion '
+                                   'sharing an element must refuse the '
+                                   'run, not crash') as caught:
+            nc.check_row_pins(ROWS + [twin])
+        self.assertIn('#2692 native-config shared-assertion rows missing '
+                      'from ROW_PINS: permission-stub-revert-list-twin',
+                      str(caught.exception),
+                      '#2692 closure-r3: the refusal names the family and '
+                      'the unpinned list twin')
+
+    def test_main_check_refuses_a_list_assertion_row_cleanly(self):
+        # closure-r3: the same injection through the real --check envelope
+        # must be a clean refusal -- stderr names the row, the process exits
+        # nonzero, and no traceback reaches the operator. The roster stays
+        # aligned (the twin joins EXPECTED_NAMES), so the refusal can only
+        # come from check_row_pins, after the roster guard.
+        driver = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('nc', sys.argv[1])\n"
+            "nc = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(nc)\n"
+            "source = next(row for row in nc.mutations\n"
+            "              if row[0] == 'permission-stub-revert')\n"
+            "twin = list(source)\n"
+            "twin[0] = 'permission-stub-revert-list-twin'\n"
+            "twin[5] = [twin[5], '#1872 an unshared list rider']\n"
+            "nc.mutations = list(nc.mutations) + [tuple(twin)]\n"
+            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin[0],)\n"
+            "sys.argv = ['negative_controls.py', '--check']\n"
+            "nc.main()\n")
+        done = subprocess.run(
+            [sys.executable, '-I', '-c', driver,
+             str(HERE.with_name('negative_controls.py'))],
+            cwd=nc.ROOT, capture_output=True, text=True)
+        # The family envelope raises SystemExit(str), which the interpreter
+        # turns into rc 1 (native-config's documented pre-guard failure code,
+        # `run_cases` shape) -- the blankkey/turn-submit refuse() rc 2 does
+        # not apply to this family.
+        self.assertEqual(done.returncode, 1,
+                          f'#2692 closure-r3: the list twin must refuse '
+                          f'--check: rc={done.returncode} out={done.stdout!r}')
+        self.assertNotIn('Traceback', done.stderr,
+                         '#2692 closure-r3: the refusal must be clean, '
+                         'not a traceback')
+        self.assertIn('permission-stub-revert-list-twin', done.stderr,
+                      '#2692 closure-r3: the refusal names the list twin')
+        self.assertIn('shared-assertion rows missing from ROW_PINS',
+                      done.stderr,
+                      '#2692 closure-r3: the refusal is the pin-table one')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
         # assertion string another row also carries used to survive a

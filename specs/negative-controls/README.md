@@ -175,8 +175,9 @@ rc 2 不同形，且 CARGO_HOME/PDRS_BASELINE 守卫先于选择执行，对齐�
    concurrency #1）起该要求在已迁移入口是**双向**机检的：`check_row_pins` 除核 pin 名
    指向的行仍在表里，还由运行期表算出「断言串被 ≥2 行携带」的行集要求 ⊆ `ROW_PINS`，
    新增一行复用既有断言串而未入 pin 表即拒跑（native-blankkey-submit / native-config /
-   turn-submit 三家，各配一条红腿）；全仓普查面已随撤件移除，未迁移入口暂不在机检
-   覆盖内，重建归 #3069。
+   turn-submit 三家，各配一条红腿）；turn-submit 的 location 形按 computed site 计，
+   marker 槽里的测试名不参与共享判定（毒锁对的标记槽不作为共享断言）；全仓普查面
+   已随撤件移除，未迁移入口暂不在机检覆盖内，重建归 #3069。
    （r13 曾配 `tests/fixtures/test_shared_assertion_pins.py` 全仓结构普查；fix-r13 评审
    判其表名白名单有盲区——约 55 张 `MUTATIONS`/`CASES` 等命名的表被判 no-table
    静默放行，属尺子假通过——普查器组件随收口撤下，债表快照正本见提交 a00925dee，

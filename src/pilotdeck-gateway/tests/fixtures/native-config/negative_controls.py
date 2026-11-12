@@ -882,6 +882,10 @@ ROW_PINS = (
 )
 
 
+def _assertions(case):
+    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+
+
 def check_row_pins(rows):
     """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
 
@@ -893,17 +897,26 @@ def check_row_pins(rows):
     table: every row whose assertion string another row also carries must be
     pinned, so the next row reusing a shared anchor refuses here instead of
     silently widening the pool a both-tables drop can shrink unnoticed.
+    closure-r3 (DS sibling#1 + concurrency#1 + boundary#1, three-way P2): the
+    reverse check counts per element (`_assertions`, the accessor
+    `check_literal_anchors` below already iterates) -- a row whose assertion
+    is a list used to hit `counts[case.assertion]` and abort with
+    `TypeError: unhashable type: 'list'` instead of a clean refusal, and
+    per-element sharing never judged (the native-blankkey shape).
     """
     names = {case.mutation for case in rows}
     for name in ROW_PINS:
         if name not in names:
             raise SystemExit(f'#2692 row pin names a row that is gone: {name}')
+    anchors = []
     counts = {}
     for case in rows:
-        counts[case.assertion] = counts.get(case.assertion, 0) + 1
+        for assertion in _assertions(case):
+            anchors.append((case.mutation, assertion))
+            counts[assertion] = counts.get(assertion, 0) + 1
     shared = {assertion for assertion, total in counts.items() if total >= 2}
-    unpinned = sorted({case.mutation for case in rows
-                       if case.assertion in shared} - set(ROW_PINS))
+    unpinned = sorted({name for name, assertion in anchors if assertion in shared}
+                      - set(ROW_PINS))
     if unpinned:
         raise SystemExit('#2692 native-config shared-assertion rows missing '
                          f'from ROW_PINS: {", ".join(unpinned)}')
@@ -1034,10 +1047,6 @@ AUDITED_MODULES = (
     ('native_process::methods::cron::cron_tests::', CRON_TESTS),
     ('native_process::management_tests::', MANAGEMENT_TESTS),
 )
-
-
-def _assertions(case):
-    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
 
 
 def check_literal_anchors(cases, pins=None, bound_rows=None):

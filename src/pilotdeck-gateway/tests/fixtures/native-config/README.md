@@ -23,7 +23,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.
 
 正跑也会在起 cargo 之前无条件跑同一条守卫（只读 16 个文件、秒级），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 的绑定漂移自检块也会跑它（#2692 fix-r5 起，`.github/workflows/ci.yml`），全量杀灭轮仍由协调者在宿主跑。
 
-这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出三串计数——变异锚点、字面锚点、绑定测试声明；负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」，#2692 fix-r8 起另有一条改名腿钉「绑定测试改名 → `#1457 bound test not declared` 拒跑」和一条 stale-anchor 腿钉 `#1457` 前缀只出现一次；#2692 fix-r10（评审 boundary#1）再加一条名册漂移腿钉「表里删一行 → `#1457 mutation roster drifted` 拒跑」）。#2692 fix-r9（评审 sibling#1）起该测试文件接进 `tests/negative_anchor_selfcheck.rs` 的脚本清单，cargo CI 每轮真跑——此前它不进任何自动入口，门禁删坏时唯一会红的文件没人执行：
+这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出三串计数——变异锚点、字面锚点、绑定测试声明；负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」，#2692 fix-r8 起另有一条改名腿钉「绑定测试改名 → `#1457 bound test not declared` 拒跑」和一条 stale-anchor 腿钉 `#1457` 前缀只出现一次；#2692 fix-r10（评审 boundary#1）再加一条名册漂移腿钉「表里删一行 → `#1457 mutation roster drifted` 拒跑」；closure-r3（评审 sibling#1 / concurrency#1 / boundary#1 三路同撞 P2）再加一条 list 断言腿钉「断言串为 list、元素与既有行共享而整行未入 `ROW_PINS` → `check_row_pins` 干净拒跑点名该行（进程内直调 + 真 `--check` 包络两腿），反向计数逐元素走 `_assertions`，不再 `TypeError: unhashable type: 'list'` traceback」）。#2692 fix-r9（评审 sibling#1）起该测试文件接进 `tests/negative_anchor_selfcheck.rs` 的脚本清单，cargo CI 每轮真跑——此前它不进任何自动入口，门禁删坏时唯一会红的文件没人执行：
 
 ```
 python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_literal_anchors.py

@@ -248,6 +248,20 @@ mutant_anchor = {
 }
 
 
+def shareable_anchor(row):
+    """The effective ``(kind, anchor)`` pair a row's binding asserts on.
+
+    closure-r3 (DS simplify#1, P2): the rule used to live twice -- `build()`
+    and `check_row_pins` each re-derived ``mutant_anchor.get(name, ('message',
+    marker))``, so a new anchor source added to `build()` left the reverse
+    check silently judging the old rule (the #1890 six-copy drift shape).
+    Both consumers now read this one function; `build()` keeps the location
+    expansion at its call site, so the reverse check stays free of I/O.
+    """
+    name, _, _, _, marker, _ = row
+    return mutant_anchor.get(name, ('message', marker))
+
+
 def check_row_pins(rows):
     """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
 
@@ -268,11 +282,11 @@ def check_row_pins(rows):
             refuse(f'#2692 row pin names a row that is gone: {name}')
     anchors = []
     counts = {}
-    for name, _, _, _, marker, _ in rows:
-        kind, anchor = mutant_anchor.get(name, ('message', marker))
+    for row in rows:
+        kind, anchor = shareable_anchor(row)
         if kind == 'location' or not isinstance(anchor, str):
             continue
-        anchors.append((name, anchor))
+        anchors.append((row[0], anchor))
         counts[anchor] = counts.get(anchor, 0) + 1
     shared = {anchor for anchor, total in counts.items() if total >= 2}
     unpinned = sorted({name for name, anchor in anchors if anchor in shared}
@@ -313,9 +327,10 @@ def build():
         host_source.with_name('submit_host_tests.rs'), host_test)
     entries = [adapter.Mutation(Case('baseline', test, '#1110 positive baseline',
                                     kind='positive', positive_tests=inventory))]
-    for name, before, after, scenario, marker, capability in mutants:
+    for row in mutants:
+        name, before, after, scenario, marker, capability = row
         target = mutant_source.get(name, source)
-        kind, anchor = mutant_anchor.get(name, ('message', marker))
+        kind, anchor = shareable_anchor(row)
         if kind == 'location':
             anchor = adapter.unwrap_site(rust, target, before, after, target.read_bytes())
         elif anchor.startswith('#813 '):
