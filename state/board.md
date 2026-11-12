@@ -6451,3 +6451,34 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 下次两小时交接 ~13:30 写段 | e7 | 13:4x |
 
 **待人工验收（AI 已实测部分）**：无新增；2499 宿主链原始记录在 macmini `~/ws/pdrs-runner-evidence/issue-2499/`（AI 已实测 KILLED=75，待人签字项不变）。
+
+### 13:30（两小时交接，接 11:30；本窗 11:30–13:30；下一段 15:30）
+
+**做了什么**：
+
+- **#1833（PR 3018 已 MERGED）mutant-kill 宿主实杀闭环**：mk-r3 PASS——14/14 KILLED / 0 SURVIVED / 0 INVALID / baseline 全 PASS / 树还原干净（cb8 证据 `~/ws/pdrs-runner-evidence/issue-1833/negctl-1833-20261112-123106/`，四件关键件镜像 `_tmp/20261026-issue-1833/review-mk-r3-cb8-evidence/`）；登记 #1833 评论 6814938683，义务闭环。计数口径更正：板写「13 mutants」为 impl-r1 旧数，EXPECTED_NAMES 实数 **14**。**过程事故沉淀 memory**：mk-r1/mk-r2 两轮 6 s 白跑 = cb8 链名额缓存 key（PDRS_CARGO_SLOT_N=4 独立缓存）超 24h fail-closed exit 4；手动 ssh 裸跑复现刷的是另一个 key 假绿——修复须带链同款 env 跑 `--refresh-cap`（`state/memory/cb8-chain-cargo-slots-cache-key.md`）。
+- **#1623（PR 2957）fix-r5→r6 收敛到入队**：fix-r6 交付（撤销 fix-r5 账本登记 P1×4 同根：ledger.json 恢复 fix-r4 字节 + A7 diff 追加 6 行更正句「三入口 Rust 侧孤立代理门均不入 TS 基线账本、正本在本 diff」+ manifest 不重投影；树外负控 M1 原样复活被四项拒 / M2 schema 合法形状仍被 invented_error_code 拒）→ 收货核验推送 `a412c0edd`（gitleaks 绿、surrogate 70 passed、check_frozen 只读 PASS）→ **DS r6 增量四角色全 PASS 零 P2**（P3×6 不阻塞）→ MM 仍 429（12:49 探针 Token Plan 上限）→ **第二家走 Grok 备胎谱系**（`代码分析` bot，内容归属已核：P0=0 P1=0 P2=0 P3=1）→ 双谱系收敛，r6 块 + 退役旧头 marker（评论 6815140308）→ **gate PASS**、CI 在跑（合并等待器在飞）。
+- **#2692（PR 2960）fix-r7 收货 → DS 增量全 PASS → fix-r8 在跑**：r7 交付 `d628adf15`（带内读面五链实测否决 P1 boundary#1、native-config/turn-submit 补 declares_test 门禁 70/60 锚、探针入树）→ **DS r7 四角色 PASS P1=0**，sibling P2×2（ci.yml 绑定漂移自检独缺 failure-guard 接线 / 新门禁无树内红灯测试——后者 b 档按 P1）→ 处置登记 6814883689 → **fix-r8 派 cb8**（a 档一行接线 + b 档两文件红灯测试 + 三条 P3 顺带；只修 P2 轮次单家 DS 复核口径）。
+- **#2795（PR 2968）fix-r8 交付**：六条 P2 批次轮（boundary#1 可解析 matrix_main 合成夹具 + 过度豁免负控 / boundary#3 backlog 登记中间布尔变量盲区 + 合成负控钉 / concurrency#1 登记「元控变体循环读面」进 backlog 二（续）/ simplify#1 commands 派生等）DONE `b13ebb591` 已推 → DS r8 增量在飞（只修 P2 轮单家口径）。**超修复轮上限 3 备案**：b 档 P2（漏判面）按 P1 处理且不适用轮次放行，登记进 PR 2968 评论待人复核。
+- **#2122（PR 3036）fix-r2 交付**：P1×2 同根（R3.md 复算命令 `--exact` + 模块路径 → 0 测试假 PASS）实测钉死（破形命令原始输出 5657 filtered out / 0 passed 退出 0）→ 修后逐条全名 + `--list` 计数实测，DONE `1d9dee84d` 已推 → DS r2 增量在飞（P1 轮次，MM/第二家随配额补）。
+- **#1800（PR 3009）只修 P2 轮收口**：fix-r6 增量评审四条 P2 处置贴正文（sibling#1 已并入 #2981（评论 6814679760）、其余三条开 **#3043** P2-跟进）→ `gh pr ready` → gate PASS → **CI ci run 卡 queued 8h21m 僵尸**（cancel API 拒「not queued yet」，memory ci-run-red-but-jobs-green 同族）→ close/reopen 重生成（run 43157064697 in_progress）→ 合并等待器在飞。
+- **#1087（PR 2982 链）fix-r4 本机 GLM 在跑**（P1×3 ruler-class：判死补 `test result: FAILED` 汇总行判据 + compile 排除 / task-budget-zero、js-math-zero 迁五张表发布骨架 / concurrency#3 P2b exit-2 不遗留旧 summary.json；进度 S4）。
+- **PR 3041（11:30 段）MERGED 邮箱核平**；3029 MERGED 后 #3010 已关单 + wt-3010 已回收（11:30 义务闭环）。
+- **巡场（12:4x–13:0x 实测）**：盘 **166.6 GiB**（<180 可开树、>160 WARN 维持）、树 58/60、失联 0、human-comments 空、本机 cargo 1/2（1087 worker）、cb8 worker 2692 fix-r8（2795/2122 已交付归零）、队列 2985/2983 CLEAN 在队、3003 UNKNOWN 待判读、MM 429 / DS 16 满转（1623-r6→2795-r8→2122-r2 顺跑）。
+
+**未结义务表**：
+
+| 下一步动作 | 唯一责任人 | 最迟复查 |
+|---|---|---|
+| 2957 CI 绿即 merge（等待器）→ 邮箱核 → #1623 关单检查（concurrency#1 跟进单是否已开）+ wt-1623 回收（25.6 GiB） | e7 | 通知即办 |
+| 2795 fix-r8 DS 收块 → P2 三分（预期小）→ 贴块 → gate → CI → 入队 | e7 | 完成即办 |
+| 2122 fix-r2 DS 收块 → P0/P1 处置 → 第二家（MM 恢复或 Grok）→ 贴块 → gate → 入队 | e7 | 完成即办 |
+| 2692 fix-r8 cb8 收货（fix-r8/remote-run/waiter.log）→ 核验推送 → DS 单家增量 → 贴块 → gate → 入队 | e7 | 7200s 窗内 |
+| 1087 fix-r4 本机收货 → 核验推送 → DS+第二家增量 → 贴块 → gate → 入队 | e7 | 7200s 窗内 |
+| 3009 CI（43157064697）绿即 merge → 邮箱核 → #1800 关单检查 + wt-1800 回收 | e7 | 通知即办 |
+| 2985/2983/3003 队列收块 → MERGED 核邮箱 → 收尾（3003: #2743 关单 + wt-2743 回收；2983: #2617 关单检查）；3003 UNKNOWN 若为卡死按 ci-run-red-but-jobs-green 处置 | e7 | 通知即办 |
+| MM 配额恢复（约 16:5x）即补第二家：2122 r2、1087 r4（未走 Grok 的位） | e7 | 17:0x |
+| 1833 mk-r3 后 ops 小修评估（remote-host-chain-cb8-v3.sh 起链先刷链名额缓存，工具类挡产品才修） | e7 | 15:3x |
+| 15:30 下次交接段 | e7 | 15:4x |
+
+**待人工验收（AI 已实测部分）**：无新增；#1833 mk-r3 宿主实杀 14/14 KILLED 为 AI 已实测项，原始记录在 cb8 runner-evidence 与主仓镜像，待人签字项照旧。
