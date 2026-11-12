@@ -6482,3 +6482,32 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 15:30 下次交接段 | e7 | 15:4x |
 
 **待人工验收（AI 已实测部分）**：无新增；#1833 mk-r3 宿主实杀 14/14 KILLED 为 AI 已实测项，原始记录在 cb8 runner-evidence 与主仓镜像，待人签字项照旧。
+
+### 16:30（两小时交接，接 13:30；本窗 13:30–16:30，15:30 段因上下文压缩并入本段；下一段 18:30）
+
+**做了什么**：
+
+- **#1623（PR 2957）fix-r7→r9 收敛链**：r7 全量 DS 出 P1（R15 撞号、在队 PR #2960/#2786 已占）→ fix-r8（R18 改号 + 代理门移 runId 后 + config 六方法矩阵，`8bd3e414e` 已推）→ r8 DS+MM 双谱系**独立同撞 P1**：① R18 的 id/沿革内容改动漏提交（`git mv`+Edit 后 add 重试漏新路径，提交只含纯 rename、工作树尺子假 PASS）② submit 门次序未修完（trustedContext/maxBudgetUsd 仍在门下、翻转 TS 字段码）→ **fix-r9（协调者亲自修，`721a0a018` 已推）**：门收 `validate()` 末尾（maxBudgetUsd 后、busy 前）+ `submit_turn_combined_invalid_keeps_the_ts_field_codes` 三格组合钉（变异自证：去 budget 短路测试红）+ A7 次序口径/机器判据同步 + R18 内容补提交（提交树 `git show` 复核 id=R18、`check_frozen` 在干净工作树 PASS）→ **r9 DS+MM 增量双谱系在飞**（base=8bd3e414e，out `_tmp/20261112-1623-r9-{ds,mm}/`）；剩余 config 三入口 + tools_rewind_files 门次序 P2 开 **#3051**（前置于 #1357）。
+- **3047（评审通道模型守卫）收口**：fix-r3 DS 增量全 PASS P2=5 → 两张跟进单 **#3049**（review-deepseek 表外逐字未同步 + 缺同型负控 + 注释互指失效）/ **#3050**（声明侧 --model 大小写变体假 ERROR）→ 贴 r3 块 + **删 r1 旧 marker**（旧头块挡闸，已沉淀 memory）→ gate PASS → CI 等绿（等待器 bpjl1m0iy 在飞，3 check pending）。
+- **3045（#2781 决策卡）MERGED 邮箱核平**；**3009（#1800）MERGED 邮箱核平**（fix-r6 六轮修复链收口）——两单均 Refs，#1800/#2781 关单检查待做。
+- **#1087（PR 3042）fix-r5 收货补推**（auto-receive 漏推老坑第四次，补推 + ls-remote 断言，head `2c707588d`）→ r5 **MM 四角色收块：P1×3**（sibling#1=concurrency#1 同根：固定名日志回读判死、重叠跑假 KILLED/SURVIVED + entries×5 同族；sibling#2：六张表 STALE ANCHORS 拒绝打印未同步死 stdout 守卫、断管时 exit 2 变 exit 3/rc 1 假 FAIL）+ DS 在飞；**#2499（PR 2959）fix-r4 收货补推**（head `0ac45ebbb`）→ r4 单家 DS 在飞（纯 P2 轮口径）。
+- **#2692（PR 2960）fix-r10 cb8 完成**（waiter FINISH exit=0 @16:19）待收货；**#2795（PR 2968）fix-r11 重派成功**（首派第三参裸轮次名 cd 失败，改传树内完整路径，cb8 pid 2800837 在跑）。
+- **macmini SSD 迁移**：外接 4 TB 盘（pdrs-host 卷载体，52 GiB sparsebundle）映像拷内置盘三重核验一致 → 旧盘已弹出等人接新 SSD；接上后恢复 `/Volumes/pdrs-host` 再删内置盘副本（memory `20261112-macmini-pdrs-host-ssd-migration.md` 待办清单）；期间 macmini 不派宿主链。
+- **memory 新增两条**：PR 换头旧 marker 块挡闸（3047 实例）、git mv+Edit 漏 add 致提交纯 rename（1623 r8 实例）。
+- **巡场（16:2x–16:3x）**：human-comments 空、fleet 健康（盘 149.6/200、树 53/60）、无 P0、无遗留 spin。
+
+**未结义务表**：
+
+| 下一步动作 | 唯一责任人 | 最迟复查 |
+|---|---|---|
+| 1623 r9 DS+MM 收块 → 无 P1 即贴 r9 块（删正文 r7/r8 旧 marker）→ gate → CI → 入队 → MERGED 邮箱核 → #1623 关单检查（#3033/#3039/#2992/#2993/#2998/#3022/#3025/#3051 前置逐条处置）+ wt-1623 回收（25.6 GiB） | e7 | 收块即办 |
+| 1087 r5 DS 收块 → 与 MM P1×3 合并处置（预期 fix-r6：run_token 日志名 + 判死用内存值 + 六表守卫打印同步）→ 修复轮 → 双谱系 | e7 | 收块即办 |
+| 2499 r4 DS 收块 → P2 三分 → 贴块 → gate → CI → 入队 | e7 | 收块即办 |
+| 2692 fix-r10 收货（waiter 16:19 FINISH）→ 核验推送 → r10 须全量四角色块（r9 分批双块不合规）→ 贴块时移除 PR 2960 旧残块 → gate → 入队 | e7 | 17:0x |
+| 2795 fix-r11 cb8 收货（waiter 在飞）→ 核验推送 → 评审 → 贴块 → 入队 | e7 | 7200s 窗内 |
+| 3047 CI 绿即入队（bpjl1m0iy）→ MERGED → 邮箱核 + #3049/#3050 登记 | e7 | 通知即办 |
+| #1800 / #2781 关单检查（大步骤收尾自查，3009/3045 均 MERGED）+ wt-1800 树回收评估 | e7 | 17:3x |
+| macmini 新 SSD 接上即恢复 pdrs-host 卷（memory 待办清单 4 步） | e7 | 接盘即办 |
+| 18:30 下次交接段 | e7 | 18:4x |
+
+**待人工验收（AI 已实测部分）**：无新增；#1833 mk-r3 宿主实杀 14/14 KILLED 仍待人签字（原始记录 cb8 runner-evidence + 主仓镜像）。
