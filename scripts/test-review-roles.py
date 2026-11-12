@@ -120,8 +120,12 @@ if mode != "no_assistant":
         resp = "wrong-model-x"
     elif mode == "other_lineage":  # 别家的规范名：两形白名单也不得放行
         resp = next((v for k, v in alias.items() if k != model), "wrong-model-x")
+    elif mode == "other_lineage_raw":  # 别家的原样请求名：白名单若误并进整表 key，别的负控杀不掉
+        resp = next((k for k in alias if k != model), "wrong-model-x")
     elif mode == "raw_resp":  # llm-center 有时原样回显请求名：同一家的第二种合法形
         resp = model
+    elif mode == "case_variant":  # 仅大小写不同（如 dEEPSEEK-V4.1-fLASH）：与 review-deepseek 的 casefold 同口径，放行
+        resp = alias.get(model, model).swapcase()
     else:
         resp = alias.get(model, model)  # 真网关回显展示名（默认规范形）
     if mode == "mixed_resp":  # 一轮里两种形混出：都算同一家
@@ -301,6 +305,9 @@ def _run(gate, rrr, out_base: Path) -> int:
         rc, s = run("glm-mixed-echo", "mixed_resp", runner="zai")
         if rc != 0 or "simplify:PASS" not in s or gate_errs(s):
             fails.append(f"glm-mixed-echo：规范名与原样名混出应全 PASS 且过闸（rc={rc}）")
+        rc, s = run("glm-case-variant", "case_variant", runner="zai")
+        if rc != 0 or "simplify:PASS" not in s or gate_errs(s):
+            fails.append(f"glm-case-variant：仅大小写不同的回显名应全 PASS 且过闸（rc={rc}）")
 
         # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
         for name, mode, want, runner in [("extra-tool", "extra_tool", "TOOLS_VIOLATION", "zai"), ("wrong-init", "wrong_init", "ERROR", "zai"),
@@ -314,6 +321,7 @@ def _run(gate, rrr, out_base: Path) -> int:
                                          ("wrong-resp-ds", "wrong_resp", "ERROR", "deepseek"),
                                          ("wrong-usage-ds", "wrong_usage", "ERROR", "deepseek"),
                                          ("other-lineage-ds", "other_lineage", "ERROR", "deepseek"),
+                                         ("other-lineage-raw-ds", "other_lineage_raw", "ERROR", "deepseek"),
                                          ("no-assistant", "no_assistant", "ERROR", "zai"), ("noverdict", "noverdict", "PARTIAL", "zai")]:
             rc, s = run(name, mode, runner=runner)
             if rc == 0 or want not in s or not gate_errs(s):
@@ -539,6 +547,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
             trace.write_text("")
             (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                       "aliases": dict(rrr.RESP_MODEL_ALIAS),
                                                        "trace": str(trace)}))
             out = out_base / f"{mode_name}-ok"
             cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
@@ -558,6 +567,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 通道并发闸（11-05 缺口 2）：anthropic 只有 2 路，四角色必须排队——峰值并发 = 2 且打出过 waiting
         trace.write_text("")
         (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                   "aliases": dict(rrr.RESP_MODEL_ALIAS),
                                                    "trace": str(trace)}))
         out = out_base / "anthropic-slots"
         cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "anthropic", "--claude-bin", str(fake),
@@ -575,6 +585,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         trace.write_text("")
         marker = tmp / "hang-first.flag"
         (tmp / "fake.json").write_text(json.dumps({"mode": "ok", "log": str(log), "final": FINAL, "keys": {},
+                                                   "aliases": dict(rrr.RESP_MODEL_ALIAS),
                                                    "trace": str(trace), "hang_first": str(marker)}))
         out = out_base / "serial-timeout-first"
         cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
