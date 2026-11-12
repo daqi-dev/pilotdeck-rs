@@ -8896,6 +8896,7 @@ self_check_controls_run | return | return problems
             'python3 -I scripts/test-review-minimax.py',
             'python3 -I scripts/test-review-roles.py',
             'python3 -I scripts/test-check-taskbook-segments.py',
+            'python3 -I scripts/test-fixround-ledger.py',
             'python3 -I scripts/test-check-frozen-delivery.py',
             'bash scripts/test-pdrs-loop.sh',
             'bash scripts/test-worktree-count.sh',

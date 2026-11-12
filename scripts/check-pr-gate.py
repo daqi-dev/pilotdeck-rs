@@ -14,8 +14,21 @@
      与当前 PR 补丁指纹（`git diff <PR base>...<PR head>`）相同才沿用——纯 rebase、内容逐字不变的提交链
      不必重审（同 Gerrit trivial rebase 保留评审）；任何一行不同、上下文变了、或算不出指纹，都按旧提交拒收。
 
+  4. 修复轮字段（#3056，长尾收口卡「机检落点」）：正文第一个非空行含 `fix-r<N>` 即判为修复轮 PR
+     （提交标题 `fix(...) #N fix-rM：…`，PR 正文首行即标题回显；正文不回显标题则漏判——fail-open，
+     与「防漏跑不防伪造」同一威胁模型）。修复轮 PR 的每个结果块须带 `fixtype=<枚举式|结构性|不适用>`
+     （字面三值，子类字样一律写「结构性」）；N≥4 另须正文恰一个 `<!-- pdrs-residual: <非空> -->`
+     （无上一轮写字面值「无上一轮」，空白不算）。豁免轮（waiver）的修法类型写在豁免标记内
+     （`fixtype=<三值>`），豁免理由长度不计 fixtype 词汇。
+  5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
+     docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
+     缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
+  6. 多块一致（#3056 G）：修复轮 PR 贴多个结果块凑双谱系/分批/复跑时，全块须同一 head=，
+     或全块声明同一 patch= 指纹——不同头且不同指纹的块不得拼作「末轮评审覆盖齐」。
+
 输入：--body-file FILE ｜ --pr N（调 gh pr view，只读）｜ 环境变量 PR_BODY（CI 用，避免 shell 插值）
       --head / PR_HEAD、--base / PR_BASE（CI 传 PR 的 head 与 base SHA；补丁指纹在 --repo 里算）
+      --repo（算补丁指纹与「不适用」路径检查的 git 仓库，须含 base 与 head 两个提交）
 退出码：0 通过 · 1 不通过 · 2 输入错误
 """
 from __future__ import annotations
@@ -35,6 +48,60 @@ NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 补丁指纹的 diff 参数全部写死：不受本机 / CI 的 diff.renames、diff.algorithm、前缀、颜色、外部 diff 配置影响
 FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
                     "--diff-algorithm=myers", "--src-prefix=a/", "--dst-prefix=b/"]
+
+# #3056 修复轮字段（长尾收口卡「机检落点」）：修法类型只接受字面三值。
+FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
+# PR 侧修复轮识别：正文第一个非空行含 fix-r<N>（词边界防 fix-r10 匹配成 fix-r1）。
+FIXROUND_RE = re.compile(r"(?<![\w-])fix-r(\d+)(?![\w-])")
+RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
+WAIVER_FIXTYPE = re.compile(r"fixtype=(\S+)")
+
+
+def fix_round_from_body(body: str):
+    """正文第一个非空行里的 fix-r<N>；没有则 None。首行不回显提交标题会漏判（fail-open，见 docstring 规则 4）。"""
+    for line in body.split("\n"):
+        s = line.strip()
+        if s:
+            m = FIXROUND_RE.search(s)
+            return int(m.group(1)) if m else None
+    return None
+
+
+def _kv(attrs: str) -> dict:
+    """注释键值全量解析（#200）：`key=value` 空白分隔，同键多次收集成列表（调用方判重复）。"""
+    kv: dict[str, list[str]] = {}
+    for tok in attrs.split():
+        k, sep, v = tok.partition("=")
+        if sep:
+            kv.setdefault(k, []).append(v)
+    return kv
+
+
+def _load_ci_scope():
+    """懒加载同目录 ci_scope.py（「不适用」判定的唯一口径，不复制其路径白名单）；任何失败返回 None（fail-closed）。"""
+    try:
+        import importlib.util
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ci_scope.py")
+        spec = importlib.util.spec_from_file_location("pdrs_ci_scope_3056", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:  # noqa: BLE001 —— 加载失败即 fail-closed，由调用方拒收
+        return None
+
+
+def check_na_path(base: str, repo: str, head: str) -> list[str]:
+    """`fixtype=不适用` 的 diff 级路径检查（#3056 义务 4）：ci_scope 语义为唯一口径，fail-closed。"""
+    if not (base and head and repo):
+        return ["fixtype=不适用 但缺 --base/--head/--repo，无法按 ci_scope 语义复算 diff 路径（fail-closed 拒收）"]
+    mod = _load_ci_scope()
+    if mod is None or not hasattr(mod, "docs_only_for_range"):
+        return ["fixtype=不适用 但 ci_scope.py 加载失败（fail-closed 拒收）"]
+    if not mod.docs_only_for_range(repo, base, head):
+        return ["fixtype=不适用 与 diff 路径矛盾：改动不限于文档白名单（ci_scope 唯一口径）——触及代码路径不得写不适用"]
+    return []
 
 
 def patch_fingerprint(repo: str, base: str, head: str) -> str:
@@ -92,17 +159,19 @@ def check_block(attrs: str, head: str, patch: str = "") -> list[str]:
         elif roles[r] != "PASS":
             errs.append(f"角色 {r} 状态 {roles[r]}（只有 PASS 计入闸门；PARTIAL/TIMEOUT 须重跑或分批）")
     # #200：按完整键解析（空白分隔的 key=value），每个键恰好一次
-    kv: dict[str, list[str]] = {}
-    for tok in attrs.split():
-        k, sep, v = tok.partition("=")
-        if sep:
-            kv.setdefault(k, []).append(v)
+    kv = _kv(attrs)
     one = {k: v[0] for k, v in kv.items() if len(v) == 1}
     for k in ("head", "roles", "readonly", "runner", "model"):
         if len(kv.get(k, [])) != 1:
             errs.append(f"结果块键 {k} 须恰好出现一次（现 {len(kv.get(k, []))} 次）；重跑 run-review-roles.py")
     if len(kv.get("patch", [])) > 1:
         errs.append("结果块键 patch 至多出现一次；重跑 run-review-roles.py")
+    # #3056 义务 E：fixtype= 键校验——只要声明就须是字面三值（是否必填看 check() 的修复轮判定）
+    if len(kv.get("fixtype", [])) > 1:
+        errs.append("结果块键 fixtype 至多出现一次；重跑 run-review-roles.py")
+    for v in kv.get("fixtype", []):
+        if v not in FIXTYPE_VALUES:
+            errs.append(f"结果块 fixtype={v} 不是字面三值（枚举式 / 结构性 / 不适用）；「结构派生」等子类字样一律写「结构性」")
     if one.get("readonly", "tools") != "tools":
         errs.append(f"结果块 readonly={one['readonly']}：只接受 readonly=tools（执行层工具白名单）")
     # codex（官方 GPT 谱系，ops 侧 `codex exec` 入口）不在 run-review-roles.py 的
@@ -138,21 +207,71 @@ def check_block(attrs: str, head: str, patch: str = "") -> list[str]:
     return errs
 
 
-def check(body: str, head: str = "", patch: str = "") -> list[str]:
+def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str = "") -> list[str]:
     errs: list[str] = []
     blocks = list(MARKER.finditer(body))
+    fix_round = fix_round_from_body(body)
     w = WAIVER.search(body)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
         for n, m in enumerate(blocks, 1):
             tag = f"结果块 {n}/{len(blocks)}：" if len(blocks) > 1 else ""
             errs.extend(tag + e for e in check_block(m.group(1), head, patch))
+        # ---- #3056 修复轮字段（义务 E/G；详见 docstring 规则 4-6）----
+        kvs = [_kv(m.group(1)) for m in blocks]
+        declared = [v for kv in kvs for v in kv.get("fixtype", [])]
+        if fix_round is not None:
+            for n, kv in enumerate(kvs, 1):
+                if not kv.get("fixtype"):
+                    tag = f"结果块 {n}/{len(blocks)}：" if len(blocks) > 1 else "结果块："
+                    errs.append(tag + f"修复轮（fix-r{fix_round}）须带 fixtype=<枚举式|结构性|不适用>；重跑 run-review-roles.py --fixtype …")
+            # G：多块凑双谱系/分批/复跑须同头或同一补丁指纹（#3056 阻塞前置）
+            if len(blocks) > 1:
+                heads = [kv.get("head", [""])[0] for kv in kvs]
+                patches = [kv.get("patch", [""])[0] for kv in kvs]
+                if not (len(set(heads)) == 1 or (all(patches) and len(set(patches)) == 1)):
+                    errs.append(f"修复轮多块不一致（#3056 G）：块头 {heads} 各不相同且补丁指纹 "
+                                f"{['缺' if not p else p[:12] for p in patches]} 不统一——分批/复跑拼块须覆盖同一 head 或同一 patch 指纹")
+            # N≥4：上轮残差判读（PR 正文，恰一个、非空白）
+            if fix_round >= 4:
+                found = RESIDUAL_MARKER.findall(body)
+                if not found:
+                    errs.append(f"修复轮 fix-r{fix_round}（N≥4）PR 正文缺 <!-- pdrs-residual: 上轮残差判读 -->（无上一轮写字面值「无上一轮」）")
+                elif len(found) > 1:
+                    errs.append("pdrs-residual 标记出现多次（至多一次）")
+                elif not found[0].strip():
+                    errs.append("pdrs-residual 内容是空白串（无上一轮写字面值「无上一轮」，空答不算答）")
+        # 义务 4：fixtype=不适用 的 diff 级路径检查（声明即查，与轮数判定无关——
+        # 「不适用」本身断言了 docs-only diff，该断言可复算就必须复算）
+        if any(v == "不适用" for v in declared):
+            errs.extend(check_na_path(base, repo, head))
     elif w:
         reason = w.group(1).strip()
-        if len(reason) < 8:
-            errs.append("豁免理由太短（≥8 字）")
+        fv = None
+        if fix_round is not None:
+            # 义务 3：waiver 轮载体——修法类型写在豁免标记内；豁免理由长度不计 fixtype 词汇
+            m2 = WAIVER_FIXTYPE.search(reason)
+            if not m2:
+                errs.append(f"修复轮（fix-r{fix_round}）的豁免标记须携带修法类型：fixtype=<枚举式|结构性|不适用>")
+            else:
+                fv = m2.group(1)
+                if fv not in FIXTYPE_VALUES:
+                    errs.append(f"豁免 fixtype={fv} 不是字面三值（枚举式 / 结构性 / 不适用）")
+            if fix_round >= 4:
+                found = RESIDUAL_MARKER.findall(body)
+                if not found:
+                    errs.append(f"修复轮 fix-r{fix_round}（N≥4）PR 正文缺 <!-- pdrs-residual: 上轮残差判读 -->（无上一轮写字面值「无上一轮」）")
+                elif len(found) > 1:
+                    errs.append("pdrs-residual 标记出现多次（至多一次）")
+                elif not found[0].strip():
+                    errs.append("pdrs-residual 内容是空白串（无上一轮写字面值「无上一轮」，空答不算答）")
+        plain = WAIVER_FIXTYPE.sub("", reason).strip()
+        if len(plain) < 8:
+            errs.append("豁免理由太短（≥8 字，不计 fixtype 词汇）")
         else:
-            print(f"check-pr-gate: 豁免——{reason}")
+            print(f"check-pr-gate: 豁免——{plain}")
+        if fv == "不适用":
+            errs.extend(check_na_path(base, repo, head))
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
     if not ISSUE_LINK.search(body) and not NO_ISSUE.search(body):
@@ -166,7 +285,7 @@ def main() -> int:
     g.add_argument("--body-file")
     g.add_argument("--pr")
     ap.add_argument("--head", default=os.environ.get("PR_HEAD", ""), help="PR 当前 head SHA；给定时与结果块 head= 比对")
-    ap.add_argument("--base", default=os.environ.get("PR_BASE", ""), help="PR base SHA；与 --head 同给时算当前补丁指纹，供 head 不等时比对")
+    ap.add_argument("--base", default=os.environ.get("PR_BASE", ""), help="PR base SHA；与 --head 同给时算当前补丁指纹（head 不等时比对）并复算 fixtype=不适用 的 diff 路径")
     ap.add_argument("--repo", default=".", help="算补丁指纹的 git 仓库（须含 base 与 head 两个提交）")
     a = ap.parse_args()
     if a.body_file:
@@ -183,7 +302,7 @@ def main() -> int:
         print("check-pr-gate: 需要 --body-file / --pr / 环境变量 PR_BODY", file=sys.stderr)
         return 2
     patch = patch_fingerprint(a.repo, a.base, a.head) if a.head and a.base else ""
-    errs = check(body, a.head, patch)
+    errs = check(body, a.head, patch, a.base, a.repo)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")
     if not errs:

@@ -852,6 +852,53 @@ CLI_CASES = [
 
 
 
+# ---- 修复轮字段（#3056 长尾收口卡「机检落点」）：路径段 fix-rN 才触发 ------------
+# 载荷都是小包文本（无 scope 声明、无 9 个 .rs）：字段检查须在 big/small 分支之前生效（义务 2）。
+FIX_TASKBOOK = "# #9 fix(gateway) 修复轮\n\n## 要做\n1. 改 `src/a.rs` 补测试\n"
+FIXTYPE_ENUM = "<!-- pdrs-fixtype: 枚举式 词表封闭性：两类词表各自全文遍历，无第三种写法 -->\n"
+FIXTYPE_STRUCT = "<!-- pdrs-fixtype: 结构性 词表核验：测试真实遍历的词表 12/12 项全部覆盖 -->\n"
+FIXTYPE_NA = "<!-- pdrs-fixtype: 不适用 -->\n"
+RESIDUAL_OK = "<!-- pdrs-residual: 上轮的洞是边界暴露：仅修饰窗差一词，修法本身成立 -->\n"
+RESIDUAL_NONE = "<!-- pdrs-residual: 无上一轮 -->\n"
+
+FIX_CASES = []
+
+
+def fixcase(name, expect_rc, text, must=None, rnd="fix-r5"):
+    FIX_CASES.append((name, expect_rc, rnd, text, must or []))
+
+
+fixcase("修复轮正控：枚举式（附边界论证）", 0, FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK)
+fixcase("修复轮正控：结构性（附词表核验）", 0, FIX_TASKBOOK + FIXTYPE_STRUCT + RESIDUAL_OK)
+fixcase("修复轮正控：不适用（任务书侧不查路径）", 0, FIX_TASKBOOK + FIXTYPE_NA + RESIDUAL_OK)
+fixcase("修复轮缺 fixtype 字段", 1, FIX_TASKBOOK + RESIDUAL_OK, must=["pdrs-fixtype"])
+fixcase("修复轮子类字样：结构派生", 1,
+        FIX_TASKBOOK + "<!-- pdrs-fixtype: 结构派生 已覆盖全部词表 -->\n" + RESIDUAL_OK,
+        must=["字面三值", "结构派生"])
+fixcase("枚举式无边界论证", 1, FIX_TASKBOOK + "<!-- pdrs-fixtype: 枚举式 -->\n" + RESIDUAL_OK,
+        must=["缺论证"])
+fixcase("fixtype 值是空白串", 1, FIX_TASKBOOK + "<!-- pdrs-fixtype:    -->\n" + RESIDUAL_OK,
+        must=["空白"])
+fixcase("fixtype 标记出现两次", 1, FIX_TASKBOOK + FIXTYPE_ENUM + FIXTYPE_STRUCT + RESIDUAL_OK,
+        must=["至多一次"])
+fixcase("fixtype 论证是占位符", 1, FIX_TASKBOOK + "<!-- pdrs-fixtype: 枚举式 <边界论证> -->\n" + RESIDUAL_OK,
+        must=["占位符"])
+fixcase("fix-r5（N≥4）缺 residual", 1, FIX_TASKBOOK + FIXTYPE_ENUM, must=["pdrs-residual"])
+fixcase("residual 内容是空白串", 1, FIX_TASKBOOK + FIXTYPE_ENUM + "<!-- pdrs-residual:   -->\n",
+        must=["空白"])
+fixcase("residual 字面值 无上一轮（正控）", 0, FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_NONE)
+fixcase("residual 内容是占位符", 1, FIX_TASKBOOK + FIXTYPE_ENUM + "<!-- pdrs-residual: <上轮残差判读> -->\n",
+        must=["占位符"])
+fixcase("fix-r3（N<4）不要求 residual（正控）", 0, FIX_TASKBOOK + FIXTYPE_ENUM, rnd="fix-r3")
+fixcase("fix-r3 仍要求 fixtype", 1, FIX_TASKBOOK, must=["pdrs-fixtype"], rnd="fix-r3")
+fixcase("围栏里的 fixtype 不算声明", 1, FIX_TASKBOOK + "```\n" + FIXTYPE_ENUM + "```\n" + RESIDUAL_OK,
+        must=["pdrs-fixtype"])
+fixcase("大包修复轮：分段 + 字段齐（正控）", 0, BIG_SCOPE + SEGMENTS_OK + FIXTYPE_STRUCT + RESIDUAL_OK)
+fixcase("大包修复轮：缺分段表（字段齐）", 1, BIG_SCOPE + FIXTYPE_ENUM + RESIDUAL_OK, must=["分段交付"])
+fixcase("大包修复轮：分段齐但缺字段", 1, BIG_SCOPE + SEGMENTS_OK, must=["pdrs-fixtype"])
+case("非修复轮带 fixtype/residual 标记：不检查（正控）", 0, SMALL + FIXTYPE_ENUM + RESIDUAL_OK)
+
+
 def run():
     fails = 0
     with tempfile.TemporaryDirectory() as td:
@@ -860,6 +907,19 @@ def run():
             p.write_text(text, encoding="utf-8")
             r = ctbs.check_file(p)
             out = "；".join(r["problems"]) + " " + ((r["class"] or {}).get("reason") or "")
+            ok = r["rc"] == expect and all(s in out for s in must)
+            print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={r['rc']}（期望 {expect}）{'' if ok else ' ← ' + out}")
+            if not ok:
+                fails += 1
+
+        # 修复轮字段用例：任务书写进 _tmp/<单>/fix-rN/task.md（路径段即修复轮信号，与 ops
+        # dispatch-fix 的生成位置同构）；载荷是小包文本——字段检查须先于 big/small 分支。
+        for name, expect, rnd, text, must in FIX_CASES:
+            p = Path(td) / "_tmp" / "20261105-issue-9" / rnd / "task.md"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            r = ctbs.check_file(p)
+            out = "；".join(r["problems"])
             ok = r["rc"] == expect and all(s in out for s in must)
             print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={r['rc']}（期望 {expect}）{'' if ok else ' ← ' + out}")
             if not ok:
