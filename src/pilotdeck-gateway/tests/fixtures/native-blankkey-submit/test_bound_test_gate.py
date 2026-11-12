@@ -7,7 +7,11 @@ used to keep the roster green with the name living only in this string table),
 but only the host's out-of-tree negative round ever showed it red. The first
 case runs the real `--check` and pins its bound-test count; the second renames
 the short name the shared binder returns and demands the matching refusal.
-Run from anywhere:
+fix-r11 (review sibling#1 / sibling#2) adds the table-level red sides the same
+review round asked for on the turn twins: the static-roster drift leg and
+mutate()'s stale-anchor / no-op legs. The rows are drifted in memory (the
+table is data here and `main()` reads the module global), so the tree is only
+read. Run from anywhere:
 
     python3 -I -B src/pilotdeck-gateway/tests/fixtures/native-blankkey-submit/test_bound_test_gate.py
 """
@@ -26,22 +30,53 @@ nc = importlib.util.module_from_spec(SPEC)
 # inert here; loading only defines the table and the functions.
 SPEC.loader.exec_module(nc)
 
+# Dropping this row keeps every pin bound through a sibling row
+# (`registry-body-spelling` asserts the same `#2692 the record body keeps the
+# raw JSON null`), so the drift test isolates the static-roster refusal, not
+# a knock-on pin refusal -- the native-config DROPPED_ROW precedent.
+DROPPED_ROW = 'submit-raw-spelling'
+STALE_ROW = 'echo-capped-serializer'
 
-def run_check():
+
+def run_check(rows=None):
     """Call nc.main() under argv ['negative_controls.py', '--check'].
 
     Returns (exit code, stdout, stderr); the refusal envelope exits 2 with the
-    reason on stderr. No cargo runs; the tree is only read.
+    reason on stderr. No cargo runs; the tree is only read. `rows` (fix-r11)
+    swaps the module's mutation table in memory so the table-level red sides
+    can drift one row without touching the tree.
     """
     out, err = io.StringIO(), io.StringIO()
-    saved_argv = sys.argv
+    saved_argv, saved_rows = sys.argv, nc.mutations
     sys.argv = ['negative_controls.py', '--check']
+    if rows is not None:
+        nc.mutations = rows
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = nc.main()
+            try:
+                code = nc.main()
+            except SystemExit as stop:
+                code = stop.code
     finally:
+        nc.mutations = saved_rows
         sys.argv = saved_argv
     return code, out.getvalue(), err.getvalue()
+
+
+def patched_rows(mutation, old=None, new=None):
+    """The table with one row's anchor fields replaced (in memory)."""
+    rows, patched = [], False
+    for row in nc.mutations:
+        row = list(row)
+        if row[0] == mutation:
+            patched = True
+            if old is not None:
+                row[2] = old
+            if new is not None:
+                row[3] = new
+        rows.append(row)
+    assert patched, f'#2692 fix-r11: the row to patch must exist: {mutation}'
+    return rows
 
 
 class BoundTestGate(unittest.TestCase):
@@ -81,6 +116,49 @@ class BoundTestGate(unittest.TestCase):
                        f'code={caught.exception.code!r} out={out.getvalue()!r}')
         self.assertIn('bound test not declared', err.getvalue(),
                       '#2692 fix-r9: the refusal names the drifted binding')
+
+    def test_check_refuses_a_dropped_roster_row(self):
+        # fix-r11 (review sibling#1): the printed anchor count and this
+        # file's expectations all derive from the runtime table, so a dropped
+        # row kept --check green while one control silently stopped being
+        # audited; the static EXPECTED_NAMES roster must refuse the drift
+        # before any count is printed (the #1666 shape; native-config /
+        # turn-read / turn-publish already pin theirs).
+        rows = [row for row in nc.mutations if row[0] != DROPPED_ROW]
+        code, out, err = run_check(rows=rows)
+        self.assertTrue(code == 2,
+                        f'#2692 fix-r11: a dropped roster row must refuse --check: '
+                        f'rc={code} out={out!r}')
+        self.assertIn('mutation roster drifted', err,
+                      '#2692 fix-r11: the refusal names the roster drift')
+        self.assertIn(f'missing=[{DROPPED_ROW!r}]', err,
+                      f'#2692 fix-r11: the refusal names the missing row: {err!r}')
+
+    def test_check_rejects_a_stale_anchor(self):
+        # fix-r11 (review sibling#2): mutate()'s count != 1 leg had no
+        # in-tree red side -- the gate could regress to "always 1" and only
+        # the host's cargo round would notice.
+        rows = patched_rows(STALE_ROW,
+                            old='pub(crate) const MAX_ARRAY_DEPTH: usize = 4242;')
+        code, out, err = run_check(rows=rows)
+        self.assertTrue(code == 2,
+                        f'#2692 fix-r11: a stale anchor must refuse --check: '
+                        f'rc={code} out={out!r}')
+        self.assertIn(f'#2692 {STALE_ROW}: stale anchor (expected 1, got 0)', err,
+                      '#2692 fix-r11: the refusal names the row and the count')
+
+    def test_check_rejects_a_no_op_mutation(self):
+        # fix-r11 (review sibling#2): before == after used to stay green
+        # until the host's cargo round reported SURVIVED; blankkey folds the
+        # leg into mutate()'s stale-anchor refusal, so the count reads 1.
+        rows = patched_rows(STALE_ROW,
+                            new='pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;')
+        code, out, err = run_check(rows=rows)
+        self.assertTrue(code == 2,
+                        f'#2692 fix-r11: a no-op mutation must refuse --check: '
+                        f'rc={code} out={out!r}')
+        self.assertIn(f'#2692 {STALE_ROW}: stale anchor (expected 1, got 1)', err,
+                      '#2692 fix-r11: the refusal names the row and the no-op shape')
 
 
 if __name__ == '__main__':

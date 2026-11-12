@@ -64,16 +64,22 @@ run_registry / js_value / read）外，纳入断言所在的两个测试模块
 绑定测试名仍在声明它的那个文件里（`negative_suite.bind_module_file` +
 `declares_test`，fix-r6 评审 boundary#5）。这条门禁的红侧由同目录
 `test_bound_test_gate.py` 钉住（#2692 fix-r9，评审 sibling#3：正控跑真 `--check`
-核 `bound tests declared` 计数、红侧模拟绑定测试改名要求 rc 2 拒跑），该测试经
+核 `bound tests declared` 计数、红侧模拟绑定测试改名要求 rc 2 拒跑；fix-r11 评审
+sibling#1/sibling#2 补表级红腿——静态名册漂移（删行 = `mutation roster drifted`
+拒跑）、`mutate` 的 stale-anchor / no-op 腿（行级锚点过期 / before==after 均 rc 2
+拒跑，行在内存换、不动树）），该测试经
 `tests/negative_anchor_selfcheck.rs` 进 cargo CI。字面锚守卫
 （`check_literal_anchors`）自己的红侧由同目录 `test_literal_anchors.py` 钉住
 （#2692 fix-r10，评审 sibling#1：正控净表通过，负控各破坏一个不变式——pin
 不在源 / pin 出 SOURCE_TEXTS / pin 无行绑定 / 断言无 pin / 行出 SOURCE_TEXTS /
-子集仍按全表绑定——要求 rc 2 与对应拒绝语），同样经
+子集仍按全表绑定——要求 rc 2 与对应拒绝语；fix-r11 评审 boundary#2 补
+「同一字面量按文件各自登记」腿：只删 `run_registry_tests.rs` 一侧 pin 必须拒跑，
+另一文件的 pin 不得替它背书），同样经
 `tests/negative_anchor_selfcheck.rs` 进 cargo CI；该 .rs 清单另有发现式 meta
 测试：每个 `fixtures/*/test_bound_test_gate.py` 与 `fixtures/*/
 test_literal_anchors.py` 红侧 twin 必须在清单里，忘登记即红（fix-r10，评审
-simplify#5）。
+simplify#5；fix-r11 评审 boundary#1/concurrency#1 改为常量分母——清单提成文件级
+`PREFLIGHT` 常量、两测试同源消费，注释掉清单行也会红，不再扫源文本子串）。
 
 ## 启动契约（#2391 迁移）
 

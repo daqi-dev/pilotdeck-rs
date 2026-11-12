@@ -18,7 +18,6 @@ import contextlib
 import dataclasses
 import importlib.util
 import io
-import sys
 import unittest
 from pathlib import Path
 
@@ -45,7 +44,9 @@ def replace_row(field, value, mutation=BAD_ROW):
 
 
 class LiteralAnchorGuard(unittest.TestCase):
-    def assertRefused(self, *needles, pins=None, cases=None, bound_rows=None):
+    def assertRefused(self, *needles, pins=None, cases=None, bound_rows=None,
+                      why='#2692 fix-r10: check_literal_anchors must refuse '
+                          'the broken table'):
         """Run the guard expecting the shared refusal (rc 2, stderr text)."""
         err = io.StringIO()
         saved_pins = nc.LITERAL_ANCHORS
@@ -65,8 +66,7 @@ class LiteralAnchorGuard(unittest.TestCase):
             return
         finally:
             nc.LITERAL_ANCHORS = saved_pins
-        raise AssertionError('#2692 fix-r10: check_literal_anchors must refuse '
-                             'the broken table (no SystemExit raised)')
+        raise AssertionError(f'{why} (no SystemExit raised)')
 
     def test_guard_passes_on_the_pristine_table(self):
         try:
@@ -104,6 +104,21 @@ class LiteralAnchorGuard(unittest.TestCase):
         pins = [pin for pin in nc.LITERAL_ANCHORS
                 if pin != (nc.GATES, '#2692 permission cell F code')]
         self.assertRefused('unpinned literal anchor', 'config.rs', pins=pins)
+
+    def test_rejects_dropped_second_registration(self):
+        # fix-r11 (review boundary#2): `#2692 the record body keeps the raw
+        # JSON null` is verbatim in two scanned files (config.rs and
+        # run_registry_tests.rs); a pin for one copy must not vouch for the
+        # other -- matching the anchor set alone would keep --check green
+        # while the run_registry_tests.rs copy rode on config.rs's pin (the
+        # native-config test_rejects_dropped_second_registration shape).
+        pins = [pin for pin in nc.LITERAL_ANCHORS
+                if pin != (nc.REGISTRY_TESTS,
+                           '#2692 the record body keeps the raw JSON null')]
+        self.assertRefused('unpinned literal anchor', 'run_registry_tests.rs',
+                           pins=pins,
+                           why='#2692 fix-r11: a dropped second registration '
+                               'must refuse the run')
 
     def test_subset_is_bound_against_the_full_table(self):
         # A targeted run validates a few rows but still owns the whole pin
