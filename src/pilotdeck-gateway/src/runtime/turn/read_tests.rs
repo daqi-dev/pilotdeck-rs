@@ -396,6 +396,7 @@ async fn replay_run_case(case: &JsValue) -> Result<(), String> {
     for seed in array(sub(case, "setup"), "seed") {
         let run = run_ref(seed);
         file.accept(&RunAcceptInput {
+            session_key_raw: JsValue::String(run.session_key.clone()),
             run: run.clone(),
             request_material: text(seed, "material").cloned().unwrap(),
         })
@@ -858,12 +859,14 @@ async fn read_session_messages_does_not_block_concurrent_publish_while_history_i
         }
     }
     let coordinator = Arc::new(TurnEventCoordinator::new());
+    // #2692: a string session key is its own router-domain key.
     let stream = Arc::new(TurnPublisher::start(
         RunRef {
             session_key: "s".into(),
             run_id: "r".into(),
             project_key: None,
         },
+        "s".into(),
         None,
         coordinator.clone(),
     ));
@@ -926,6 +929,190 @@ async fn read_session_messages_does_not_block_concurrent_publish_while_history_i
     drop(stream);
 }
 
+/// #2692 fix-r1 matrix row 20 (sibling#5): TS reads the raw request value
+/// into the replay Map lookup, so both epoch snapshots consult the router
+/// domain — a null request meets the null-born turn parked under the tagged
+/// spelling while "" and "null" miss — and the merged stream echoes the
+/// request's own value, dropped exactly when absent or undefined. A
+/// spelling the shared depth bound cannot re-spell (a too-deep array)
+/// answers the miss shape: TS consults it only by reference, which no Rust
+/// spelling can reproduce (registered divergence).
+#[tokio::test]
+async fn read_session_messages_reads_the_router_domain_and_echoes_the_raw_key() {
+    struct PlainHistory;
+    impl SessionHistoryReader for PlainHistory {
+        fn read(
+            &self,
+            _input: &JsValue,
+        ) -> Pin<Box<dyn Future<Output = Result<JsValue, TurnReadError>> + Send>> {
+            Box::pin(async { Ok(js(&json!({"messages": [], "total": 0}))) })
+        }
+    }
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    // A null-born turn: the RunRef spells "null" (registry domain), the
+    // publication rides the tagged router key — the split the submit chain
+    // now lands.
+    let stream = Arc::new(TurnPublisher::start(
+        RunRef {
+            session_key: "null".into(),
+            run_id: "r".into(),
+            project_key: None,
+        },
+        "\0\0raw:null".into(),
+        None,
+        coordinator.clone(),
+    ));
+    let history = PlainHistory;
+    let input = js(&json!({"sessionKey": null}));
+    let result = read_session_messages(&coordinator, Some(&history), &input)
+        .await
+        .expect("#2692 the raw-domain read merges");
+    assert_eq!(
+        json(&keys(&result)),
+        json!(["messages", "total", "stream"]),
+        "#2692 the merge keeps the history keys and appends the stream"
+    );
+    let result = json(&result);
+    assert_eq!(
+        result["stream"]["active"],
+        json!(true),
+        "#2692 a null request meets the null-born turn"
+    );
+    assert_eq!(
+        result["stream"]["sessionKey"],
+        json!(null),
+        "#2692 the stream echoes the raw null, not the tagged spelling"
+    );
+    assert_eq!(result["stream"]["runId"], json!("r"));
+    // The string spellings miss the null-born turn and echo raw.
+    for (key, label) in [("", "blank spelling"), ("null", "null spelling")] {
+        let input = js(&json!({"sessionKey": key}));
+        let result = json(
+            &read_session_messages(&coordinator, Some(&history), &input)
+                .await
+                .expect("#2692 the miss merges"),
+        );
+        assert_eq!(
+            result["stream"]["active"],
+            json!(false),
+            "#2692 the {label} does not meet the null-born turn"
+        );
+        assert_eq!(
+            result["stream"]["sessionKey"],
+            json!(key),
+            "#2692 the miss echoes the raw request value"
+        );
+        assert_eq!(
+            result["stream"].get("runId"),
+            None,
+            "#2692 the miss carries no run id"
+        );
+    }
+    // An absent sessionKey consults the undefined spelling and drops the
+    // echo, like JSON.stringify.
+    let input = js(&json!({}));
+    let result = json(
+        &read_session_messages(&coordinator, Some(&history), &input)
+            .await
+            .expect("#2692 the absent-key read merges"),
+    );
+    assert_eq!(
+        result["stream"].get("sessionKey"),
+        None,
+        "#2692 an absent sessionKey is dropped from the stream echo"
+    );
+    // A too-deep array cannot be spelled: the miss shape with the raw echo.
+    // The echo stays 2001 levels deep, so the asserts read the JsValue
+    // directly — the serde bridge's recursion bound cannot carry it.
+    let mut deep = JsValue::Array(vec![]);
+    for _ in 0..crate::js_value::MAX_ARRAY_DEPTH {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let input = crate::metadata::object([("sessionKey", deep.clone())]);
+    let result = read_session_messages(&coordinator, Some(&history), &input)
+        .await
+        .expect("#2692 the unspellable key answers the miss shape");
+    let stream_object = result
+        .get("stream")
+        .expect("#2692 the merge appends the stream");
+    assert_eq!(
+        stream_object.get("active"),
+        Some(&JsValue::Bool(false)),
+        "#2692 the unspellable key misses the null-born turn"
+    );
+    assert_eq!(
+        stream_object.get("sessionKey"),
+        Some(&deep),
+        "#2692 the miss echoes the raw deep array"
+    );
+    drop(stream);
+}
+
+/// #2692 fix-r5 (review boundary#2, R17 registration): the echo of an
+/// unspellable sessionKey rides the response face, which serializes through
+/// `pilotdeck_protocol::stringify_json` — iterative, no depth cap — not the
+/// 2000-level-capped `js_value::json_stringify` (that one serves provider
+/// bodies only). Node 22.22.0 (v8 12.4.254.21-node.33) measured
+/// `structuredClone` succeeding at 1999/2000/2100 levels (both leaf shapes)
+/// and throwing from 2621 while `JSON.stringify` stays fine past 3000
+/// (`fix-r6/node-probe/clone-band.out`; the fix-r5 probe's "throws from
+/// 2100" was its own deeper caller stack — the clone band drifts with the
+/// stack like every V8 recursion bound, and the gap between 2100 and 2621
+/// is unprobed). So a 3000-level key is the band where TS's read face fails
+/// on the response clone while this side answers the miss shape with the
+/// full raw echo — the answer-shape divergence R17 registers (TS-side
+/// mechanism inferred from cell e).
+#[tokio::test]
+async fn deep_session_key_echo_survives_the_response_serializer() {
+    struct PlainHistory;
+    impl SessionHistoryReader for PlainHistory {
+        fn read(
+            &self,
+            _input: &JsValue,
+        ) -> Pin<Box<dyn Future<Output = Result<JsValue, TurnReadError>> + Send>> {
+            Box::pin(async { Ok(js(&json!({"messages": [], "total": 0}))) })
+        }
+    }
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    let history = PlainHistory;
+    let mut deep = JsValue::Array(vec![]);
+    for _ in 0..3000 {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let input = crate::metadata::object([("sessionKey", deep.clone())]);
+    let result = read_session_messages(&coordinator, Some(&history), &input)
+        .await
+        .expect("#2692 the unspellable deep key answers the miss shape");
+    let stream_object = result
+        .get("stream")
+        .expect("#2692 the merge appends the stream");
+    assert_eq!(
+        stream_object.get("active"),
+        Some(&JsValue::Bool(false)),
+        "#2692 the deep key misses every live turn"
+    );
+    assert_eq!(
+        stream_object.get("sessionKey"),
+        Some(&deep),
+        "#2692 the miss echoes the raw 3000-level array"
+    );
+    // The wire face: the iterative serializer carries the full echo, while
+    // the capped serializer that serves provider bodies refuses the same
+    // value — the two-caliber split the review flagged, pinned here so the
+    // response face cannot drift onto the capped one unnoticed.
+    let wire = stringify_json(&result)
+        .unwrap()
+        .expect("#2692 the iterative response serializer has no depth cap");
+    assert!(
+        wire.contains(&format!("\"sessionKey\":{}", "[".repeat(3000))),
+        "#2692 the full 3000-level echo rides the response body"
+    );
+    assert!(
+        crate::js_value::json_stringify(&result).is_err(),
+        "#2692 the capped provider-body serializer refuses the same value"
+    );
+}
+
 /// A turn that settles while the durable history is being read is retried to
 /// a merged terminal snapshot, through the real publication pipeline and the
 /// durable registry — no deadlock, and the result's stream is the terminal
@@ -968,14 +1155,17 @@ async fn read_session_messages_settles_when_concurrent_publish_finishes_the_turn
         project_key: None,
     };
     file.accept(&RunAcceptInput {
+        session_key_raw: JsValue::String(run.session_key.clone()),
         run: run.clone(),
         request_material: "{\"message\":\"hello\"}".into(),
     })
     .unwrap();
     let registry = Arc::new(FileRegistry::new(file).unwrap());
     let coordinator = Arc::new(TurnEventCoordinator::new());
+    // #2692: a string session key is its own router-domain key.
     let stream = Arc::new(TurnPublisher::start(
-        run,
+        run.clone(),
+        run.session_key.clone(),
         Some(registry.clone()),
         coordinator.clone(),
     ));

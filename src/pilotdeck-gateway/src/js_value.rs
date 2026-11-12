@@ -8,12 +8,19 @@
 //! iterative and reports [`StackOverflow`] past [`MAX_ARRAY_DEPTH`] instead of
 //! exhausting the Rust stack.
 //!
-//! Measured (A6.8-pr4 review, Node 22): `String(a)` throws from depth 2516,
-//! both at top level and one call deeper; the A6-JSVALUE-DEPTH-001 oracle
-//! (#1550) has 2100 converting and 3000 throwing, and nested objects trip it
-//! as early as 1887. Known divergence: Rust's limit is a fixed constant, while
-//! V8's varies with the caller's stack shape, so the constant sits low and
-//! depths between it and V8's real limit throw here but convert in TS.
+//! Measured (A6.8-pr4 review, Node 22, `String(a)` called at module top
+//! level and one call deeper — that stack prefix, not a bare number, is the
+//! record): `String(a)` throws from depth 2516; the A6-JSVALUE-DEPTH-001
+//! oracle (#1550) has 2100 converting and 3000 throwing, and nested objects
+//! trip it as early as 1887. The same V8 recursion bound measured at the run
+//! registry's own load call shapes folds 45 levels deeper, not one
+//! (`storage::run_registry::TS_KEY_FOLD_DEPTH`, #2692 fix-r7 probe on Node
+//! v22.22.0 / v8 12.4.254.21-node.33: every registry load chain folds 2560
+//! and throws 2561, against this prefix's 2515) — two stack prefixes, two
+//! boundaries, not a contradiction. Known divergence: Rust's
+//! limit is a fixed constant, while V8's varies with the caller's stack
+//! shape, so the constant sits low and depths between it and V8's real limit
+//! throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
@@ -258,6 +265,69 @@ pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
     to_string_units_checked(value).map(JsString::from_utf16)
 }
 
+/// The template-literal spelling TS's composite run key gives a session key:
+/// `` `${projectKey ?? ""}\0${sessionKey}\0${runId}` `` (RunRegistry.ts:70).
+/// The stored record body keeps the raw value while the index and every
+/// read-back path key by this spelling, so a record whose key cannot be
+/// re-spelled (a too-deep array) is unreadable — the registry read path
+/// skips such records instead of failing the whole snapshot (#2692: a
+/// fold-to-`""` here used to admit them and brick the registry on reopen,
+/// because `to_string_units` reports the same overflow on the way back).
+///
+/// Inside the fold band (≤ the registry's `TS_KEY_FOLD_DEPTH`, measured at
+/// the load call shape) TS's own template spelling folds a deep container to
+/// `""` or `"1"`; beyond the band the same template literal throws
+/// `Maximum call stack size exceeded` just like `structuredClone` does — but
+/// the spelling and the clone do not ride the same recursion bound: the
+/// spelling folds across the whole band, while a `structuredClone` of the
+/// deep record exhausts its budget earlier. fix-r7 measured the read face
+/// boundary at 2560/2561, yet a folded-spelling `get` returns the record
+/// through the clone only up to 2557 levels, the clone throwing the same
+/// RangeError from 2558 (see `run_registry.rs`'s in-band comment and
+/// `_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-inband-reads.out`,
+/// which supersedes the fix-r6 "identical levels" wording). Rust's spelling
+/// walks with a depth bound instead, so the overflow surfaces here — with
+/// the same message the clone reports.
+pub(crate) fn template_key_checked(value: &JsValue) -> Result<JsString, ToStringError> {
+    // Same walk as `property_key` — `String()`'s coercion — under a different
+    // semantic hat: this is a template-literal slot, that is a property-key
+    // slot. TS renders both through the same ToString; only the callers'
+    // intent differs, so one spelling function serves both (review P3#4:
+    // two verbatim-identical bodies would drift).
+    property_key(value)
+}
+
+/// The raw-value key TS's router-shaped maps use (SameValueZero): sessions,
+/// in-flight turns, the turn-event coordinator, the completion fence, and
+/// the busy gates that pre-check `hasActiveTurn` all index by the request's
+/// original value, so `null` and the string `"null"` are different keys
+/// (#2692 `ts-prodkey-probe.out`, cells b–d). Strings are their own key;
+/// every other category is tagged so its spelling cannot collide with a
+/// genuine string key: `\0\0raw:null`, `\0\0raw:undefined`,
+/// `\0\0raw:true` / `\0\0raw:false`, `\0\0raw:number:<Number string>`
+/// (`-0` and `+0` spell alike, matching SameValueZero), and
+/// `\0\0raw:object:<spelling>` for containers. A container whose spelling
+/// throws answers the error instead of a key — the submit path rejects it
+/// up front, the read paths treat it as a miss. A literal string equal to a
+/// tag collides with the tagged key; containers key structurally where TS
+/// keys by reference — both are registered divergences (R15).
+pub(crate) fn router_key(value: &JsValue) -> Result<JsString, ToStringError> {
+    const TAG: &str = "\0\0raw:";
+    let tagged = |text: String| JsString::from(text.as_str());
+    Ok(match value {
+        JsValue::String(s) => s.clone(),
+        JsValue::Null => tagged(format!("{TAG}null")),
+        JsValue::Undefined => tagged(format!("{TAG}undefined")),
+        JsValue::Bool(true) => tagged(format!("{TAG}true")),
+        JsValue::Bool(false) => tagged(format!("{TAG}false")),
+        JsValue::Number(n) => tagged(format!("{TAG}number:{}", number_string(*n))),
+        JsValue::Array(_) | JsValue::Object(_) => {
+            let units = to_string_units_checked(value)?;
+            tagged(format!("{TAG}object:{}", String::from_utf16_lossy(&units)))
+        }
+    })
+}
+
 /// `JSON.stringify` with the same conservative container-depth bound as
 /// [`to_string_units`]. The serializer itself walks iteratively; this guard
 /// makes a too-deep input report V8's `RangeError` instead of silently
@@ -466,6 +536,77 @@ mod tests {
         assert_eq!(
             expand_replacement("没有 $ 模式", "m", "pre", "post"),
             "没有 $ 模式"
+        );
+    }
+
+    /// #2692: the spelling TS's composite run key sees. `null`/absent keep
+    /// their template spellings instead of folding to `""` (the old
+    /// submit-side fold collapsed the two states); a too-deep array is an
+    /// error, not a fold — the submit path rejects it before the key matters
+    /// (`ts-prodkey-probe.out`, cell e: TS reports the same overflow from
+    /// `structuredClone` after persisting, so the record is unreadable there
+    /// too).
+    #[test]
+    fn template_key_spells_the_template_literal_form() {
+        for (value, expected) in [
+            (JsValue::Null, "null"),
+            (JsValue::Undefined, "undefined"),
+            (JsValue::from("session"), "session"),
+            (JsValue::from(""), ""),
+            (JsValue::Bool(true), "true"),
+            (JsValue::Number(42.0), "42"),
+            (parse_json("[1,null]").unwrap(), "1,"),
+        ] {
+            assert_eq!(
+                template_key_checked(&value)
+                    .expect("#2692 the spelling converts")
+                    .to_utf8()
+                    .unwrap(),
+                expected,
+                "#2692 {value:?}"
+            );
+        }
+        assert_eq!(
+            template_key_checked(&nested(MAX_ARRAY_DEPTH + 1)),
+            Err(ToStringError::StackOverflow),
+            "#2692 a too-deep array is an unreadable key, not a blank one"
+        );
+    }
+
+    /// #2692: the raw-value key the router-shaped maps (sessions, in-flight
+    /// turns, coordinator sinks, busy-gate pre-checks) index by — SameValueZero
+    /// over the request's original value (`ts-prodkey-probe.out`, cells b–d:
+    /// `null`/`42`/object keys never meet their string spellings, a fresh
+    /// object never meets an equal-shaped one). Strings are identity; every
+    /// other category is tagged, so the string `"null"` and JSON `null` get
+    /// different keys while `-0`/`+0` share one, like SameValueZero.
+    #[test]
+    fn router_keys_separate_raw_categories_from_string_spellings() {
+        let key = |value: &JsValue| {
+            router_key(value)
+                .expect("#2692 the raw key converts")
+                .to_utf8()
+                .unwrap()
+        };
+        assert_eq!(key(&JsValue::from("session")), "session");
+        assert_eq!(key(&JsValue::from("null")), "null");
+        assert_eq!(key(&JsValue::Null), "\0\0raw:null");
+        assert_eq!(key(&JsValue::Undefined), "\0\0raw:undefined");
+        assert_eq!(key(&JsValue::Bool(true)), "\0\0raw:true");
+        assert_eq!(key(&JsValue::Bool(false)), "\0\0raw:false");
+        assert_eq!(key(&JsValue::Number(42.0)), "\0\0raw:number:42");
+        assert_eq!(key(&JsValue::Number(-0.0)), "\0\0raw:number:0");
+        assert_eq!(key(&JsValue::Number(0.0)), "\0\0raw:number:0");
+        // SameValueZero: distinct spellings stay distinct keys.
+        assert_ne!(key(&JsValue::Null), key(&JsValue::from("null")));
+        assert_ne!(key(&JsValue::Number(42.0)), key(&JsValue::from("42")));
+        // Containers join their template spelling under the object tag.
+        assert_eq!(key(&parse_json("[1,null]").unwrap()), "\0\0raw:object:1,");
+        // A key whose spelling throws is an error the caller turns into a
+        // rejection (submit) or a miss (read faces) — never a blank key.
+        assert_eq!(
+            router_key(&nested(MAX_ARRAY_DEPTH + 1)),
+            Err(ToStringError::StackOverflow)
         );
     }
 

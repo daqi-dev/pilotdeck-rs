@@ -104,6 +104,11 @@ SCRIPTS = (
     # refuse_unusable_target + verdict_exit); its startup refusals join the
     # machine-checked matrix here, and its --check is also wired into CI.
     ('issue-2495/negative_controls.py', (), ()),
+    # #2692 fix-r1/fix-r2: the blankkey fixture migrated to the same
+    # negative_selection contract (registered + strict --check argv +
+    # claim_dir + missing_target/refuse_unusable_target + verdict_exit);
+    # its --check is also wired into CI.
+    ('native-blankkey-submit/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

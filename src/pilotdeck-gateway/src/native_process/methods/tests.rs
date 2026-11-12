@@ -5302,9 +5302,11 @@ async fn run_family_reads_the_registry_key_like_the_ts_template() {
             run_id: "r".into(),
         },
     ] {
+        let session_key_raw = JsValue::String(run.session_key.clone());
         TurnRunRegistry::accept(
             &*registry,
             &RunAcceptInput {
+                session_key_raw,
                 run,
                 request_material: "#1604 seed".into(),
             },
@@ -5576,4 +5578,129 @@ async fn active_turn_snapshot_misses_echo_the_raw_session_key() {
         .dispose()
         .await
         .expect("#1604 registry fixture project shutdown");
+}
+
+// #2692 fix-r1 matrix rows 11/12 (ts-prodkey-probe cell b): the replay Map
+// is the router domain — a turn born from a null sessionKey request is
+// parked under the tagged spelling, so a null snapshot request meets it
+// (raw SameValueZero hit) while "" and "null" miss; hit and miss both echo
+// the request's own value. `includeEvents` is read on the hit path for any
+// request shape, and a spelling the shared depth bound cannot re-spell
+// (a too-deep array) answers the miss shape — TS consults it only by
+// reference, which no Rust spelling can reproduce (registered divergence).
+#[tokio::test]
+async fn active_turn_snapshot_reads_the_router_domain_and_echoes_the_raw_key() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#2692 registry fixture setup");
+    let replay = requests.coordinator.start(
+        &pilotdeck_protocol::JsString::from("\0\0raw:null"),
+        &"run-null".into(),
+        |_| {},
+    );
+    // Row 11: the null request meets the null-born turn.
+    let result = requests
+        .request(
+            "active_turn_snapshot".into(),
+            crate::metadata::object([("sessionKey", JsValue::Null)]),
+        )
+        .await
+        .expect("#2692 the raw hit stays Ok");
+    negative_assert_eq!(
+        result.get("active"),
+        Some(&JsValue::Bool(true)),
+        "#2692 a null request meets the null-born turn"
+    );
+    negative_assert_eq!(
+        result.get("sessionKey"),
+        Some(&JsValue::Null),
+        "#2692 the hit echoes the raw null, not the tagged spelling"
+    );
+    negative_assert_eq!(
+        result.get("runId").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("run-null")),
+        "#2692 the hit reports the run id"
+    );
+    negative_assert_eq!(
+        result.get("events"),
+        Some(&JsValue::Array(vec![])),
+        "#2692 the fresh replay has no events yet"
+    );
+    // includeEvents is read on the hit path for the null request too
+    // (GatewayTurnReplayStore.ts:117).
+    let result = requests
+        .request(
+            "active_turn_snapshot".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::Null),
+                ("includeEvents", JsValue::Bool(false)),
+            ]),
+        )
+        .await
+        .expect("#2692 the includeEvents hit stays Ok");
+    negative_assert_eq!(
+        result.get("events"),
+        Some(&JsValue::Array(vec![])),
+        "#2692 an explicit false suppresses events for a non-string request"
+    );
+    // Row 12: the string spellings miss the null-born turn and echo raw.
+    for key in [JsValue::from(""), JsValue::from("null")] {
+        let result = requests
+            .request(
+                "active_turn_snapshot".into(),
+                crate::metadata::object([("sessionKey", key.clone())]),
+            )
+            .await
+            .expect("#2692 the raw miss stays Ok");
+        negative_assert_eq!(
+            result.get("active"),
+            Some(&JsValue::Bool(false)),
+            "#2692 the spelling does not meet the null-born turn"
+        );
+        negative_assert_eq!(
+            result.get("sessionKey"),
+            Some(&key),
+            "#2692 the miss echoes the raw request value"
+        );
+        negative_assert_eq!(
+            result.get("runId"),
+            None,
+            "#2692 the miss carries no run id"
+        );
+    }
+    // A too-deep array is a reference key in TS that no Rust spelling can
+    // consult: the miss shape with the raw echo.
+    let mut deep = JsValue::Array(vec![]);
+    for _ in 0..crate::js_value::MAX_ARRAY_DEPTH {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let result = requests
+        .request(
+            "active_turn_snapshot".into(),
+            crate::metadata::object([("sessionKey", deep.clone())]),
+        )
+        .await
+        .expect("#2692 the unspellable key answers the miss shape");
+    negative_assert_eq!(
+        result.get("active"),
+        Some(&JsValue::Bool(false)),
+        "#2692 the unspellable key misses the null-born turn"
+    );
+    negative_assert_eq!(
+        result.get("sessionKey"),
+        Some(&deep),
+        "#2692 the miss echoes the raw deep array"
+    );
+    drop(replay);
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2692 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2692 registry fixture project shutdown");
 }

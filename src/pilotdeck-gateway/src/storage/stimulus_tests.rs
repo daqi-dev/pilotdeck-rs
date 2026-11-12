@@ -367,8 +367,10 @@ fn run() -> RunRef {
     }
 }
 fn accept_input() -> RunAcceptInput {
+    let run = run();
     RunAcceptInput {
-        run: run(),
+        session_key_raw: JsValue::String(run.session_key.clone()),
+        run,
         request_material: "m".into(),
     }
 }
@@ -971,8 +973,10 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
             OUTLIVED_BOUND_MS,
         )]),
     );
+    // #2692: a string session key is its own router-domain key.
     let publisher = TurnPublisher::start(
         run(),
+        run().session_key,
         Some(registry.clone()),
         Arc::new(TurnEventCoordinator::new()),
     );

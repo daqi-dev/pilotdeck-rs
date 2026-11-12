@@ -11,6 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import bind_module_file, declares_test
 from _negkit import contract as C
 
 BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
@@ -97,7 +98,7 @@ def test_inventory(path, prefix):
     return tuple(prefix + '::' + name for name in names)
 
 
-def check(entries, oracle):
+def check(entries, oracle, modules=None):
     C.select_cases([entry.binding for entry in entries], None, oracle)
     for entry in entries:
         if entry.path is not None:
@@ -105,6 +106,20 @@ def check(entries, oracle):
                 raise ValueError(f'{entry.binding.mutation}: stale/nonunique mutation anchor')
             if entry.before == entry.after:
                 raise ValueError(f'{entry.binding.mutation}: mutation is a no-op')
+    # #2692 fix-r7 (review sibling#1): with a module table, every mutation's
+    # bound test must still be declared in the one file its module path names
+    # -- the gate native-blankkey / turn-read / turn-publish already carry
+    # from fix-r6. Positives are exempt: their names come from test_inventory
+    # over the live test file, so a rename fails their own construction.
+    if modules is not None:
+        for entry in entries:
+            binding = entry.binding
+            if binding.kind == 'positive':
+                continue
+            tests_path, short = bind_module_file(binding.test, modules)
+            if not declares_test(tests_path.read_text(), short):
+                raise ValueError(f'{binding.mutation}: bound test not declared: '
+                                 f'{binding.test}')
     return len(entries)
 
 

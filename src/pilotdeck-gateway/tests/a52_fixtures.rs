@@ -455,8 +455,10 @@ fn registry_failed_write_does_not_publish_uncommitted_snapshot_and_can_retry() {
     fs::create_dir(&parent).unwrap();
     let path = parent.join("runs.json");
     let registry = FileRunRegistry::open(&path).unwrap();
+    let run = run("s", "r");
     let input = RunAcceptInput {
-        run: run("s", "r"),
+        session_key_raw: JsValue::String(run.session_key.clone()),
+        run,
         request_material: "request".into(),
     };
     registry.accept(&input).unwrap();
@@ -623,8 +625,10 @@ fn cold_restart_child() {
         return;
     };
     let registry = FileRunRegistry::open(path).unwrap();
+    let run = run("s", "r");
     let input = RunAcceptInput {
-        run: run("s", "r"),
+        session_key_raw: JsValue::String(run.session_key.clone()),
+        run,
         request_material: "request".into(),
     };
     registry.accept(&input).unwrap();

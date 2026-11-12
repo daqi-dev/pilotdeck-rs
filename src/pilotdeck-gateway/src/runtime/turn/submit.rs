@@ -156,6 +156,9 @@ impl TerminalClaim {
 struct PumpContext<'a> {
     input: &'a JsValue,
     run: &'a RunRef,
+    /// #2692: the raw-value key the fence and owner maps use; `run` keeps
+    /// the template spelling for the record and busy message.
+    router_key: &'a JsString,
     completion: &'a TurnCompletionHandle,
     publisher: &'a TurnPublisher,
     progress: &'a Mutex<SnapshotProgress>,
@@ -347,17 +350,44 @@ impl TurnSubmitter {
             );
             set(&mut input, "sdkSessionConfig", config);
         }
+        // #2692: acceptance is where TS's key spellings are decided. The
+        // registry composite key spells `String(sessionKey)` (null →
+        // "null", absent → "undefined") while the record body keeps the raw
+        // value, and the router-shaped maps (admission, sessions, fence,
+        // coordinator) key by the raw value itself (`ts-prodkey-probe.out`
+        // cells b–d), so null and "null" are two sessions over one record
+        // spelling. A value whose spelling throws is rejected here with the
+        // accept-catch shape — TS persists first and fails returning the
+        // record (cell e), Rust cannot index what it cannot spell, so
+        // nothing lands and the registry stays readable. TS also validates
+        // the key past acceptance: with no explicit modelSelection the
+        // production resolution chain rejects null/blank keys at
+        // pump-time (cell a1), so a null-born turn survives only the
+        // storage layer or an explicit selection (cell a2).
+        let run_id = field(&input, "runId")
+            .as_string()
+            .cloned()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
+        let session_key_raw = field(&input, "sessionKey").clone();
+        let (session_key, router_key) = match (
+            crate::js_value::template_key_checked(&session_key_raw),
+            crate::js_value::router_key(&session_key_raw),
+        ) {
+            (Ok(session_key), Ok(router_key)) => (session_key, router_key),
+            (Err(error), _) | (_, Err(error)) => {
+                emit_all(send, vec![acceptance_error_event(&run_id, &error)]);
+                return Ok(());
+            }
+        };
         let run = RunRef {
-            session_key: string(field(&input, "sessionKey")),
+            session_key,
             project_key: field(&input, "projectKey").as_string().cloned(),
-            run_id: field(&input, "runId")
-                .as_string()
-                .cloned()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into()),
+            run_id,
         };
         let acceptance = RunAcceptInput {
             run: run.clone(),
             request_material: request_material(&input)?.into(),
+            session_key_raw,
         };
         match accept_turn(self.registry.as_deref(), &acceptance).await {
             TurnAcceptance::Replay(events) => {
@@ -373,6 +403,7 @@ impl TurnSubmitter {
         let mut cleanup = Cleanup {
             submitter: self,
             run: &run,
+            router_key: &router_key,
             reservation: None,
             completion: None,
             released: false,
@@ -411,7 +442,7 @@ impl TurnSubmitter {
                 return Ok(());
             }
         }
-        cleanup.reservation = self.owner.begin_turn(&run.session_key, &run.run_id);
+        cleanup.reservation = self.owner.begin_turn(&router_key, &run.run_id);
         if cleanup.reservation.is_none() {
             cleanup.release();
             // TS busy distinguishes explicit null/false from an absent field,
@@ -508,7 +539,7 @@ impl TurnSubmitter {
             .await;
             return Ok(());
         }
-        let completion = self.owner.begin_completion(&run.session_key, &run.run_id);
+        let completion = self.owner.begin_completion(&router_key, &run.run_id);
         cleanup.completion = Some(completion.clone());
         admitted(&run);
         if sdk {
@@ -520,7 +551,7 @@ impl TurnSubmitter {
                     Ok(changed) => {
                         if changed {
                             self.owner
-                                .mark_session_dirty(&run.session_key, "sdk_session_config_changed");
+                                .mark_session_dirty(&router_key, "sdk_session_config_changed");
                         }
                         None
                     }
@@ -550,7 +581,7 @@ impl TurnSubmitter {
         if let Some(cwd) = field(&input, "workspaceCwd")
             .as_string()
             .filter(|cwd| !cwd.is_empty())
-            && let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)
+            && let Err(error) = self.host.set_session_cwd(&router_key, cwd)
         {
             cleanup.release();
             self.preflight_events(
@@ -563,6 +594,7 @@ impl TurnSubmitter {
         }
         let publisher = Arc::new(TurnPublisher::start(
             run.clone(),
+            router_key.clone(),
             self.registry.clone(),
             self.coordinator.clone(),
         ));
@@ -576,6 +608,7 @@ impl TurnSubmitter {
         // a misbehaving host future without holding admission or the fence.
         let submitter = self.clone();
         let worker_run = run.clone();
+        let worker_router_key = router_key.clone();
         let worker_input = input.clone();
         let worker_completion = completion.clone();
         let worker_publisher = publisher.clone();
@@ -589,6 +622,7 @@ impl TurnSubmitter {
                 .pump(PumpContext {
                     input: &worker_input,
                     run: &worker_run,
+                    router_key: &worker_router_key,
                     completion: &worker_completion,
                     publisher: &worker_publisher,
                     progress: &worker_progress,
@@ -615,7 +649,7 @@ impl TurnSubmitter {
                 if !worker_timeout.load(Ordering::SeqCst)
                     && submitter
                         .owner
-                        .is_current_completion(&worker_run.session_key, &worker_completion)
+                        .is_current_completion(&worker_router_key, &worker_completion)
                     && worker_terminal.claim()
                 {
                     submitter
@@ -768,6 +802,11 @@ impl TurnSubmitter {
             let _ = barrier.await;
         };
         tokio::join!(manage, consume);
+        // The pending-turn buses register under the turn's ExecutionIdentity
+        // sessionId (the template spelling, ReloadSource.session_id), so the
+        // turn_ended rejection keys by the same spelling as the timer arm's
+        // turn_timeout rejection — not by the raw-value router key (which the
+        // owner maps and the coordinator use).
         let rejected = self.host.reject_pending(&run.session_key, "turn_ended");
         // TS releases admission before post_agent and the timeout close; fence
         // completion remains after both. Keep workspace ownership until then.
@@ -786,7 +825,7 @@ impl TurnSubmitter {
         self.capture_post(&workspace, &progress, &run, timed_out, stable)
             .await;
         if timed_out {
-            let close = self.owner.close(&run.session_key);
+            let close = self.owner.close(&router_key);
             tokio::spawn(async move {
                 let _ = close.await;
             });
@@ -970,6 +1009,7 @@ impl TurnSubmitter {
         let PumpContext {
             input,
             run,
+            router_key,
             completion,
             publisher,
             progress,
@@ -995,7 +1035,12 @@ impl TurnSubmitter {
         let handle = self
             .owner
             .get_or_create(SessionContext {
-                session_key: run.session_key.clone(),
+                session_key: router_key.clone(),
+                // Path/persistent-identity domain: template spelling. run.session_key
+                // is the submit-side template spelling (null -> "null", missing ->
+                // "undefined"); router_key carries the raw-value tag and must not
+                // leak into paths (std::fs rejects NUL bytes).
+                session_id: run.session_key.clone(),
                 project_key: run.project_key.clone(),
                 channel_key: string(field(input, "channelKey")),
                 allowed_tools: strings(field(input, "allowedTools")),
@@ -1092,9 +1137,7 @@ impl TurnSubmitter {
             .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?
         {
             if timed_out.load(Ordering::SeqCst)
-                || !self
-                    .owner
-                    .is_current_completion(&run.session_key, completion)
+                || !self.owner.is_current_completion(router_key, completion)
             {
                 break;
             }
@@ -1220,9 +1263,7 @@ impl TurnSubmitter {
             }
             if let Some(guard) = &mut failure_guard
                 && !timed_out.load(Ordering::SeqCst)
-                && self
-                    .owner
-                    .is_current_completion(&run.session_key, completion)
+                && self.owner.is_current_completion(router_key, completion)
                 && !guard.is_tripped()
                 && let Some(trip) = guard.observe(&event)
                 // Same single-writer rule as the pump failure path: a policy
@@ -1273,6 +1314,10 @@ impl TurnSubmitter {
 struct Cleanup<'a> {
     submitter: &'a TurnSubmitter,
     run: &'a RunRef,
+    /// #2692: the raw-value key the admission/fence maps use; the run's
+    /// template spelling stays on the record, the busy message, and the
+    /// abort-reason turnKey.
+    router_key: &'a JsString,
     reservation: Option<TurnReservation>,
     completion: Option<TurnCompletionHandle>,
     released: bool,
@@ -1282,7 +1327,7 @@ impl Cleanup<'_> {
     fn end_admission(&mut self) {
         if let Some(reservation) = self.reservation.take() {
             self.submitter.owner.end_turn(
-                &self.run.session_key,
+                self.router_key,
                 Some(&self.run.run_id),
                 Some(&reservation),
             );
@@ -1300,12 +1345,14 @@ impl Cleanup<'_> {
                 .release(&workspace, self.run);
         }
         if let Some(completion) = self.completion.take() {
+            // abortedTurnReasons keys by the template-spelling turnKey
+            // (`${sessionKey}\0${runId}`), not the raw value.
             self.submitter
                 .owner
                 .clear_turn_abort_reason(&self.run.session_key, &self.run.run_id);
             self.submitter
                 .owner
-                .complete_turn(&self.run.session_key, &completion);
+                .complete_turn(self.router_key, &completion);
         }
         self.submitter
             .host
@@ -1372,6 +1419,25 @@ pub(super) fn error_event(run: &RunRef, code: &str, message: &str, recoverable: 
         ("code", code.into()),
         ("message", message.into()),
         ("recoverable", JsValue::Bool(recoverable)),
+    ])
+}
+
+/// The accept-catch shape (`InProcessGateway.js` accept 阶段): a key whose
+/// `String()` throws fails durable acceptance as `result_unknown` — TS
+/// reports the same error when `registry.accept` throws on the record
+/// (`ts-prodkey-probe.out` cell e), with the raw error message and the
+/// accept-time userHint.
+fn acceptance_error_event(run_id: &JsString, error: &crate::js_value::ToStringError) -> JsValue {
+    object([
+        ("type", "error".into()),
+        ("runId", JsValue::String(run_id.clone())),
+        ("code", "result_unknown".into()),
+        ("message", error.message().into()),
+        ("recoverable", JsValue::Bool(false)),
+        (
+            "userHint",
+            "Gateway acceptance could not be durably confirmed. Inspect the run state before retrying.".into(),
+        ),
     ])
 }
 fn busy_message(session: &JsString) -> JsValue {

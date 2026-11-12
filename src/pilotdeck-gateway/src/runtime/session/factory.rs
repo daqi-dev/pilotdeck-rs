@@ -1021,7 +1021,7 @@ impl ProjectSessionFactory {
                         .recorder
                         .writer()
                         .record_session_metadata(
-                            &context.session_key,
+                            &context.session_id,
                             &"host-admission".into(),
                             JsValue::Object(metadata),
                         )
@@ -1054,7 +1054,7 @@ impl ProjectSessionFactory {
             if let Some(resolve) = self.options.tool_results_dir.as_ref()
                 && !crate::mutants::on("session-cwd-preflight-skipped")
                 && let Err(error) = ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(
-                    &context.session_key,
+                    &context.session_id,
                 )))
             {
                 return Err(if crate::mutants::on("session-cwd-preflight-message") {
@@ -1067,7 +1067,7 @@ impl ProjectSessionFactory {
             let projection = storage.projection.clone();
             let tail = SessionTail::new(
                 storage.recorder.clone(),
-                context.session_key.clone(),
+                context.session_id.clone(),
                 prepared.tail,
             );
             let state = storage.projection.snapshot()?;
@@ -1080,7 +1080,7 @@ impl ProjectSessionFactory {
             ));
             let reload_files = saved_files.clone();
             let source = ReloadSource {
-                session_id: context.session_key.clone(),
+                session_id: context.session_id.clone(),
                 cwd: storage.cwd.clone(),
                 transcript_path: storage.recorder.writer().path().to_owned(),
                 projection: storage.projection.clone(),
@@ -1150,7 +1150,7 @@ impl ProjectSessionFactory {
                             } else {
                                 "resume"
                             },
-                            String::from_utf16_lossy(context.session_key.units())
+                            String::from_utf16_lossy(context.session_id.units())
                         ),
                         causes: vec![error, rollback],
                         js_error: None,

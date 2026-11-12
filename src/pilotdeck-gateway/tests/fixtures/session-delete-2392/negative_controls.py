@@ -147,7 +147,26 @@ EXPECTED_NAMES = (
 
 
 def _assertions(case):
-    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+    # closure-r5 (DS sibling#2, P2): sync of the native-config closure-r4
+    # guard into this family's copy of the accessor. Every consumer iterates
+    # per element, so an EMPTY list row produces no anchors: it joins no
+    # literal-anchor loop, the row still counts in `--check`'s printed total
+    # and the run stays green while the kill round could only ever read it
+    # INVALID. Refuse the empty-list shape cleanly (rc 2), and the shapes
+    # that would TypeError on the next line anyway (a non-str element, a
+    # non-str scalar assertion). This family is outside the five-family
+    # ROW_PINS machine check, but its `--check` is in CI.
+    assertion = case.assertion
+    if isinstance(assertion, list):
+        if not assertion:
+            refuse(f'#2392 empty assertion list: {case.mutation}')
+        for element in assertion:
+            if not isinstance(element, str):
+                refuse(f'#2392 non-str assertion element: {case.mutation}')
+        return assertion
+    if not isinstance(assertion, str):
+        refuse(f'#2392 non-str assertion: {case.mutation}')
+    return [assertion]
 
 
 def check_literal_anchors(cases, bound_rows=None):

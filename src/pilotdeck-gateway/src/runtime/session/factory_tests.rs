@@ -290,9 +290,9 @@ impl Harness {
                         pilot_home: root.join("home"),
                         transcript_path: root.join(format!(
                             "{}.jsonl",
-                            String::from_utf16_lossy(context.session_key.units())
+                            String::from_utf16_lossy(context.session_id.units())
                         )),
-                        session_id: context.session_key,
+                        session_id: context.session_id,
                     },
                 );
                 lock(&obs.writer_leases).push(storage.writer_lease.clone());
@@ -455,6 +455,7 @@ impl Harness {
     fn context(&self) -> SessionContext {
         SessionContext {
             session_key: "session-745".into(),
+            session_id: "session-745".into(),
             project_key: None,
             channel_key: "test".into(),
             allowed_tools: None,
@@ -1408,6 +1409,10 @@ async fn never_finishing_predecessor_does_not_block_other_keys() {
     drop(replacement);
     let mut other = h.context();
     other.session_key = "independent".into();
+    // Distinct on-disk identity too: the harness storage derives the
+    // transcript path from session_id, and two owner-map sessions sharing
+    // one session_id share the writer lease (the null/"null" shape).
+    other.session_id = "independent".into();
     let independent = bounded(name, h.owner.get_or_create(other))
         .await
         .expect("#745 independent creation");
@@ -1445,6 +1450,10 @@ async fn two_different_session_keys_can_overlap_inside_prepare() {
     let h = Harness::new(name);
     let mut other = h.context();
     other.session_key = "other".into();
+    // Distinct on-disk identity too: the harness storage derives the
+    // transcript path from session_id, and two owner-map sessions sharing
+    // one session_id share the writer lease (the null/"null" shape).
+    other.session_id = "other".into();
     let first = h.owner.get_or_create(h.context());
     let second = h.owner.get_or_create(other);
     // Both prepares must be parked inside the factory simultaneously, right
@@ -2151,7 +2160,7 @@ async fn writer_lease_excludes_second_factory_and_alias() {
                     TranscriptKey {
                         project_root: root.clone(),
                         pilot_home: root.clone(),
-                        session_id: context.session_key,
+                        session_id: context.session_id,
                         transcript_path: root.join("session-745.jsonl"),
                     },
                 )))
@@ -4511,7 +4520,7 @@ async fn writer_factory_rejects_already_locked_storage() {
                         project_root: root.clone(),
                         pilot_home: root,
                         transcript_path: path,
-                        session_id: context.session_key,
+                        session_id: context.session_id,
                     },
                 )))
             })
@@ -4833,6 +4842,7 @@ async fn same_key_ticket_blocks_before_publication() {
         let owner = SessionOwner::new(options);
         let context = SessionContext {
             session_key: "ticket-1022".into(),
+            session_id: "ticket-1022".into(),
             project_key: None,
             channel_key: "test".into(),
             allowed_tools: None,

@@ -28,7 +28,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
+from negative_selection import registered
+from negative_suite import (Case, bind_module_file, classify, declares_test,
+                            invalidate_completed, passed, publish_summary)
 
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
@@ -322,35 +324,41 @@ mutations = [
     # ── #1872: the alias-key busy gate. Reverting the owner-side check to the
     # pre-fix request-key-only shape lets the request through; it appends
     # through the owner's recorder and the close aborts the running turn, so
-    # the bound test's expect_err dies on a success.
+    # the bound test's expect_err dies on a success. #2692 fix-r1
+    # (sibling#2): re-anchored onto the router-domain gate — the owner arm is
+    # now the string-request conjunction `string_request && matches!(… if
+    # trimmed_string_is_non_empty(key)) && owner.is_some_and(…)`; the mutant
+    # floors the last conjunct to `false`, the same request-key-only shape.
     ('set-alias-owner-busy-removed', CONFIG,
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
      '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && self.owner.has_active_turn(key)\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && false\n'
      '        {',
      CFG + 'session_model_set_rejects_active_turn_on_alias_owner',
      '#1872 session_model_set is busy on the alias owner'),
     # ── #1872 fix-r2: the owner-side blank-key arm of the same gate. TS's
     # busy gate consults the request spelling alone, so a blank request key
     # that folds onto the `session` transcript must reach the port write's
-    # sessionKey gate; removing the `trimmed_string_is_non_empty(key)`
-    # conjunct lets the owner-side check fire first and the bound test dies
-    # on the SESSION_BUSY answer instead of the sessionKey gate's. The
-    # anchor is the test's own assert label — the expect_err message never
-    # reaches the panic payload on this path (cb8 sample r1 INVALID).
+    # sessionKey gate; dropping the `trimmed_string_is_non_empty(key)` guard
+    # from the conjunction lets the owner-side check fire first and the bound
+    # test dies on the SESSION_BUSY answer instead of the sessionKey gate's.
+    # The anchor is the test's own assert label — the expect_err message
+    # never reaches the panic payload on this path (cb8 sample r1 INVALID).
+    # #2692 fix-r1 (sibling#2): re-anchored onto the router-domain gate —
+    # `matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))`
+    # becomes `matches!(&request_key, Ok(_))`.
     ('set-busy-gate-blank-key-guard-removed', CONFIG,
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(key) if trimmed_string_is_non_empty(key))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
      '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        } || string_request\n'
+     '            && matches!(&request_key, Ok(_))\n'
+     '            && owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
      '        {',
      CFG + 'session_model_set_blank_key_answers_the_session_key_gate',
      '#1872 the blank key is a sessionKey error'),
@@ -358,43 +366,32 @@ mutations = [
     # SESSION_BUSY for a turn held on the blank spelling itself (probe B),
     # so the request-side check must stay live; reverting to the fix-r1
     # whole-gate skip makes the bound test see INVALID_SESSION_KEY instead
-    # of the busy code.
+    # of the busy code. #2692 fix-r1 (sibling#2): re-anchored onto the
+    # router-domain gate — the request arm grows the blank-key skip
+    # `trimmed_string_is_non_empty(key) &&` in front of its table check.
     ('set-blank-key-busy-reverted-to-gate-skip', CONFIG,
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || trimmed_string_is_non_empty(key)\n'
-     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
-     '        {',
-     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && trimmed_string_is_non_empty(key)\n'
-     '            && (self.owner.has_active_turn(key)\n'
-     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
-     '        {',
+     '        if match &request_key {\n'
+     '            Ok(key) => self.owner.has_active_turn(key),\n'
+     '            Err(_) => false,\n'
+     '        } || string_request\n',
+     '        if match &request_key {\n'
+     '            Ok(key) => trimmed_string_is_non_empty(key) && self.owner.has_active_turn(key),\n'
+     '            Err(_) => false,\n'
+     '        } || string_request\n',
      CFG + 'session_model_set_reports_busy_for_a_turn_held_on_the_blank_key',
      '#1872 the blank key answers busy'),
     # ── #1872 fix-r2 arbitration of the DS P1: the real TS wiring runs
     # hasActiveTurn on the raw request key before the callback's sessionKey
     # gate (probe C), so permission needs no blank-key guard — this mutant
     # is the reviewed-away shape, and the bound test dies on the
-    # INVALID_SESSION_KEY answer instead of the busy code.
+    # INVALID_SESSION_KEY answer instead of the busy code. #2692 fix-r1
+    # (sibling#2): re-anchored onto the router-domain gate — the request arm
+    # grows the blank-key skip inside `is_ok_and`.
     ('permission-blank-key-busy-skipped', CONFIG,
-     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
-     '            && self.owner.has_active_turn(key)\n'
-     '        {\n'
-     '            return Err(gateway_error(\n'
-     '                "SESSION_BUSY",\n'
-     '                "Cannot change permission mode during an active turn.",\n'
-     '            ));\n'
-     '        }',
-     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
-     '            && trimmed_string_is_non_empty(key)\n'
-     '            && self.owner.has_active_turn(key)\n'
-     '        {\n'
-     '            return Err(gateway_error(\n'
-     '                "SESSION_BUSY",\n'
-     '                "Cannot change permission mode during an active turn.",\n'
-     '            ));\n'
-     '        }',
+     '        if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {',
+     '        if request_key\n'
+     '            .is_ok_and(|key| trimmed_string_is_non_empty(&key) && self.owner.has_active_turn(&key))\n'
+     '        {',
      CFG + 'set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key',
      '#1872 the blank key answers busy for permission'),
     # ── #1872 fix-r2: clear answers the sessionKey gate first — TS's
@@ -1416,6 +1413,268 @@ mutations = [
      DIR + 'new_session_throwing_project_key_prefix_answers_the_boundary_typeerror',
      '#2068 the ToPrimitive failure keeps the bare V8 text'),
 ]
+# #2692 fix-r10 (review boundary#1): the denominator is this literal roster,
+# never `len(mutations)` (#2391 fix-r1, specs/negative-controls/README.md
+# invariant 1). The printed anchor count and the red-side twin's expectation
+# both used to derive from the same runtime table, so a dropped or renamed row
+# kept `--check` green while one control silently stopped being audited (the
+# #1666 shape); `registered()` compares the two in order and refuses on any
+# drift, the same startup refusal native-blankkey already carries.
+EXPECTED_NAMES = (
+    'set-stub-revert',
+    'clear-stub-revert',
+    'permission-stub-revert',
+    'thinking-stub-revert',
+    'styles-list-stub-revert',
+    'styles-set-stub-revert',
+    'seed-stub-revert',
+    'selection-shape-gate-removed',
+    'session-key-gate-code',
+    'permission-mode-gate-removed',
+    'mode-whitelist-narrowed',
+    'thinking-shape-message',
+    'seed-mtime-boundary',
+    'seed-path-gate-code',
+    'transcript-clear-null',
+    'transcript-fence-removed-config',
+    'transcript-fence-removed-rename',
+    'transcript-live-bypass-config',
+    'transcript-live-bypass-rename',
+    'transcript-live-bypass-status',
+    'transcript-hydrate-fence-removed',
+    'transcript-cold-lease-skipped',
+    'transcript-cold-lease-skipped-status',
+    'transcript-cold-lease-skipped-config',
+    'model-set-checked-append-reverted',
+    'rename-checked-append-reverted',
+    'status-checked-append-reverted',
+    'writer-lease-folded-to-busy',
+    'set-alias-owner-busy-removed',
+    'set-busy-gate-blank-key-guard-removed',
+    'set-blank-key-busy-reverted-to-gate-skip',
+    'permission-blank-key-busy-skipped',
+    'clear-blank-key-require-weakened',
+    'set-blank-key-owner-reservation-restored',
+    'clear-blank-key-owner-reservation-restored',
+    'permission-blank-key-require-weakened',
+    'clear-alias-owner-busy-removed',
+    'set-alias-owner-reservation-skipped',
+    'clear-alias-owner-reservation-skipped',
+    'close-owner-fallback-busy-skipped',
+    'set-closes-owner-target-reverted',
+    'seed-mtime-wiring',
+    'set-busy-message',
+    'clear-busy-message',
+    'permission-busy-message',
+    'thinking-busy-message',
+    'style-busy-message',
+    'seed-busy-message',
+    'shared-trim-dropped',
+    'session-dir-blank-gate-removed',
+    'session-dir-surrogate-rejected',
+    'session-dir-project-key-domain-message',
+    'session-dir-project-key-surrogate-rejected',
+    'session-key-surrogate-guard-removed-resume',
+    'session-key-surrogate-guard-removed-delete',
+    'session-key-surrogate-guard-removed-e2e',
+    'session-key-surrogate-guard-removed-config',
+    'session-key-surrogate-message',
+    'submit-entry-surrogate-guard-removed',
+    'rewind-entry-surrogate-guard-removed',
+    'archive-entry-surrogate-guard-removed',
+    'session-model-entry-surrogate-guard-removed',
+    'record-status-entry-surrogate-guard-removed',
+    'admission-null-refused',
+    'submit-null-refused',
+    'submit-surrogate-project-key-rejected',
+    'submit-serve-gate-removed',
+    'submit-admit-cell-serves-wrong-id',
+    'admission-null-refused-close-project',
+    'admission-null-refused-list-sessions',
+    'admission-null-refused-new-session',
+    'admission-refusal-removed-resume',
+    'admission-refusal-removed-close',
+    'admission-refusal-removed-delete',
+    'admission-refusal-removed-rename',
+    'admission-refusal-removed-tag',
+    'blank-gate-removed-resume-order',
+    'blank-gate-removed-close-order',
+    'blank-gate-removed-delete-order',
+    'blank-gate-removed-rename-order',
+    'blank-gate-removed-tag-order',
+    'admission-refusal-removed-config-set',
+    'admission-refusal-removed-config-clear',
+    'admission-refusal-removed-config-permission',
+    'admission-refusal-removed-config-thinking',
+    'admission-refusal-removed-config-style',
+    'admission-refusal-removed-config-seed',
+    'blank-gate-removed-config-set-order',
+    'blank-gate-removed-config-clear-order',
+    'blank-gate-removed-config-permission-order',
+    'blank-gate-removed-config-thinking-order',
+    'blank-gate-removed-config-style-order',
+    'blank-gate-removed-config-seed-order',
+    'admission-null-refused-config-set',
+    'admission-null-refused-config-clear',
+    'admission-null-refused-config-permission',
+    'admission-null-refused-config-thinking',
+    'admission-null-refused-config-style',
+    'admission-null-refused-config-seed',
+    'admission-null-refused-close-order',
+    'admission-null-refused-delete-order',
+    'admission-null-refused-rename-order',
+    'admission-null-refused-tag-order',
+    'admission-relative-projectkey-served-resume',
+    'admission-relative-projectkey-served-config',
+    'admission-empty-projectkey-served-resume',
+    'admission-empty-projectkey-served-config',
+    'blank-gate-nonempty-only-resume',
+    'blank-gate-nonempty-only-config',
+    'permission-store-write-removed',
+    'thinking-store-write-removed',
+    'style-store-write-removed',
+    'compose-permission-readback-removed',
+    'compose-thinking-readback-removed',
+    'compose-style-merge-removed',
+    'styles-list-selected-removed',
+    'submit-permission-source-removed',
+    'tools-admission-source-removed',
+    'acquire-ask-sync-removed',
+    'acquire-miss-dedup-removed',
+    'cron-inline-sync',
+    'project-key-nonstring-folded',
+    'project-key-utf8-folded',
+    'config-project-key-nonstring-folded',
+    'project-key-object-folded',
+    'project-key-code-reverted',
+    'config-project-key-utf8-folded',
+    'new-session-prefix-trim-gate',
+    'new-session-prefix-number-dropped',
+    'new-session-prefix-surrogate-stripped',
+    'new-session-prefix-throwing-prefixed',
+)
+
+# #2692 fix-r13 (DS + MM sibling/boundary, both families): the roster guard
+# above only catches one-sided drift. Rows that ride an assertion string
+# another row also carries (nine on the fix-r13 table; fifty after
+# merge-main-r3 brought main's #1623 admission/blank-gate rows in -- they
+# share the family's assertion literals) are exactly the ones where deleting
+# them from `mutations` *and* `EXPECTED_NAMES` together kept `registered()`
+# aligned and the surviving sibling kept every pin bound -- `--check` stayed
+# green while one control silently stopped being audited. ROW_PINS is a third
+# denominator outside both tables: every shared-assertion row must be present,
+# so a both-tables drop refuses like a one-sided one (the native-blankkey
+# fix-r12 shape).
+ROW_PINS = (
+    'admission-empty-projectkey-served-config',
+    'admission-empty-projectkey-served-resume',
+    'admission-null-refused',
+    'admission-null-refused-close-order',
+    'admission-null-refused-config-clear',
+    'admission-null-refused-config-permission',
+    'admission-null-refused-config-seed',
+    'admission-null-refused-config-set',
+    'admission-null-refused-config-style',
+    'admission-null-refused-config-thinking',
+    'admission-null-refused-delete-order',
+    'admission-null-refused-rename-order',
+    'admission-null-refused-tag-order',
+    'admission-refusal-removed-close',
+    'admission-refusal-removed-config-clear',
+    'admission-refusal-removed-config-permission',
+    'admission-refusal-removed-config-seed',
+    'admission-refusal-removed-config-set',
+    'admission-refusal-removed-config-style',
+    'admission-refusal-removed-config-thinking',
+    'admission-refusal-removed-delete',
+    'admission-refusal-removed-rename',
+    'admission-refusal-removed-resume',
+    'admission-refusal-removed-tag',
+    'admission-relative-projectkey-served-config',
+    'admission-relative-projectkey-served-resume',
+    'blank-gate-nonempty-only-config',
+    'blank-gate-nonempty-only-resume',
+    'blank-gate-removed-close-order',
+    'blank-gate-removed-config-clear-order',
+    'blank-gate-removed-config-permission-order',
+    'blank-gate-removed-config-seed-order',
+    'blank-gate-removed-config-set-order',
+    'blank-gate-removed-config-style-order',
+    'blank-gate-removed-config-thinking-order',
+    'blank-gate-removed-delete-order',
+    'blank-gate-removed-rename-order',
+    'blank-gate-removed-resume-order',
+    'blank-gate-removed-tag-order',
+    'mode-whitelist-narrowed',
+    'permission-stub-revert',
+    'project-key-nonstring-folded',
+    'project-key-object-folded',
+    'style-store-write-removed',
+    'styles-set-stub-revert',
+    'transcript-fence-removed-config',
+    'transcript-fence-removed-rename',
+    'transcript-live-bypass-config',
+    'transcript-live-bypass-rename',
+    'transcript-live-bypass-status',
+)
+
+
+def _assertions(case):
+    # closure-r4 (DS boundary#1, P2-a): after closure-r3 made every consumer
+    # iterate per element, an EMPTY list row stopped crashing (the pre-r3
+    # TypeError) and instead produced no anchors -- the row joined no count,
+    # no reverse pin and no literal-anchor loop, so --check counted it in and
+    # stayed green (the injected-twin false green recorded in closure-r4's
+    # RESULT) while the kill round could only ever read it INVALID. Refuse
+    # the empty-list shape cleanly, and the shapes that would TypeError on
+    # the next line anyway (a non-str element, a non-str scalar assertion).
+    assertion = case.assertion
+    if isinstance(assertion, list):
+        if not assertion:
+            raise SystemExit(f'#2692 empty assertion list: {case.mutation}')
+        for element in assertion:
+            if not isinstance(element, str):
+                raise SystemExit(f'#2692 non-str assertion element: {case.mutation}')
+        return assertion
+    if not isinstance(assertion, str):
+        raise SystemExit(f'#2692 non-str assertion: {case.mutation}')
+    return [assertion]
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
+
+    closure-r2 (MM concurrency #1, P1): the forward loop below is one-sided
+    -- it catches a pinned row that disappeared, but a row ADDED with a
+    sibling's assertion string and no ROW_PINS entry is the one drift nothing
+    guards since the structural census left with closure-r1 (the README
+    invariant-1 rule). The reverse direction is computed from this runtime
+    table: every row whose assertion string another row also carries must be
+    pinned, so the next row reusing a shared anchor refuses here instead of
+    silently widening the pool a both-tables drop can shrink unnoticed.
+    closure-r3 (DS sibling#1 + concurrency#1 + boundary#1, three-way P2): the
+    reverse check counts per element (`_assertions`, the accessor
+    `check_literal_anchors` below already iterates) -- a row whose assertion
+    is a list used to hit `counts[case.assertion]` and abort with
+    `TypeError: unhashable type: 'list'` instead of a clean refusal, and
+    per-element sharing never judged (the native-blankkey shape).
+    """
+    names = {case.mutation for case in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            raise SystemExit(f'#2692 row pin names a row that is gone: {name}')
+    anchors = []
+    counts = {}
+    for case in rows:
+        for assertion in _assertions(case):
+            anchors.append((case.mutation, assertion))
+            counts[assertion] = counts.get(assertion, 0) + 1
+    shared = {assertion for assertion, total in counts.items() if total >= 2}
+    unpinned = sorted({name for name, assertion in anchors if assertion in shared}
+                      - set(ROW_PINS))
+    if unpinned:
+        raise SystemExit('#2692 native-config shared-assertion rows missing '
+                         f'from ROW_PINS: {", ".join(unpinned)}')
 
 
 # #2065: `expect` / `expect_err` take `&str` and never interpolate, so a panic
@@ -1596,10 +1855,32 @@ SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TE
                 MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS,
                 SUBMIT, SUBMIT_TESTS, ARCHIVE, ARCHIVE_TESTS, METHODS_TOOLS,
                 SESSION_MODEL, SESSION_MODEL_TESTS)
-
-
-def _assertions(case):
-    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+# #2692 fix-r7 (review sibling#1): --check also proves every bound test is
+# still declared -- a renamed test used to leave the roster's string constant
+# green until the host's cargo round (the gate native-blankkey / turn-read /
+# turn-publish already carry from fix-r6). The full module path binds to the
+# one file that declares it (negative_suite.bind_module_file), then
+# declares_test matches the fn / table / scenario! form with comments and
+# literals blanked.
+# merge-main-r3: the four #1623 families main added (submit / rewind_tools /
+# archive / session_model) join the audited set -- their rows' test prefixes
+# (SUBMIT_T / TOOLS_T / ARCHIVE_T / SESSION_MODEL_T above) bind to the file
+# that declares their `tests` module (submit.rs pulls submit_tests.rs in via
+# #[path]; native_archive.rs / session_model.rs declare `mod tests;` in their
+# sibling dirs; methods/tools.rs carries the module inline).
+AUDITED_MODULES = (
+    ('native_process::methods::config::tests::', CONFIG),
+    ('native_process::methods::session_dir::tests::', SESSION_DIR),
+    ('native_process::tests::review::', REVIEW_TESTS),
+    ('runtime::session::factory::tests::', FACTORY_TESTS),
+    ('runtime::turn::live::stream_tests::', LIVE_TESTS),
+    ('native_process::methods::cron::cron_tests::', CRON_TESTS),
+    ('native_process::management_tests::', MANAGEMENT_TESTS),
+    ('runtime::turn::submit::tests::', SUBMIT_TESTS),
+    ('native_process::methods::tools::tests::', METHODS_TOOLS),
+    ('native_archive::tests::', ARCHIVE_TESTS),
+    ('session_model::tests::', SESSION_MODEL_TESTS),
+)
 
 
 def check_literal_anchors(cases, pins=None, bound_rows=None):
@@ -1646,7 +1927,10 @@ def check_literal_anchors(cases, pins=None, bound_rows=None):
 def mutate(case, original):
     count = original.count(case.old)
     if count != 1 or case.old == case.new:
-        raise ValueError(f'#1457 {case.mutation}: stale anchor (expected 1, got {count})')
+        # fix-r8 (concurrency#2): no `#1457` here -- the --check envelope
+        # prefixes it once; the run path prints this via
+        # `f'{type(error).__name__}: {error}'` and keeps its own tagging.
+        raise ValueError(f'{case.mutation}: stale anchor (expected 1, got {count})')
     return original.replace(case.old, case.new, 1)
 
 
@@ -1694,14 +1978,42 @@ def main():
     # table itself; refuse the whole run (including `--check`) instead.
     if len({case.mutation for case in every_row}) != len(every_row):
         raise SystemExit('#1457 duplicate mutation name in the table')
+    # #2692 fix-r10 (review boundary#1): the static roster guards both the
+    # --check gate and the mutating run's denominator (a dropped row used to
+    # print `69 mutation anchors OK` and still pass the twin's count pin, the
+    # #1666 shape).
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        raise SystemExit(f'#1457 mutation roster drifted: {error}')
+    # #2692 fix-r13: the third denominator, after the roster guard -- a row
+    # dropped from both tables at once must refuse exactly like a one-sided
+    # drift (see ROW_PINS above).
+    check_row_pins(every_row)
     if args == ['--check']:
         # Guard first: it reports an unreadable scanned file as a clean refusal,
         # while the anchor probe below would raise a bare OSError on the same tree.
         check_literal_anchors(selected_rows)
-        for case in selected_rows:
-            mutate(case, case.path.read_text())
+        # fix-r7 (review sibling#1): the same envelope covers the bound-test
+        # gate below -- a missing or renamed tests file is a clean refusal,
+        # not a traceback.
+        # fix-r9 (review boundary#2): the third count is what the gate actually
+        # passed, not the input row count -- a truncated or deleted loop used to
+        # keep printing `len(selected_rows)` and the count pin stayed green.
+        try:
+            declared = 0
+            for case in selected_rows:
+                mutate(case, case.path.read_text())
+                tests_path, short = bind_module_file(case.test, AUDITED_MODULES)
+                if not declares_test(tests_path.read_text(), short):
+                    raise ValueError(f'bound test not declared: '
+                                     f'{case.mutation} -> {case.test}')
+                declared += 1
+        except (ValueError, OSError) as error:
+            raise SystemExit(f'#1457 {error}')
         print(f'#1457 {len(selected_rows)} mutation anchors OK; '
-              f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK')
+              f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK; '
+              f'{declared} bound tests declared')
         return 0
     if not args:
         raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')

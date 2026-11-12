@@ -137,13 +137,35 @@ impl SessionFactory for Factory {
 fn context(project: &Path) -> SessionContext {
     SessionContext {
         session_key: "fixture".into(),
+        session_id: "fixture".into(),
         project_key: Some(project.to_string_lossy().into_owned().into()),
         channel_key: "test".into(),
         allowed_tools: None,
         disallowed_tools: None,
     }
 }
-pub(super) fn setup() -> (Scratch, requests::Requests) {
+/// The run registry the fixtures share: a file registry over the scratch
+/// home, the same shape `start_assembly` builds for the isolated process.
+fn scratch_run_registry(root: &Path) -> Arc<crate::runtime::turn::publish::FileRegistry> {
+    Arc::new(
+        crate::runtime::turn::publish::FileRegistry::new(
+            crate::storage::FileRunRegistry::open(root.join("home/runs.json"))
+                .expect("#1231 run file"),
+        )
+        .expect("#1231 run registry"),
+    )
+}
+
+/// The fixture base every management setup shares: scratch directories,
+/// isolated-process options, seeded project state, the transcript directory
+/// and the project registry — everything up to the point where the session
+/// factory is chosen.
+fn fixture_parts() -> (
+    Scratch,
+    Options,
+    crate::config::Env,
+    Arc<ProjectRuntimeRegistry>,
+) {
     let root = std::env::temp_dir().join(format!("pdrs-1231-{}", uuid::Uuid::new_v4()));
     for dir in ["home", "project/.pilotdeck/commands"] {
         std::fs::create_dir_all(root.join(dir)).expect("#1231 scratch directory");
@@ -209,17 +231,16 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
         root.join("home/storage").to_string_lossy().into_owned(),
     );
     let project = assembly::project_registry(&options, &env);
+    (Scratch(root), options, env, project)
+}
+
+pub(super) fn setup() -> (Scratch, requests::Requests) {
+    let (scratch, options, env, project) = fixture_parts();
     let mut owner_options = SessionOwnerOptions::new(Arc::new(Factory(options.project.clone())));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
-    let runs = Arc::new(
-        crate::runtime::turn::publish::FileRegistry::new(
-            crate::storage::FileRunRegistry::open(root.join("home/runs.json"))
-                .expect("#1231 run file"),
-        )
-        .expect("#1231 run registry"),
-    );
-    (Scratch(root), {
+    let runs = scratch_run_registry(&scratch.0);
+    (scratch, {
         let replacement_owner = owner.clone();
         requests::Requests {
             options,
@@ -258,6 +279,85 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+        }
+    })
+}
+
+/// #2692 fix-r3 条2: the production-faithful management fixture. Same scratch,
+/// options and project registration as [`setup`], but the owner runs the very
+/// factory the isolated process runs — `assembly::production_session_factory`
+/// over the shared handles — so a submitted turn crosses the real
+/// `create_storage` -> fence -> `open_and_adopt` -> tool-results budget ->
+/// host-binding chain instead of a stub whose `create` ignores the
+/// `SessionContext`. The recorders, interactions and session-override maps
+/// are the very maps the factory closures capture, so request surfaces see
+/// the sessions the factory creates. `mcp_config` stays unpublished and the
+/// MCP diagnostics stay silent: neither leg is under test here, and stderr
+/// noise would pollute the parallel test runners.
+pub(super) fn production_setup() -> (Scratch, requests::Requests) {
+    let (scratch, options, env, project) = fixture_parts();
+    let recorders: assembly::Recorders = Arc::default();
+    let permission_rule_sets: Arc<
+        crate::config::permission::GatewaySessionPermissionRuleSetRegistry,
+    > = Arc::default();
+    let interactions = Arc::new(
+        crate::runtime::interaction::GatewayInteractionCoordinator::new(
+            crate::runtime::interaction::InteractionOptions {
+                permission_grants: Some(permission_rule_sets.clone()),
+                ..Default::default()
+            },
+        ),
+    );
+    let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    let factory = assembly::production_session_factory(assembly::SessionFactoryWiring {
+        project: project.clone(),
+        options: options.clone(),
+        env: env.clone(),
+        recorders: recorders.clone(),
+        interactions: interactions.clone(),
+        permission_rule_sets,
+        session_overrides: session_overrides.clone(),
+        mcp_config: Arc::default(),
+        acquire_miss_report: Arc::new(|_: &str| {}),
+        loop_planned: false,
+        mcp_diagnostic: None,
+    });
+    let mut owner_options = SessionOwnerOptions::new(factory);
+    owner_options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(owner_options);
+    let runs = scratch_run_registry(&scratch.0);
+    (scratch, {
+        let replacement_owner = owner.clone();
+        requests::Requests {
+            options,
+            env,
+            snapshot_enabled: true,
+            memory: Arc::new(crate::runtime::memory::gateway::MemoryGateway::disabled()),
+            project,
+            owner: owner.clone(),
+            coordinator: Arc::default(),
+            runs: Some(runs),
+            replacement: Arc::new(crate::runtime::replacement::ReplacementCoordinator::new(
+                Default::default(),
+                Arc::new(replacement_owner),
+                5000,
+                None,
+            )),
+            recorders,
+            interactions,
+            mcp: requests::Requests::stub_mcp(&owner),
+            async_hook_registry: None,
+            user_dialog_bus: Arc::new(std::sync::Mutex::new(
+                crate::user_dialog::GatewayUserDialogBus::connected(
+                    crate::user_dialog::DialogRuntime::default(),
+                ),
+            )),
+            upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
+            prepare_weixin_login: None,
+            cron: None,
+            always_on: None,
+            settings: requests::Requests::stub_settings(&owner),
+            session_overrides,
         }
     })
 }
