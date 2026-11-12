@@ -93,6 +93,27 @@ LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走
 # 11-05 实测 MiniMax-M3.1-Flash 原样回显、deepseek-v4.1-flash-mb 回显 DeepSeek-V4.1-Flash，原件 _tmp/20261105-minimax-runner/）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
 SYNTHETIC_MODEL = "<synthetic>"  # 网关错误响应（额度 / 断连）的占位 model：不是换了模型，是真没跑成
+
+
+def originals_in(out: Path) -> list[str]:
+    """out 目录里已有的评审原件名（#3056 H 义务 7；#3056 fix-r1 DS simplify#1/sibling#4、DS concurrency#2）。
+
+    - 角色名从 ROLES 派生（不双份维护）：增删/改名角色后守卫自动跟上，不会静默失效；
+    - 清单含 <角色>.md / <角色>.jsonl / <角色>.err（含 .retryN 形）与 summary.md / status.json / diff.patch——
+      *.jsonl/*.err 是原始流、diff.patch 是被审对象：父进程在写 <角色>.md 之前被 SIGKILL/SIGINT 时
+      目录里只剩这些半成品，复跑 open("w") 会把它们截断，所以崩溃残留也算原件、一律拒覆盖。"""
+    pat = re.compile("(" + "|".join(re.escape(r) for r in ROLES) + r")(\.retry\d+)?\.(md|jsonl|err)")
+    return [p.name for p in out.iterdir()
+            if p.is_file() and (p.name in ("summary.md", "status.json", "diff.patch") or pat.fullmatch(p.name))]
+
+
+def error_rec(role: str, detail: str, contention: bool = False) -> dict:
+    """异常/争抢分支的 rec 模板：字段与正常路径一致（含 resource_contention，#3056 fix-r1 DS sibling#5）。
+
+    运行器异常时未知是否争抢，按「其余 false」口径置 False——status.json 的机读契约不因分支缺键
+    （下游 rec.get(...) is False 的断言拿到 None 会不成立）。"""
+    return {"role": role, "status": "ERROR", "detail": detail, "counts": None,
+            "resource_contention": contention}
 API_ERROR_MARK = "API Error:"  # 错误原文前缀，见 _tmp/20261106-issue-1527/review-r30-minimax/
 ERR_QUOTA = "额度耗尽（429）"  # 找人：升级 Token Plan 套餐 / 换 key
 ERR_CONN = "连接断开"  # 查网络 / 代理 / 节点
@@ -541,11 +562,9 @@ def main() -> int:
         print(f"run-review-roles: 找不到 {a.claude_bin}", file=sys.stderr)
         return 2
     out.mkdir(parents=True, exist_ok=True)
-    # #3056 H（义务 7）：齐块判定以原件（<角色>.md / summary.md / status.json）为准——
-    # 目录里已有原件即拒跑（复跑/分批须换独立 out 目录，覆盖会让原轮证据变成复跑字节）。
-    originals = [p.name for p in out.iterdir()
-                 if p.is_file() and (p.name in ("summary.md", "status.json")
-                                     or re.fullmatch(r"(sibling|concurrency|boundary|simplify)(\.retry\d+)?\.md", p.name))]
+    # #3056 H（义务 7）：齐块判定以原件（<角色>.md / .jsonl / .err / summary.md / status.json /
+    # diff.patch）为准——目录里已有原件即拒跑（复跑/分批须换独立 out 目录，覆盖会让原轮证据变成复跑字节）。
+    originals = originals_in(out)
     if originals:
         print(f"run-review-roles: out 目录已有评审原件 {sorted(originals)}——复跑/分批须换独立 out 目录（#3056 H，不得覆盖原件）",
               file=sys.stderr)
@@ -607,13 +626,13 @@ def main() -> int:
         try:
             fd = acquire_slot(a.runner)
         except SlotTimeout as e:
-            results[r] = {"role": r, "status": "ERROR", "detail": str(e), "counts": None,
-                          "resource_contention": True}  # #3056：名额排队超时属争抢类（首次排除、补跑后仍争抢计入）
+            # #3056：名额排队超时属争抢类（首次排除、补跑后仍争抢计入）
+            results[r] = error_rec(r, str(e), contention=True)
             return
         try:
             results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model, a.budget_usd)
         except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
-            results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
+            results[r] = error_rec(r, f"运行器异常 {type(e).__name__}")
         finally:
             if fd is not None:
                 os.close(fd)

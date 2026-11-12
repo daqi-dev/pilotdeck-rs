@@ -4,21 +4,28 @@
 判据 5（state/decisions-20261110-longtail-closure-rule.md）的运营精度归本脚本：
 
   1. **幂等键**（义务 8）：登记键 = 链 × 谱系 × 轮号，形如 `#2692/ds/r11`（issue 号 / 谱系 / fix-rN 的 N）。
-     同键重复登记**先登记者为准**：后到的登记仍写入（供审计）但标 `superseded=true`，计数不计。
+     同键**同形态**（都首次 / 都补跑）重复登记先登记者为准：后到的登记仍写入（供审计）但标
+     `superseded=true`，计数不计；同键补跑（`--rerun`）是新一轮尝试，参与判重、不盲标 superseded——
+     否则补跑后仍争抢的 `contention_counted` 永不可达（#3056 fix-r1 MM concurrency#1）。
   2. **单写者与原子累加**（义务 9）：flock + O_APPEND 追加写（board.md:791 跨进程丢行改 O_APPEND 的先例），
      读-判重-写在同一把锁内完成，多进程并发登记不丢行。
-  3. **计数**：`count` 按链×谱系累计未 superseded 的登记条数；任一链×谱系 ≥ 2 时退出码 1
-     （判据 5 停手阈值的机读信号，人据此停修转结构性/转人，本脚本不停任何东西）。
+  3. **计数**：`count` 与 `judge` 同一分类（classify 单一实现，不再各说各话）。计入停手阈值的
+     失败类 = contention_counted（补跑后仍争抢，前提③）+ unavailable_other（非争抢失败）；不计入 =
+     contention_first（首次争抢排除段，须补跑）、superseded（重复登记）、available（PASS 有效块——
+     PASS 不是失败）。任一链×谱系计入类 ≥ 2 时退出码 1（判据 5 停手阈值的机读信号，人据此停修
+     转结构性/转人，本脚本不停任何东西）。
   4. **争抢二义收敛**（义务 10，MM 建议）：资源争抢类排除**仅覆盖首次**；补跑后仍无有效块即按前提③计入。
      落地：登记行带 `resource_contention`（run-review-roles.py 的 rec 字段，SlotTimeout / 429 配额 /
      执行级 TIMEOUT 为 true）与 `rerun`（--rerun 补跑标记）两个机读字段，`judge` 据此分类：
+       - superseded：同键同形态重复登记（不计）
        - contention_first：首次争抢（排除段，不计入，须补跑）
        - contention_counted：补跑后仍争抢（前提③，计入）
-       - available：非争抢且 PASS（有效块）
-       - unavailable_other：非争抢且非 PASS（看 detail 人判，不自动排除也不计入争抢类）
+       - available：非争抢且 PASS（有效块，不计入——PASS 不是失败）
+       - unavailable_other：非争抢且非 PASS（看 detail 人判，不自动排除，计入）
 
 登记行是单行 JSON（键固定：key/ts/status/resource_contention/rerun/superseded/note），坏行 fail-closed
-（count / judge 遇无法解析的行退出码 2，绝不跳过——跳过会把丢数据吞成计数偏低）。
+（register / count / judge 遇无法解析或非 UTF-8 的行一律退出码 2，绝不跳过——跳过会把丢数据吞成计数
+偏低；register 侧同口径，不再裸 json.loads 崩栈用 rc 1 冒充「触发阈值」）。
 
 用法：
   python3 -I scripts/fixround-ledger.py validate-key '#2692/ds/r11'
@@ -52,26 +59,78 @@ def _chain_lineage(key: str) -> tuple[str, str]:
     return m.group(1), m.group(2)
 
 
-def read_lines(path: str) -> list[dict]:
-    """读台账；坏行（非 JSON / 缺 key / 键非法）fail-closed 退出码 2（跳过会把丢数据吞成计数偏低）。"""
+def _parse_records(path: str, text: str) -> list[dict]:
+    """逐行解析台账文本；坏行（非 JSON / 非对象 / 缺 key / 键非法）fail-closed 退出码 2
+    （跳过会把丢数据吞成计数偏低）。read_lines 与 register 共用——register 侧同口径，
+    不再裸 json.loads 崩栈（traceback rc 1 会冒充「count 触发阈值」）。"""
     out: list[dict] = []
-    if not os.path.exists(path):
-        return out
-    with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                print(f"fixround-ledger: {path}:{n} 不是 JSON 行（fail-closed，不跳过）：{line[:120]}", file=sys.stderr)
-                raise SystemExit(2)
-            if not isinstance(rec, dict) or not isinstance(rec.get("key"), str) or not key_ok(rec["key"]):
-                print(f"fixround-ledger: {path}:{n} 登记行缺合法 key（fail-closed，不跳过）：{line[:120]}", file=sys.stderr)
-                raise SystemExit(2)
-            out.append(rec)
+    for n, line in enumerate(text.split("\n"), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            print(f"fixround-ledger: {path}:{n} 不是 JSON 行（fail-closed，不跳过）：{line[:120]}", file=sys.stderr)
+            raise SystemExit(2)
+        if not isinstance(rec, dict) or not isinstance(rec.get("key"), str) or not key_ok(rec["key"]):
+            print(f"fixround-ledger: {path}:{n} 登记行缺合法 key（fail-closed，不跳过）：{line[:120]}", file=sys.stderr)
+            raise SystemExit(2)
+        out.append(rec)
     return out
+
+
+def _read_text_fail_closed(path: str, *, create_ok: bool) -> str:
+    """读台账原始字节并按 UTF-8 严格解码；任何读/解码失败 fail-closed 退出码 2
+    （decode('replace') 会把坏字节静默吞成计数偏低，这里宁可拒读）。"""
+    try:
+        if create_ok:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                size = os.fstat(fd).st_size
+                return os.pread(fd, size, 0).decode("utf-8") if size else ""
+            finally:
+                os.close(fd)
+        with open(path, "rb") as f:
+            return f.read().decode("utf-8")
+    except UnicodeDecodeError as e:
+        print(f"fixround-ledger: {path} 不是 UTF-8（fail-closed）：{e}", file=sys.stderr)
+        raise SystemExit(2)
+    except OSError as e:
+        print(f"fixround-ledger: {path} 读不了（fail-closed）：{e}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def read_lines(path: str) -> list[dict]:
+    """读台账；坏行（非 JSON / 缺 key / 键非法 / 非 UTF-8）fail-closed 退出码 2（不跳过）。"""
+    if not os.path.exists(path):
+        return []
+    return _parse_records(path, _read_text_fail_closed(path, create_ok=False))
+
+
+def classify(rec: dict) -> str:
+    """count 与 judge 共用的机读分类（单一实现——两命令口径由同一函数保证，不再各说各话）。"""
+    if rec.get("superseded"):
+        return "superseded"
+    if rec.get("resource_contention") and not rec.get("rerun"):
+        return "contention_first"
+    if rec.get("resource_contention") and rec.get("rerun"):
+        return "contention_counted"
+    if rec.get("status") == "PASS":
+        return "available"
+    return "unavailable_other"
+
+
+CLASS_LABEL = {
+    "superseded": "superseded（同键同形态重复登记，不计）",
+    "contention_first": "contention_first（首次争抢：排除段不计入，须补跑）",
+    "contention_counted": "contention_counted（补跑后仍争抢：按前提③计入）",
+    "available": "available（有效块：PASS 不是失败，不计入停手计数）",
+    "unavailable_other": "unavailable_other（非争抢失败：看 detail 人判，计入）",
+}
+# 计入判据 5 停手阈值的失败类；contention_first（首次争抢排除段）/ superseded（重复登记）/
+# available（PASS 有效块）不计——count 与 judge 共用 classify，口径只有这一份
+COUNTED_CLASSES = ("contention_counted", "unavailable_other")
 
 
 def register(path: str, key: str, status: str, contention: bool, rerun: bool, note: str) -> int:
@@ -83,9 +142,11 @@ def register(path: str, key: str, status: str, contention: bool, rerun: bool, no
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        existing = os.pread(fd, os.fstat(fd).st_size or 1, 0).decode("utf-8", "replace") if os.fstat(fd).st_size else ""
-        dup = any(ln.strip() and json.loads(ln).get("key") == key for ln in existing.split("\n") if ln.strip())
-        # 后到重复：仍写入（审计可见）但标 superseded，count 不计——先登记者为准
+        existing = _parse_records(path, _read_text_fail_closed(path, create_ok=True))
+        # 判重含形态（rerun）：同键**同形态**（都首次 / 都补跑）的后到才算重复登记（先登记者为准）；
+        # 同键补跑是新一轮尝试，不盲标 superseded——盲标会把 contention_counted（补跑后仍争抢）
+        # 永远压回 superseded，义务 10 的两分对同轮补跑不可达（#3056 fix-r1 MM concurrency#1）
+        dup = any(r.get("key") == key and bool(r.get("rerun")) == rerun for r in existing)
         rec = {"key": key, "ts": dt.datetime.now().isoformat(timespec="seconds"), "status": status,
                "resource_contention": contention, "rerun": rerun, "superseded": dup,
                "note": note}
@@ -102,7 +163,10 @@ def count(path: str) -> int:
     recs = read_lines(path)
     tally: dict[tuple[str, str], int] = {}
     for rec in recs:
-        if rec.get("superseded"):
+        # 与 judge 同一分类（classify）：只计失败类（contention_counted / unavailable_other）。
+        # 首次争抢（contention_first）是排除段、superseded 是重复登记、available 是 PASS——都不计，
+        # 否则「一次真失败 + 一次资源不足」就假触发停手（#3056 fix-r1 DS concurrency#4/DS sibling#3）
+        if classify(rec) not in COUNTED_CLASSES:
             continue
         tally[_chain_lineage(rec["key"])] = tally.get(_chain_lineage(rec["key"]), 0) + 1
     rc = 0
@@ -111,25 +175,14 @@ def count(path: str) -> int:
         print(f"#{chain}/{lineage}: {n}{flag}")
         if n >= COUNT_THRESHOLD:
             rc = 1
-    print(f"fixround-ledger: {'触发停手阈值（判据 5）：同链×谱系累计 ≥ 2' if rc else '未触发阈值'}")
+    print(f"fixround-ledger: {'触发停手阈值（判据 5）：同链×谱系计入类失败累计 ≥ 2' if rc else '未触发阈值'}")
     return rc
 
 
 def judge(path: str) -> int:
     recs = read_lines(path)
     for rec in recs:
-        key = rec["key"]
-        if rec.get("superseded"):
-            cls = "superseded（重复登记，不计）"
-        elif rec.get("resource_contention") and not rec.get("rerun"):
-            cls = "contention_first（首次争抢：排除段不计入，须补跑）"
-        elif rec.get("resource_contention") and rec.get("rerun"):
-            cls = "contention_counted（补跑后仍争抢：按前提③计入）"
-        elif rec.get("status") == "PASS":
-            cls = "available（有效块）"
-        else:
-            cls = "unavailable_other（非争抢失败：看 detail 人判）"
-        print(f"{key}: {cls}")
+        print(f"{rec['key']}: {CLASS_LABEL[classify(rec)]}")
     return 0
 
 
@@ -138,14 +191,14 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     vk = sub.add_parser("validate-key", help="校验幂等键格式")
     vk.add_argument("key")
-    rg = sub.add_parser("register", help="登记一轮（flock + O_APPEND；同键后到标 superseded）")
+    rg = sub.add_parser("register", help="登记一轮（flock + O_APPEND；同键同形态后到标 superseded，补跑参与判重）")
     rg.add_argument("path")
     rg.add_argument("key")
     rg.add_argument("--status", default="ERROR", help="该轮评审状态（run-review-roles 的 summary 判定，如 PASS/ERROR/TIMEOUT）")
     rg.add_argument("--contention", action="store_true", help="该轮属资源争抢（SlotTimeout / 429 配额 / 执行级 TIMEOUT）")
     rg.add_argument("--rerun", action="store_true", help="该轮是补跑（--rerun；首次争抢补跑后仍争抢按前提③计入）")
     rg.add_argument("--note", default="", help="备注（跟踪单评论链接等）")
-    ct = sub.add_parser("count", help="按链×谱系累计（≥2 退出码 1，判据 5 停手信号）")
+    ct = sub.add_parser("count", help="按链×谱系累计计入类失败（与 judge 同分类；≥2 退出码 1，判据 5 停手信号）")
     ct.add_argument("path")
     jd = sub.add_parser("judge", help="逐条分类：available / contention_first / contention_counted / unavailable_other")
     jd.add_argument("path")

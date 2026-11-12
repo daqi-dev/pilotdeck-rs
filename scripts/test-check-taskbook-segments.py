@@ -1343,6 +1343,19 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  .preview 不当备份跳过、.prev-r2 与 remote-run 仍跳过")
         fails += 0 if ok else 1
 
+        # 12) 字面三值单源（#3056 fix-r1 item 13，DS sibling#8）：任务书侧常量必须派生自
+        # check-pr-gate.py（同一集合），且赋值行不得再写一份字面值（改回复制会在加值/改名后漂移：
+        # 一侧放行、另一侧永久拒收，假 FAIL）
+        _gspec = importlib.util.spec_from_file_location("gate_for_taskbook_pairing", HERE / "check-pr-gate.py")
+        _gate = importlib.util.module_from_spec(_gspec)
+        _gspec.loader.exec_module(_gate)
+        _assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                   if ln.startswith("FIXTYPE_VALUES = ")]
+        ok = (ctbs.FIXTYPE_VALUES == _gate.FIXTYPE_VALUES and len(_assign) == 1
+              and "_gate_module()" in _assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  FIXTYPE_VALUES 派生自 check-pr-gate（同一集合，不复制第二份）")
+        fails += 0 if ok else 1
+
 
     # 命令行契约
     sys.stdout = _real_stdout          # 恢复：下面的 CLI 契约与 PARSE_EST 用各自的 len() 计数
@@ -1352,9 +1365,10 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    # 命令行契约用 len(CLI_CASES) 数；「线性铺开」的独立检查用实际打印行数（_manual["n"]），
-    # 跳过的分支不计数——手写常数会让 SUMMARY 虚报（gate21 MiniMax boundary P3）。
-    total = len(CASES) + _manual["n"] + len(CLI_CASES) + len(PARSE_EST)
+    # 命令行契约用 len(CLI_CASES) 数；FIX_CASES 在自己的计数器建立之前打印（上面 run() 开头），
+    # 所以显式计入（#3056 fix-r1 item 11，DS sibling#6：SUMMARY cases= 少报 19 条）；
+    # 「线性铺开」的独立检查用实际打印行数（_manual["n"]），跳过的分支不计数。
+    total = len(CASES) + len(FIX_CASES) + _manual["n"] + len(CLI_CASES) + len(PARSE_EST)
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)

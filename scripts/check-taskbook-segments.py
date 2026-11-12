@@ -1182,8 +1182,27 @@ def check_segments(text):
 # 修复轮信号 = 路径段全匹配 fix-r<N>（ops dispatch-fix 生成于 _tmp/<日期>-issue-<N>/fix-r<M>/task.md）。
 # 内容识别不可靠：任务书正文经常引用 fix-rN 字样（如本检查器的文档），不能当轮次信号。
 FIX_ROUND_PART = re.compile(r"fix-r(\d+)")
-# 修法类型只接受字面三值（卡「收口证明义务」节）；「结构派生/自动派生」等子类字样一律写 结构性
-FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
+
+
+def _gate_module():
+    """懒加载同目录 check-pr-gate.py 取字面三值常量（#3056 fix-r1，DS sibling#8）：run-review-roles.py
+    的 _gate_module() 是先例——三值改名 / 加值时任务书闸门与 PR 闸门用同一对象，不再各写一份
+    （各写一份会在改名后一侧放行另一侧永久拒收，假 FAIL）。加载失败让位后续 FIXTYPE_RE 检查报错
+    （fail-closed：拿不到正本就不做静默放行）。"""
+    import importlib.util
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-pr-gate.py")
+    spec = importlib.util.spec_from_file_location("pdrs_gate_for_taskbook_3056", p)
+    if spec is None or spec.loader is None:
+        print(f"check-taskbook-segments: 加载不了 {p}（字面三值的正本），fail-closed 退出", file=sys.stderr)
+        raise SystemExit(2)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# 修法类型只接受字面三值（卡「收口证明义务」节）；「结构派生/自动派生」等子类字样一律写 结构性。
+# 常量不复制：就是 check-pr-gate.py 的同一对象（见 _gate_module；配对测试断言 is 同一）。
+FIXTYPE_VALUES = _gate_module().FIXTYPE_VALUES
 # 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明
 FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
 RESIDUAL_RE = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
