@@ -1370,8 +1370,10 @@ def _meta_controls_variant_loop_window():
     Parses session-domain-expectations/test_meta_controls.py and derives the
     registered blind-spot window from its anchors alone — the module-level
     ``negative_checks`` definition (exactly one), the ``for ... in
-    variants:`` loop skeleton inside it (exactly one, its target spelling
-    the fix-r10 anchor ``for name, function, ...``), the three
+    variants:`` loop inside it (exactly one, located by its ``variants``
+    iterator alone — the loop target's spelling is deliberately not an
+    anchor, renaming ``for name, function, ...`` to any other unpacking
+    keeps the derived window unchanged), the three
     ``DriftTests(method).run()`` calls (all inside the loop) and the
     ``_meta_class_setup()`` class-setup call (a direct statement of the
     function body) — never hand-copied line numbers. #2795 fix-r10（评审
@@ -1379,9 +1381,9 @@ def _meta_controls_variant_loop_window():
     base b13ebb591 的旧行号（652-688，第三次 run 与 except 段在窗口外），
     同 commit 的前缀钉又把失真行号固化成字面串——窗口漂移时钉子照绿。
     登记文案与钉子都从本定位派生：登记行的 ``行=`` 与 ``:`` 类建面调用行
-    必须等于这里的返回值，代码上方增删行、锚改名、删段都会先在这里或
-    钉子的比对处红。返回 ``((loop_start, loop_end), setup_call_line,
-    run_call_lines)``。
+    必须等于这里的返回值，代码上方增删行、迭代锚（``variants``）改名、
+    删段都会先在这里或钉子的比对处红。返回
+    ``((loop_start, loop_end), setup_call_line, run_call_lines)``。
     """
     source = (FIXTURES / 'session-domain-expectations' / 'test_meta_controls.py'
               ).read_text(encoding='utf-8')
@@ -1462,7 +1464,10 @@ def _has_check_mode_gate(tree):
     kind, element count and nesting inside _names_check_mode's acceptance
     domain (``<argv-ish> == ['--check']`` was the fix-r6 predicate's only
     compare shape; ``('--check',) == args`` pins the left side and the
-    tuple bracket, #2795 fix-r10 sibling#4), the argparse attribute gate
+    tuple bracket, #2795 fix-r10 sibling#4; the domain's set /
+    multi-element / nested cells got parseable fixtures of their own in
+    fix-r11 — before that they were pinned only on unparseable sources,
+    which never reach this half), the argparse attribute gate
     ``if args.check:`` — through ``not``, parentheses and any attribute
     depth (``if not args.check:`` / ``if (args.check):`` / ``if
     flags.args.check:``, fix-r10 sibling#4), the membership tests
@@ -2088,7 +2093,11 @@ class BareCheckPreflightBacklog(unittest.TestCase):
         # attributes and the sequence compare on the left now also have
         # **parseable** fixtures — before fix-r10 these four shapes were only
         # pinned on unparseable sources, which never reach
-        # _has_check_mode_gate); unparseable sources
+        # _has_check_mode_gate); #2795 fix-r11（评审 DS sibling#2 / MM
+        # sibling#2 / MM boundary#1）：接受域的 set / 多元素 / 嵌套形状此前
+        # 同样只有不可解析夹具（钉正则半边），自此也有**可解析**正控钉
+        # AST 半边——真实树 411 个 *.py 全可解析，活着的只有 AST 半边；
+        # unparseable sources
         # with the gate literal are flagged through _has_gate_literal, the
         # regex half for sources ast cannot parse (fix-r8, boundary#2: no
         # test reached the SyntaxError branch before; fix-r9, boundary#1:
@@ -2098,7 +2107,11 @@ class BareCheckPreflightBacklog(unittest.TestCase):
         # extend to the full _names_check_mode acceptance domain —
         # multi-element list, tuple left and right, set, nested — and each
         # fixture is asserted to really be a SyntaxError source, else the
-        # AST half would serve it and the regex half would go untested); and
+        # AST half would serve it and the regex half would go untested;
+        # fix-r11: the honesty guard is an expected-parse-outcome table over
+        # both fixture groups — the parseable positive controls are asserted
+        # to really parse, else the regex half would serve them and the AST
+        # half's coverage would silently vanish); and
         # a bare entry whose
         # code merely uses plausible-sounding identifiers (out /
         # registrations / selected) stays flagged (fix-r8, boundary#1:
@@ -2125,35 +2138,6 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                                      "if args.check:\n"
                                      "    for row in rows:\n"
                                      "        check_anchor(row, row[1].read_text())\n")
-            # #2795 fix-r10（评审 sibling#4）：四类新门拼写的**可解析**正控——
-            # AST 半边 _has_check_mode_gate 对同一批形状此前只有不可解析夹具
-            # 钉正则半边（new-unparseable-* 走 SyntaxError 分支，根本不进
-            # _has_check_mode_gate），属性分支或比较分支一旦收窄（如只认
-            # Name.attr、只认右值序列）这些形状会静默失去覆盖而新夹具全绿。
-            # 序列在左用 tuple（('--check',) == args）——一并钉住接受域的
-            # 括号种类，不只 list。
-            argparse_not_bare = base / 'new-argparse-not-bare' / 'negative_controls.py'
-            argparse_not_bare.parent.mkdir()
-            argparse_not_bare.write_text("import argparse\n"
-                                         "if not args.check:\n"
-                                         "    sources = {p: p.read_text() for p in ps}\n")
-            argparse_paren_bare = base / 'new-argparse-paren-bare' / 'negative_controls.py'
-            argparse_paren_bare.parent.mkdir()
-            argparse_paren_bare.write_text("import argparse\n"
-                                          "if (args.check):\n"
-                                          "    sources = {p: p.read_text() for p in ps}\n")
-            argparse_multi_attr_bare = \
-                base / 'new-argparse-multi-attr-bare' / 'negative_controls.py'
-            argparse_multi_attr_bare.parent.mkdir()
-            argparse_multi_attr_bare.write_text("import argparse\n"
-                                                "if flags.args.check:\n"
-                                                "    sources = {p: p.read_text() for p in ps}\n")
-            argparse_seq_left_bare = \
-                base / 'new-argparse-seq-left-bare' / 'negative_controls.py'
-            argparse_seq_left_bare.parent.mkdir()
-            argparse_seq_left_bare.write_text("import sys\n"
-                                              "if ('--check',) == args:\n"
-                                              "    sources = {p: p.read_text() for p in ps}\n")
             aliased = base / 'new-aliased' / 'negative_controls.py'
             aliased.parent.mkdir()
             aliased.write_text(
@@ -2280,24 +2264,77 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                  "if (['--check'], ['--check-anchors']) in given:\n"
                  "    sources = {path: path.read_text()\n"),
             )
+            # #2795 fix-r10（评审 sibling#4）+ fix-r11（评审 DS sibling#2 /
+            # MM sibling#2 / MM boundary#1）：AST 半边 _has_check_mode_gate
+            # 的**可解析**正控，与不可解析表同构参数化（fix-r10 时是四段
+            # 手抄样板、各带一条死 import）：属性门经 not / 括号 / 多级属性，
+            # 序列在左（tuple——一并钉住接受域的括号种类不只 list），fix-r11
+            # 按同一接受域补齐 set 在右、多元素 list 在左、多元素 tuple 在
+            # 右、嵌套 tuple-of-lists 在左 in——此前这些形状只有不可解析
+            # 夹具钉正则半边（SyntaxError 分支根本不进 _has_check_mode_gate），
+            # 接受域一旦收窄（去 ast.Set、只认单元素、只认右值、递归收平）
+            # 真实树扫描静默漏判而新夹具全绿。
+            parseable_gate_spellings = (
+                ('new-argparse-not-bare',
+                 "if not args.check:\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-argparse-paren-bare',
+                 "if (args.check):\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-argparse-multi-attr-bare',
+                 "if flags.args.check:\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-argparse-seq-left-bare',
+                 "if ('--check',) == args:\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-set-right-bare',
+                 "if args == {'--check'}:\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-multi-list-left-bare',
+                 "import sys\n"
+                 "if ['--check', '--check-anchors'] == sys.argv[1:]:\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-tuple-right-bare',
+                 "if args == ('--check', '--check-anchors'):\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+                ('new-nested-seq-left-in-bare',
+                 "if (['--check'], ['--check-anchors']) in given:\n"
+                 "    sources = {p: p.read_text() for p in ps}\n"),
+            )
+            # 夹具诚实性守卫，期望解析结果表（fix-r10 不可解析半边；fix-r11
+            # 评审 DS sibling#1 / DS boundary#1 / MM sibling#3 两家独立同点
+            # 补镜像半边）：两组夹具各钉一半扫描器——new-unparseable-* 必
+            # SyntaxError（夹具意外可解析时 AST 半边照样点名，正则半边根本
+            # 没被测到而测试仍绿）；可解析正控必 ast.parse 成功（源意外残缺
+            # 时 bare_check_preflight_signature 走 SyntaxError 分支、正则半边
+            # 照样点名，found 集合照绿而 _has_check_mode_gate 对这些形状的
+            # 覆盖静默作废——同一条失效路径的镜像）。
             for station, unparseable_source in unparseable_gate_spellings:
-                # 夹具诚实性守卫（fix-r10）：不可解析夹具必须真的 SyntaxError
-                # ——可解析源走 AST 半边照样被点名，夹具意外可解析时正则
-                # 半边根本没被测到而测试仍绿。
-                try:
+                with self.assertRaises(
+                        SyntaxError,
+                        msg='#2795 fix-r11: the unparseable gate fixture '
+                            f'for {station} must fail ast.parse (a parseable '
+                            'source is served by the AST half and proves '
+                            'nothing about _has_gate_literal)'):
                     ast.parse(unparseable_source)
-                except SyntaxError:
-                    pass
-                else:
-                    self.assertTrue(False,
-                                    '#2795 fix-r10: the unparseable gate '
-                                    f'fixture for {station} must fail '
-                                    'ast.parse (a parseable source is '
-                                    'served by the AST half and proves '
-                                    'nothing about _has_gate_literal)')
                 unparseable = base / station / 'negative_controls.py'
                 unparseable.parent.mkdir()
                 unparseable.write_text(unparseable_source)
+            for station, parseable_source in parseable_gate_spellings:
+                try:
+                    ast.parse(parseable_source)
+                except SyntaxError as error:
+                    self.assertTrue(False,
+                                    '#2795 fix-r11: the parseable gate '
+                                    f'fixture for {station} must pass '
+                                    'ast.parse (AST half positive controls '
+                                    'must stay parseable — a broken source '
+                                    'is served by the regex half and pins '
+                                    f'nothing about _has_check_mode_gate): '
+                                    f'{error}')
+                parseable = base / station / 'negative_controls.py'
+                parseable.parent.mkdir()
+                parseable.write_text(parseable_source)
             found = _bare_check_entries(base)
         self.assertTrue(found == {'new-bare/negative_controls.py',
                                   'new-argparse-bare/negative_controls.py',
@@ -2307,6 +2344,13 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                                   'new-argparse-multi-attr-bare/'
                                   'negative_controls.py',
                                   'new-argparse-seq-left-bare/'
+                                  'negative_controls.py',
+                                  'new-set-right-bare/negative_controls.py',
+                                  'new-multi-list-left-bare/'
+                                  'negative_controls.py',
+                                  'new-tuple-right-bare/'
+                                  'negative_controls.py',
+                                  'new-nested-seq-left-in-bare/'
                                   'negative_controls.py',
                                   'new-in-argv-bare/negative_controls.py',
                                   'new-mode-compare-bare/negative_controls.py',
@@ -2346,7 +2390,12 @@ class BareCheckPreflightBacklog(unittest.TestCase):
                         'parentheses / multi-level attributes and the '
                         'sequence compare on the left (fix-r10 sibling#4: '
                         'the AST half had no parseable fixture for these), '
-                        'plus every unparseable gate spelling the regex '
+                        'plus the parseable acceptance-domain shapes — set '
+                        'right, multi-element list left, multi-element '
+                        'tuple right, nested sequence left of an in '
+                        '(fix-r11: the AST half had no parseable fixture '
+                        'for these either), plus every unparseable gate '
+                        'spelling the regex '
                         'half covers (membership, if not args.check / '
                         'multi-level attribute, sequence-on-left == / in '
                         '— fix-r8 boundary#2, widened and parameterized in '
@@ -2481,32 +2530,97 @@ class BareCheckPreflightBacklog(unittest.TestCase):
             'to another section keeps its first token (and the exemption '
             'set) intact, only this section pin goes red')
         # 防线 B2：代码窗口定位——登记值必须等于按代码锚派生的窗口。
+        # fix-r11（评审 MM boundary#3 / DS simplify#6 / MM sibling#1）：行内
+        # 匹配从「取首个」（re.search）改成「取全部」（findall）——登记行同
+        # 时带历史旧号（fix-r9 的 行=652-688 说明文字）与正文副本（变体
+        # 循环 :671-707），首个匹配在散文改写后可能落在诱饵或副本上，
+        # 字段那一份反而没被钉。取全部后：恰一个等于派生窗口，其余必须
+        # 是显式登记的历史旧号——新插入的任何其它窗口字样必红。
         window, setup_call_line, run_lines = \
             _meta_controls_variant_loop_window()
-        registered_window = re.search(r'行=(\d+)-(\d+)', row)
+        stale_row_windows = ((652, 688),)  # fix-r9 的旧行号（登记行说明文字）
+        registered_windows = [tuple(int(part) for part in pair) for pair
+                              in re.findall(r'行=(\d+)-(\d+)', row)]
+        current_row_windows = [pair for pair in registered_windows
+                               if pair == window]
+        stale_row_matches = [pair for pair in registered_windows
+                             if pair in stale_row_windows]
         self.assertTrue(
-            registered_window is not None
-            and (int(registered_window.group(1)),
-                 int(registered_window.group(2))) == window,
-            '#2795 fix-r10: the registered 行= window must equal the '
-            'code-anchored variant loop in test_meta_controls.py '
-            f'(row says 行={registered_window.group(1) if registered_window else "?"}-'
-            f'{registered_window.group(2) if registered_window else "?"}, '
-            f'the code anchor derives {window[0]}-{window[1]} with '
-            f'DriftTests(method).run() at {run_lines}): a stale window '
-            '(lines added or removed above the loop) silently shrinks the '
-            'migration target and only this window pin goes red')
-        registered_setup = re.search(r':(\d+) _meta_class_setup', row)
+            len(current_row_windows) == 1
+            and len(current_row_windows) + len(stale_row_matches)
+            == len(registered_windows),
+            '#2795 fix-r11: the row must carry exactly one current 行= '
+            'window equal to the code-anchored variant loop in '
+            'test_meta_controls.py (the code anchor derives '
+            f'{window[0]}-{window[1]} with DriftTests(method).run() at '
+            f'{run_lines}), and every other 行= in the row must be a '
+            'registered stale one, got '
+            f'{registered_windows}: the first-match form silently compared '
+            'the wrong copy once prose was rewritten around the field')
+        # 行内正文副本（「变体循环 :NNN-NNN」）同样取全部、恰等于派生窗口。
+        registered_prose_windows = [tuple(int(part) for part in pair)
+                                    for pair
+                                    in re.findall(r':(\d+)-(\d+)', row)]
         self.assertTrue(
-            registered_setup is not None
-            and int(registered_setup.group(1)) == setup_call_line,
-            '#2795 fix-r10: the registered _meta_class_setup call line '
-            'must equal the code-anchored call site in '
-            'test_meta_controls.py (row says '
-            f':{registered_setup.group(1) if registered_setup else "?"}, '
-            f'the code anchor derives :{setup_call_line}): the fix-r7 '
-            'class-setup claim drifts the same way the 行= window did, '
-            'only this call-site pin goes red')
+            registered_prose_windows == [window],
+            '#2795 fix-r11: the row\'s prose window copy (变体循环 '
+            ':NNN-NNN) must equal the code-anchored variant loop '
+            f'({window[0]}-{window[1]}), got {registered_prose_windows}: '
+            'the second in-row copy drifted invisibly under the '
+            'first-match form')
+        registered_setups = [int(match) for match
+                              in re.findall(r':(\d+) _meta_class_setup', row)]
+        self.assertTrue(
+            registered_setups == [setup_call_line],
+            '#2795 fix-r11: the row must carry exactly one :NNN '
+            '_meta_class_setup call line equal to the code-anchored call '
+            f'site in test_meta_controls.py (:{setup_call_line}), got '
+            f'{registered_setups}: the fix-r7 class-setup claim drifts '
+            'the same way the 行= window did')
+        # 防线 B3（fix-r11，评审 DS simplify#1 / MM sibling#1 / MM
+        # boundary#2，三家同点）：同一行号事实的另外三份手抄副本——README、
+        # test_meta_controls 的 setUp 注释与 negative_checks docstring——
+        # 此前不在任何机检内（钉子只读登记行）：代码上移后维护者只改台账
+        # 行，副本停在旧值且所有测试照绿（fix-r9 的 652-688 失真同源）。
+        # 副本改引「见续跑表」删数亦可，但只要留着就必须逐字等于代码锚
+        # 派生值；删空（README/test_meta_controls 各自不再有 行= 副本）也
+        # 必红——删数须连同本钉一起改。
+        prose_copies = (
+            ('session-domain-expectations/README.md',
+             FIXTURES / 'session-domain-expectations' / 'README.md'),
+            ('session-domain-expectations/test_meta_controls.py',
+             FIXTURES / 'session-domain-expectations' / 'test_meta_controls.py'),
+        )
+        for prose_name, prose_path in prose_copies:
+            prose = prose_path.read_text(encoding='utf-8')
+            copied_windows = [tuple(int(part) for part in pair) for pair
+                              in re.findall(r'行=(\d+)-(\d+)', prose)]
+            self.assertTrue(
+                bool(copied_windows)
+                and all(pair == window for pair in copied_windows),
+                '#2795 fix-r11: every hand-copied 行= window in '
+                f'{prose_name} must equal the code-anchored variant loop '
+                f'({window[0]}-{window[1]}), got {copied_windows}: prose '
+                'copies are invisible to the backlog-row pins and drift '
+                'silently when only the row is updated (dropping the '
+                'numbers for a 「见续跑表」 reference is fine, but drop '
+                'this pin in the same change)')
+        # 类建面调用行的散文副本只在 test_meta_controls 里（「类建面 :669」
+        # 与「窗口与 :669」；按上下文词取，裸 :NNN 会误伤 events[:1] 一类
+        # 切片下标）。README 无此副本，本钉只认 test_meta_controls 的。
+        copied_setups = [int(match) for match in re.findall(
+            r'(?:类建面|窗口与) :(\d+)',
+            (FIXTURES / 'session-domain-expectations'
+             / 'test_meta_controls.py').read_text(encoding='utf-8'))]
+        self.assertTrue(
+            bool(copied_setups)
+            and all(line == setup_call_line for line in copied_setups),
+            '#2795 fix-r11: every hand-copied :NNN class-setup line in '
+            'the test_meta_controls.py prose (类建面/窗口与 :NNN) must '
+            'equal the code-anchored _meta_class_setup call site '
+            f'(:{setup_call_line}), got {copied_setups}: prose copies are '
+            'invisible to the backlog-row pins and drift silently when '
+            'only the row is updated')
 
 
 class BackgroundPanicRunRefusal(unittest.TestCase):
