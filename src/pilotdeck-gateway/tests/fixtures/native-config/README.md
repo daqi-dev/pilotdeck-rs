@@ -21,7 +21,7 @@ CARGO_TARGET_DIR=<本树独立 target> \
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
 ```
 
-正跑也会在起 cargo 之前无条件跑同一条守卫（只读 15 个文件、秒级），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
+正跑也会在起 cargo 之前无条件跑同一条守卫（只读 16 个文件、秒级；#2617 fix-r6 对齐 SOURCE_TEXTS 现为 16 项，DS r8 sibling P2 处置），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里）。
 
 这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出两串计数；十条负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」）：
 
