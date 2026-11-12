@@ -846,9 +846,6 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 // tears the connection down on either (the response future
                 // resolves and the socket drops), so no follow-up head can
                 // ever observe the stale window (review fix-r1 Grok #1).
-                if !crate::mutants::on("native-http-flush-clear-off") {
-                    self.write_pending.store(false, Ordering::Relaxed);
-                }
                 // #2499 fix-r9 (merge review concurrency#1/sibling#1/
                 // boundary#1, the three-role collision): a gate parked behind
                 // this unflushed tail re-parked here — the release woke it
@@ -862,7 +859,29 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 // re-poll the gate (hyper's `maybe_notify` short-circuits on
                 // the read the park blocked, and the parked deadline only
                 // fires the 408 lane much later). Empty slot: a no-op.
-                take_and_wake_release_slot(&self.release_waker);
+                // fix-r10 (merge review concurrency#1/boundary#1, the double
+                // collision on r9's own wake): that take was unconditional —
+                // with a request in flight the parked read stores the
+                // dispatcher's waker in the slot, and the same dispatcher
+                // iteration's flush takes it right back, so park → flush →
+                // wake → re-park spins with nothing ever written, a
+                // self-sustaining busy spin pinning one core per pipelined
+                // connection (hyper 1.7.0's `poll_loop` runs read → write →
+                // flush every round). Narrowed to the one transition r9
+                // meant: only a flush that confirms an unflushed tail takes
+                // the slot — `was_pending`, the swap's old value
+                // (`IdleBody::release` stores the flag before its wake, so
+                // the woken gate's confirming flush sees it and still fires);
+                // an idle flush leaves the parked waker asleep. The mutant
+                // guard keeps clear and wake together:
+                // `native-http-flush-clear-off` is the confirmation never
+                // happening — neither half runs.
+                if !crate::mutants::on("native-http-flush-clear-off") {
+                    let was_pending = self.write_pending.swap(false, Ordering::Relaxed);
+                    if was_pending {
+                        take_and_wake_release_slot(&self.release_waker);
+                    }
+                }
                 Poll::Ready(Ok(()))
             }
             other => other,

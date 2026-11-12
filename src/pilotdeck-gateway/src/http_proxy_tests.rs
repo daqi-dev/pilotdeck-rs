@@ -1065,6 +1065,168 @@ async fn a_next_head_parked_at_the_withholding_cap_wakes_at_the_response_release
     );
 }
 
+/// #2499 fix-r10 (merge review concurrency#1/boundary#1, the double
+/// collision on fix-r9's flush-side wake): with a request in flight the
+/// parked read stores the dispatcher's waker in the release slot, and
+/// hyper 1.7.0's `poll_loop` runs read → write → flush every round — so a
+/// flush that takes the slot unconditionally wakes the very waker the
+/// same iteration parked: park → flush → wake → re-park, a self-sustaining
+/// busy spin pinning one core per pipelined connection, with nothing ever
+/// written (`write_pending` sits false the whole spin). The machine
+/// criterion pins both halves of the r10 narrowing: (a) two idle
+/// flush-repark rounds wake no one — the second flush's wake is the spin's
+/// minimal repro, red on r9's unconditional take; (b) a flush that
+/// confirms a real accepted write — `write_pending`'s true→false, the
+/// swap's old value — wakes exactly once, the completing half of the
+/// release re-feed (the release stores the flag before its wake, so the
+/// woken gate's confirming flush is this same transition). Gate level,
+/// the fix-r5 counting-waker family: the criterion drives `poll_flush`
+/// and `poll_write` directly against the counting waker the park stores,
+/// which needs `UpgradeReadGate`'s private constructor (the r9
+/// full-connection cell in `native_http/tests.rs`,
+/// `unflushed_tail_flush_completion_serves_the_parked_complete_head`,
+/// pins the serving behavior this mechanism exists for; its
+/// ParkedWriteTransport parks writes to pin completion interleaves — here
+/// the roomy duplex keeps every flush available, which is the point).
+#[tokio::test]
+async fn idle_flushes_wake_no_one_and_a_confirming_flush_wakes_once() {
+    use std::task::Wake;
+    struct Counter(AtomicUsize);
+    impl Wake for Counter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let counter = Arc::new(Counter(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+    let state = Arc::new(Mutex::new(ReadState {
+        paused: false,
+        waker: None,
+    }));
+    let (io, mut client) = tokio::io::duplex(128 * 1024);
+    let now = tokio::time::Instant::now();
+    let in_flight = Arc::new(AtomicUsize::new(1));
+    let (activity, _activity_rx) = tokio::sync::watch::channel(None::<tokio::time::Instant>);
+    let write_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let release_waker: Arc<Mutex<Option<std::task::Waker>>> = Arc::new(Mutex::new(None));
+    let mut gated = UpgradeReadGate::new(
+        io,
+        state,
+        activity,
+        Arc::new(AtomicUsize::new(1)),
+        Some(NODE_HEADERS_TIMEOUT),
+        Some(now + NODE_HEADERS_TIMEOUT),
+        Some(now),
+        None,
+        tokio::sync::watch::channel(0usize).1,
+        in_flight,
+        write_pending.clone(),
+        // The request's own body is fully read: every byte from here on is
+        // the *next* head's, parked while the response streams.
+        Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        release_waker.clone(),
+    );
+    let flood = vec![b'X'; WITHHELD_HEAD_CAP];
+    client
+        .write_all(&flood)
+        .await
+        .expect("duplex write must accept the flood without a reader");
+    let mut bytes = [0; 1];
+    assert!(
+        Pin::new(&mut gated)
+            .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+            .is_pending(),
+        "#2499 fix-r10: the gate parks a next head behind the in-flight slot"
+    );
+    assert!(
+        release_waker.lock().unwrap().is_some(),
+        "#2499 fix-r10: the park stored the counting waker in the release slot"
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r10: the park itself wakes no one"
+    );
+    // (a) The busy spin's minimal reproduction, two rounds of it: an idle
+    // flush (nothing written, `write_pending` false), then the re-park the
+    // spin's own wake performs. r9's unconditional take wakes on every
+    // round — the second flush's wake is the repro; r10's `was_pending`
+    // narrowing leaves both rounds at zero.
+    for round in 0..2 {
+        assert!(
+            matches!(
+                Pin::new(&mut gated).poll_flush(&mut cx),
+                Poll::Ready(Ok(()))
+            ),
+            "#2499 fix-r10: round {round}: the idle flush itself succeeds"
+        );
+        assert!(
+            Pin::new(&mut gated)
+                .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+                .is_pending(),
+            "#2499 fix-r10: round {round}: the re-polled read re-parks"
+        );
+        assert!(
+            release_waker.lock().unwrap().is_some(),
+            "#2499 fix-r10: round {round}: the re-park re-stored the waker"
+        );
+    }
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r10: two idle flush-repark rounds woke no one — r9's \
+         unconditional take is the busy spin, the second flush's wake its \
+         minimal repro"
+    );
+    // (b) The one transition that may wake: an accepted write leaves a tail
+    // (`write_pending` true), and the flush confirming it wakes the parked
+    // gate exactly once.
+    let tail = b"unflushed-tail";
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_write(&mut cx, tail),
+            Poll::Ready(Ok(written)) if written == tail.len()
+        ),
+        "#2499 fix-r10: the roomy duplex accepts the tail whole"
+    );
+    assert!(
+        write_pending.load(Ordering::Relaxed),
+        "#2499 fix-r10: the accepted write left a tail to confirm"
+    );
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ),
+        "#2499 fix-r10: the confirming flush succeeds"
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "#2499 fix-r10: exactly one wake — the flush confirming the tail"
+    );
+    assert!(
+        release_waker.lock().unwrap().is_none(),
+        "#2499 fix-r10: the confirming flush took the slot's waker"
+    );
+    // And that wake is one-shot: the next idle flush adds nothing — the
+    // spin cannot restart from a confirmed tail.
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ),
+        "#2499 fix-r10: the follow-up idle flush still succeeds"
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "#2499 fix-r10: the confirming flush's wake is one-shot — the next \
+         idle flush adds none"
+    );
+}
+
 /// #2499 fix-r5 (review sibling#1, the native re-feed twin): a next head
 /// parked at the withholding cap is re-fed and **served** once the response
 /// completes — no successor bytes needed. The release wake is the only thing
