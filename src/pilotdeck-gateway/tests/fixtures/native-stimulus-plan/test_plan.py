@@ -593,8 +593,16 @@ class PlanTests(unittest.TestCase):
         # #2795 fix-r14（DS sibling#2「配对缺一半」）：启动期拒跑（忙锁/stale
         # 锚点 → rc 2、不发布 summary）只钉了「未开始」一侧；本条钉 began 翻转
         # 之后的守卫失败仍是既有形状——作废行 + 发布 INVALID summary + 退 1，
-        # 不冒充拒跑。若把 main 的拒跑分支放宽到 began 之后（把「if memory
-        # and not began」改成「if memory」），本测试转红。
+        # 不冒充拒跑。
+        # #2795 fix-r15（DS boundary#1 + MM sibling#3/concurrency#1 四撞）：r14
+        # 的桩抛 RuntimeError，被 one() 自己的 except Exception 吞成
+        # status='INVALID'，main 的拒跑分支一次都没求值——把「if args.memory
+        # and not began」放宽成「if args.memory」该测试不红。现在桩抛
+        # KeyboardInterrupt（BaseException，越过 one() 的 except Exception），
+        # plan 的 main 在 began 之后作废行、发布 INVALID summary、照常退 1（不
+        # 重抛）。若把 main 的拒跑分支放宽到 began 之后（把「if args.memory
+        # and not began」改成「if args.memory」），该失败会走拒跑：撤目录、
+        # SystemExit(2)、无 summary——本测试转红。
         marker = '#2795 memory rehearsal publishes an INVALID summary (rc 1) when the guard fails after it began'
         path = Path(__file__).with_name('negative_controls.py')
         try:
@@ -610,7 +618,7 @@ class PlanTests(unittest.TestCase):
                     return None
 
             def failing_run_owned(command, **_keywords):
-                raise RuntimeError('probe: guard failure after began')
+                raise KeyboardInterrupt('probe: guard failure after began')
 
             with tempfile.TemporaryDirectory(prefix='pdrs-2795-plan-began-') as tmp:
                 output = Path(tmp) / 'results'
@@ -623,6 +631,9 @@ class PlanTests(unittest.TestCase):
                         mock.patch.object(runner, 'run_owned', failing_run_owned), \
                         mock.patch('sys.stdout', new_callable=io.StringIO), \
                         mock.patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                    # KeyboardInterrupt escapes one()'s `except Exception` and
+                    # lands on main()'s post-began shape: rows voided, INVALID
+                    # summary published, rc 1 (plan's main does not re-raise).
                     code = runner.main()
                 summary = json.loads((output / 'summary.json').read_text())
                 rows = summary['controls'] if isinstance(summary, dict) else summary

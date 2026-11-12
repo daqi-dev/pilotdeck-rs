@@ -796,8 +796,12 @@ class E2ETests(unittest.TestCase):
                 os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
             try:
                 with tempfile.TemporaryDirectory(prefix='pdrs-1398-e2e-') as folder:
+                    # #2795 fix-r15（MM sibling#2，孪生同步 plan:429 的 r14 改动）：
+                    # tree_lock 已被桩成空操作，真 _anchor_errors 读会发生在假锁
+                    # 之下——本用例只断言锁序，真锚点读交给 preflights/stale 两条。
                     with mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
                             mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch.object(runner, '_anchor_errors', return_value=[]), \
                             mock.patch('sys.stdout', new_callable=io.StringIO), \
                             mock.patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
                                                            '--case', 'memory-rehearsal-without-lock']):
@@ -989,9 +993,18 @@ class E2ETests(unittest.TestCase):
         # #2795 fix-r14（DS sibling#2「配对缺一半」，与 plan 同形）：启动期拒跑
         # （忙锁/stale 锚点 → rc 2、不发布 summary）只钉了「未开始」一侧；本条
         # 钉 began 翻转之后的守卫失败仍是既有形状——作废行 + 发布 INVALID
-        # summary + 退 1，不冒充拒跑。若把 main 的拒跑分支放宽到 began 之后
-        # （把「if memory and not began」改成「if memory」），本测试转红。
-        marker = '#2795 memory rehearsal publishes an INVALID summary (rc 1) when the guard fails after it began'
+        # summary，不冒充拒跑。
+        # #2795 fix-r15（DS boundary#1 + MM sibling#3/concurrency#1 四撞）：r14
+        # 的桩抛 RuntimeError，被 one() 自己的 except Exception 吞成
+        # status='INVALID'，main 的拒跑分支一次都没求值——把「if memory and
+        # not began」放宽成「if memory」该测试不红。现在桩抛 KeyboardInterrupt
+        # （BaseException，越过 one() 的 except Exception），e2e 的 main 在
+        # began 之后作废行、发布 INVALID summary、重抛非 Exception（保持响
+        # 亮），测试接住 BaseException 后断言 summary 已发布且行 INVALID。若
+        # 把 main 的拒跑分支放宽到 began 之后（把「if memory and not began」
+        # 改成「if memory」），该失败会走拒跑：撤目录、SystemExit(2)、无
+        # summary——本测试转红。
+        marker = '#2795 memory rehearsal publishes an INVALID summary when the guard fails after it began'
         path = Path(__file__).with_name('negative_controls.py')
         try:
             spec = importlib.util.spec_from_file_location('e2e_memory_began', path)
@@ -1006,7 +1019,7 @@ class E2ETests(unittest.TestCase):
                     return None
 
             def failing_run_owned(command, **_keywords):
-                raise RuntimeError('probe: guard failure after began')
+                raise KeyboardInterrupt('probe: guard failure after began')
 
             previous_target = os.environ.get('CARGO_TARGET_DIR')
             if previous_target is None:
@@ -1022,10 +1035,16 @@ class E2ETests(unittest.TestCase):
                             mock.patch('sys.stderr', new_callable=io.StringIO) as stderr, \
                             mock.patch.object(sys, 'argv', [str(path), str(out), '--memory',
                                                            '--case', 'memory-rehearsal-without-lock']):
-                        code = runner.main()
+                        try:
+                            runner.main()
+                            raised = None
+                        except BaseException as error:
+                            raised = error
                     summary = json.loads((out / 'summary.json').read_text())
                     rows = summary['controls'] if isinstance(summary, dict) else summary
-                    self.assertTrue(code == 1
+                    self.assertTrue(raised is not None
+                                    and isinstance(raised, KeyboardInterrupt)
+                                    and 'probe: guard failure after began' in str(raised)
                                     and len(rows) == 1 and rows[0]['status'] == 'INVALID'
                                     and 'refused to start' not in stderr.getvalue()
                                     and 'tree lock or anchor read failed' not in stderr.getvalue(), marker)
