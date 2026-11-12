@@ -279,6 +279,7 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
     saved_handlers = {name: signal.getsignal(getattr(signal, name))
                       for name in TERMINATE_SIGNALS if hasattr(signal, name)}
     window_entry = {}
+    window_exit = {}
 
     @contextlib.contextmanager
     def recording_window(root, paths, **kwargs):
@@ -289,11 +290,21 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
         # window entry -- leaves the batch unprotected while a post-return
         # sample would still see the handler; the SIGTERM-only shape was
         # judged P1 on the frozen side once already (DS rebase review of
-        # this PR, sibling#1).
+        # this PR, sibling#1). Sample again when the window closes: a
+        # mid-window restore to the default dispositions must stay red
+        # even though the entry sample was clean (DS r5 sibling#1 /
+        # boundary#1 -- two reviewers independently hit the entry-only
+        # hole; entry+exit together catch both the late install and the
+        # early restore).
         window_entry.update({name: signal.getsignal(getattr(signal, name))
                              for name in TERMINATE_SIGNALS
                              if hasattr(signal, name)})
-        yield {path: path.read_bytes() for path in paths}
+        try:
+            yield {path: path.read_bytes() for path in paths}
+        finally:
+            window_exit.update({name: signal.getsignal(getattr(signal, name))
+                                for name in TERMINATE_SIGNALS
+                                if hasattr(signal, name)})
 
     installed = False
     stdout, stderr = io.StringIO(), io.StringIO()
@@ -326,11 +337,15 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
                     code = module.main()
             except ValueError as error:
                 code = f'uncaught ValueError: {error}'
-        # Judged from the window-entry recording above, before the restore
-        # below puts the interpreter's own dispositions back.
-        installed = bool(window_entry) and all(
+        # Judged from the window-entry AND window-exit recordings above,
+        # before the restore below puts the interpreter's own dispositions
+        # back: the handlers must be in place when the batch starts and
+        # still be in place when the window closes.
+        installed = bool(window_entry) and bool(window_exit) and all(
             handler is module.terminate_cleanly
-            for handler in window_entry.values())
+            for handler in window_entry.values()) and all(
+            handler is module.terminate_cleanly
+            for handler in window_exit.values())
     finally:
         for name, handler in saved_handlers.items():
             # getsignal returns None when a non-Python handler held the
@@ -1043,6 +1058,7 @@ class ModeRoutingGuard(unittest.TestCase):
         saved_handlers = {name: signal.getsignal(getattr(signal, name))
                           for name in TERMINATE_SIGNALS if hasattr(signal, name)}
         window_entry = {}
+        window_exit = {}
 
         @contextlib.contextmanager
         def recording_window(root, paths, **kwargs):
@@ -1052,11 +1068,18 @@ class ModeRoutingGuard(unittest.TestCase):
             # leaves the batch unprotected while a post-return sample would
             # still see the handler; and every TERMINATE_SIGNALS member must
             # be bound, not just SIGTERM (the SIGTERM-only shape was judged
-            # P1 on the frozen side once already).
+            # P1 on the frozen side once already). Sample again when the
+            # window closes (DS r5 sibling#1 / boundary#1): a mid-window
+            # restore to the default dispositions must stay red.
             window_entry.update({name: signal.getsignal(getattr(signal, name))
                                  for name in TERMINATE_SIGNALS
                                  if hasattr(signal, name)})
-            yield {path: path.read_bytes() for path in paths}
+            try:
+                yield {path: path.read_bytes() for path in paths}
+            finally:
+                window_exit.update({name: signal.getsignal(getattr(signal, name))
+                                    for name in TERMINATE_SIGNALS
+                                    if hasattr(signal, name)})
 
         installed = False
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -1078,11 +1101,15 @@ class ModeRoutingGuard(unittest.TestCase):
                  contextlib.redirect_stdout(stdout), \
                  contextlib.redirect_stderr(stderr):
                 code = module.main()
-            # Judged from the window-entry recording above, before the
-            # restore below puts the interpreter's own dispositions back.
-            installed = bool(window_entry) and all(
+            # Judged from the window-entry AND window-exit recordings
+            # above, before the restore below puts the interpreter's own
+            # dispositions back: bound when the batch starts and still
+            # bound when the window closes.
+            installed = bool(window_entry) and bool(window_exit) and all(
                 handler is module.terminate_cleanly
-                for handler in window_entry.values())
+                for handler in window_entry.values()) and all(
+                handler is module.terminate_cleanly
+                for handler in window_exit.values())
         finally:
             for name, handler in saved_handlers.items():
                 # getsignal returns None when a non-Python handler held the
@@ -1179,6 +1206,7 @@ class SessionDomainCleanupGuard(unittest.TestCase):
         saved_handlers = {name: signal.getsignal(getattr(signal, name))
                           for name in TERMINATE_SIGNALS if hasattr(signal, name)}
         window_entry = {}
+        window_exit = {}
 
         @contextlib.contextmanager
         def recording_window(root, paths, **kwargs):
@@ -1186,11 +1214,18 @@ class SessionDomainCleanupGuard(unittest.TestCase):
             # concurrency #1/#2): record the live dispositions when the
             # window opens, for every TERMINATE_SIGNALS member -- not a
             # post-return SIGTERM-only sample (both weaker shapes were
-            # judged insufficient on the frozen side already).
+            # judged insufficient on the frozen side already). Sample again
+            # when the window closes (DS r5 sibling#1 / boundary#1): a
+            # mid-window restore to the default dispositions must stay red.
             window_entry.update({name: signal.getsignal(getattr(signal, name))
                                  for name in TERMINATE_SIGNALS
                                  if hasattr(signal, name)})
-            yield {path: path.read_bytes() for path in paths}
+            try:
+                yield {path: path.read_bytes() for path in paths}
+            finally:
+                window_exit.update({name: signal.getsignal(getattr(signal, name))
+                                    for name in TERMINATE_SIGNALS
+                                    if hasattr(signal, name)})
 
         installed = False
         stdout, stderr = io.StringIO(), io.StringIO()
