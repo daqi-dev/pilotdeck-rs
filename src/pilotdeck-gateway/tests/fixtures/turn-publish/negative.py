@@ -116,6 +116,10 @@ if args and args[0] == '--check':
     try:
         texts = {path: path.read_text() for path in (source, connection)}
         tests_text = tests_source.read_text()
+        # fix-r9 (review boundary#2, same fix as native-config): the second
+        # count is what the bound-test gate actually passed -- a truncated or
+        # deleted loop used to keep printing `len(mutants)`.
+        declared = 0
         for name, path, before, after, test in mutants:
             count = texts[path].count(before)
             if count != 1:
@@ -125,13 +129,14 @@ if args and args[0] == '--check':
             if not (declares_test(tests_text, test)
                     or declares_test(tests_text, test, macro='scenario!')):
                 refuse(f'turn-publish {name}: bound test not declared in publish_tests.rs: {test}')
+            declared += 1
         names = [name for name, *_ in mutants]
         if len(set(names)) != len(names):
             refuse('turn-publish roster has duplicate mutation names')
     except (ValueError, OSError) as error:
         refuse(f'turn-publish --check could not audit the tree: {error}')
     print(f'turn-publish: {len(mutants)} mutation anchors OK; '
-          f'{len(mutants)} bound tests declared')
+          f'{declared} bound tests declared')
     raise SystemExit(0)
 if len(args) != 1:
     print('usage: negative.py --check | NEW_OUTPUT', file=sys.stderr)

@@ -39,6 +39,8 @@ python3 src/pilotdeck-gateway/tests/fixtures/turn-publish/negative.py /tmp/turn-
 
 `negative.py` 必须独占本树运行。它临时变异产品源文件（包括一次 WS `final` 标志变异），测试与金样不变；先跑原版，再对每个变异要求编译成功且目标断言失败。原始 SHA、变异前后文本、完整输出、退出码写输出目录；finally 恢复源文件原字节并核验。不要与编辑器、cargo 或另一负控并发写本树。负控覆盖丢/重复/提前 final、提前可见/关闭、顺序、重复回放、冲突、accept/preflight/storage 失败、单次 unknown、迟到事件。
 
+`negative.py --check`（只读、零 cargo）核锚点唯一性、名册无重复、每行绑定测试名仍在 `publish_tests.rs` 声明（`declares_test`，fix-r6 评审 boundary#5 起），CI 绑定漂移自检块每轮跑它。这条门禁的红侧由同目录 `test_bound_test_gate.py` 钉住（#2692 fix-r9，评审 sibling#3：正控跑真 `--check` 核 `bound tests declared` 计数、红侧模拟绑定测试改名要求 rc 2 拒跑），该测试经 `tests/negative_anchor_selfcheck.rs` 进 cargo CI。
+
 另有真实 Rust `FileRegistry` 适配器的双 worker 测试：65 帧持久化后再读 live 流，核 FIFO、durable 结果一致和关流后拒收。
 
 生产 submit/ConnectionGateway 接线仍归 pr4/pr5；本夹具用测试适配器串起真实 Rust connection 与发布组件。终态回收计时差异 A7.2-REPLAY-RETENTION-TIMER-001 不在本单修改。

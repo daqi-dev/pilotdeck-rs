@@ -202,8 +202,28 @@ class MigrationTests(unittest.TestCase):
         # an in-tree red side -- a renamed binding used to go red only in the
         # host's out-of-tree negative round (negative-gates.py), so deleting
         # the `modules` argument or breaking the gate kept every tree test
-        # green. The rename keeps the module prefix, so the binding still
-        # resolves to the same file and only the declared fn name drifts.
+        # green. #2692 fix-r9 (review sibling#2/boundary#1): the green side
+        # used to re-pass the module table itself, so it pinned the shared
+        # gate's body, not `build()`'s wiring -- a spy around submit.check now
+        # records what each build() actually hands over (failure-guard and
+        # turn-submit are the two wiring points).
+        for name in ('failure-guard', 'turn-submit'):
+            module = runner(name)
+            seen = {}
+            real = A.check
+
+            def spy(entries, oracle, modules=None):
+                seen['modules'] = modules
+                return real(entries, oracle, modules)
+
+            with patch.object(A, 'check', spy):
+                module.build()
+            self.assertTrue(seen.get('modules') is module.AUDITED_MODULES,
+                            f'#2692 fix-r9: {name} build() must hand its module '
+                            'table to the shared gate (deleting the modules '
+                            'argument used to keep every tree test green)')
+        # The rename keeps the module prefix, so the binding still resolves to
+        # the same file and only the declared fn name drifts.
         module = runner('failure-guard')
         entries, oracle = module.build()
         self.assertEqual(A.check(entries, oracle, module.AUDITED_MODULES), len(entries),

@@ -55,11 +55,13 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn(f'#1457 {len(ROWS)} mutation anchors OK', done.stdout)
         self.assertIn(f'#2065 {len(nc.LITERAL_ANCHORS)} literal anchors OK', done.stdout)
-        # #2692 fix-r8 (review sibling#2): pin the third count too -- without
-        # it the bound-test gate could be deleted outright and this positive
-        # stayed green.
+        # #2692 fix-r9 (review boundary#2): pin the third count, which is now
+        # what the bound-test gate actually passed -- deleting its loop or
+        # truncating the rows it audits changes the printed count and this
+        # positive goes red (it used to re-derive the count from the input
+        # table, so only the rename leg caught a deletion).
         self.assertIn(f'{len(ROWS)} bound tests declared', done.stdout,
-                      '#2692 fix-r8: the bound-test declaration count must be reported')
+                      '#2692 fix-r9: the bound-test declaration count must be reported')
 
     def test_rejects_the_regression(self):
         # The exact #2065 shape: the row goes back to the invented suffix while
@@ -173,7 +175,10 @@ class LiteralAnchorGuard(unittest.TestCase):
             nc.mutations = saved_rows
             sys.argv = saved_argv
         message = str(caught.exception)
-        self.assertIn('set-stub-revert: stale anchor (expected 1, got 0)', message,
+        # fix-r9 (concurrency#2): the mutation name is read off the row this
+        # test just corrupted -- reordering the table must not turn this into a
+        # confusing false red naming a different mutation.
+        self.assertIn(f'{rows[0][0]}: stale anchor (expected 1, got 0)', message,
                       '#2692 fix-r8: the stale-anchor refusal shape is unchanged')
         self.assertEqual(message.count('#1457'), 1,
                          f'concurrency#2: the tag must appear exactly once: {message!r}')

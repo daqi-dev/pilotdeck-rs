@@ -447,6 +447,10 @@ def main():
                    'and no --compile-only flag')
         try:
             check_literal_anchors(selected_rows, bound_rows=every_row)
+            # fix-r9 (review boundary#2, same fix as native-config): the third
+            # count is what the bound-test gate actually passed -- a truncated
+            # or deleted loop used to keep printing `len(selected_rows)`.
+            declared = 0
             for case in selected_rows:
                 mutate(case, case.path.read_text())
                 # fix-r6 (review boundary#5): the bound test must still be
@@ -455,11 +459,12 @@ def main():
                 if not declares_test(tests_path.read_text(), short):
                     refuse('#2692 bound test not declared: '
                            f'{case.mutation} -> {case.test}')
+                declared += 1
         except (ValueError, OSError) as error:
             refuse(str(error))
         print(f'#2692 {len(selected_rows)} mutation anchors OK; '
               f'{len(LITERAL_ANCHORS)} literal anchors OK; '
-              f'{len(selected_rows)} bound tests declared')
+              f'{declared} bound tests declared')
         return 0
     if not args:
         refuse('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')

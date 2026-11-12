@@ -58,6 +58,18 @@ fn negative_fixture_anchors_and_checker_controls() {
             &["--negative-controls"][..],
         ),
         ("pending-reanchor/test_controls.py", &[][..]),
+        // #2692 fix-r9（评审 sibling#1）：native-config 的红侧测试（改名腿 /
+        // stale-anchor 腿 / 三串计数正控）此前不进任何自动入口——CI 只跑
+        // negative_controls.py --check 的正向，绑定门禁删坏时唯一会红的文件
+        // 没人跑。纯 Python 零 cargo（一次只读 --check 子进程，秒级）。
+        ("native-config/test_literal_anchors.py", &[][..]),
+        // #2692 fix-r9（评审 sibling#3）：turn-read / turn-publish / blankkey
+        // 三家 declares_test 门禁载体的同款红侧（fix-r8 只给 native-config /
+        // failure-guard 补过进树红侧），一并接进本入口，不再只靠宿主链的
+        // 出树负控轮；同样纯 Python 零 cargo。
+        ("turn-read/test_bound_test_gate.py", &[][..]),
+        ("turn-publish/test_bound_test_gate.py", &[][..]),
+        ("native-blankkey-submit/test_bound_test_gate.py", &[][..]),
         // CI prepares the TS baseline after cargo test. This explicit mode still
         // lists missing launcher prerequisites; local invocation is strict.
         ("anchor_selfcheck.py", &["--anchors-only"][..]),

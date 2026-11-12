@@ -23,7 +23,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.
 
 正跑也会在起 cargo 之前无条件跑同一条守卫（只读 16 个文件、秒级），坏锚当场拒跑，不会烧掉整轮编译预算；`--check` 的用处是不进变异、不起进程的预检，CI 的绑定漂移自检块也会跑它（#2692 fix-r5 起，`.github/workflows/ci.yml`），全量杀灭轮仍由协调者在宿主跑。
 
-这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出三串计数——变异锚点、字面锚点、绑定测试声明；负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」，#2692 fix-r8 起另有一条改名腿钉「绑定测试改名 → `#1457 bound test not declared` 拒跑」和一条 stale-anchor 腿钉 `#1457` 前缀只出现一次）：
+这条自检自己的红侧由同目录 `test_literal_anchors.py` 钉住（正控跑真 `--check` 并核输出三串计数——变异锚点、字面锚点、绑定测试声明；负控各破坏一个不变式，要求对应的拒绝语；其中两条钉「定点重跑只校验被选中的行、但 pin 仍按全表绑定」，#2692 fix-r8 起另有一条改名腿钉「绑定测试改名 → `#1457 bound test not declared` 拒跑」和一条 stale-anchor 腿钉 `#1457` 前缀只出现一次）。#2692 fix-r9（评审 sibling#1）起该测试文件接进 `tests/negative_anchor_selfcheck.rs` 的脚本清单，cargo CI 每轮真跑——此前它不进任何自动入口，门禁删坏时唯一会红的文件没人执行：
 
 ```
 python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_literal_anchors.py
@@ -39,4 +39,4 @@ python3 -m unittest -v src/pilotdeck-gateway/tests/fixtures/native-config/test_l
 
 脚本复用 `negative_process`（`mutating_sources` / `run_owned` / `wait_for_slot`）与 `negative_suite`（`Case` / `classify` / `invalidate_completed` / `passed` / `publish_summary`），但自管逐案流程：每个变异前要插一次 `cargo test --no-run` 编译门，`negative_suite.run_cases` 当前没有该钩子。
 
-三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前 70 条变异（以 `--check` 报的锚点数为准），每条的绑定测试还须在 `AUDITED_MODULES` 指到的文件里声明（#2692 fix-r7 起，`--check` 第三串计数即其输出）。
+三态退出契约逐字沿用 `run_cases`（#1076 fix-r2）：进入守卫前失败 rc=1；守卫展开期间失败、恢复未验证、取消、或守卫在回卷途中抛出（此时 `phase` 仍写着 `body`，靠 `body_error` 同一性区分）一律 rc=2。当前 70 条变异（以 `--check` 报的锚点数为准），每条的绑定测试还须在 `AUDITED_MODULES` 指到的文件里声明（#2692 fix-r7 起，`--check` 第三串计数即其输出；fix-r9 起该计数按门禁真实通过条数计、不再按输入行数派生，截短或删掉门禁循环会直接改计数——评审 boundary#2）。

@@ -36,6 +36,8 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/turn-read/negative.py /tmp/turn-
 
 `negative.py` 必须独占本树运行。它临时变异产品源文件（`runtime/turn/read.rs` 与 `storage/run_registry.rs`，两者哈希都写入 `negative-original-sha256.json`），测试与金样不变；先跑原版，再对每个变异要求编译成功且目标断言失败。原始 SHA、变异前后文本、完整输出、退出码写输出目录；finally 恢复源文件原字节并核验。不要与编辑器、cargo 或另一负控并发写本树。
 
+`negative.py --check`（只读、零 cargo）核锚点唯一性、名册无重复、每行绑定测试名仍在 `read_tests.rs` 声明（`declares_test`，fix-r6 评审 boundary#5 起），CI 绑定漂移自检块每轮跑它。这条门禁的红侧由同目录 `test_bound_test_gate.py` 钉住（#2692 fix-r9，评审 sibling#3：正控跑真 `--check` 核 `bound tests declared` 计数、红侧模拟绑定测试改名要求 rc 2 拒跑），该测试经 `tests/negative_anchor_selfcheck.rs` 进 cargo CI。
+
 金样回放全程留在 `JsValue` 域并以 `stringify_json` 逐字节比较，键序与字段缺失都判负；并发行为另有两条例内测试：history 挂起时并发 publish 不被读阻塞，以及发布中 settle 的 epoch 在三限内重读到一致快照。
 
 Gateway WS 方法接线归 pr5；本单不改动 `session/handle.rs` 与连接层。

@@ -62,7 +62,10 @@ run_registry / js_value / read）外，纳入断言所在的两个测试模块
 字面锚覆盖内，纳入后按「断言逐字出现于被扫源 → 必须有 pin」规则补齐（14 个
 字面锚；fix-r6 增 read_tests 的两口径 pin）。`--check` 除锚点/名册外还核每行
 绑定测试名仍在声明它的那个文件里（`negative_suite.bind_module_file` +
-`declares_test`，fix-r6 评审 boundary#5）。
+`declares_test`，fix-r6 评审 boundary#5）。这条门禁的红侧由同目录
+`test_bound_test_gate.py` 钉住（#2692 fix-r9，评审 sibling#3：正控跑真 `--check`
+核 `bound tests declared` 计数、红侧模拟绑定测试改名要求 rc 2 拒跑），该测试经
+`tests/negative_anchor_selfcheck.rs` 进 cargo CI。
 
 ## 启动契约（#2391 迁移）
 

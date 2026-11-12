@@ -1015,18 +1015,23 @@ def main():
         # fix-r7 (review sibling#1): the same envelope covers the bound-test
         # gate below -- a missing or renamed tests file is a clean refusal,
         # not a traceback.
+        # fix-r9 (review boundary#2): the third count is what the gate actually
+        # passed, not the input row count -- a truncated or deleted loop used to
+        # keep printing `len(selected_rows)` and the count pin stayed green.
         try:
+            declared = 0
             for case in selected_rows:
                 mutate(case, case.path.read_text())
                 tests_path, short = bind_module_file(case.test, AUDITED_MODULES)
                 if not declares_test(tests_path.read_text(), short):
                     raise ValueError(f'bound test not declared: '
                                      f'{case.mutation} -> {case.test}')
+                declared += 1
         except (ValueError, OSError) as error:
             raise SystemExit(f'#1457 {error}')
         print(f'#1457 {len(selected_rows)} mutation anchors OK; '
               f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK; '
-              f'{len(selected_rows)} bound tests declared')
+              f'{declared} bound tests declared')
         return 0
     if not args:
         raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
