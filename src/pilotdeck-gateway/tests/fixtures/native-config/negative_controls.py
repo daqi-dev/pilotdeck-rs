@@ -1336,11 +1336,13 @@ mutations = [
 # the derived counts in the paragraph above describe the #2065 table as it was.
 # #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
 # the counts moved to 51 rows / 41 literal-anchor entries.
-# #2617 (rebase 改数，基线从分支旧 80/62 前移到 main 108/65): the two submit
-# surrogate rows above joined the table with their two MANAGEMENT_TESTS pins,
-# so the counts moved to 110 rows / 67 literal-anchor entries.
-# #2617 fix-r2 (同前移): the admit-cell row (the id-equality red side) joined
-# with its pin, so the counts moved to 111 rows / 68 literal-anchor entries.
+# #2617 (rebase 改数，fix-r4 按 DS r6 双 P1 实测重算): the three #2617 rows
+# (two submit-surrogate + one admit-cell) joined the table with their three
+# MANAGEMENT_TESTS pins. The pre-rebase note derived counts from the stale
+# "108 rows / 65 entries" baseline; the rebase-time main table actually held
+# 118 rows / 72 literal-anchor entries, so with our +3 rows / +3 pins the
+# head 8ecbdee3b `--check` reads #1457 121 mutation anchors / #2065 75
+# literal anchors (2026-11-12 实跑).
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
