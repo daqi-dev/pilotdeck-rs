@@ -64,9 +64,10 @@ issue-2495 / close-order-pin precedents:
   (the ``phase = "exit"`` proof after the last control) fails — every
   completed row must still land in the abort accounting, its diagnostic
   kept as a prefix, rc 2. This is the use case for those lines: deleting
-  the exit-side proof turns this test green, and no earlier case can
-  (the ledger-drift case faults the entry-side proof only, and
-  guard-exit-fault raises from the guard's cleanup, not from the proof).
+  the exit-side proof turns this test red (rc 0 != the asserted 2), not
+  green, and no earlier case can (the ledger-drift case faults the
+  entry-side proof only, and guard-exit-fault raises from the guard's
+  cleanup, not from the proof).
 
 The three verdict-delivery legs of an otherwise healthy run are pinned
 as they behave today (fix-r2, MM concurrency + DS sibling both flagged the
@@ -199,6 +200,13 @@ tree = Path(sys.argv[4]).resolve()
 out = Path(sys.argv[5])
 names = sys.argv[6:]
 
+# #2981 fix-r5（MM concurrency#2 的姊妹 #7，DS simplify#2）：hang 模式的
+# 自释放常量——此前它与用例侧的墙钟上界同为 60，纯靠巧合同值维系判别
+# 力。解耦成独立大常量：用例上界（驱动超时 ×4）必须严格小于自释放，
+# 才能区分「驱动的超时腿先到」与「孤儿等自己醒」；即使驱动的回收被
+# 变异掉，孤儿也会在此时限内自退，不把宿主钉成无限泄漏。
+ORPHAN_RELEASE_S = 300
+
 sys.path.insert(0, str(real_fixtures))
 import negative_process
 
@@ -251,6 +259,9 @@ if mode in ('busy-lock', 'preflight-drift'):
 else:
     @contextlib.contextmanager
     def fake_guard(actual_root, requested, **_kwargs):
+        # #2981 fix-r5（DS boundary#1 点名，四路同撞升 P1）：入口置位之外
+        # 补 finally 复位——出场注入的守卫项靠复位才有判别力（证明被挪到
+        # with 之后时 guard 已回 False，注入不再误触发，用例转红）。
         state['guard'] = True
         snapshots = {Path(path): Path(path).read_bytes() for path in requested}
         try:
@@ -258,6 +269,7 @@ else:
         finally:
             for path, data in snapshots.items():
                 negative_process.write_source_atomic(actual_root, path, data)
+            state['guard'] = False
             if mode == 'guard-exit-fault':
                 raise RuntimeError('#2981 injected guard exit failure')
 
@@ -269,6 +281,10 @@ else:
     # （head 0 / guard 未开）；入场证明在守卫内、任何 run_owned 之前
     # （head 1-2 / runs 0）；出场证明在全部 run_owned 之后（head 3-4 /
     # runs 8 = 4×len(names)）。
+    # #2981 fix-r5（DS boundary#1 点名，升 P1）：入场侧 r4 已绑守卫窗口，
+    # 本轮出场侧同样补上（state['guard']），且 fake_guard 的 finally 补
+    # 复位——否则置位后恒 True，出场注入的守卫项形同虚设：证明被挪到
+    # with 之外时注入照触发，用例照绿（假 PASS，NC 审计结论被污染）。
     calls = {'run': 0}
     state = {'guard': False, 'exit_served': False}
 
@@ -325,9 +341,9 @@ else:
         if mode == 'hang' and index >= 4:
             # #2981 fix-r4（MM concurrency#1）：确定性的「写完首行后卡死」——
             # 第一条 record() 行已到达 reader（head 取行退出），第二个控制的
-            # 首相位起 runner 永不再前进。60 s 而非永久：即使驱动的回收被
-            # 变异掉，孤儿也自会退出，不把宿主钉成无限泄漏。
-            time.sleep(60)
+            # 首相位起 runner 永不再前进。自释放改用 ORPHAN_RELEASE_S
+            # （见其定义处的 fix-r5 注释：与用例墙钟上界解耦）。
+            time.sleep(ORPHAN_RELEASE_S)
         row = _row(index // 4)
         if mode == 'survived':
             # The verdict edge no abort mode can reach: every phase green,
@@ -351,7 +367,9 @@ else:
             command, 1, _failed_log(row[4], row[5]), '')
 
     def fake_head_bytes(actual_root, relative, _baseline):
-        # #2981 fix-r4：相位判定见 state 上方注释（MM simplify#1）。
+        # #2981 fix-r4：相位判定见 state 上方注释（MM simplify#1）；fix-r5
+        # （升 P1）：出场注入补 state['guard'] —— 出场证明必须在守卫窗口
+        # 内触发，被挪到 with 之外时注入不再误触发、用例转红而不是照绿。
         if mode == 'ledger-drift' and state['guard'] and calls['run'] == 0:
             # The entry-side proof inside the guard, where `phase` is already
             # 'body' and only the FrozenLedgerDrift term of the
@@ -360,7 +378,7 @@ else:
             # stay green here — that read is the preflight-drift mode's
             # territory.
             raise OSError('#2981 injected ledger drift')
-        if mode == 'exit-ledger-drift' and state['exit_served']:
+        if mode == 'exit-ledger-drift' and state['guard'] and state['exit_served']:
             # The exit-side proof after the last control, where `phase` is
             # 'exit' and the raise comes out of the runner's own
             # assert_frozen_ledgers_match_head() on its way out of the
@@ -547,6 +565,16 @@ class _RunnerDriver:
         kill cannot reach this process group). A TimeoutExpired is re-raised
         with the reaped runner attached as ``.process``, so a caller can
         prove the driver never returns with the runner still alive.
+
+        fix-r5（MM concurrency#2 + 其姊妹 #1）：回收腿本身不再抛。旧的裸
+        ``child.wait(timeout=30)`` 在 finally 里可能再抛一个
+        TimeoutExpired，顶掉刚挂好 ``.process`` 的原始异常（调用者从此拿
+        不到「runner 是否还活着」的载体）；``os.killpg`` 的 except 也只认
+        ProcessLookupError，而组领导已被收尸时整个 OSError 家族都在失败
+        窗内。TimeoutExpired 现在随异常带走三样东西：``.process``（fix-r4
+        已有）、``.head_stdout``（reader 已交付的首行——「卡死发生在首行
+        送达之后」从此是用例可断言的前提，不再是注释里的口头声明）、
+        ``.reaped``（回收腿的逐子确认结果）。
         """
         base = self._new_base('pdrs-2981-pipe-')
         tree, tree_runner, out, before, env = self._stage(base)
@@ -558,24 +586,48 @@ class _RunnerDriver:
              str(tree_runner), str(FIXTURES), str(tree), str(out), *names],
             stdout=reader.stdin, stderr=subprocess.PIPE, text=True, env=env,
             start_new_session=True)
+        head_stdout = None
         try:
             head_stdout, _reader_stderr = reader.communicate(timeout=timeout)
             _process_stdout, stderr_text = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as error:
             error.process = process
+            error.head_stdout = head_stdout
+            error.reaped = self._reap_piped_children(process, reader)
             raise
         finally:
-            # fix-r4: neither child may outlive the driver — not on the
-            # happy path, not on a timeout. Group kill, then a bounded reap
-            # (the _kill_holder shape; a vanished group is not an error).
-            for child in (process, reader):
-                if child.poll() is None:
-                    try:
-                        os.killpg(os.getpgid(child.pid), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                child.wait(timeout=30)
+            # fix-r5（MM concurrency#2）：回收腿不抛（见 _reap_piped_children
+            # 的 docstring）；在 except 之外兜底其余异常形态与正常路径——
+            # 幂等，重复调用不会二次杀已收尸的孩子。
+            self._reap_piped_children(process, reader)
         return process, head_stdout, stderr_text, tree, before, out
+
+    @staticmethod
+    def _reap_piped_children(*children):
+        """fix-r5（MM concurrency#2）：piped 驱动的回收腿，杀完、有界等、不抛。
+
+        旧 finally 里裸 ``child.wait(timeout=30)`` 可能再抛一个
+        TimeoutExpired 顶掉原始异常（调用者挂好的 ``.process`` 载体随之丢
+        失）；``os.killpg`` 只吞 ProcessLookupError，而组领导已被收尸时
+        ``getpgid``/``killpg`` 抛的是整个 OSError 家族（ProcessLookupError
+        只是其一）。现在 killpg 放宽到 OSError、wait 超时静默吞掉，返回值
+        逐子回答「确认已死」（挂到 TimeoutExpired.reaped 上）。幂等：
+        poll() 已答的孩子跳过 kill，重复调用无副作用。
+        """
+        reaped = []
+        for child in children:
+            if child.poll() is None:
+                try:
+                    os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+                except OSError:
+                    # ProcessLookupError 是其子类；组已消散不是错误。
+                    pass
+            try:
+                child.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+            reaped.append(child.poll() is not None)
+        return reaped
 
     @staticmethod
     def counts_line(stdout):
@@ -1009,17 +1061,38 @@ class VerdictDeliveryTests(_RunnerDriver, unittest.TestCase):
         # 的两条性质：有限时间内以 TimeoutExpired 返回（墙钟下界），且驱动
         # 返回时 runner 必须已死（不回收的孤儿持着临时树与管道写端）。
         started = time.monotonic()
+        timeout = 5
         with self.assertRaises(subprocess.TimeoutExpired) as caught:
-            self.run_runner_piped('hang', timeout=5)
-        self.assertLess(time.monotonic() - started, 60,
+            self.run_runner_piped('hang', timeout=timeout)
+        # fix-r5（MM concurrency#2 的姊妹 #7，DS simplify#2）：墙钟上界挂
+        # 钩驱动超时（×4 留调度余量），不再与 harness 自释放常量
+        # ORPHAN_RELEASE_S 巧合同值——上界必须严格小于自释放，本用例才能
+        # 区分「驱动的超时腿先到」与「孤儿自己醒了」。
+        self.assertLess(time.monotonic() - started, timeout * 4,
                         '#2981 the piped driver must bound a hung runner '
                         'instead of waiting for the CI step to kill the '
                         'whole module')
-        process = caught.exception.process
+        error = caught.exception
+        # fix-r5（MM concurrency#1）：「reader 已交付首行后才卡死」是用例
+        # 前提的一部分，不再只是 harness 注释里的口头声明（照姊妹用例
+        # :891 的 assertIn 形态）——否则 runner 丢 flush 时 reader 腿超时
+        # 照样全绿，而无界 stderr 腿从未被走到。
+        self.assertIn(': KILLED: ', error.head_stdout,
+                      '#2981 the reader must really have taken the first '
+                      'record line before the hang: the pinned fault is '
+                      '"hung after its first delivered line", not "never '
+                      'delivered anything"')
+        process = error.process
         self.assertIsNotNone(process.poll(),
                              '#2981 the hung runner must not outlive the '
                              'piped driver: a leaked child holds the '
                              'temporary tree and the pipe write end')
+        # fix-r5（MM concurrency#2）：回收腿不抛、结果挂回异常——两个子
+        # 进程（runner 与 reader）都必须确认已死。
+        self.assertEqual(error.reaped, [True, True],
+                          '#2981 the reap leg must confirm both children '
+                          'dead without throwing: a raising wait() would '
+                          'replace the TimeoutExpired the caller inspects')
 
 
 class PreflightLedgerDriftTests(_RunnerDriver, unittest.TestCase):

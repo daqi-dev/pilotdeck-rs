@@ -168,22 +168,35 @@ else:
 
     @contextlib.contextmanager
     def fake_guard(actual_root, requested, **_kwargs):
+        # #2981 fix-r5（DS boundary#1 + MM simplify#1/boundary#1/sibling#2
+        # 四路同撞，协调者升 P1）：fake_guard 补守卫窗口相位标志，与兄弟
+        # sdk-signals 的 state['guard'] 同形。置位/复位成对出现在入口与
+        # finally——出场注入的守卫项靠复位才有判别力（见 fake_head_bytes）。
+        state['guard'] = True
         snapshots = {Path(path): Path(path).read_bytes() for path in requested}
         try:
             yield snapshots
         finally:
             for path, data in snapshots.items():
                 negative_process.write_source_atomic(actual_root, path, data)
+            state['guard'] = False
             if exit_fault:
                 raise RuntimeError('#1800 injected guard exit failure')
 
     calls = {'count': 0}
+    state = {'guard': False}
     # #2981 fix-r4（MM simplify#1）：注入按相位绑定，不按 _head_bytes 调用
     # 序号——旧的 ``index >= 2`` 把「出场证明是第 3-4 次读」写死，runner
     # 增删一本账本或增一次入场前证明，注入就会落到错误的证明上（或不再
     # 触发），绿灯从此证明不了「钉的是出场侧那条证明」。相位以 runner
     # 的可见行为绑定：入场证明先于任何 run_owned（实测 head 0-1 / runs 0），
     # 出场证明后于全部 run_owned（head 2-3 / runs 5）。
+    # #2981 fix-r5（升 P1，同四路评审）：相位还必须绑「守卫内」。此前
+    # 入场注入只认 calls['count'] == 0：把 runner 的入场证明行上提到
+    # with mutating_sources(...) 之外（重开 #1885 r3 关掉的 TOCTOU 窗口）
+    # 后 count 依旧为 0，注入照触发、整套照绿而证明已出守卫（假 PASS，
+    # NC 审计结论被污染）。绑上 state['guard'] 后同样的搬移让注入不再
+    # 误触发 → 健康 rc 0 ≠ 断言的 2 → 转红。
     exit_served = {'done': False}
 
     def fake_run_owned(command, **_kwargs):
@@ -223,20 +236,29 @@ else:
             command, 0, 'product anchors: PASS\\n', '')
 
     def fake_head_bytes(actual_root, relative, _baseline):
-        # #2981 fix-r4：相位判定见 fake_run_owned 上方注释（MM simplify#1）。
-        if mode == 'ledger-drift' and calls['count'] == 0:
+        # #2981 fix-r4：相位判定见 fake_run_owned 上方注释（MM simplify#1）；
+        # fix-r5（升 P1）：两个注入都补 state['guard'] —— 只在守卫窗口内
+        # 触发，证明被搬出守卫（上提出 with / 挪到 with 之后）时注入不再
+        # 误触发，用例转红而不是照绿。
+        if mode == 'ledger-drift' and state['guard'] and calls['count'] == 0:
             # The entry-side proof inside the guard, before any control ran
             # (no run_owned served yet). Deleting the runner's entry proof
             # line turns this case red (rc 0 != the asserted 2) — that is
-            # its discriminating power, not a green hole.
+            # its discriminating power, not a green hole. fix-r5: hoisting
+            # that line above the ``with`` (out of the guard window) must
+            # turn it red the same way — the guard term is what makes the
+            # window binding real.
             raise OSError('#2981 injected entry ledger drift')
-        if mode == 'exit-ledger-drift' and exit_served['done']:
+        if mode == 'exit-ledger-drift' and state['guard'] and exit_served['done']:
             # The exit-side proof after the last control, the `#1885 r3`
             # re-prove on the way out. Failing there and nowhere else is
             # what makes this the use case for that proof: delete it and
             # this case goes red (rc 0 != the asserted 2), and no earlier
             # fault reaches it — every completed row must still land in the
-            # abort accounting.
+            # abort accounting. fix-r5: the state['guard'] term keeps the
+            # injection inside the with-block; the guard's finally resets
+            # it, so a proof moved below the ``with`` no longer triggers
+            # the injection and the case goes red instead of green.
             raise OSError('#2981 injected exit ledger drift')
         return (Path(actual_root) / relative).read_bytes()
 
@@ -402,6 +424,17 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
         self.assertEqual([row['mutation'] for row in summary['results']],
                          list(SELECTION),
                          '#1800 every selected control must stay accounted for')
+        # #2981 fix-r5（MM sibling#3）：status 列改直接钉，与兄弟 assert_rows
+        # （sdk-signals:596）从此同形同源。r4 修 6 删 exit 用例逐行 status
+        # 断言时引用的理由「already pins every row INVALID with the counts」
+        # 在本文件不成立——counts 只是聚合计，行级 revoke 回归（行仍 KILLED
+        # 而 counts 记 INVALID）要落到更晚、更远的断言上才红；一处补进
+        # assert_rows 覆盖全部 6 个 abort 调用点，r4 的删冗余同时保持成立。
+        self.assertTrue([row['status'] for row in summary['results']]
+                        == ['INVALID'] * len(SELECTION),
+                        '#1800 an aborting run must revoke every recorded'
+                        ' kill, got '
+                        + repr([row['status'] for row in summary['results']]))
         # #2981 fix-r4：绑定断言带专属消息且单行可识别（#1120 形态，对齐
         # sdk-signals 侧 assert_rows）——它判定「注入落在哪条证明」。
         self.assertTrue([row['reason'] for row in summary['results']] == reasons,
