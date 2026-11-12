@@ -452,7 +452,10 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         return rec
     # real_resp 为空（只有 <synthetic>/None 占位）时 issubset 恒真，守卫退化为只靠 usage 一条证据——
     # 拒：成功 result 必须至少带一条真实 assistant 响应名，否则谱系无从证明（边界 #1）。
-    if model and (not real_resp or not real_resp.issubset(allowed) or not usage or not usage.issubset(allowed)):
+    # 大小写与 review-deepseek 的 casefold 同口径：只变大小写不算换谱系，两边脚本不再一边放行一边误杀。
+    allowed_cf = {str(m).casefold() for m in allowed}
+    if model and (not real_resp or not {str(m).casefold() for m in real_resp}.issubset(allowed_cf)
+                 or not usage or not {str(m).casefold() for m in usage}.issubset(allowed_cf)):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}（合法形 {sorted(allowed)}）"
         return rec
     text = result.get("result") if isinstance(result.get("result"), str) else ""
