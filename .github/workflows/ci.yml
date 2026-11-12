@@ -293,11 +293,11 @@ jobs:
           # 窗口结束当轮删旧值。窗口内两 job 可能各自命中集合内不同成员——守卫
           # 单独只证「各在册」，「两 job 同一构建」由 fix-r4（#3078 MM P1）恢复：
           # 两 job 经 outputs 上报实际构建号，check 汇聚 job 比对，不一致即红。
-          # 比对红的恢复手段是 Re-run all jobs 对齐两 job；持续失配说明两 job
-          # 命中集合内不同成员——往集合里加新值救不了比对步的红，只能等 fleet
-          # 收敛后把集合收窄到实际在服的那一个值（删旧成员）；加新值只对
-          # 「构建号尚未在集合内→守卫红」那一种红有效。空集合与未提供实际值
-          # 都 fail-closed：不提供不等于命中集合、也不等于同构建。
+          # 比对红的恢复手段是 Re-run all jobs 对齐两 job（滚动窗口内只是再抽
+          # 一次签，不保证对齐）；往集合里加新值救不了比对步的红，加新值只对
+          # 「构建号尚未在集合内→守卫红」那一种红有效。需要严格同构建的结论时，
+          # 确定性恢复是把集合收窄到实际在服的那一个值（删旧成员）再跑。空集合
+          # 与未提供实际值都 fail-closed：不提供不等于命中集合、也不等于同构建。
           image_os="${ImageOS:-}"
           image_version="${ImageVersion:-}"
           if [ -z "${expected_image_versions// /}" ]; then
@@ -590,7 +590,7 @@ jobs:
             exit 1
           fi
           if [ "$RUST_IMAGE_VERSION" != "$NEGCTL_IMAGE_VERSION" ]; then
-            echo "::error::rust 与 negative-controls 落在不同 runner 镜像构建上：rust=$RUST_IMAGE_VERSION negative-controls=$NEGCTL_IMAGE_VERSION——负控 KILLED/SURVIVED 与 rust 结论不可比；重跑两 job 或当轮收窄集合（#3078 MM P1）" >&2
+            echo "::error::rust 与 negative-controls 落在不同 runner 镜像构建上：rust=$RUST_IMAGE_VERSION negative-controls=$NEGCTL_IMAGE_VERSION——负控 KILLED/SURVIVED 与 rust 结论不可比；恢复：Re-run all jobs（加新值救不了本红），需严格同构建结论时收窄集合到实际在服值（#3078 MM P1）" >&2
             exit 1
           fi
           echo "两 job 同构建核验通过：ImageVersion=$RUST_IMAGE_VERSION"
@@ -662,11 +662,11 @@ jobs:
           # 窗口结束当轮删旧值。窗口内两 job 可能各自命中集合内不同成员——守卫
           # 单独只证「各在册」，「两 job 同一构建」由 fix-r4（#3078 MM P1）恢复：
           # 两 job 经 outputs 上报实际构建号，check 汇聚 job 比对，不一致即红。
-          # 比对红的恢复手段是 Re-run all jobs 对齐两 job；持续失配说明两 job
-          # 命中集合内不同成员——往集合里加新值救不了比对步的红，只能等 fleet
-          # 收敛后把集合收窄到实际在服的那一个值（删旧成员）；加新值只对
-          # 「构建号尚未在集合内→守卫红」那一种红有效。空集合与未提供实际值
-          # 都 fail-closed：不提供不等于命中集合、也不等于同构建。
+          # 比对红的恢复手段是 Re-run all jobs 对齐两 job（滚动窗口内只是再抽
+          # 一次签，不保证对齐）；往集合里加新值救不了比对步的红，加新值只对
+          # 「构建号尚未在集合内→守卫红」那一种红有效。需要严格同构建的结论时，
+          # 确定性恢复是把集合收窄到实际在服的那一个值（删旧成员）再跑。空集合
+          # 与未提供实际值都 fail-closed：不提供不等于命中集合、也不等于同构建。
           image_os="${ImageOS:-}"
           image_version="${ImageVersion:-}"
           if [ -z "${expected_image_versions// /}" ]; then
