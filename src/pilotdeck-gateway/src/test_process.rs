@@ -25,15 +25,34 @@ const RERUN_REAP_LIMIT: Duration = Duration::from_secs(30);
 const RERUN_POLL: Duration = Duration::from_millis(10);
 /// Per-file cap for the rerun's captured streams. A descendant that keeps
 /// writing is exactly the regression the audit hunts, so the capture must not
-/// be able to fill the host: the wait below stops the group once either file
-/// passes the cap, and the read truncates.
+/// be able to fill the host: the leader runs under a kernel `RLIMIT_FSIZE`
+/// ([`RERUN_FSIZE_BLOCKS`]), so a write past the cap fails with `EFBIG` and
+/// the writer dies of `SIGXFSZ` instead of growing the file, the wait below
+/// stops the group as the backstop for a writer that survives the signal, and
+/// the read truncates.
 ///
-/// This is a sampled threshold, not a hard ceiling: the size is checked every
-/// `RERUN_POLL`, so a writer can overshoot it by one poll interval of its own
-/// write rate. Without `RLIMIT_FSIZE` (`unsafe` is forbidden in this
-/// workspace) that residual is the price of bounding it in the parent at all.
+/// #1723: the cap is a hard ceiling, not a sampled threshold. The old
+/// parent-side check could only sample every `RERUN_POLL`, so a writer
+/// overshot it by one poll interval of its own write rate; handing the limit
+/// to the kernel through an `sh` wrapper needs no `unsafe` at all, which is
+/// how the ceiling lands here despite `unsafe_code = "forbid"`. The limit
+/// binds every file the rerun tree writes, not only the two captures — the
+/// audits' fixture writes are orders of magnitude below it.
 #[cfg(unix)]
 const RERUN_OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
+
+/// #1723: the `ulimit -f` argument that reproduces [`RERUN_OUTPUT_LIMIT`] in
+/// the wrapping shell's own blocks — 512 B per block in Linux `/bin/sh`
+/// (dash, the POSIX unit) and 1 KiB in macOS's (bash); both measured, see the
+/// dump xfsz case for the earlier measurement and RESULT for this one. 64 MiB
+/// is a whole number of blocks under either unit, so the byte cap is exact.
+/// A shell with the other unit would only loosen the kernel ceiling to 2×
+/// the cap — never tighten it below an audit's legitimate output — and the
+/// sampler stays the bound either way.
+#[cfg(all(unix, target_os = "macos"))]
+const RERUN_FSIZE_BLOCKS: u64 = RERUN_OUTPUT_LIMIT / 1024;
+#[cfg(all(unix, not(target_os = "macos")))]
+const RERUN_FSIZE_BLOCKS: u64 = RERUN_OUTPUT_LIMIT / 512;
 
 /// Size of a captured stream, or 0 while it does not exist yet.
 ///
@@ -80,17 +99,59 @@ fn read_capped(path: &std::path::Path) -> String {
     text
 }
 
+/// #1723: the bytes a capture file holds when the rerun ended, for the
+/// failure evidence. An unmeasurable capture keeps the over-cap direction of
+/// the sampler: a size the audit cannot read must not read as a small file.
+#[cfg(unix)]
+fn captured_len(path: &std::path::Path) -> u64 {
+    stream_len(path).unwrap_or(RERUN_OUTPUT_LIMIT + 1)
+}
+
 /// Result of [`rerun_exact`]. `stdout`/`stderr` are returned even on timeout so
 /// a stuck rerun still reports what it managed to print.
 pub(crate) struct RerunOutput {
     pub status: std::process::ExitStatus,
     pub stdout: String,
     pub stderr: String,
-    /// The deadline expired and the whole process group was killed.
+    /// #1723: the bytes present in each capture file when the rerun ended,
+    /// before [`read_capped`]'s truncation — the failure evidence for an
+    /// output-cap stop, which used to report only `overflow=true` with no
+    /// count of what was already written.
+    pub stdout_bytes: u64,
+    pub stderr_bytes: u64,
+    /// #1723: the deadline expired before the leader was observed exited. A
+    /// fact about the clock, not about who ended the run: a leader that
+    /// finished on its own inside the same poll window still reaps with its
+    /// natural status — see [`RerunOutput::finished_on_its_own`] — and the
+    /// group signal that window provoked is recorded separately in `stopped`.
+    /// The old `status.success()` rewrite of this field erased exactly that
+    /// record.
     pub timed_out: bool,
-    /// A captured stream passed [`RERUN_OUTPUT_LIMIT`]; the group was stopped
-    /// so a runaway writer cannot fill the host.
+    /// #1723: the harness took its stop path and sent the group KILL (the
+    /// deadline or the sampled output cap). A fact about the signal, not the
+    /// outcome: the race above still sets it even though the leader had
+    /// already exited, and a rerun the kernel's file-size cap ended
+    /// (`SIGXFSZ`) never sets it — the kernel stopped the writer, not this
+    /// harness.
+    pub stopped: bool,
+    /// A captured stream hit [`RERUN_OUTPUT_LIMIT`] — sampled, seen at the
+    /// final look, or ended by the kernel's `SIGXFSZ`. The group was stopped
+    /// (or the writer killed by the kernel) so a runaway writer cannot fill
+    /// the host.
     pub overflow: bool,
+}
+
+#[cfg(unix)]
+impl RerunOutput {
+    /// #1723: whether the rerun ended by itself rather than being stopped. A
+    /// leader that exited on its own in the same poll window as the deadline
+    /// (or the cap) is reaped with its natural status, so the group kill that
+    /// went out landed on an already-exited process: the stop reason fired but
+    /// did not end the run. The judgment of who stopped first belongs to the
+    /// caller; this is the fact it branches on.
+    pub(crate) fn finished_on_its_own(&self) -> bool {
+        self.status.success() && !self.overflow
+    }
 }
 
 /// Run an audit's owned rerun and fail the caller unless the rerun finished on
@@ -103,11 +164,21 @@ pub(crate) struct RerunOutput {
 #[cfg(target_os = "linux")]
 pub(crate) fn rerun_audit_case(test: &str, envs: &[(&str, &str)], issue: &str) {
     let rerun = rerun_exact(test, envs, RERUN_LIMIT);
+    // #1723: a rerun the harness stopped (deadline, sampled output cap) or
+    // the kernel's file-size cap ended (`SIGXFSZ`) is a failure — unless the
+    // leader provably finished on its own first, in which case the group
+    // kill that went out landed on an already-exited process and the rerun's
+    // output is still its own. Who stopped first is the branch; `stopped`
+    // and the byte counts are the evidence.
     assert!(
-        !rerun.timed_out && !rerun.overflow,
-        "{issue} the audit rerun was stopped (timeout={} overflow={}):\n{}\n{}",
+        rerun.finished_on_its_own() || (!rerun.timed_out && !rerun.overflow),
+        "{issue} the audit rerun was stopped (deadline={} output-cap={} group-kill={} \
+         captured stdout {} bytes / stderr {} bytes):\n{}\n{}",
         rerun.timed_out,
         rerun.overflow,
+        rerun.stopped,
+        rerun.stdout_bytes,
+        rerun.stderr_bytes,
         rerun.stdout,
         rerun.stderr
     );
@@ -129,6 +200,13 @@ pub(crate) fn rerun_audit_case(test: &str, envs: &[(&str, &str)], issue: &str) {
 /// * The rerun gets its own process group (`process_group(0)`); when the
 ///   deadline expires the whole group is killed, not just the leader, and the
 ///   leader is reaped so the captured bytes survive the failure.
+/// * #1723: the leader is `/bin/sh -c 'ulimit -f … && exec "$@"'` wrapping
+///   this binary, so each capture file is capped by the kernel
+///   (`RLIMIT_FSIZE`): a runaway writer dies of `SIGXFSZ` at the cap instead
+///   of overshooting it by a poll interval. The `exec` keeps the leader's
+///   pid, process group and exit status the test binary's own — the wrapper
+///   is invisible except for the limit. `&&` keeps a host that refuses the
+///   `ulimit` from exec'ing an unbounded rerun.
 ///
 /// This mirrors `tests/fixtures/negative_process.py` `run_owned` (start a new
 /// session, bounded wait, group kill, always keep the output).
@@ -140,12 +218,17 @@ pub(crate) fn rerun_audit_case(test: &str, envs: &[(&str, &str)], issue: &str) {
 /// pulled in here.
 #[cfg(unix)]
 pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) -> RerunOutput {
-    use std::os::unix::process::CommandExt;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
     let scratch = crate::test_scratch::Scratch::new("rerun");
     let stdout_path = scratch.path().join("stdout");
     let stderr_path = scratch.path().join("stderr");
-    let mut command = Command::new(std::env::current_exe().expect("rerun test binary path"));
+    let mut command = Command::new("/bin/sh");
     command
+        .arg("-c")
+        .arg(format!("ulimit -f {RERUN_FSIZE_BLOCKS} && exec \"$@\""))
+        // `sh`'s `$0`, so `"$@"` is the program and its arguments.
+        .arg("sh")
+        .arg(std::env::current_exe().expect("rerun test binary path"))
         // `--include-ignored` keeps the control worker cases selectable under
         // `--exact`; the audits themselves are not ignored.
         .args([
@@ -178,20 +261,28 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
     // leader reaped by `Child::wait` does not take its descendants with it,
     // and the capture files disappear with the scratch dir.
     let mut guard = crate::process_group::GroupGuard(Some(group));
-    // `true` once either capture passes the cap. An unmeasurable stream counts
-    // as over the cap: it cannot be bounded, and quietly polling a zero would
+    // `true` once either capture reaches the cap. #1723: the kernel holds the
+    // ceiling, so a file at exactly the limit is a writer the cap stopped —
+    // the strict `>` of the sampled era would read it as under the cap, and
+    // the sampler is the backstop here for a writer that survives `SIGXFSZ`
+    // (its writes then fail with `EFBIG` and the file stops growing at the
+    // limit while the leader lives on). An unmeasurable stream counts as
+    // over the cap: it cannot be bounded, and quietly polling a zero would
     // switch the cap off.
     let oversized = || {
         [&stdout_path, &stderr_path]
             .iter()
             .any(|path| match stream_len(path) {
-                Ok(len) => len > RERUN_OUTPUT_LIMIT,
+                Ok(len) => len >= RERUN_OUTPUT_LIMIT,
                 Err(_) => true,
             })
     };
     let started = Instant::now();
     let mut timed_out = false;
     let mut overflow = false;
+    // #1723: the stop branch fired and sent its group kill. Kept apart from
+    // `timed_out` so neither fact can rewrite the other.
+    let mut stopped = false;
     // `Some` once the leader was reaped inside the loop: the stop path below,
     // or a platform whose only way to observe the exit also reaps.
     let mut reaped: Option<ExitStatus> = None;
@@ -215,7 +306,12 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
         }
         // Those targets cannot wait without reaping; `try_wait` reaps, so the
         // final group signal is skipped there rather than aimed at a pgid that
-        // is free again.
+        // is free again. #1723 registers the residual that follows: a leader
+        // that exits *before* the deadline on those platforms leaves its
+        // descendants unkilled, because the reaped pgid may already have been
+        // handed to an unrelated group. None of them is in CI; if one enters
+        // it, the alternative is a `setsid` leader with a fixed pgid observed
+        // through the pgid rather than through the leader's pid.
         #[cfg(any(
             target_os = "cygwin",
             target_os = "horizon",
@@ -227,14 +323,16 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
             reaped = Some(status);
             break;
         }
-        // The workspace forbids `unsafe`, so the child cannot be given
-        // `RLIMIT_FSIZE` through `pre_exec`; the cap is enforced here instead:
-        // a runaway writer is stopped as soon as either file passes it.
+        // The kernel holds the per-file ceiling (`ulimit -f` in the wrapper,
+        // no `unsafe` needed for it here); the sampled check below is the
+        // backstop for a writer that survives `SIGXFSZ` and keeps running
+        // with its writes failing.
         let expired = started.elapsed() > limit;
         let too_big = oversized();
         if expired || too_big {
             timed_out = expired;
             overflow = too_big;
+            stopped = true;
             // The leader is still alive, so the group id is still ours.
             guard.signal(rustix::process::Signal::KILL);
             let direct = child.kill();
@@ -265,21 +363,32 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
         }
     };
     // A rerun that ran away and then exited is still an overflow: the loop
-    // breaks on `try_wait` before it looks at the files, so without this last
-    // look a writer that filled the capture and exited would report success
-    // with a silently truncated stdout.
+    // breaks on the leader's exit before it looks at the files, so without
+    // this last look a writer that filled the capture and exited would report
+    // success with a silently truncated stdout.
     overflow |= oversized();
-    // The deadline can fire in the same poll window in which the leader
-    // finished on its own. Nothing was stopped in that case, and reporting a
-    // timeout would fail a clean rerun.
-    if status.success() && !overflow {
-        timed_out = false;
+    // #1723: a leader the kernel's file-size cap killed is an overflow by
+    // definition — the write failed at the cap — whether or not the clamped
+    // file reached exactly the limit byte, so the signal is its own evidence
+    // and not only the sampled size.
+    if status
+        .signal()
+        .is_some_and(|signal| signal == rustix::process::Signal::XFSZ.as_raw())
+    {
+        overflow = true;
     }
+    // #1723: no `timed_out` rewrite for a leader that finished on its own in
+    // the deadline's poll window. The rewrite used to erase the record that
+    // the stop path ran; `timed_out` stays the clock fact, `stopped` stays
+    // the signal fact, and `finished_on_its_own` is the caller's branch.
     RerunOutput {
         status,
+        stdout_bytes: captured_len(&stdout_path),
+        stderr_bytes: captured_len(&stderr_path),
         stdout: read_capped(&stdout_path),
         stderr: read_capped(&stderr_path),
         timed_out,
+        stopped,
         overflow,
     }
 }
@@ -441,6 +550,36 @@ fn run_case(
     }
     Ok(())
 }
+/// #1723: the surviving-writer control mode needs the gateway's `SIGXFSZ`
+/// disposition — ignored, so a write past the cap surfaces as `EFBIG`
+/// instead of killing the writer. Registered on this thread's own runtime
+/// and held for the rest of the process, the same shape
+/// `tests/common/write_stage.rs` gives its child halves; kept local because
+/// this file is `#[path]`-included into integration crates that do not
+/// declare that module (or the lib's `ensure_sigxfsz_ignored`).
+#[cfg(unix)]
+fn ignore_sigxfsz_like_the_gateway() {
+    static SIGNAL: std::sync::OnceLock<Option<tokio::signal::unix::Signal>> =
+        std::sync::OnceLock::new();
+    SIGNAL.get_or_init(|| {
+        Some(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("#1723 the surviving writer's runtime")
+                .block_on(async {
+                    // The gateway's own spelling (`register_sigxfsz`): no
+                    // named `SignalKind` constant for `SIGXFSZ`, so the raw
+                    // number through the same safe tokio API.
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::from_raw(
+                        libc::SIGXFSZ,
+                    ))
+                    .expect("#1723 register the SIGXFSZ disposition")
+                }),
+        )
+    });
+}
+
 #[test]
 #[ignore = "only launched by bounded child controls"]
 fn control_worker() {
@@ -452,6 +591,24 @@ fn control_worker() {
             loop {
                 if std::io::stdout().write_all(&[b'x'; 4096]).is_err() {
                     break;
+                }
+            }
+        }
+        // #1723: the writer the kernel cannot stop — `SIGXFSZ` ignored the way
+        // the gateway registers it, so every write past the cap fails with
+        // `EFBIG` while the leader lives on and the file stops growing at
+        // exactly the cap. This rerun is what the sampler's `>=` backstop
+        // exists for: the kernel ceiling alone cannot end it.
+        "output-survives-xfsz" => {
+            #[cfg(unix)]
+            ignore_sigxfsz_like_the_gateway();
+            use std::io::Write;
+            loop {
+                if std::io::stdout().write_all(&[b'x'; 4096]).is_err() {
+                    // Past the cap every write fails `EFBIG`; pace the loop
+                    // instead of spinning — the harness's sampled cap is what
+                    // stops this writer.
+                    std::thread::sleep(Duration::from_millis(1));
                 }
             }
         }
@@ -595,11 +752,15 @@ fn owned_rerun_is_not_blocked_by_a_grandchild_holding_the_streams() {
     let rerun = rerun_exact(control, &envs, RERUN_LIMIT);
     let bounded = started.elapsed();
     println!("PDRS_RERUN_TIMING legacy_pipe={blocked:?} owned_files={bounded:?}");
+    // #1723: `timed_out` is now the clock fact, never rewritten by a success —
+    // a leader that finishes on its own inside the deadline's poll window is
+    // exempted by `finished_on_its_own`, not by erasing the record.
     assert!(
-        !rerun.timed_out && !rerun.overflow,
-        "the owned rerun was stopped (timeout={} overflow={}):\n{}\n{}",
+        rerun.finished_on_its_own() || (!rerun.timed_out && !rerun.overflow),
+        "the owned rerun was stopped (deadline={} output-cap={} group-kill={}):\n{}\n{}",
         rerun.timed_out,
         rerun.overflow,
+        rerun.stopped,
         rerun.stdout,
         rerun.stderr
     );
@@ -661,6 +822,14 @@ fn owned_rerun_kills_the_whole_group_at_the_deadline() {
         "the owned rerun did not hit its deadline:\n{}\n{}",
         rerun.stdout, rerun.stderr
     );
+    // #1723: the deadline stop is recorded as the harness's own act — the
+    // group kill this test proves was sent, distinct from a kernel
+    // `SIGXFSZ` stop (`stopped=false`) or a leader that beat the clock.
+    assert!(
+        rerun.stopped,
+        "#1723 the deadline stop must be recorded (stopped={}):\n{}\n{}",
+        rerun.stopped, rerun.stdout, rerun.stderr
+    );
     assert_eq!(
         rerun.status.signal(),
         Some(rustix::process::Signal::KILL.as_raw()),
@@ -716,6 +885,127 @@ fn owned_rerun_kills_the_whole_group_at_the_deadline() {
     println!(
         "PDRS_RERUN_GROUP_KILL descendant={descendant} status={:?}",
         rerun.status
+    );
+}
+
+/// #1723: the last bytes of a captured stream, for failure evidence whose
+/// full text is the fill pattern itself — a 64 MiB wall of `x` says nothing,
+/// but its tail carries libtest's summary of the rerun.
+#[cfg(unix)]
+fn captured_tail(text: &str, bytes: usize) -> String {
+    let mut start = text.len().saturating_sub(bytes);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut tail = String::new();
+    if start > 0 {
+        tail.push('…');
+    }
+    tail.push_str(&text[start..]);
+    tail
+}
+
+/// #1723: the output cap is a hard kernel ceiling, not a sampled threshold.
+/// The control worker writes until the kernel refuses: the write that would
+/// cross [`RERUN_OUTPUT_LIMIT`] is clamped, the next one fails and raises
+/// `SIGXFSZ`, so the capture stops *at* the cap — not one poll interval past
+/// it, the overshoot the sampled era allowed — and the rerun reports the
+/// overflow with the byte count already written.
+///
+/// How the writer *ends* is inherited state, not contract, so this test does
+/// not assert it. Measured on cb8: from a shell parent the leader dies of
+/// `SIGXFSZ` (exit 153, ×5); from this harness's parent it survives the
+/// signal to the `EFBIG` write error and exits on libtest's own io error
+/// (status `signal() == None`); under tracing the harness's sampled stop
+/// path can group-kill first. All three end the run promptly with the file
+/// at ≤ the cap, which is what the asserts below pin — plus that a plain
+/// writer can never *succeed* past its cap.
+#[cfg(unix)]
+#[test]
+fn owned_rerun_hits_the_kernel_output_cap() {
+    let rerun = rerun_exact(
+        "test_process::control_worker",
+        &[("PDRS_PROCESS_CONTROL", "output")],
+        RERUN_LIMIT,
+    );
+    // The stdout evidence is the byte count and the stream's tail: the body is
+    // the fill pattern by construction, and printing the whole capture would
+    // bury the failure under 64 MiB of `x`.
+    assert!(
+        rerun.overflow,
+        "#1723 a rerun the kernel's file-size cap ended is an overflow (captured stdout {} \
+         bytes / stderr {} bytes):\n{}\n{}",
+        rerun.stdout_bytes,
+        rerun.stderr_bytes,
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
+    );
+    assert!(
+        !rerun.status.success(),
+        "#1723 a plain writer cannot succeed past the kernel cap (status {}):\n{}\n{}",
+        rerun.status,
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
+    );
+    // The ceiling itself: without the kernel limit the file would have run one
+    // poll interval past the cap before the sampler looked.
+    assert!(
+        rerun.stdout_bytes <= RERUN_OUTPUT_LIMIT,
+        "#1723 the capture stops at the cap, not past it ({} bytes > {}):\n{}\n{}",
+        rerun.stdout_bytes,
+        RERUN_OUTPUT_LIMIT,
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
+    );
+}
+
+/// #1723: the sampler is the backstop for a writer the kernel cannot stop —
+/// `SIGXFSZ` ignored the way the gateway registers it, so its writes fail
+/// with `EFBIG` and the file stops growing at *exactly* the cap while the
+/// leader lives on. That exact-at-the-cap size is a stopped writer under the
+/// `>=` criterion; the strict `>` of the sampled era would wait for the
+/// deadline instead of stopping the run.
+#[cfg(unix)]
+#[test]
+fn owned_rerun_stops_a_writer_that_survives_the_kernel_cap() {
+    use std::os::unix::process::ExitStatusExt;
+    let rerun = rerun_exact(
+        "test_process::control_worker",
+        &[("PDRS_PROCESS_CONTROL", "output-survives-xfsz")],
+        // The backstop fires within one poll of the file reaching the cap, so
+        // this budget only bounds the failure mode, it is not the subject.
+        Duration::from_secs(30),
+    );
+    assert!(
+        rerun.overflow,
+        "#1723 a writer holding the capture at the cap is an overflow (captured {} bytes):\n{}\n{}",
+        rerun.stdout_bytes,
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
+    );
+    assert!(
+        rerun.stopped && !rerun.timed_out,
+        "#1723 the sampler stops the surviving writer at the cap — a deadline stop here means \
+         the backstop did not fire (stopped={} deadline={}):\n{}\n{}",
+        rerun.stopped,
+        rerun.timed_out,
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
+    );
+    assert_eq!(
+        rerun.status.signal(),
+        Some(rustix::process::Signal::KILL.as_raw()),
+        "#1723 the surviving writer ends under the harness's group kill:\n{}\n{}",
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
+    );
+    assert!(
+        rerun.stdout_bytes <= RERUN_OUTPUT_LIMIT,
+        "#1723 the surviving writer's file stays at the kernel cap ({} bytes > {}):\n{}\n{}",
+        rerun.stdout_bytes,
+        RERUN_OUTPUT_LIMIT,
+        captured_tail(&rerun.stdout, 500),
+        rerun.stderr
     );
 }
 #[test]
@@ -1372,9 +1662,94 @@ fn foreign_data_dir_holders_in(
 #[cfg(target_os = "linux")]
 pub(crate) type TransientObservations = (TransientChildren, std::collections::BTreeSet<i32>);
 
-/// The child set of one `/proc` sweep, keyed by pid.
+/// The child set the sampler accumulated, keyed by pid: each value carries
+/// the pid's last readable executable and its reuse record ([`ObservedChild`]).
 #[cfg(target_os = "linux")]
-pub(crate) type TransientChildren = std::collections::BTreeMap<i32, Option<std::path::PathBuf>>;
+pub(crate) type TransientChildren = std::collections::BTreeMap<i32, ObservedChild>;
+
+/// #1723: what the sampler knows about one child pid. `exe` is the last
+/// readable executable (a zombie's `/proc/<pid>/exe` no longer resolves);
+/// `reappeared` is the pid-reuse record the fold below keeps.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObservedChild {
+    pub exe: Option<std::path::PathBuf>,
+    pub reappeared: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl ObservedChild {
+    /// A first observation: no reuse record yet.
+    pub(crate) fn first(exe: Option<std::path::PathBuf>) -> Self {
+        Self {
+            exe,
+            reappeared: false,
+        }
+    }
+}
+
+/// #1723: the fold the sampler applies to each child sweep, kept as its own
+/// type so the pid-reuse rule is a pure function a test can drive
+/// deterministically — a real wraparound would need the host's `pid_max`
+/// rewritten under other users' processes (cb8: 4194304, out of reach).
+///
+/// A child of this test process that exits stays a zombie — still in
+/// `/proc`, still parented here — until *this* process reaps it, and the
+/// sampler never reaps. So a full sweep that no longer lists a pid it
+/// previously saw means the pid was reaped and its number is free; the same
+/// pid in a later sweep is therefore a new process that reused the number,
+/// whatever executable it runs, and the fold records the return
+/// (`reappeared`) for [`unknown_children`] to judge. An exe-only comparison
+/// cannot see this: the reuse this audit hunts is precisely the same-exe
+/// kind that matches the before-set.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+pub(crate) struct ChildFold {
+    children: TransientChildren,
+    /// The pids the *previous* sweep listed. A known pid absent here was
+    /// reaped in between; its return is the reuse signal.
+    previous: std::collections::BTreeSet<i32>,
+}
+
+#[cfg(target_os = "linux")]
+impl ChildFold {
+    /// Fold one sweep's children into the accumulated set.
+    pub(crate) fn sweep(&mut self, observed: Vec<(i32, Option<std::path::PathBuf>)>) {
+        let present: std::collections::BTreeSet<i32> =
+            observed.iter().map(|(pid, _)| *pid).collect();
+        for (pid, exe) in observed {
+            // #1723: a pid the fold already holds that the previous sweep no
+            // longer listed was reaped in between; its return is a new
+            // process on the reused number.
+            let reappeared = self.children.contains_key(&pid) && !self.previous.contains(&pid);
+            // A child that exits is a zombie until it is reaped, and a
+            // zombie's `/proc/<pid>/exe` no longer resolves. Overwriting the
+            // exe already read for that pid with `None` would turn the *exit*
+            // into a different `(pid, exe)` pair, and `unknown_children`
+            // would report a spawn for a child that merely died — the false
+            // FAIL this audit exists to remove (#1632 r5 boundary). Keep the
+            // last readable exe: an unreadable *first* observation still
+            // records `None`, and a readable change still overwrites (a
+            // reused pid or an exec).
+            let keep_last_readable = exe.is_none()
+                && matches!(self.children.get(&pid), Some(kept) if kept.exe.is_some());
+            let child = self
+                .children
+                .entry(pid)
+                .or_insert_with(|| ObservedChild::first(None));
+            if !keep_last_readable {
+                child.exe = exe;
+            }
+            child.reappeared |= reappeared;
+        }
+        self.previous = present;
+    }
+
+    /// The accumulated children, with their reuse records.
+    pub(crate) fn children(&self) -> &TransientChildren {
+        &self.children
+    }
+}
 
 /// Children `seen` reports that the window did not open with, as
 /// `pid:exe` strings ready for a failure message.
@@ -1398,8 +1773,15 @@ pub(crate) fn unknown_children(
         // is also the fail-closed one — the one legitimate source of that
         // mismatch, a child turning into an unreadable zombie, is kept out of
         // the map by the sampler (it keeps the last readable exe, r5 boundary).
-        .filter(|(pid, exe)| before.get(*pid) != Some(*exe))
-        .map(|(pid, exe)| format!("{pid}:{exe:?}"))
+        // #1723: and a reused pid is a new process even when the executable
+        // matches — a pre-window child that exits, is reaped, and comes back
+        // with the same exe is exactly the spawn the exe-only comparison read
+        // as the same child (false PASS). The fold's `reappeared` record is
+        // what closes that hole.
+        .filter(|(pid, observed)| {
+            observed.reappeared || before.get(*pid).map(|old| &old.exe) != Some(&observed.exe)
+        })
+        .map(|(pid, observed)| format!("{pid}:{:?}", observed.exe))
         .collect()
 }
 
@@ -1414,12 +1796,19 @@ pub(crate) fn unknown_children(
 /// pid the window did not open with is still judged from its own sweep.
 #[cfg(target_os = "linux")]
 pub(crate) fn end_snapshot(seen: &TransientChildren) -> TransientChildren {
-    let mut after: TransientChildren = child_processes().into_iter().collect();
-    for (pid, exe) in after.iter_mut() {
-        if exe.is_none()
-            && let Some(Some(known)) = seen.get(pid)
-        {
-            *exe = Some(known.clone());
+    let mut after: TransientChildren = child_processes()
+        .into_iter()
+        .map(|(pid, exe)| (pid, ObservedChild::first(exe)))
+        .collect();
+    for (pid, observed) in after.iter_mut() {
+        if let Some(known) = seen.get(pid) {
+            if observed.exe.is_none() {
+                observed.exe = known.exe.clone();
+            }
+            // #1723: a pid that left the sweeps and returned is a new process
+            // even at the end of the window; the closing sweep must not
+            // launder the reuse back into an ordinary surviving child.
+            observed.reappeared = known.reappeared;
         }
     }
     after
@@ -1479,11 +1868,13 @@ pub(crate) fn child_spawn_failure(
 #[cfg(target_os = "linux")]
 pub(crate) fn node_children(seen: &TransientChildren) -> Vec<String> {
     seen.iter()
-        .filter(|(_, exe)| {
-            exe.as_ref()
+        .filter(|(_, observed)| {
+            observed
+                .exe
+                .as_ref()
                 .is_some_and(|path| path.to_string_lossy().to_lowercase().contains("node"))
         })
-        .map(|(pid, exe)| format!("{pid}:{exe:?}"))
+        .map(|(pid, observed)| format!("{pid}:{:?}", observed.exe))
         .collect()
 }
 
@@ -1493,7 +1884,10 @@ pub(crate) fn node_children(seen: &TransientChildren) -> Vec<String> {
 /// lifetime is shorter than the gap between them, so a transient writer would
 /// slip through both and leave the audit green. This sampler keeps running
 /// until `finish`, accumulating every child pid and every foreign fd holder it
-/// ever observes; the assertions then judge the accumulated sets.
+/// ever observes; the assertions then judge the accumulated sets. #1723: the
+/// holder half of the sweep is the #1316 constructor's choice — see
+/// [`TransientAudit::start_children_only`] — and the child fold also records
+/// pid reuse, so a reaped pid's return is judged as the spawn it is.
 ///
 /// Coverage is bracketed on both ends, not assumed: `start` returns only after
 /// the first full sweep has completed, together with that sweep's child set
@@ -1517,7 +1911,8 @@ pub(crate) struct TransientAudit {
 
 #[cfg(target_os = "linux")]
 impl TransientAudit {
-    /// Open the sampling window and return the first sweep's child set.
+    /// Open the sampling window with both predicates armed — the children
+    /// sweep *and* the foreign data-dir holder scan (the #1316 audit).
     ///
     /// The "before" snapshot and the opening of the window must be the same
     /// observation. Taking `child_processes()` *after* `start` returns leaves a
@@ -1528,6 +1923,29 @@ impl TransientAudit {
     /// gap: the returned set is exactly what the sampler saw when the window
     /// opened.
     pub(crate) fn start(root: std::path::PathBuf) -> (Self, TransientChildren) {
+        Self::start_in(std::path::PathBuf::from("/proc"), Some(root))
+    }
+
+    /// #1723 (#1349): open the sampling window with only the children
+    /// predicate armed. The #1349 audit judged nothing on the holder set its
+    /// window kept paying for — a whole-host descriptor scan on every
+    /// millisecond sweep, every process, every descriptor — so its verdict
+    /// drops the arm instead of the bill: the child judgment stays the same
+    /// shared code, only the unused half of the sweep is gone.
+    pub(crate) fn start_children_only() -> (Self, TransientChildren) {
+        Self::start_in(std::path::PathBuf::from("/proc"), None)
+    }
+
+    /// #1723: the one constructor behind the public entries. `proc_root` is
+    /// where the sweeps read — production passes `/proc`; a test injects a
+    /// fixture tree so the pid-reuse rule can be driven end to end without a
+    /// real wraparound — and `root` decides whether each sweep also scans the
+    /// foreign holders of that data dir (`Some` for #1316, `None` for #1349's
+    /// children-only window).
+    pub(crate) fn start_in(
+        proc_root: std::path::PathBuf,
+        root: Option<std::path::PathBuf>,
+    ) -> (Self, TransientChildren) {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
         // #2138: an audit read that fails inside the sampler must reach the
@@ -1542,18 +1960,19 @@ impl TransientAudit {
         // and the opening of the window would be unsampled.
         let (swept, first_sweep) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let mut children = TransientChildren::new();
+            let mut fold = ChildFold::default();
             let mut holders = std::collections::BTreeSet::new();
             let mut announced = false;
             loop {
                 // Read the flag before sweeping: a stop request that lands while
                 // this sweep runs still leaves one more sweep after the writes.
                 let done = flag.load(std::sync::atomic::Ordering::SeqCst);
-                let sweep = child_processes_in(std::path::Path::new("/proc")).and_then(|seen| {
-                    Ok((
-                        seen,
-                        foreign_data_dir_holders_in(std::path::Path::new("/proc"), &root)?,
-                    ))
+                let sweep = child_processes_in(&proc_root).and_then(|seen| {
+                    let foreign = match root.as_ref() {
+                        Some(dir) => foreign_data_dir_holders_in(&proc_root, dir)?,
+                        None => Vec::new(),
+                    };
+                    Ok((seen, foreign))
                 });
                 let (spawned, foreign) = match sweep {
                     Ok(observation) => observation,
@@ -1567,24 +1986,10 @@ impl TransientAudit {
                         *worker_failure
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(text);
-                        return (children, holders);
+                        return (fold.children().clone(), holders);
                     }
                 };
-                for (pid, exe) in spawned {
-                    // A child that exits is a zombie until it is reaped, and a
-                    // zombie's `/proc/<pid>/exe` no longer resolves. Overwriting
-                    // the exe already read for that pid with `None` would turn
-                    // the *exit* into a different `(pid, exe)` pair, and
-                    // `unknown_children` would report a spawn for a child that
-                    // merely died — the false FAIL this audit exists to remove
-                    // (#1632 r5 boundary). Keep the last readable exe: an
-                    // unreadable *first* observation still records `None`, and a
-                    // readable change still overwrites (pid reuse or an exec).
-                    if exe.is_none() && matches!(children.get(&pid), Some(Some(_))) {
-                        continue;
-                    }
-                    children.insert(pid, exe);
-                }
+                fold.sweep(spawned);
                 for pid in foreign {
                     holders.insert(pid);
                 }
@@ -1593,14 +1998,14 @@ impl TransientAudit {
                     // The first sweep is the window's opening snapshot. A
                     // closed receiver only means `start` was abandoned; keep
                     // sampling, `Drop` still stops this thread.
-                    let _ = swept.send(Ok(children.clone()));
+                    let _ = swept.send(Ok(fold.children().clone()));
                 }
                 if done {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
-            (children, holders)
+            (fold.children().clone(), holders)
         });
         let children_before = match first_sweep.recv() {
             Ok(Ok(children)) => children,
@@ -2036,5 +2441,130 @@ fn an_unreadable_holder_of_this_user_fails_the_data_dir_audit() {
     assert!(
         text.contains(&parent) && text.contains("reading the descriptors"),
         "#2138 the failure must name the unreadable same-user holder: {text}"
+    );
+}
+
+/// #1723: a pre-window child that exits, is reaped, and has its pid reused by
+/// a new process with the *same* executable is a spawn inside the window. The
+/// exe-only comparison cannot see it — the reuse matches the before-set byte
+/// for byte — so the fold records the return and the shared predicate judges
+/// that instead. Real pid wraparound is out of reach on a shared host (cb8
+/// `pid_max` 4194304), so the fold is driven here as the pure function it
+/// now is; the end-to-end twin below injects a proc root.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_reused_pid_with_the_same_exe_is_a_transient_spawn() {
+    let exe = || Some(std::path::PathBuf::from("/usr/bin/fixture-sleep"));
+    let mut fold = ChildFold::default();
+    // The window opens on the pre-window child.
+    fold.sweep(vec![(4242, exe())]);
+    let before = fold.children().clone();
+    // It exits: a zombie's exe no longer resolves, and the fold keeps the
+    // last readable one (#1632 r5 boundary — an exit is not a spawn).
+    fold.sweep(vec![(4242, None)]);
+    // It is reaped: a full sweep without the pid. This process never reaps
+    // its children, so on a real host that means someone freed the number.
+    fold.sweep(vec![]);
+    // The same pid, the same exe: a new process on the reused number.
+    fold.sweep(vec![(4242, exe())]);
+    let seen = fold.children().clone();
+    // The pre-#1723 criterion — exe equality alone — reads this as the same
+    // child. Spelled out here so the two verdicts cannot quietly converge
+    // back onto the passing one.
+    let old_criterion: Vec<i32> = seen
+        .iter()
+        .filter(|(pid, observed)| before.get(*pid).map(|old| &old.exe) != Some(&observed.exe))
+        .map(|(pid, _)| *pid)
+        .collect();
+    assert!(
+        old_criterion.is_empty(),
+        "#1723 the old exe-only criterion is blind to this reuse by design (it flagged {old_criterion:?})"
+    );
+    assert_eq!(
+        unknown_children(&seen, &before),
+        [format!("4242:{:?}", exe())],
+        "#1723 a pid that left the sweeps and returned is a transient spawn even when the exe matches"
+    );
+}
+
+/// #1723: the end-to-end twin of the fold test above — the same pid reuse,
+/// driven through the sampler itself against an injected proc root, so the
+/// rule is proven from the sweep thread to the shared predicate. The fixture
+/// pid's `stat` claims this process as parent and its `exe` is a symlink the
+/// way a real child's is; deleting the pid directory stands in for the reap
+/// (a swept child that vanished was reaped — nothing else removes it), and
+/// recreating it with the same exe stands in for the reuse.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_sampler_reports_a_pid_that_leaves_and_returns() {
+    let scratch = crate::test_scratch::Scratch::new("1723-reuse");
+    let proc_root = scratch.path().join("proc");
+    let mine = std::process::id();
+    std::fs::create_dir_all(proc_root.join(mine.to_string()))
+        .expect("#1723 the sampler's own proc entry");
+    // The self-visibility check reads this stat on every sweep; only the
+    // fields after `)` matter.
+    std::fs::write(
+        proc_root.join(mine.to_string()).join("stat"),
+        format!("(test) S 1 {mine} 1"),
+    )
+    .expect("#1723 the sampler's own stat");
+    // A pid number the host is not using, so the deletion window's source
+    // classification (which reads the real `/proc`) always sees a vanished
+    // source there, never a live one it might fail to read.
+    let reuse_pid: i32 = (4000..)
+        .find(|pid| !std::path::Path::new(&format!("/proc/{pid}")).exists())
+        .expect("#1723 a free pid number");
+    let fixture = |pid: i32| {
+        let dir = proc_root.join(pid.to_string());
+        std::fs::create_dir_all(&dir).expect("#1723 the fixture pid directory");
+        // comm, state, ppid: the same two fields a real sweep reads, with this
+        // process claimed as the parent so the pid counts as our child.
+        // Published by rename, never by a plain write: the sweep is
+        // fail-closed on a readable-but-unparsable stat (#2138), and a plain
+        // write is observable as an *empty* stat in the window between its
+        // create and its content landing — rename keeps every intermediate
+        // state either missing (vanished, skipped) or complete.
+        let staged = dir.join("stat.staged");
+        std::fs::write(&staged, format!("(fixture-sleep) S {mine} 1"))
+            .expect("#1723 the fixture stat");
+        std::fs::rename(&staged, dir.join("stat")).expect("#1723 publish the fixture stat");
+        std::os::unix::fs::symlink("/usr/bin/fixture-sleep", dir.join("exe"))
+            .expect("#1723 the fixture exe link");
+    };
+    let exe = Some(std::path::PathBuf::from("/usr/bin/fixture-sleep"));
+    // The window opens on the pre-window child.
+    fixture(reuse_pid);
+    let (audit, before) = TransientAudit::start_in(proc_root.clone(), None);
+    assert!(
+        before.contains_key(&reuse_pid),
+        "#1723 the window's before-set carries the fixture child"
+    );
+    // Reaped: the pid leaves the sweeps for far longer than one.
+    std::fs::remove_dir_all(proc_root.join(reuse_pid.to_string()))
+        .expect("#1723 remove the fixture pid directory");
+    std::thread::sleep(Duration::from_millis(250));
+    // Reused: the same number returns with the same exe.
+    fixture(reuse_pid);
+    std::thread::sleep(Duration::from_millis(250));
+    let (seen, holders) = audit.finish();
+    assert!(
+        holders.is_empty(),
+        "#1723 a children-only window never reports holders ({holders:?})"
+    );
+    // The old criterion, spelled out as in the fold test: still green.
+    let old_criterion: Vec<i32> = seen
+        .iter()
+        .filter(|(pid, observed)| before.get(*pid).map(|old| &old.exe) != Some(&observed.exe))
+        .map(|(pid, _)| *pid)
+        .collect();
+    assert!(
+        old_criterion.is_empty(),
+        "#1723 the old exe-only criterion is blind to this reuse by design (it flagged {old_criterion:?})"
+    );
+    assert_eq!(
+        unknown_children(&seen, &before),
+        [format!("{reuse_pid}:{exe:?}")],
+        "#1723 the sampler reports the returned pid as a transient spawn"
     );
 }

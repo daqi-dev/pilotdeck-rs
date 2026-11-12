@@ -124,6 +124,7 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    'audit-rerun-boundary/negative_controls.py',
 )
 
 
@@ -4936,7 +4937,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
-            'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
+            'registered table count': r'当前登记 (\d+) 张表',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

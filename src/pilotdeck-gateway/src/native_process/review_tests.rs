@@ -1196,7 +1196,12 @@ fn transient_audit_before_set_opens_with_the_window() {
     // The pre-fix ordering snapshotted the children here, i.e. without the
     // already-exited pre-window child, while the sampler still had it: that
     // before-set reports the child as transient, the false FAIL this guards.
-    let old_before: TransientChildren = child_processes().into_iter().collect();
+    // #1723: the value grew a reuse record alongside the exe; a bare first
+    // observation is what a snapshot holds.
+    let old_before: TransientChildren = child_processes()
+        .into_iter()
+        .map(|(pid, exe)| (pid, crate::test_process::ObservedChild::first(exe)))
+        .collect();
     let (children_seen, _holders) = audit.finish();
     // Deliberately the *pre-fix* computation, kept as the demonstration that
     // the old ordering reports this child; the live predicate below is the

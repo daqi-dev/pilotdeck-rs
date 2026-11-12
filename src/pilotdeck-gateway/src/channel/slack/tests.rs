@@ -1161,10 +1161,11 @@ async fn host_lease_release_without_the_guard_retains_on_the_lock_path() {
         Duration::from_secs(30),
     );
     crate::negative_assert!(
-        !rerun.timed_out && !rerun.overflow,
-        "#2322 the retention worker rerun was stopped (timeout={} overflow={}):\n{}\n{}",
+        rerun.finished_on_its_own() || (!rerun.timed_out && !rerun.overflow),
+        "#2322 the retention worker rerun was stopped (deadline={} output-cap={} group-kill={}):\n{}\n{}",
         rerun.timed_out,
         rerun.overflow,
+        rerun.stopped,
         rerun.stdout,
         rerun.stderr
     );

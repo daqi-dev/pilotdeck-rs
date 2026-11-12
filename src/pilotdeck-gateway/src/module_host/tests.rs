@@ -1557,7 +1557,10 @@ async fn describe_and_call_spawn_no_children() {
     // start of sampling are one observation, and the sampler keeps every pid it
     // ever sees, so a child that lives and dies inside the exchange cannot slip
     // between two snapshots (#1632, same toolkit as the #1316 audit).
-    let (audit, children_before) = crate::test_process::TransientAudit::start(parent.clone());
+    // #1723: this audit judges nothing on foreign fd holders, so the window
+    // opens children-only — the whole-host descriptor scan it used to pay for
+    // on every sweep is the #1316 audit's cost, not this one's.
+    let (audit, children_before) = crate::test_process::TransientAudit::start_children_only();
     let principal = r#"{"principal":{"pilotDeckUserId":"u1","tenantId":"t1","actorUserId":"a1","agentId":"audit"}}"#;
     let describe = format!(
         "POST /api/module-host/describe HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Length: {}\r\n\r\n{}",
