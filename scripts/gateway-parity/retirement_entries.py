@@ -206,12 +206,27 @@ def raw_background(d, folder, mode, result):
 # producer's business assertions. Other profiles retain their own raw evidence
 # and stay BLOCKED until their corresponding contract adapter is connected.
 EIGHT_CHANNELS = {'telegram', 'discord', 'slack', 'dingtalk', 'feishu', 'weixin', 'qq', 'wecom'}
-# The v2 adapter authenticates application observations, not their complete
-# socket streams. Merely retaining TCP chunks does not bind HTTP messages or
-# validate WS upgrade/frame headers against those bytes. Keep both obligations
-# explicit until a registered verifier implements the frozen normalization.
+# Retained TCP chunks or semantic equality alone do not discharge these
+# obligations. Only the registered comparator's strict two-engine proof can.
 CHANNEL_V2_WIRE_GAPS = ('v2-http-same-socket-wire-binding',
                         'v2-websocket-frame-and-header-binding')
+
+
+def channel_v2_wire_bindings(comparison):
+    """Return only a complete proof from an equal, still nonformal pair."""
+    if (type(comparison) is not dict or comparison.get('equal') is not True
+            or comparison.get('differentFields') != []
+            or comparison.get('formalAcceptance') is not False):
+        return None
+    bindings = comparison.get('wireBindings')
+    if type(bindings) is not list or len(bindings) != 2:
+        return None
+    if any(type(row) is not dict or set(row) != {'engine', 'httpSameSocket', 'websocketFrames'}
+           or type(row['engine']) is not str or row['engine'] not in ('ts', 'native')
+           or row['httpSameSocket'] is not True or row['websocketFrames'] is not True
+           for row in bindings):
+        return None
+    return bindings if {row['engine'] for row in bindings} == {'ts', 'native'} else None
 
 
 def channel_basic_observation(raw, channel):
@@ -691,11 +706,7 @@ def channel_v2_roles(d, native, raw, process_evidence):
 
 
 def channel_v2_comparison(d, native, baseline, row, raw, process_evidence):
-    """Authenticate both processes and compare the v2 application observations.
-
-    Matching semantic projections are diagnostic evidence. The current
-    adapter does not certify the HTTP/WS socket-byte obligations.
-    """
+    """Authenticate both processes and carry the comparator's actual wire proof."""
     adapter = _load('retirement_channel_v2', _apparatus / 'retirement_channel_v2.py')
     _verify_cli_imports(_apparatus)
     tracked = {str(d.ROOT / item['path']): item['sha256'] for item in native.source['files']}
@@ -790,10 +801,15 @@ def channel_v2_comparison(d, native, baseline, row, raw, process_evidence):
     comparison = adapter.compare_pair(ts_raw, raw, ts_process['transportRecords'],
                                       process_evidence['transportRecords'], ts_files, native_files,
                                       ts_root=ts_root, native_root=native_root)
-    d.require(comparison['equal'], 'ENTRY_CHANNEL_BEHAVIOR',
-              'TS/native eight-v2 business differs: ' + str(comparison['differentFields']))
-    return {'observations': observed, 'semanticComparison': comparison,
-            'missing': [*missing, *CHANNEL_V2_WIRE_GAPS], 'originals': originals}
+    d.require(comparison['equal'] is True, 'ENTRY_CHANNEL_BEHAVIOR',
+              'TS/native eight-v2 comparison differs: ' + str(comparison['differentFields']))
+    bindings = channel_v2_wire_bindings(comparison)
+    result = {'observations': observed, 'semanticComparison': comparison,
+              'missing': [*missing, *(CHANNEL_V2_WIRE_GAPS if bindings is None else ())],
+              'originals': originals}
+    if bindings is not None:
+        result['wireBindings'] = bindings
+    return result
 
 
 def channel_results(d, native, entry_root, baseline=None):
@@ -894,6 +910,13 @@ def channel_results(d, native, entry_root, baseline=None):
                     if 'semanticComparison' in paired:
                         cell['semanticComparison'] = paired['semanticComparison']
                         cell['covered'].append('fixed-ts-v2-semantic-business-comparison')
+                        bindings = channel_v2_wire_bindings(paired['semanticComparison'])
+                        carried = channel_v2_wire_bindings({**paired['semanticComparison'],
+                                                          'wireBindings': paired.get('wireBindings')})
+                        if bindings is not None and carried == bindings:
+                            cell['wireBindings'] = bindings
+                            cell['missing'] = [item for item in cell['missing'] if item not in CHANNEL_V2_WIRE_GAPS]
+                            cell['covered'].extend(CHANNEL_V2_WIRE_GAPS)
                 else:
                     cell['missing'].append('registered-profile-transport-contract-adapter')
             else:

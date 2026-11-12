@@ -579,7 +579,7 @@ class ChannelV2Controls(unittest.TestCase):
             v2._outbound({'wire': [reply]}, 'wecom', trace, {'source': 'wire', 'index': 0}, 'final', 'same')
 
     def test_fixed_normalizer_pair_requires_both_complete_preserved_roots(self):
-        raw, records, files = fixture()
+        raw, records, files = full_wire_fixture()
         ts_raw = copy.deepcopy(raw)
         ts_raw['engine'] = 'ts'
         with tempfile.TemporaryDirectory() as temp:
@@ -595,6 +595,556 @@ class ChannelV2Controls(unittest.TestCase):
             (roots[1] / 'project/extra.txt').write_text('unregistered business file')
             with self.assertRaisesRegex(ValueError, 'PAIR_DURABLE_ORIGINALS'):
                 v2.compare_pair(ts_raw, raw, records, records, files, files, ts_root=roots[0], native_root=roots[1])
+
+
+def http_wire_fixture(*, second_socket=False, chunked=False):
+    """Synthetic original bytes in the real observer's server-side row shape."""
+    raw = {'runtime': {'mockPort': 28690, 'controlPort': 28610},
+           'http': [], 'models': [], 'wire': [], 'controlFrames': []}
+    records = []
+
+    def add(kind, **fields):
+        records.append({'kind': kind, 'sequence': len(records), **fields})
+
+    for index in range(2):
+        socket = {'id': index + 1 if second_socket else 1, 'localHost': '127.0.0.1',
+                  'localPort': 28690, 'remoteHost': '127.0.0.1',
+                  'remotePort': 41000 + index if second_socket else 41000}
+        target = '/channel/out?part=' + str(index)
+        body = b'{"text":"unit"}'
+        response_body = b'{"ok":true}'
+        request_headers = ['Host', '127.0.0.1:28690', 'Authorization', 'Bearer fixture',
+                           'Content-Length', str(len(body)), 'X-Repeat', 'first', 'X-Repeat', 'second']
+        request_head = ('POST ' + target + ' HTTP/1.1\r\n' + ''.join(
+            f'{key}: {value}\r\n' for key, value in zip(request_headers[::2], request_headers[1::2])) + '\r\n').encode()
+        request_wire = request_head + body
+        for chunk in (request_wire[:11], request_wire[11:]):
+            add('fixture-tcp-data', socket=copy.deepcopy(socket), payload=blob(chunk))
+        raw['http'].append({'method': 'POST', 'path': '/channel/out', 'body': json.loads(body),
+                            'authorization': 'Bearer fixture'})
+        add('mock-http-request', id=index, socket=copy.deepcopy(socket), method='POST', url=target,
+            headers={'host': '127.0.0.1:28690', 'authorization': 'Bearer fixture',
+                     'content-length': str(len(body)), 'x-repeat': 'first, second'},
+            rawHeaders=request_headers, body=blob(body))
+        response_headers = {'content-type': 'application/json',
+                            'transfer-encoding' if chunked else 'content-length':
+                                'chunked' if chunked else str(len(response_body))}
+        response_head = 'HTTP/1.1 200 Kept reason\r\n' + ''.join(
+            f'{key}: {value}\r\n' for key, value in response_headers.items()) + '\r\n'
+        response_wire = response_head.encode() + (f'{len(response_body):x}\r\n'.encode() + response_body + b'\r\n0\r\nX-Trailer: kept\r\n\r\n'
+                                                    if chunked else response_body)
+        for chunk in (response_wire[:9], response_wire[9:]):
+            add('fixture-tcp-write', socket=copy.deepcopy(socket), payload=blob(chunk))
+        add('mock-http-response', id=index, status=200, finished=True, headers=response_headers,
+            actualHeaderText=response_head, body=blob(response_body))
+    return raw, records
+
+
+class ChannelHttpWireControls(unittest.TestCase):
+    def _preconnect_rows(self):
+        raw = {'runtime': {'mockPort': 28690, 'controlPort': 28610}}
+        partial = {'id': 4, 'localHost': '127.0.0.1', 'localPort': 41000,
+                   'remoteHost': None, 'remotePort': None}
+        complete = {**partial, 'remoteHost': '127.0.0.1', 'remotePort': 28610}
+        return raw, [
+            {'sequence': 0, 'kind': 'fixture-tcp-write', 'socket': partial,
+             'payload': blob(b'GET /ws HTTP/1.1\r\n\r\n')},
+            {'sequence': 1, 'kind': 'fixture-tcp-connect', 'socket': complete},
+            {'sequence': 2, 'kind': 'fixture-tcp-data', 'socket': copy.deepcopy(complete),
+             'payload': blob(b'HTTP/1.1 101 Switching Protocols\r\n\r\n')}]
+
+    def test_preconnect_bytes_bind_only_to_same_socket_connect(self):
+        raw, records = self._preconnect_rows()
+        stream = v2.owned_tcp_streams(raw, records)[4]
+        self.assertEqual(stream['socket'], records[1]['socket'])
+        self.assertEqual(stream['write'], v2.payload(records[0]['payload']))
+        self.assertEqual(stream['endpointProof'], {'connectSequence': 1, 'preConnectSequences': [0]})
+        self.assertIsNone(records[0]['socket']['remotePort'], 'original capture must stay untouched')
+
+    def test_later_tcp_or_url_cannot_replace_missing_connect(self):
+        raw, records = self._preconnect_rows()
+        records[0]['socket']['url'] = 'ws://127.0.0.1:28610/ws'
+        records.pop(1)
+        with self.assertRaisesRegex(ValueError, 'TCP_CONNECT_REQUIRED'):
+            v2.owned_tcp_streams(raw, records)
+
+    def test_connect_cannot_change_known_endpoint_or_socket_identity(self):
+        for change, rule in [('known', 'TCP_SOCKET_IDENTITY'), ('id', 'TCP_CONNECT_REQUIRED'),
+                             ('incomplete', 'TCP_CONNECT_ENDPOINT')]:
+            with self.subTest(change=change):
+                raw, records = self._preconnect_rows()
+                if change == 'known':
+                    records[0]['socket']['localPort'] += 1
+                elif change == 'id':
+                    records[1]['socket']['id'] += 1
+                else:
+                    records[1]['socket']['remoteHost'] = None
+                with self.assertRaisesRegex(ValueError, rule):
+                    v2.owned_tcp_streams(raw, records)
+
+    def test_duplicate_connect_and_partial_after_connect_are_rejected(self):
+        for change, rule in [('duplicate', 'TCP_CONNECT_IDENTITY'), ('late', 'TCP_CONNECT_REQUIRED')]:
+            with self.subTest(change=change):
+                raw, records = self._preconnect_rows()
+                if change == 'duplicate':
+                    records.append({**copy.deepcopy(records[1]), 'sequence': 3})
+                else:
+                    records[0], records[1] = records[1], records[0]
+                    for index, row in enumerate(records):
+                        row['sequence'] = index
+                with self.assertRaisesRegex(ValueError, rule):
+                    v2.owned_tcp_streams(raw, records)
+
+    def test_real_server_row_shape_binds_split_chunks_and_fifo(self):
+        raw, records = http_wire_fixture()
+        result = v2.http_wire_observation(raw, records)
+        self.assertEqual([pair['request']['target'] for pair in result['exchanges']],
+                         ['/channel/out?part=0', '/channel/out?part=1'])
+        self.assertEqual(result['exchanges'][0]['request']['headers']['x-repeat'], ['first', 'second'])
+        self.assertEqual(result['exchanges'][0]['response']['line'], 'HTTP/1.1 200 Kept reason')
+        self.assertEqual(result['exchanges'][0]['response']['body'], b'{"ok":true}')
+        self.assertFalse(result['formalAcceptance'])
+
+    def test_chunked_bytes_and_trailers_are_retained(self):
+        raw, records = http_wire_fixture(chunked=True)
+        result = v2.http_wire_observation(raw, records)
+        self.assertEqual(result['exchanges'][0]['response']['trailers'], {'x-trailer': ['kept']})
+
+    def test_coalesced_pipelined_messages_still_bind_fifo(self):
+        raw, original = http_wire_fixture()
+        requests = [copy.deepcopy(row) for row in original if row['kind'] == 'mock-http-request']
+        responses = [copy.deepcopy(row) for row in original if row['kind'] == 'mock-http-response']
+        incoming = b''.join(v2.payload(row['payload']) for row in original if row['kind'] == 'fixture-tcp-data')
+        outgoing = b''.join(v2.payload(row['payload']) for row in original if row['kind'] == 'fixture-tcp-write')
+        socket = copy.deepcopy(requests[0]['socket'])
+        records = [{'kind': 'fixture-tcp-data', 'socket': socket, 'payload': blob(incoming)}, *requests,
+                   {'kind': 'fixture-tcp-write', 'socket': socket, 'payload': blob(outgoing)}, *responses]
+        for sequence, row in enumerate(records):
+            row['sequence'] = sequence
+        result = v2.http_wire_observation(raw, records)
+        self.assertEqual([pair['request']['target'] for pair in result['exchanges']],
+                         ['/channel/out?part=0', '/channel/out?part=1'])
+
+    def test_same_body_cannot_supply_another_socket_request(self):
+        raw, records = http_wire_fixture(second_socket=True)
+        requests = [row for row in records if row['kind'] == 'mock-http-request']
+        requests[0]['socket'], requests[1]['socket'] = requests[1]['socket'], requests[0]['socket']
+        with self.assertRaisesRegex(ValueError, 'HTTP_WIRE_REQUEST|HTTP_WIRE_EVENT_ORDER'):
+            v2.http_wire_observation(raw, records)
+
+    def test_unclaimed_raw_business_connection_is_rejected(self):
+        raw, records = http_wire_fixture(second_socket=True)
+        extra = copy.deepcopy([row for row in records if row['kind'].startswith('fixture-tcp')
+                               and row['socket']['id'] == 2])
+        for row in extra:
+            row['socket']['id'] = 99
+            row['socket']['remotePort'] = 41999
+            row['sequence'] = len(records)
+            records.append(row)
+        with self.assertRaisesRegex(ValueError, 'HTTP_WIRE_UNCLAIMED_EXCHANGE'):
+            v2.http_wire_observation(raw, records)
+
+    def test_missing_bytes_are_not_reconstructed_from_json(self):
+        raw, records = http_wire_fixture()
+        records = [row for row in records if not row['kind'].startswith('fixture-tcp')]
+        with self.assertRaisesRegex(ValueError, 'HTTP_WIRE_SOCKET'):
+            v2.http_wire_observation(raw, records)
+
+    def test_raw_query_and_status_reason_cannot_disagree_with_logical_rows(self):
+        for change in ('query', 'status'):
+            with self.subTest(change=change):
+                raw, records = http_wire_fixture()
+                if change == 'query':
+                    row = next(row for row in records if row['kind'] == 'mock-http-request')
+                    row['url'] = '/channel/out?part=other'
+                else:
+                    row = next(row for row in records if row['kind'] == 'mock-http-response')
+                    row['actualHeaderText'] = row['actualHeaderText'].replace('Kept reason', 'Invented reason')
+                with self.assertRaisesRegex(ValueError, 'HTTP_WIRE_REQUEST|HTTP_WIRE_RESPONSE'):
+                    v2.http_wire_observation(raw, records)
+
+    def test_truncation_endpoint_reuse_and_response_tail_fail(self):
+        for change, rule in [('truncated', 'TRANSPORT_BYTES'), ('endpoint', 'TCP_SOCKET_IDENTITY'),
+                             ('tail', 'HTTP_RAW_|HTTP_WIRE_')]:
+            with self.subTest(change=change):
+                raw, records = http_wire_fixture()
+                if change == 'truncated':
+                    records[0]['payload']['truncated'] = True
+                elif change == 'endpoint':
+                    records[1]['socket']['remotePort'] += 1
+                else:
+                    row = next(row for row in reversed(records) if row['kind'] == 'fixture-tcp-write')
+                    row['payload'] = blob(v2.payload(row['payload']) + b'unregistered tail')
+                with self.assertRaisesRegex(ValueError, rule):
+                    v2.http_wire_observation(raw, records)
+
+    def test_mock_upgrade_preserves_exact_offsets_and_unparsed_frame_bytes(self):
+        raw = {'runtime': {'mockPort': 28690, 'controlPort': 28610},
+               'http': [], 'models': [], 'wire': [], 'controlFrames': []}
+        socket = {'id': 8, 'localHost': '127.0.0.1', 'localPort': 28690,
+                  'remoteHost': '127.0.0.1', 'remotePort': 41000}
+        request = b'GET /feishu/stream?service_id=77 HTTP/1.1\r\nUpgrade: websocket\r\n\r\n'
+        response = b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n'
+        records = [{'sequence': 0, 'kind': 'fixture-tcp-data', 'socket': socket,
+                    'payload': blob(request + b'\x81\x80abcd')},
+                   {'sequence': 1, 'kind': 'fixture-tcp-write', 'socket': socket,
+                    'payload': blob(response + b'\x81\x00')}]
+        result = v2.http_wire_observation(raw, records)
+        upgrade = result['upgrades'][0]
+        self.assertEqual(upgrade['requestOffset'], len(request))
+        self.assertEqual(upgrade['responseOffset'], len(response))
+        self.assertEqual(upgrade['request']['headerBytes'], request)
+        self.assertEqual(result['streams'][8]['read'][upgrade['requestOffset']:], b'\x81\x80abcd')
+        self.assertFalse(result['formalAcceptance'], 'HTTP boundary is not a WS handshake/frame verdict')
+
+    def test_informational_before_upgrade_is_explicitly_unsupported(self):
+        raw = {'runtime': {'mockPort': 28690, 'controlPort': 28610},
+               'http': [], 'models': [], 'wire': [], 'controlFrames': []}
+        socket = {'id': 8, 'localHost': '127.0.0.1', 'localPort': 28690,
+                  'remoteHost': '127.0.0.1', 'remotePort': 41000}
+        request = b'GET /stream HTTP/1.1\r\nUpgrade: websocket\r\n\r\n'
+        upgrade = b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n'
+        for informational in (b'HTTP/1.1 100 Continue\r\n\r\n',
+                              b'HTTP/1.1 103 Early Hints\r\nLink: </kept>\r\n\r\n'):
+            with self.subTest(informational=informational):
+                records = [{'sequence': 0, 'kind': 'fixture-tcp-data', 'socket': socket,
+                            'payload': blob(request)},
+                           {'sequence': 1, 'kind': 'fixture-tcp-write', 'socket': socket,
+                            'payload': blob(informational + upgrade)}]
+                with self.assertRaisesRegex(ValueError, 'HTTP_WIRE_INFORMATIONAL_UPGRADE'):
+                    v2.http_wire_observation(raw, records)
+
+
+def ws_wire_frame(value, *, masked=False, opcode=1, fin=True, length_code=None, mask_key=b'\x12\x34\x56\x78'):
+    """Independent byte fixture; no production encoder or decoded-only evidence."""
+    size = len(value)
+    code = length_code if length_code is not None else (size if size < 126 else (126 if size < 65536 else 127))
+    head = bytes([(128 if fin else 0) | opcode, (128 if masked else 0) | code])
+    if code == 126:
+        head += size.to_bytes(2, 'big')
+    elif code == 127:
+        head += size.to_bytes(8, 'big')
+    return head + (mask_key + bytes(value[i] ^ mask_key[i % 4] for i in range(size)) if masked else value)
+
+
+def ws_wire_fixture(role='mock-server', *, fragmented=False, binary=False, length_code=None, payload_size=None):
+    raw = {'runtime': {'mockPort': 28690, 'controlPort': 28610},
+           'http': [], 'models': [], 'wire': [], 'controlFrames': []}
+    server = role == 'mock-server'
+    socket = {'id': 18, 'localHost': '127.0.0.1', 'localPort': 28690 if server else 41000,
+              'remoteHost': '127.0.0.1', 'remotePort': 41000 if server else 28610}
+    if not server:
+        socket['url'] = 'ws://127.0.0.1:28610/ws?token=fixture'
+    request = (b'GET /ws?token=fixture HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n'
+               b'Connection: keep-alive, Upgrade\r\nSec-WebSocket-Version: 13\r\n'
+               b'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n'
+               b'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n\r\n')
+    response = (b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+                b'Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n')
+    records = []
+    def add(kind, data, **fields):
+        records.append({'sequence': len(records), 'kind': kind, 'socket': copy.deepcopy(socket),
+                        'payload': blob(data), **fields})
+    add('fixture-tcp-data' if server else 'fixture-tcp-write', request)
+    add('fixture-tcp-write' if server else 'fixture-tcp-data', response)
+    sent, received = b'{"send":1}', b'{"ok":true}'
+    if payload_size is not None:
+        sent, received = b'"' + b's' * (payload_size - 2) + b'"', b'"' + b'r' * (payload_size - 2) + b'"'
+    sends = [sent[:5], sent[5:]] if fragmented else [sent]
+    for index, part in enumerate(sends):
+        add('fixture-ws-send', part)
+        frame = ws_wire_frame(part, masked=not server, opcode=1 if index == 0 else 0,
+                              fin=index == len(sends) - 1, length_code=length_code)
+        # Split within the original header, not only at whole-frame boundaries.
+        add('fixture-tcp-write', frame[:1])
+        add('fixture-tcp-write', frame[1:])
+    receives = [received[:7], received[7:]] if fragmented else [received]
+    for index, part in enumerate(receives):
+        frame = ws_wire_frame(part, masked=server, opcode=(2 if binary else 1) if index == 0 else 0,
+                              fin=index == len(receives) - 1, length_code=length_code)
+        add('fixture-tcp-data', frame[:1])
+        add('fixture-tcp-data', frame[1:])
+        if fragmented and index == 0:
+            add('fixture-tcp-data', ws_wire_frame(b'ping', masked=server, opcode=9))
+    add('fixture-ws-receive', received, binary=binary)
+    raw['wire' if server else 'controlFrames'].append(
+        {'binary': v2.base64.b64encode(received).decode()} if server and binary else json.loads(received))
+    return raw, records
+
+
+class WebSocketWireControls(unittest.TestCase):
+    def test_real_upgrade_both_roles_split_headers_and_api_bindings(self):
+        for role in ('mock-server', 'control-client'):
+            with self.subTest(role=role):
+                raw, records = ws_wire_fixture(role)
+                observed = v2.ws_wire_observation(raw, records)
+                connection = observed['connections'][0]
+                self.assertEqual(connection['role'], role)
+                self.assertEqual(connection['upgrade']['request']['target'], '/ws?token=fixture')
+                self.assertEqual(connection['directions']['read']['messages'][0]['payload'], b'{"ok":true}')
+                self.assertEqual([row['kind'] for row in connection['apiBindings']], ['send', 'receive'])
+                self.assertFalse(observed['formalAcceptance'])
+
+    def test_fragment_reassembly_control_interleaving_and_send_call_boundaries(self):
+        for role in ('mock-server', 'control-client'):
+            with self.subTest(role=role):
+                raw, records = ws_wire_fixture(role, fragmented=True, binary=True)
+                connection = v2.ws_wire_observation(raw, records)['connections'][0]
+                incoming = connection['directions']['read']
+                self.assertEqual([row['opcode'] for row in incoming['frames']], [2, 9, 0])
+                self.assertEqual(incoming['messages'][0]['frames'], [0, 2])
+                self.assertTrue(incoming['messages'][0]['binary'])
+                self.assertEqual([row['kind'] for row in connection['apiBindings']], ['send', 'send', 'receive'])
+                self.assertEqual(len(connection['interleaving']), 5)
+
+    def test_length_encoding_and_actual_mask_bytes_are_preserved(self):
+        headers = []
+        for code, size in ((None, 10), (126, 126), (127, 65536)):
+            raw, records = ws_wire_fixture(length_code=code, payload_size=size)
+            frame = v2.ws_wire_observation(raw, records)['connections'][0]['directions']['read']['frames'][0]
+            self.assertEqual(frame['lengthCode'], size if code is None else code)
+            self.assertTrue(frame['wireHeaderHex'].endswith('12345678'))
+            self.assertEqual(frame['wireHex'], frame['wireHeaderHex'] + frame['wirePayloadHex'])
+            headers.append(frame['wireHeaderHex'])
+        self.assertEqual(len(set(headers)), 3, 'original short, 16-bit and 64-bit headers remain distinct')
+
+    def test_nonminimal_extended_lengths_are_malformed_not_normalized(self):
+        for code in (126, 127):
+            with self.subTest(code=code):
+                raw, records = ws_wire_fixture(length_code=code)
+                with self.assertRaisesRegex(ValueError, 'WS_WIRE_NONMINIMAL_LENGTH'):
+                    v2.ws_wire_observation(raw, records)
+
+    def test_control_api_url_must_match_actual_endpoint_and_upgrade_target(self):
+        for url in (None, 'ws://127.0.0.1:28611/ws?token=fixture',
+                    'ws://127.0.0.1:28610/other?token=fixture'):
+            with self.subTest(url=url):
+                raw, records = ws_wire_fixture('control-client')
+                for row in records:
+                    if row['kind'].startswith('fixture-ws-'):
+                        row['socket']['url'] = url
+                with self.assertRaisesRegex(ValueError, 'WS_WIRE_API_TARGET'):
+                    v2.ws_wire_observation(raw, records)
+
+    def test_untrusted_handshake_fields_fail_at_actual_tcp_boundary(self):
+        changes = [('key', 'WS_WIRE_UPGRADE_KEY'), ('accept', 'WS_WIRE_UPGRADE_ACCEPT'),
+                   ('connection', 'WS_WIRE_UPGRADE_CONNECTION'), ('extension', 'WS_WIRE_UNSUPPORTED_EXTENSION'),
+                   ('protocol', 'WS_WIRE_UPGRADE_PROTOCOL')]
+        for change, rule in changes:
+            with self.subTest(change=change):
+                raw, records = ws_wire_fixture()
+                index = 0 if change == 'key' else 1
+                data = v2.payload(records[index]['payload'])
+                if change == 'key':
+                    data = data.replace(b'dGhlIHNhbXBsZSBub25jZQ==', b'YQ==')
+                elif change == 'accept':
+                    data = data.replace(b's3pPLMBiTxaQ9kYGzzhZRbK+xOo=', b'AAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+                elif change == 'connection':
+                    data = data.replace(b'Connection: Upgrade', b'Connection: close')
+                else:
+                    extra = (b'Sec-WebSocket-Extensions: permessage-deflate' if change == 'extension'
+                             else b'Sec-WebSocket-Protocol: not-offered')
+                    data = data[:-2] + extra + b'\r\n\r\n'
+                records[index]['payload'] = blob(data)
+                with self.assertRaisesRegex(ValueError, rule):
+                    v2.ws_wire_observation(raw, records)
+
+    def test_api_payload_binary_socket_and_missing_tcp_cannot_pass(self):
+        for change, rule in [('payload', 'WS_WIRE_API_PAYLOAD'), ('binary', 'WS_WIRE_API_BINARY'),
+                             ('socket', 'WS_WIRE_API_SOCKET'), ('missing-tcp', 'WS_WIRE_API_COUNT')]:
+            with self.subTest(change=change):
+                raw, records = ws_wire_fixture()
+                receive = records[-1]
+                if change == 'payload':
+                    receive['payload'] = blob(b'{"ok":false}')
+                    raw['wire'] = [{'ok': False}]
+                elif change == 'binary':
+                    receive['binary'] = True
+                    raw['wire'] = [{'binary': v2.base64.b64encode(b'{"ok":true}').decode()}]
+                elif change == 'socket':
+                    for row in records:
+                        if row['kind'].startswith('fixture-ws-'):
+                            row['socket']['remoteHost'] = '127.0.0.2'
+                else:
+                    records = [row for row in records if not (row['kind'] == 'fixture-tcp-data' and row['sequence'] > 1)]
+                with self.assertRaisesRegex(ValueError, rule):
+                    v2.ws_wire_observation(raw, records)
+
+    def test_frames_reject_wrong_mask_rsv_opcode_incomplete_payload_and_control(self):
+        for change, rule in [('mask', 'WS_WIRE_MASK'), ('rsv', 'WS_WIRE_RSV'),
+                             ('opcode', 'WS_WIRE_OPCODE'), ('payload', 'WS_WIRE_TRUNCATED_PAYLOAD'),
+                             ('control', 'WS_WIRE_CONTROL'), ('length', 'WS_WIRE_TRUNCATED_LENGTH'),
+                             ('mask-key', 'WS_WIRE_TRUNCATED_MASK'), ('continuation', 'WS_WIRE_CONTINUATION')]:
+            with self.subTest(change=change):
+                raw, records = ws_wire_fixture()
+                incoming = [row for row in records if row['kind'] == 'fixture-tcp-data' and row['sequence'] > 1]
+                data = bytearray(b''.join(v2.payload(row['payload']) for row in incoming))
+                if change == 'mask': data[1] &= 127
+                elif change == 'rsv': data[0] |= 64
+                elif change == 'opcode': data[0] = 131
+                elif change == 'payload': del data[-1:]
+                elif change == 'control': data[0] = 9
+                elif change == 'length': data = bytearray(b'\x81\xfe\x00')
+                elif change == 'mask-key': data = bytearray(b'\x81\x80\x01')
+                else: data[0] = 128
+                incoming[0]['payload'] = blob(data)
+                incoming[1]['payload'] = blob(b'')
+                with self.assertRaisesRegex(ValueError, rule):
+                    v2.ws_wire_observation(raw, records)
+
+    def test_record_order_and_deferred_http_objects_are_authenticated(self):
+        raw, records = ws_wire_fixture()
+        send_index = next(index for index, row in enumerate(records) if row['kind'] == 'fixture-ws-send')
+        records[send_index], records[send_index + 1] = records[send_index + 1], records[send_index]
+        for sequence, row in enumerate(records): row['sequence'] = sequence
+        with self.assertRaisesRegex(ValueError, 'WS_WIRE_API_ORDER'):
+            v2.ws_wire_observation(raw, records)
+        raw, records = ws_wire_fixture()
+        forged = v2.http_wire_observation(raw, records)
+        forged['upgrades'][0]['requestOffset'] += 1
+        with self.assertRaisesRegex(ValueError, 'WS_WIRE_HTTP_BINDING'):
+            v2.ws_wire_observation(raw, records, forged)
+
+
+def full_wire_fixture(channel='qq'):
+    """Synthetic complete originals for integration controls, never a capture.
+
+    The byte fixture encoder is independent of the production parsers. This
+    helper is deliberately test-only; production never fills missing TCP data
+    from application records.
+    """
+    raw, original, files = fixture(channel)
+    records, sockets = [], {}
+    for identity, role in ((2, 'mock-server'), (3, 'control-client')):
+        _, handshake = ws_wire_fixture(role)
+        socket = copy.deepcopy(handshake[0]['socket'])
+        socket['id'] = identity
+        sockets[identity] = socket
+        for row in handshake[:2]:
+            records.append(dict(row, socket=copy.deepcopy(socket)))
+    http_socket = {'id': 1, 'localHost': '127.0.0.1', 'localPort': 28690,
+                   'remoteHost': '127.0.0.1', 'remotePort': 41001}
+    for original_row in original:
+        row = copy.deepcopy(original_row)
+        kind = row['kind']
+        if kind == 'mock-http-request':
+            body = v2.payload(row['body'])
+            row['socket'] = copy.deepcopy(http_socket)
+            row['headers']['content-length'] = str(len(body))
+            row['rawHeaders'].extend(['Content-Length', str(len(body))])
+            head = (row['method'] + ' ' + row['url'] + ' HTTP/1.1\r\n'
+                    + ''.join(f'{key}: {value}\r\n' for key, value in
+                              zip(row['rawHeaders'][::2], row['rawHeaders'][1::2])) + '\r\n')
+            records.append({'kind': 'fixture-tcp-data', 'socket': copy.deepcopy(http_socket),
+                            'payload': blob(head.encode('latin-1') + body)})
+            records.append(row)
+        elif kind == 'mock-http-response':
+            records.append({'kind': 'fixture-tcp-write', 'socket': copy.deepcopy(http_socket),
+                            'payload': blob(row['actualHeaderText'].encode('latin-1') + v2.payload(row['body']))})
+            records.append(row)
+        else:
+            assert kind in ('fixture-ws-send', 'fixture-ws-receive')
+            socket = copy.deepcopy(sockets[row['socket']['id']])
+            row['socket'] = socket
+            sending = kind == 'fixture-ws-send'
+            masked = sending == (socket['id'] == 3)
+            frame = ws_wire_frame(v2.payload(row['payload']), masked=masked,
+                                  opcode=2 if row.get('binary') else 1)
+            wire = {'kind': 'fixture-tcp-write' if sending else 'fixture-tcp-data',
+                    'socket': copy.deepcopy(socket), 'payload': blob(frame)}
+            records.extend([row, wire] if sending else [wire, row])
+    for sequence, row in enumerate(records):
+        row['sequence'] = sequence
+    return raw, records, files
+
+
+class WireProjectionControls(unittest.TestCase):
+    def test_http_then_upgrade_keeps_same_socket_relationship(self):
+        raw, http_records = http_wire_fixture()
+        ws_raw, ws_records = ws_wire_fixture()
+        raw['wire'] = ws_raw['wire']
+        separate = copy.deepcopy(http_records + ws_records)
+        for sequence, row in enumerate(separate):
+            row['sequence'] = sequence
+        combined = copy.deepcopy(separate)
+        for row in combined:
+            if row.get('socket', {}).get('id') == 18:
+                row['socket']['id'] = 1
+        self.assertNotEqual(v2.wire_projection(raw, separate), v2.wire_projection(raw, combined))
+
+    def test_trailers_and_informational_headers_reach_comparison(self):
+        raw, records = http_wire_fixture(chunked=True)
+        expected = v2.wire_projection(raw, records)
+        changed = copy.deepcopy(records)
+        row = next(row for row in changed if row['kind'] == 'fixture-tcp-write'
+                   and b'x-trailer' in v2.payload(row['payload']).lower())
+        row['payload'] = blob(v2.payload(row['payload']).replace(b'kept', b'changed'))
+        self.assertNotEqual(expected, v2.wire_projection(raw, changed))
+        raw, records = http_wire_fixture()
+        expected = v2.wire_projection(raw, records)
+        row = next(row for row in records if row['kind'] == 'fixture-tcp-write')
+        row['payload'] = blob(b'HTTP/1.1 103 Early Hints\r\nLink: </kept>\r\nDate: first\r\n\r\n' + v2.payload(row['payload']))
+        changed = v2.wire_projection(raw, records)
+        self.assertNotEqual(expected, changed)
+        self.assertEqual(changed['wireHttpStreams'][0][0]['informational'],
+                         [{'line': 'HTTP/1.1 103 Early Hints', 'headers': {'link': ['</kept>']}}])
+        row['payload'] = blob(v2.payload(row['payload']).replace(b'Date: first', b'Date: second'))
+        self.assertEqual(changed, v2.wire_projection(raw, records))
+
+    def test_control_frames_and_mask_bytes_reach_comparison(self):
+        raw, records = ws_wire_fixture('control-client')
+        expected = v2.wire_projection(raw, records)
+        changed = copy.deepcopy(records)
+        # Both mask keys encode exactly the same application message.
+        for row in changed:
+            if row['kind'] == 'fixture-tcp-write' and v2.payload(row['payload']) == b'\x81':
+                continue
+            if row['kind'] == 'fixture-tcp-write' and b'GET ' not in v2.payload(row['payload']):
+                row['payload'] = blob(ws_wire_frame(b'{"send":1}', masked=True,
+                                                   mask_key=b'abcd')[1:])
+                break
+        self.assertNotEqual(expected, v2.wire_projection(raw, changed))
+        changed = copy.deepcopy(records)
+        changed.append({'kind': 'fixture-tcp-data', 'socket': copy.deepcopy(changed[0]['socket']),
+                        'payload': blob(ws_wire_frame(b'ping', opcode=9)), 'sequence': len(changed)})
+        projected = v2.wire_projection(raw, changed)
+        self.assertNotEqual(expected, projected)
+        self.assertEqual(projected['wireWebsocketStreams'][0]['frames'][-1]['opcode'], 9)
+
+    def test_compare_pair_requires_wire_and_compares_real_mask_bytes(self):
+        raw, records, files = full_wire_fixture()
+        ts_raw = copy.deepcopy(raw)
+        ts_raw['engine'] = 'ts'
+        with tempfile.TemporaryDirectory() as temp:
+            roots = [Path(temp) / name for name in ('ts', 'native')]
+            for root in roots:
+                for original, data in files.items():
+                    path = root / Path(original).relative_to('/test/cur')
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+            def compare(native_records):
+                return v2.compare_pair(ts_raw, raw, records, native_records, files, files,
+                                       ts_root=roots[0], native_root=roots[1])
+            equal = compare(records)
+            self.assertTrue(equal['equal'])
+            self.assertEqual(equal['wireBindings'], [
+                {'engine': engine, 'httpSameSocket': True, 'websocketFrames': True}
+                for engine in ('ts', 'native')])
+            self.assertFalse(equal['formalAcceptance'])
+            missing = [row for row in records if not row['kind'].startswith('fixture-tcp')]
+            with self.assertRaisesRegex(ValueError, 'HTTP_WIRE_SOCKET'):
+                compare(missing)
+            changed = copy.deepcopy(records)
+            for index, row in enumerate(changed):
+                if (row['kind'] == 'fixture-tcp-write' and row['socket']['id'] == 3
+                        and changed[index - 1]['kind'] == 'fixture-ws-send'):
+                    row['payload'] = blob(ws_wire_frame(v2.payload(changed[index - 1]['payload']),
+                                                       masked=True, mask_key=b'abcd'))
+                    break
+            unequal = compare(changed)
+            self.assertFalse(unequal['equal'])
+            self.assertIn('wireWebsocketStreams', unequal['differentFields'])
+            self.assertFalse(unequal['formalAcceptance'])
 
 
 if __name__ == '__main__':

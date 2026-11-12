@@ -520,6 +520,87 @@ class ChannelProvenance(unittest.TestCase):
         observe.assert_called_once()
         compare.assert_not_called()
 
+    def _wire_proof_cell(self, comparison, carried):
+        """Exercise aggregation only; the comparator/process proof is a stub."""
+        self.write_json('manifest.json', [
+            {'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},
+            {'path': 'pilotdeck-agent-loop-sidecar', 'sha256': 'unit-sidecar'}])
+        native = types.SimpleNamespace(manifest=self.out / 'manifest.json', source_sha='unit-source',
+                                       source={'files': []})
+        raw_ref = self.write_json('native-evidence.json', {
+            'sourceManifestSha256': 'unit-source', 'gatewaySha256': 'unit-native',
+            'sidecarSha256': 'unit-sidecar', 'fixedTS': self.d.RETIREMENT_BASELINE_REVISION})
+        row = {'id': 'gateway.channel:telegram', 'profile': 'native-eight-v2',
+               'rawEvidence': raw_ref, 'processReceipt': {'path': 'unit-native-provenance'}}
+        self.write_json('channels.json', {'schemaVersion': 1, 'entries': [row]})
+        transport = self.out / 'transport.jsonl'
+        transport.write_text('')
+        evidence = dict(self.evidence, receipt={'transportTrace': reference(transport)})
+        applicability = {'attachment': {'applicable': True, 'kinds': ['image']},
+                         'channelInteraction': {'applicable': False, 'kinds': []}}
+        paired = {'semanticComparison': comparison, 'wireBindings': carried,
+                  'missing': ['unit-other-production-gap'], 'originals': []}
+        with patch.object(entries, 'verify_owned_process', return_value=evidence), \
+                patch.object(entries, 'channel_applicability', return_value=applicability), \
+                patch.object(entries, 'channel_v2_comparison', return_value=paired):
+            return entries.channel_results(self.d, native, self.out,
+                                           baseline=self.out / 'unused-baseline')[row['id']]
+
+    def test_complete_equal_wire_proof_clears_only_two_gaps(self):
+        bindings = [{'engine': engine, 'httpSameSocket': True, 'websocketFrames': True}
+                    for engine in ('ts', 'native')]
+        comparison = {'equal': True, 'differentFields': [], 'formalAcceptance': False,
+                      'wireBindings': bindings}
+        cell = self._wire_proof_cell(comparison, copy.deepcopy(bindings))
+        self.assertEqual(cell['wireBindings'], bindings)
+        for gap in entries.CHANNEL_V2_WIRE_GAPS:
+            self.assertNotIn(gap, cell['missing'])
+            self.assertIn(gap, cell['covered'])
+        self.assertEqual(cell['status'], 'BLOCKED')
+        self.assertIn('attachment:image:production-scenario', cell['missing'])
+        self.assertIn('unit-other-production-gap', cell['missing'])
+        self.assertIn('fixed-ts-business-contract-comparison', cell['missing'])
+        self.assertNotIn('comparison', cell)
+        self.assertIs(cell['semanticComparison']['formalAcceptance'], False)
+
+    def test_partial_duplicate_or_nonboolean_wire_proofs_keep_gaps(self):
+        good = [{'engine': engine, 'httpSameSocket': True, 'websocketFrames': True}
+                for engine in ('ts', 'native')]
+        cases = [None, [], good[:1], [good[0], good[0]],
+                 [good[0], {**good[1], 'engine': 'other'}],
+                 [good[0], {**good[1], 'httpSameSocket': 1}],
+                 [good[0], {**good[1], 'websocketFrames': 'true'}],
+                 [good[0], {**good[1], 'websocketFrames': False}],
+                 [good[0], {'engine': 'native', 'httpSameSocket': True}],
+                 [good[0], {**good[1], 'extra': True}]]
+        for bindings in cases:
+            with self.subTest(bindings=bindings):
+                comparison = {'equal': True, 'differentFields': [], 'formalAcceptance': False,
+                              'wireBindings': bindings}
+                cell = self._wire_proof_cell(comparison, bindings)
+                self.assertEqual(cell['status'], 'BLOCKED', cell)
+                self.assertNotIn('wireBindings', cell)
+                for gap in entries.CHANNEL_V2_WIRE_GAPS:
+                    self.assertIn(gap, cell['missing'])
+                    self.assertNotIn(gap, cell['covered'])
+
+    def test_wire_proof_requires_equal_comparison_and_carried_proof(self):
+        bindings = [{'engine': engine, 'httpSameSocket': True, 'websocketFrames': True}
+                    for engine in ('ts', 'native')]
+        base = {'equal': True, 'differentFields': [], 'formalAcceptance': False,
+                'wireBindings': bindings}
+        cases = [({**base, 'equal': False}, bindings), ({**base, 'equal': 1}, bindings),
+                 ({**base, 'differentFields': ['wireConnections']}, bindings),
+                 ({**base, 'formalAcceptance': True}, bindings),
+                 (base, None), (base, [bindings[0], {**bindings[1], 'httpSameSocket': 1}])]
+        for comparison, carried in cases:
+            with self.subTest(comparison=comparison, carried=carried):
+                cell = self._wire_proof_cell(comparison, carried)
+                self.assertEqual(cell['status'], 'BLOCKED', cell)
+                self.assertNotIn('wireBindings', cell)
+                for gap in entries.CHANNEL_V2_WIRE_GAPS:
+                    self.assertIn(gap, cell['missing'])
+
     def test_semantic_equality_and_retained_tcp_chunks_do_not_certify_wire(self):
         self.write_json('manifest.json', [
             {'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},

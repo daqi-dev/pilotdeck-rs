@@ -56,9 +56,12 @@ if(process.env.PDRS_BASELINE){const require=createRequire(path.join(process.env.
 // Real bytes for protocol mocks that intentionally use net instead of HTTP
 // (SMTP/IMAP and manual HTTP/WS peers). Never inspect a foreign socket or stdio.
 const tcpIds=new WeakMap();let tcpSequence=0;
-function tcpSocket(socket){if(!socket.localPort&&!socket.remotePort)return null;if(!tcpIds.has(socket))tcpIds.set(socket,tcpSequence++);return {id:tcpIds.get(socket),localHost:socket.localAddress??null,localPort:socket.localPort??null,remoteHost:socket.remoteAddress??null,remotePort:socket.remotePort??null};}
+// A real TCP write may be queued before connect exposes either endpoint.
+// Preserve those original bytes under the same object identity; the separate
+// connect event supplies actual endpoints, never a URL-derived guess.
+function tcpSocket(socket){if(!socket.localPort&&!socket.remotePort&&!socket.connecting)return null;if(!tcpIds.has(socket))tcpIds.set(socket,tcpSequence++);return {id:tcpIds.get(socket),localHost:socket.localAddress??null,localPort:socket.localPort??null,remoteHost:socket.remoteAddress??null,remotePort:socket.remotePort??null};}
 const tcpWrite=net.Socket.prototype.write,tcpEmit=net.Socket.prototype.emit;
 net.Socket.prototype.write=function(chunk,encoding,...args){const socket=tcpSocket(this);if(socket)append('fixture-tcp-write',{socket,payload:body(bytes(chunk,encoding))});return tcpWrite.call(this,chunk,encoding,...args);};
-net.Socket.prototype.emit=function(event,...args){if(event==='data'){const socket=tcpSocket(this);if(socket)append('fixture-tcp-data',{socket,payload:body(args[0])});}return tcpEmit.call(this,event,...args);};
+net.Socket.prototype.emit=function(event,...args){if(event==='data'||event==='connect'){const socket=tcpSocket(this);if(socket)append(event==='data'?'fixture-tcp-data':'fixture-tcp-connect',event==='data'?{socket,payload:body(args[0])}:{socket});}return tcpEmit.call(this,event,...args);};
 syncBuiltinESMExports();
 process.once('exit',()=>{try{save('observer-source.json',{path:new URL(import.meta.url).pathname,sha256:sha(new URL(import.meta.url)),ownerPid:process.pid,records:records.length});save('owned-processes.json',records);}catch{}});

@@ -68,6 +68,7 @@ common = _load('common', _apparatus / 'common.py')
 # <<< apparatus bootstrap
 import atexit
 import base64
+import hashlib
 import json
 import re
 import shutil
@@ -233,6 +234,400 @@ def transport_observation(raw, records):
     require([json.loads(payload(row['payload'])) for row in control_received] == raw['controlFrames'], 'CONTROL_ORIGINALS')
     return {'exchanges': exchanges, 'channelSent': channel_sent, 'channelReceived': channel_received,
             'controlSent': control_sent, 'controlReceived': control_received}
+
+
+def owned_tcp_streams(raw, records):
+    """Keep original bytes; complete unknown endpoints only from real connect."""
+    mock, control = raw['runtime']['mockPort'], raw['runtime']['controlPort']
+    require(type(mock) is type(control) is int and 0 < mock < 65536
+            and 0 < control < 65536 and mock != control, 'PORTS')
+    sequences = [row['sequence'] for row in records]
+    require(all(type(value) is int for value in sequences)
+            and sequences == sorted(set(sequences)), 'TRANSPORT_SEQUENCE')
+    fields = ('localHost', 'localPort', 'remoteHost', 'remotePort')
+    grouped = {}
+    for row in records:
+        if row.get('kind') not in ('fixture-tcp-data', 'fixture-tcp-write', 'fixture-tcp-connect'):
+            continue
+        socket = row['socket']
+        require(isinstance(socket, dict), 'TCP_SOCKET_IDENTITY')
+        identity = socket.get('id')
+        require(type(identity) is int and identity >= 0, 'TCP_SOCKET_IDENTITY')
+        require(all(key in socket for key in fields), 'TCP_SOCKET_ENDPOINT')
+        for key in fields:
+            value = socket[key]
+            require(value is None or (type(value) is int and 0 < value < 65536
+                    if key.endswith('Port') else isinstance(value, str) and bool(value)), 'TCP_SOCKET_ENDPOINT')
+        grouped.setdefault(identity, []).append(row)
+    streams = {}
+    for identity, rows in grouped.items():
+        connected = [row for row in rows if row['kind'] == 'fixture-tcp-connect']
+        require(len(connected) <= 1, 'TCP_CONNECT_IDENTITY')
+        if connected:
+            connect = connected[0]
+            require(all(connect['socket'][key] is not None for key in fields), 'TCP_CONNECT_ENDPOINT')
+            endpoint = {key: connect['socket'][key] for key in ('id', *fields)}
+        else:
+            connect = None
+            endpoint = {key: rows[0]['socket'][key] for key in ('id', *fields)}
+            require(all(endpoint[key] is not None for key in fields), 'TCP_CONNECT_REQUIRED')
+        partial = []
+        for row in rows:
+            socket = row['socket']
+            require(all(socket[key] is None or socket[key] == endpoint[key] for key in fields),
+                    'TCP_SOCKET_IDENTITY')
+            if any(socket[key] is None for key in fields):
+                require(connect is not None and row['sequence'] < connect['sequence'], 'TCP_CONNECT_REQUIRED')
+                partial.append(row['sequence'])
+        server, client = endpoint['localPort'] == mock, endpoint['remotePort'] == control
+        require(server != client, 'TCP_SOCKET_SCOPE')
+        role = 'mock-server' if server else 'control-client'
+        stream = {'socket': endpoint, 'role': role, 'readChunks': [], 'writeChunks': [],
+                  'endpointProof': {'connectSequence': None if connect is None else connect['sequence'],
+                                    'preConnectSequences': partial}}
+        for row in rows:
+            if row['kind'] == 'fixture-tcp-connect':
+                continue
+            direction = 'readChunks' if row['kind'] == 'fixture-tcp-data' else 'writeChunks'
+            stream[direction].append((row['sequence'], payload(row['payload'])))
+        stream['read'] = b''.join(data for _, data in stream['readChunks'])
+        stream['write'] = b''.join(data for _, data in stream['writeChunks'])
+        streams[identity] = stream
+    return streams
+
+
+def _tcp_span(chunks, start, end):
+    offset, sequences = 0, []
+    for sequence, data in chunks:
+        if offset < end and offset + len(data) > start:
+            sequences.append(sequence)
+        offset += len(data)
+    require(sequences and start < end, 'HTTP_WIRE_SPAN')
+    return min(sequences), max(sequences)
+
+
+def http_wire_observation(raw, records, trace=None):
+    """Bind every mock HTTP record to its actual server socket FIFO exchange.
+
+    Upgrade offsets explicitly hand the untouched remaining bytes to the WS
+    verifier. This function does not certify those frames or formal acceptance.
+    """
+    trace = transport_observation(raw, records) if trace is None else trace
+    streams = owned_tcp_streams(raw, records)
+    expected, responses = {}, {}
+    for pair in trace['exchanges']:
+        request, response = pair['request'], pair['response']
+        socket = request['socket']
+        identity = socket.get('id')
+        require(type(identity) is int and identity >= 0 and identity in streams, 'HTTP_WIRE_SOCKET')
+        stream = streams[identity]
+        require(stream['role'] == 'mock-server'
+                and all(socket.get(key) == value for key, value in stream['socket'].items()), 'HTTP_WIRE_SOCKET')
+        require(request['id'] not in responses, 'HTTP_DUPLICATE')
+        responses[request['id']] = response
+        expected.setdefault(identity, []).append(pair)
+    bound, upgrades = {}, []
+    for identity, stream in streams.items():
+        if stream['role'] != 'mock-server':
+            continue
+        sent, received = stream['read'], stream['write']
+        request_offset = response_offset = count = 0
+        upgraded = False
+        pairs = expected.get(identity, [])
+        while request_offset < len(sent):
+            request_start = request_offset
+            line, headers, body_start = contracts.http_head(sent, request_offset)
+            match = re.fullmatch(r"([!#$%&'*+.^_`|~0-9A-Za-z-]+) ([^\s]+) (HTTP/1\.[01])", line)
+            require(match is not None, 'HTTP_WIRE_REQUEST_LINE')
+            method, target, version = match.groups()
+            body, trailers, request_offset = contracts.http_entity(sent, body_start, headers, request=True)
+            request_wire = {'line': line, 'method': method, 'target': target, 'version': version,
+                            'headers': headers, 'body': body, 'trailers': trailers,
+                            'headerBytes': sent[request_start:body_start],
+                            'startOffset': request_start, 'endOffset': request_offset,
+                            'span': _tcp_span(stream['readChunks'], request_start, request_offset)}
+            response_start = response_offset
+            informational = []
+            while True:
+                header_start = response_offset
+                response_line, response_headers, response_body_start = contracts.http_head(received, response_offset)
+                status_match = re.fullmatch(r'HTTP/1\.[01] ([1-5][0-9]{2}) [^\r\n]*', response_line)
+                require(status_match is not None, 'HTTP_WIRE_STATUS_LINE')
+                status = int(status_match.group(1))
+                if status == 101:
+                    require(not informational, 'HTTP_WIRE_INFORMATIONAL_UPGRADE')
+                    require(method == 'GET' and version == 'HTTP/1.1' and not body and not trailers
+                            and [value.lower() for value in headers.get('upgrade', [])] == ['websocket']
+                            and [value.lower() for value in response_headers.get('upgrade', [])] == ['websocket']
+                            and count == len(pairs), 'HTTP_WIRE_UNEXPECTED_UPGRADE')
+                    response_offset = response_body_start
+                    upgrades.append({'socket': identity, 'role': stream['role'], 'request': request_wire,
+                                     'response': {'line': response_line, 'status': status, 'headers': response_headers,
+                                                  'headerBytes': received[header_start:response_body_start],
+                                                  'startOffset': response_start, 'endOffset': response_offset,
+                                                  'span': _tcp_span(stream['writeChunks'], response_start, response_offset)},
+                                     'requestOffset': request_offset, 'responseOffset': response_offset})
+                    upgraded = True
+                    break
+                response_body, response_trailers, response_offset = contracts.http_entity(
+                    received, response_body_start, response_headers,
+                    bodyless=method == 'HEAD' or status in (204, 304) or 100 <= status < 200)
+                if status < 200:
+                    informational.append({'line': response_line, 'headers': response_headers})
+                    continue
+                break
+            if upgraded:
+                break
+            require(not headers.get('upgrade'), 'HTTP_WIRE_UNEXPECTED_UPGRADE')
+            require(count < len(pairs), 'HTTP_WIRE_UNCLAIMED_EXCHANGE')
+            pair = pairs[count]
+            request, response = pair['request'], pair['response']
+            count += 1
+            require(method == request['method'] and target == request['url']
+                    and body == payload(request['body']), 'HTTP_WIRE_REQUEST')
+            raw_headers = request['rawHeaders']
+            require(len(raw_headers) % 2 == 0, 'HTTP_REQUEST_HEADERS')
+            captured_headers = contracts.header_fields([f'{key}: {value}'.encode('latin-1')
+                for key, value in zip(raw_headers[::2], raw_headers[1::2])])
+            require(headers == captured_headers, 'HTTP_WIRE_REQUEST_HEADERS')
+            # request/end is appended after its parser has received the body;
+            # response/finish is appended after Node has queued its raw writes.
+            response_span = _tcp_span(stream['writeChunks'], response_start, response_offset)
+            require(request_wire['span'][1] < request['sequence'] < response['sequence']
+                    and response_span[1] < response['sequence'], 'HTTP_WIRE_EVENT_ORDER')
+            actual_head = response['actualHeaderText'].encode('latin-1')
+            require(received[header_start:response_body_start] == actual_head
+                    and status == response['status'] and response_body == payload(response['body'])
+                    and response.get('finished') is True, 'HTTP_WIRE_RESPONSE')
+            for key, value in response['headers'].items():
+                require(response_headers.get(key.lower()) == [str(item) for item in
+                        (value if isinstance(value, list) else [value])], 'HTTP_WIRE_RESPONSE_HEADERS')
+            bound[request['id']] = {'socket': identity, 'request': request_wire,
+                                   'response': {'line': response_line, 'status': status, 'headers': response_headers,
+                                                'headerBytes': received[header_start:response_body_start],
+                                                'body': response_body, 'trailers': response_trailers,
+                                                'informational': informational, 'startOffset': response_start,
+                                                'endOffset': response_offset, 'span': response_span}}
+        require(count == len(pairs), 'HTTP_WIRE_MISSING_EXCHANGE')
+        require(upgraded or response_offset == len(received), 'HTTP_WIRE_UNCLAIMED_RESPONSE')
+    require(len(bound) == len(trace['exchanges']), 'HTTP_WIRE_MISSING_EXCHANGE')
+    return {'exchanges': [bound[pair['request']['id']] for pair in trace['exchanges']],
+            'upgrades': upgrades, 'streams': streams, 'formalAcceptance': False}
+
+
+def _ws_tokens(headers, key):
+    values = [value.strip() for line in headers.get(key, []) for value in line.split(',')]
+    require(all(values), 'WS_WIRE_HEADER_TOKEN')
+    return values
+
+
+def _ws_upgrade(stream, request_start, response_start):
+    """Read the actual two HTTP prefixes, preserving all handshake bytes."""
+    server = stream['role'] == 'mock-server'
+    request_bytes, response_bytes = ((stream['read'], stream['write']) if server
+                                     else (stream['write'], stream['read']))
+    request_chunks, response_chunks = ((stream['readChunks'], stream['writeChunks']) if server
+                                       else (stream['writeChunks'], stream['readChunks']))
+    request_line, request_headers, request_end = contracts.http_head(request_bytes, request_start)
+    response_line, response_headers, response_end = contracts.http_head(response_bytes, response_start)
+    match = re.fullmatch(r'GET ([^\s]+) HTTP/1\.1', request_line)
+    require(match is not None and re.fullmatch(r'HTTP/1\.1 101 [^\r\n]*', response_line), 'WS_WIRE_UPGRADE_LINE')
+    body, trailers, entity_end = contracts.http_entity(request_bytes, request_end, request_headers, request=True)
+    require(not body and not trailers and entity_end == request_end
+            and not request_headers.get('transfer-encoding')
+            and not response_headers.get('transfer-encoding')
+            and not response_headers.get('content-length'), 'WS_WIRE_UPGRADE_BODY')
+    require(len(request_headers.get('host', [])) == 1 and bool(request_headers['host'][0])
+            and request_headers.get('sec-websocket-version') == ['13'], 'WS_WIRE_UPGRADE_REQUEST')
+    for headers in (request_headers, response_headers):
+        require([value.lower() for value in headers.get('upgrade', [])] == ['websocket']
+                and 'upgrade' in [value.lower() for value in _ws_tokens(headers, 'connection')],
+                'WS_WIRE_UPGRADE_CONNECTION')
+    keys = request_headers.get('sec-websocket-key', [])
+    require(len(keys) == 1, 'WS_WIRE_UPGRADE_KEY')
+    try:
+        key_bytes = base64.b64decode(keys[0], validate=True)
+        accept = base64.b64encode(hashlib.sha1(
+            (keys[0] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('ascii')).digest()).decode('ascii')
+    except (ValueError, UnicodeError):
+        require(False, 'WS_WIRE_UPGRADE_KEY')
+    require(len(key_bytes) == 16, 'WS_WIRE_UPGRADE_KEY')
+    require(response_headers.get('sec-websocket-accept') == [accept], 'WS_WIRE_UPGRADE_ACCEPT')
+    protocols = _ws_tokens(response_headers, 'sec-websocket-protocol')
+    require(not protocols or (len(protocols) == 1
+            and protocols[0] in _ws_tokens(request_headers, 'sec-websocket-protocol')), 'WS_WIRE_UPGRADE_PROTOCOL')
+    # The owned fixtures do not enable a server extension. A selected extension
+    # needs its actual negotiated codec, never an invented decompression step.
+    require(not response_headers.get('sec-websocket-extensions'), 'WS_WIRE_UNSUPPORTED_EXTENSION')
+    request_span = _tcp_span(request_chunks, request_start, request_end)
+    response_span = _tcp_span(response_chunks, response_start, response_end)
+    require(request_span[1] < response_span[0], 'WS_WIRE_UPGRADE_ORDER')
+    return {'socket': stream['socket']['id'], 'role': stream['role'],
+            'request': {'line': request_line, 'target': match.group(1), 'headers': request_headers,
+                        'headerBytes': request_bytes[request_start:request_end],
+                        'startOffset': request_start, 'endOffset': request_end, 'span': request_span},
+            'response': {'line': response_line, 'headers': response_headers,
+                         'headerBytes': response_bytes[response_start:response_end],
+                         'startOffset': response_start, 'endOffset': response_end, 'span': response_span},
+            'requestOffset': request_end, 'responseOffset': response_end}
+
+
+def _ws_frames(data, chunks, offset, masked, direction):
+    """Decode complete TCP bytes without replacing their original frame headers."""
+    frames, messages, pending = [], [], None
+    closed = False
+    while offset < len(data):
+        start = offset
+        require(len(data) - offset >= 2, 'WS_WIRE_TRUNCATED_HEADER')
+        first, second = data[offset:offset + 2]
+        offset += 2
+        fin, opcode, mask, length_code = bool(first & 128), first & 15, bool(second & 128), second & 127
+        require(first & 112 == 0, 'WS_WIRE_RSV')
+        require(opcode in (0, 1, 2, 8, 9, 10), 'WS_WIRE_OPCODE')
+        require(mask == masked, 'WS_WIRE_MASK')
+        size = length_code
+        if length_code in (126, 127):
+            count = 2 if length_code == 126 else 8
+            require(len(data) - offset >= count, 'WS_WIRE_TRUNCATED_LENGTH')
+            size = int.from_bytes(data[offset:offset + count], 'big')
+            require(length_code != 127 or size < 1 << 63, 'WS_WIRE_LENGTH')
+            require(size >= (126 if length_code == 126 else 65536), 'WS_WIRE_NONMINIMAL_LENGTH')
+            offset += count
+        if opcode >= 8:
+            require(fin and size <= 125, 'WS_WIRE_CONTROL')
+        mask_key = b''
+        if mask:
+            require(len(data) - offset >= 4, 'WS_WIRE_TRUNCATED_MASK')
+            mask_key = data[offset:offset + 4]
+            offset += 4
+        header_end = offset
+        require(size <= len(data) - offset, 'WS_WIRE_TRUNCATED_PAYLOAD')
+        wire_payload = data[offset:offset + size]
+        value = (bytes(byte ^ mask_key[index % 4] for index, byte in enumerate(wire_payload))
+                 if mask else wire_payload)
+        offset += size
+        span = _tcp_span(chunks, start, offset)
+        frame = {'direction': direction, 'opcode': opcode, 'fin': fin, 'rsv': (first >> 4) & 7,
+                 'masked': mask, 'lengthCode': length_code, 'payloadLength': size,
+                 'wireHeaderHex': data[start:header_end].hex(), 'maskKeyHex': mask_key.hex(),
+                 'wireHex': data[start:offset].hex(),
+                 'wirePayloadHex': wire_payload.hex(), 'payload': value,
+                 'startOffset': start, 'endOffset': offset, 'span': span}
+        frames.append(frame)
+        if opcode >= 8:
+            if opcode == 8:
+                require(len(value) != 1, 'WS_WIRE_CLOSE')
+                if value:
+                    code = int.from_bytes(value[:2], 'big')
+                    require((1000 <= code <= 1014 and code not in (1004, 1005, 1006))
+                            or 3000 <= code <= 4999, 'WS_WIRE_CLOSE')
+                    try:
+                        value[2:].decode('utf-8')
+                    except UnicodeError:
+                        require(False, 'WS_WIRE_CLOSE_UTF8')
+                closed = True
+            continue
+        require(not closed, 'WS_WIRE_DATA_AFTER_CLOSE')
+        if opcode in (1, 2):
+            require(pending is None, 'WS_WIRE_FRAGMENT_START')
+            pending = {'binary': opcode == 2, 'parts': [], 'frames': [], 'startSpan': span}
+        else:
+            require(pending is not None, 'WS_WIRE_CONTINUATION')
+        pending['parts'].append(value)
+        pending['frames'].append(len(frames) - 1)
+        if fin:
+            message = b''.join(pending['parts'])
+            if not pending['binary']:
+                try:
+                    message.decode('utf-8')
+                except UnicodeError:
+                    require(False, 'WS_WIRE_TEXT_UTF8')
+            messages.append({'payload': message, 'binary': pending['binary'], 'frames': pending['frames'],
+                             'span': (pending['startSpan'][0], span[1])})
+            pending = None
+    require(pending is None, 'WS_WIRE_FRAGMENT_INCOMPLETE')
+    return {'frames': frames, 'messages': messages}
+
+
+def ws_wire_observation(raw, records, http_state=None):
+    """Bind every WS API event to an authenticated upgrade and actual TCP frames.
+
+    Raw mask bytes, extended lengths, fragmentation and all control frames are
+    retained. This scratch verifier does not change normalization or acceptance.
+    """
+    actual_http = http_wire_observation(raw, records)
+    require(http_state is None or http_state == actual_http, 'WS_WIRE_HTTP_BINDING')
+    streams, upgrades = actual_http['streams'], {}
+    for deferred in actual_http['upgrades']:
+        identity = deferred['socket']
+        require(identity not in upgrades and identity in streams, 'WS_WIRE_UPGRADE_SOCKET')
+        upgrade = _ws_upgrade(streams[identity], deferred['request']['startOffset'],
+                              deferred['response']['startOffset'])
+        require(upgrade['requestOffset'] == deferred['requestOffset']
+                and upgrade['responseOffset'] == deferred['responseOffset']
+                and upgrade['request']['headerBytes'] == deferred['request']['headerBytes']
+                and upgrade['response']['headerBytes'] == deferred['response']['headerBytes'], 'WS_WIRE_HTTP_BINDING')
+        upgrades[identity] = upgrade
+    for identity, stream in streams.items():
+        if stream['role'] == 'control-client':
+            require(identity not in upgrades, 'WS_WIRE_UPGRADE_SOCKET')
+            upgrades[identity] = _ws_upgrade(stream, 0, 0)
+    api = {identity: {'send': [], 'receive': [], 'url': None} for identity in upgrades}
+    for row in records:
+        if row['kind'] not in ('fixture-ws-send', 'fixture-ws-receive'):
+            continue
+        identity = row['socket'].get('id')
+        require(identity in upgrades and all(row['socket'].get(key) == value
+                for key, value in streams[identity]['socket'].items()), 'WS_WIRE_API_SOCKET')
+        if streams[identity]['role'] == 'control-client':
+            value = row['socket'].get('url')
+            require(isinstance(value, str) and bool(value), 'WS_WIRE_API_TARGET')
+            url = urlsplit(value)
+            target = (url.path or '/') + ('?' + url.query if url.query else '')
+            require(url.scheme == 'ws' and url.hostname in ('127.0.0.1', 'localhost', '::1')
+                    and url.port == streams[identity]['socket']['remotePort']
+                    and not url.username and not url.password and not url.fragment
+                    and target == upgrades[identity]['request']['target'], 'WS_WIRE_API_TARGET')
+            require(api[identity]['url'] is None or api[identity]['url'] == value, 'WS_WIRE_API_TARGET')
+            api[identity]['url'] = value
+        api[identity]['send' if row['kind'] == 'fixture-ws-send' else 'receive'].append(row)
+    observations = []
+    for identity, upgrade in upgrades.items():
+        stream = streams[identity]
+        server = stream['role'] == 'mock-server'
+        directions = {}
+        for direction in ('read', 'write'):
+            client_to_server = (direction == 'read') == server
+            offset = upgrade['requestOffset'] if client_to_server else upgrade['responseOffset']
+            parsed = _ws_frames(stream[direction], stream[direction + 'Chunks'], offset,
+                                client_to_server, direction)
+            if parsed['frames']:
+                first_span = parsed['frames'][0]['span']
+                require(first_span[0] > upgrade['response']['span'][1] if client_to_server else
+                        first_span[0] >= upgrade['response']['span'][1], 'WS_WIRE_FRAME_BEFORE_UPGRADE')
+            directions[direction] = parsed
+        sent = [frame for frame in directions['write']['frames'] if frame['opcode'] < 8]
+        received = directions['read']['messages']
+        require(len(sent) == len(api[identity]['send'])
+                and len(received) == len(api[identity]['receive']), 'WS_WIRE_API_COUNT')
+        bindings = []
+        for frame, event in zip(sent, api[identity]['send']):
+            require(payload(event['payload']) == frame['payload'], 'WS_WIRE_API_PAYLOAD')
+            require(upgrade['response']['span'][1] < event['sequence'] < frame['span'][0], 'WS_WIRE_API_ORDER')
+            bindings.append({'kind': 'send', 'sequence': event['sequence'], 'span': frame['span']})
+        for message, event in zip(received, api[identity]['receive']):
+            require(payload(event['payload']) == message['payload'], 'WS_WIRE_API_PAYLOAD')
+            require(type(event.get('binary')) is bool and event['binary'] == message['binary'], 'WS_WIRE_API_BINARY')
+            require(message['span'][1] < event['sequence'], 'WS_WIRE_API_ORDER')
+            bindings.append({'kind': 'receive', 'sequence': event['sequence'], 'span': message['span']})
+        # A TCP event can hold several frames. Preserve its within-stream byte
+        # offsets as well as cross-direction event order; do not invent timing.
+        interleaving = sorted([frame for parsed in directions.values() for frame in parsed['frames']],
+                              key=lambda frame: (frame['span'][1], frame['span'][0], frame['endOffset']))
+        observations.append({'socket': stream['socket'], 'role': stream['role'], 'url': api[identity]['url'], 'upgrade': upgrade,
+                             'directions': directions, 'interleaving': interleaving,
+                             'apiBindings': sorted(bindings, key=lambda item: item['sequence'])})
+    return {'connections': observations, 'formalAcceptance': False}
 
 
 def _deliveries(raw, channel, trace):
@@ -628,6 +1023,63 @@ def transport_projection(trace):
             'channelStreams': sorted(channels.values(), key=canonical)}
 
 
+def _wire_value(data):
+    try:
+        return decoded(data)
+    except UnicodeDecodeError:
+        return {'rawBytesHex': data.hex()}
+
+
+def wire_projection(raw, records):
+    """Compare only authenticated wire data, retaining headers and control frames.
+
+    Socket numbers and capture offsets locate originals; they are not protocol
+    fields. Whole streams may be reordered across sockets, never within one.
+    Original TCP bytes remain in the source-bound transport receipt. No new
+    mask, handshake, business-ID or heartbeat normalization is introduced.
+    """
+    http = http_wire_observation(raw, records)
+    websocket = ws_wire_observation(raw, records, http)
+    http_streams = {}
+    excluded = {'date', 'connection', 'keep-alive', 'transfer-encoding'}
+    for pair in http['exchanges']:
+        request, response = pair['request'], pair['response']
+        http_streams.setdefault(pair['socket'], []).append({
+            'requestLine': request['line'], 'requestHeaders': request['headers'],
+            'request': _wire_value(request['body']), 'requestTrailers': request['trailers'],
+            'statusLine': response['line'],
+            'responseHeaders': {key: value for key, value in response['headers'].items()
+                                if key not in excluded},
+            'response': _wire_value(response['body']), 'responseTrailers': response['trailers'],
+            'informational': [{**item, 'headers': {key: value for key, value in item['headers'].items()
+                                                  if key not in excluded}}
+                              for item in response['informational']]})
+    websocket_streams = []
+    for connection in websocket['connections']:
+        upgrade = connection['upgrade']
+        frames = []
+        for frame in connection['interleaving']:
+            frames.append({key: frame[key] for key in (
+                'direction', 'opcode', 'fin', 'rsv', 'masked', 'lengthCode',
+                'payloadLength', 'wireHeaderHex', 'maskKeyHex')})
+            frames[-1]['payload'] = (_wire_value(frame['payload']) if frame['opcode'] in (0, 1)
+                                      else {'rawBytesHex': frame['payload'].hex()})
+        websocket_streams.append({
+            'role': connection['role'],
+            'priorHttp': http_streams.pop(connection['socket']['id'], []),
+            'requestLine': upgrade['request']['line'], 'requestHeaders': upgrade['request']['headers'],
+            'statusLine': upgrade['response']['line'], 'responseHeaders': upgrade['response']['headers'],
+            'frames': frames,
+            'messages': {direction: [
+                {'binary': message['binary'], 'frames': message['frames'],
+                 'payload': ({'rawBytesHex': message['payload'].hex()} if message['binary']
+                             else _wire_value(message['payload']))}
+                for message in connection['directions'][direction]['messages']]
+                for direction in ('read', 'write')}})
+    return {'wireHttpStreams': sorted(http_streams.values(), key=canonical),
+            'wireWebsocketStreams': sorted(websocket_streams, key=canonical)}
+
+
 def compare_pair(ts_raw, native_raw, ts_records, native_records, ts_files, native_files, *, ts_root, native_root):
     """Compare authenticated captures using only the existing frozen normalizer.
 
@@ -654,16 +1106,20 @@ def compare_pair(ts_raw, native_raw, ts_records, native_records, ts_files, nativ
                     actual_files[str(Path(raw['runtime'][name]) / path.relative_to(root / name))] = path.read_bytes()
         require(actual_files == files, 'PAIR_DURABLE_ORIGINALS')
         observation = observe(raw, channel, records, files)
+        observation.update(wire_projection(raw, records))
         normalizer = compare.entity_normalizer(root, {})
         normalizer.index(raw)
         projection = normalizer.value(observation)
         # Entity normalization can change a stream's lexical key; it must not
         # restore an accidental cross-connection ordering constraint.
-        for field in ('models', 'exchanges', 'channelStreams'):
+        for field in ('models', 'exchanges', 'channelStreams', 'wireHttpStreams', 'wireWebsocketStreams'):
             projection[field].sort(key=canonical)
         projection['disk'] = compare.disk(root, normalizer)
         projections.append(projection)
     left, right = projections
     differences = [key for key in left if canonical(left[key]) != canonical(right[key])]
     return {'equal': not differences, 'differentFields': differences, 'scope': list(SCOPE),
-            'formalAcceptance': False, 'ts': left, 'native': right}
+            'formalAcceptance': False,
+            'wireBindings': [{'engine': engine, 'httpSameSocket': True, 'websocketFrames': True}
+                             for engine in ('ts', 'native')],
+            'ts': left, 'native': right}
