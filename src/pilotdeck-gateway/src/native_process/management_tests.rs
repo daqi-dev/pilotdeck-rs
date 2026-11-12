@@ -2668,6 +2668,10 @@ async fn submit_workspace_id_surrogate_project_key_reaches_the_capability_gate()
         .workspace_id(&residual_input)
         .expect("#2617 the residual lossy form of the configured project is served")
         .expect("#2617 the served residual project answers a workspace id");
+    negative_assert!(
+        served.to_utf8().is_ok(),
+        "#2617 the served workspace id is a valid UTF-8 string"
+    );
     // fix-r1 (review P2): the admit cell discriminates — the served id is the
     // residual project's own storage id (the same `SnapshotProjects` resolver
     // the production path uses, services.rs), not just any valid UTF-8 string.
