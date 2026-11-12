@@ -1184,3 +1184,240 @@ async fn a_capped_withheld_head_is_re_fed_and_served_once_the_response_completes
     .await
     .expect("the capped withheld heads must be re-fed and served at the release");
 }
+
+// ── #2499 fix-r6: the never-completing 408 landing cell, the native mirror of
+// the sms lane's fix-r5 cell (head_timeout_tests.rs), on the paused tokio
+// clock. Virtual time moves only through the explicit advances below, so the
+// landing instant is probed, never raced.
+
+/// #2499 fix-r6: the paused-clock probe family's read window — the timeout
+/// each windowed probe below arms on its read before its
+/// [`PAUSED_PROBE_ADVANCE`] advance.
+const PAUSED_PROBE_READ_WINDOW_MS: u64 = 50;
+const PAUSED_PROBE_READ_WINDOW: Duration = Duration::from_millis(PAUSED_PROBE_READ_WINDOW_MS);
+/// #2499 fix-r6: the paused-clock probe family's advance — the virtual time
+/// each windowed probe crosses while its read is pending. It stays strictly
+/// greater than the read window (the probe must cross the read's timeout
+/// with the advance), the same arithmetic as the sms lane's
+/// `head_timeout_tests` family.
+const PAUSED_PROBE_ADVANCE_MS: u64 = 60;
+const PAUSED_PROBE_ADVANCE: Duration = Duration::from_millis(PAUSED_PROBE_ADVANCE_MS);
+const _: () = assert!(PAUSED_PROBE_ADVANCE_MS > PAUSED_PROBE_READ_WINDOW_MS);
+
+/// #2499 fix-r6: the virtual-clock harness (the sms lane's `manual_clock`,
+/// itself from `native_ws::tests` via `native_http/tests.rs`): the wrapped
+/// future is polled against yields of the current-thread runtime, so the
+/// spawned serve task makes progress between advances. The wall guard only
+/// diagnoses a stalled future; it is never a timing result.
+async fn manual_clock<F: std::future::Future>(future: F) -> F::Output {
+    tokio::pin!(future);
+    let wall = std::time::Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return result,
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(
+            wall.elapsed() < Duration::from_secs(60),
+            "#2499 fix-r6 manual-clock harness stalled: the serve future never resolved"
+        );
+    }
+}
+
+/// #2499 fix-r6: give the spawned serve task scheduling slots on the paused
+/// clock — eight yields, enough for the parse → arm → park cycle of one
+/// connection between advances.
+async fn yield_a_beat() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// #2499 fix-r6: the probe/tail helpers' latin-1 rendering — every byte is one
+/// character, so the expected ASCII never re-encodes on the way out.
+fn latin1_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| *byte as char).collect()
+}
+
+/// #2499 fix-r6: probe for data/EOF at the current virtual time — the windowed
+/// read is armed before its [`PAUSED_PROBE_ADVANCE`] advance, so a still-open
+/// read resolves `Elapsed`, while a close latched during the advance wins.
+async fn probe_still_open(client: &mut DuplexStream, what: &str) {
+    yield_a_beat().await;
+    let mut probe = [0u8; 1];
+    let pending = timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut probe));
+    tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+    yield_a_beat().await;
+    match pending.await {
+        Err(_quiet) => {}
+        Ok(Ok(0)) => panic!("#2499 {what}"),
+        Ok(Ok(count)) => panic!("#2499 {what}: {count} unexpected byte(s) arrived"),
+        Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+    }
+}
+
+/// #2499 fix-r6: read the 51-byte headersTimeout 408 inside the same windowed
+/// probe pattern as [`probe_still_open`]. The bytes are asserted equal to
+/// [`NODE_HEADERS_TIMEOUT_408`] itself — this lane's own copy of the exact
+/// canned response Node writes, never a re-typed literal. A missing 408 (a
+/// landing that never comes) fails at this helper's own message instead of
+/// hanging the harness. Unlike the sms lane's twin (whose destroy() closes the
+/// socket with the 408), the EOF here is read by the cell itself after the
+/// serve task joins — hyper holds the duplex until its connection ends.
+async fn headers_timeout_408_arrives(client: &mut DuplexStream, what: &str) {
+    let expected = NODE_HEADERS_TIMEOUT_408;
+    let mut buffer = Vec::new();
+    while buffer.len() < expected.len() {
+        let mut chunk = [0u8; 64];
+        let pending = timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut chunk));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        match pending.await {
+            Ok(Ok(0)) => panic!(
+                "#2499 {what}: EOF before the 408 arrived (buffer so far: {:?})",
+                latin1_string(&buffer)
+            ),
+            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+            Err(_no_408) => {
+                panic!(
+                    "#2499 {what}: the 51-byte 408 never arrived at the head \
+                     deadline's grid landing"
+                )
+            }
+        }
+    }
+    assert_eq!(
+        buffer, expected,
+        "#2499 {what}: the bytes are exactly Node's canned 51-byte 408"
+    );
+}
+
+/// #2499 fix-r6 (the sms lane's fix-r5 never-completing cell, mirrored): a
+/// next head parked at the withholding cap behind a response that NEVER
+/// completes is retired by its own deadline's grid landing — the 408 written
+/// straight onto the socket even though the response is still in flight,
+/// exactly Node's answer for the same shape: the fix-r5 Node probe's leg-C/D
+/// (an incomplete follow-up head behind a held response, 200 ms checker grid,
+/// 1500 ms deadline) gets its `408 Request Timeout` at ~1.6 s and the socket
+/// destroyed, the held response never written — Node's `socketOnError` writes
+/// the 408 while the in-flight response has not sent its head
+/// (`!_httpMessage._headerSent`), and destroys it. The withheld head's first
+/// byte armed its own deadline at the withholding (t ≈ 0), so the injected
+/// +15 s deadline on the 30 s grid lands at +30 s; the probes bracket it
+/// (+29.46 s still open with the response still unarrived, +30.06 s the
+/// 51-byte 408). The +29.46 s probe is the `native-http-headers-grid-off`
+/// discriminator (the mutant's 408 lands at the +15 s deadline itself and the
+/// probe reads its first byte). The bounded divergence from Node — a parked
+/// head that was COMPLETE would never be header-timed-out there (leg A/B:
+/// deadline-immune, served at the finish) while this lane's parked bytes
+/// cannot be told apart without parsing them — is the residual
+/// `A8.4-NATIVE-HTTP-002-R3` item 2 registers; this cell is its machine
+/// judgment (the sms lane's twin pins `A8.3-CH-SMS-017` residual 4). Unlike
+/// the sms lane's destroy(), hyper keeps the duplex open until its connection
+/// ends, so the EOF is read after the serve task joins — the held handler is
+/// let go first and its late response's write is refused (BrokenPipe).
+#[tokio::test(start_paused = true)]
+async fn a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (io, mut client) = tokio::io::duplex(128 * 1024);
+        let (stop, stop_rx) = watch::channel(false);
+        // The interleave control, held for the whole cell: the handler never
+        // finishes, so the response never completes — nothing is ever written
+        // back (Node leg-C/D's held-response shape).
+        let (release_tx, release_rx) = oneshot::channel();
+        let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+        let task = tokio::spawn(serve_connection_configured(
+            io,
+            move |request, _lease| {
+                let release = if request.uri().path() == "/first" {
+                    release_rx.lock().unwrap().take()
+                } else {
+                    None
+                };
+                async move {
+                    if let Some(release) = release {
+                        release.await.unwrap();
+                    }
+                    Ok(plain(StatusCode::OK, "ok"))
+                }
+            },
+            // The native lane, a 15 s injected headers deadline, the
+            // production checker grid anchored at the spawn instant.
+            true,
+            Some(stop_rx),
+            Some(Duration::from_secs(15)),
+            None,
+            Some(grid_anchor),
+        ));
+        // Request 1, held by the un-sent oneshot: its handler is pending, so
+        // hyper keeps polling the gate's read while nothing is written back —
+        // the exact state the withholding branch keys on.
+        client
+            .write_all(b"GET /first HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .expect("write the held request");
+        yield_a_beat().await;
+        // The flood: exactly the cap's worth of complete heads, all parked at
+        // the withholding cap — the first of them anchors the cell's +15 s
+        // deadline, whose grid landing is +30 s.
+        let mut head = String::from("GET /any HTTP/1.1\r\nHost: xy\r\nX-P: ");
+        head.push_str(&"p".repeat(64 - head.len() - 4));
+        head.push_str("\r\n\r\n");
+        assert_eq!(head.len(), 64, "#2499 fix-r6: the flood head is 64 bytes");
+        let flood = head.repeat(WITHHELD_HEAD_CAP / 64);
+        assert_eq!(
+            flood.len(),
+            WITHHELD_HEAD_CAP,
+            "#2499 fix-r6: the flood is exactly the cap"
+        );
+        client
+            .write_all(flood.as_bytes())
+            .await
+            .expect("write the capped flood of next heads");
+        yield_a_beat().await;
+        // t = +29.46 s: before the withheld head's +30 s landing, with the
+        // held response still unarrived — the connection open, nothing on
+        // the wire.
+        tokio::time::advance(Duration::from_millis(29_460)).await;
+        probe_still_open(
+            &mut client,
+            "the capped withheld head keeps the connection open before its \
+             deadline's +30 s grid landing",
+        )
+        .await;
+        // t = +30.06 s: the landing — and this head received bytes, so the
+        // answer is the 408, written straight onto the socket even though the
+        // response is still in flight (Node leg-C/D: the 408 lands while
+        // `_headerSent` is false).
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "next head parked at the withholding cap").await;
+        // The held handler is let go: the 408 already answered the connection,
+        // so the late response's write is refused (BrokenPipe) and the serve
+        // task joins — in either the clean close or the io error; the cell's
+        // subject is the 408 landing, not the join's flavor.
+        let _ = release_tx.send(());
+        drop(stop);
+        let joined = task
+            .await
+            .expect("#2499 the never-completing cap cell's serve task join");
+        drop(joined);
+        // The serve task's end is what closes the socket — Node's destroy()
+        // shape: the 408 was the connection's last word.
+        let mut tail = [0u8; 1];
+        let pending = timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut tail));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        match pending.await {
+            Ok(Ok(0)) => {}
+            other => panic!(
+                "#2499 next head parked at the withholding cap: the \
+                 connection closes after the 408 like Node's destroy(), got \
+                 {other:?}"
+            ),
+        }
+    })
+    .await;
+}

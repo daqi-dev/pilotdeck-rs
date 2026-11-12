@@ -28,6 +28,21 @@ incidentally re-poll the parked gate after a body completes (its dispatch loop
 swallows a Pending read and may iterate once more), so the end-to-end outcome
 is racy (4/10 mutant runs completed all 513 responses on cb8) and cannot serve
 as a deterministic witness; the gate-level cell pins the wake itself.
+
+`#2499` fix-r6 (MM sibling P2, the native mirror of the sms lane's fix-r5
+never-completing 408 cell) adds `native-http-headers-grid-off` — an existing
+`http_proxy.rs` switch, cross-table like `absolute-reads-cwd` and the other
+shared names — bound to the never-completing cap cell: a next head parked at
+the cap behind a response that never completes is retired by its own
+deadline's +30 s grid landing, the 408 written straight onto the socket while
+the response is still in flight. The cell's +29.46 s still-open probe is the
+discriminator (the mutant's 408 lands at the +15 s deadline itself, so the
+probe reads its first byte); the sms twin also binds its 408-bytes-off and
+read-no-timeout switches, but this lane carries no byte-silent-408 switch and
+the never-arriving-408 shape is already pinned for its timeout switch by the
+first-head cell of the table that owns it — the grid landing is this cell's
+distinctive witness, so fix-r6 binds exactly it (local three-segment sample
+KILLED=1 / SURVIVED=0 / INVALID=0, fix-r6/negctl-grid-off-sample/).
 """
 import argparse
 import os
@@ -52,6 +67,17 @@ switches = [
     ('native-http-withheld-park-no-wake', PROXY,
      'a_next_head_parked_at_the_withholding_cap_wakes_at_the_response_release',
      '#2499 fix-r5: the IdleBody release woke the parked gate'),
+    # #2499 fix-r6 (the sms lane's never-completing 408 cell, mirrored —
+    # R3 item 2's residual gets its machine judgment): a next head parked at
+    # the cap behind a response that never completes is retired by its own
+    # deadline's grid landing, the 408 written straight onto the socket while
+    # the response is still in flight (Node leg-C/D: the 408 lands while
+    # `_headerSent` is false). The +29.46 s still-open probe is the
+    # discriminator: the mutant's 408 lands at the +15 s deadline itself, so
+    # the probe reads its first byte.
+    ('native-http-headers-grid-off', PROXY,
+     'a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing',
+     "keeps the connection open before its deadline's +30 s grid landing"),
 ]
 GUARDED = [
     PROXY,
