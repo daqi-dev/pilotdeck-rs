@@ -170,6 +170,41 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertEqual(message.count('#2392'), 1,
                          f'fix-r13: the tag must appear exactly once: {message!r}')
 
+    def test_main_check_refuses_an_empty_assertion_list_row(self):
+        # closure-r7 (DS r5r6 boundary#2 + sibling#1 + concurrency#1, P2): the
+        # closure-r5 sync added the three-shape `_assertions` guard to this
+        # family but not one red leg -- the guard could be deleted wholesale
+        # and this file stayed green, against the in-file contract above
+        # (every guard must be shown to turn red). Each leg below breaks
+        # exactly one shape through the real --check envelope, rewriting the
+        # row-0 assertion column in place (the roster stays aligned, so the
+        # refusal can only come from the accessor inside
+        # check_literal_anchors; the blankkey closure-r5 needle caliber).
+        # Empty list: the row joins no anchor loop, the pre-fix --check
+        # counted the row in and stayed green while the kill round could
+        # only ever read it INVALID.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][5] = []
+        self.assert_main_check_refused(
+            rows, f'#2392 empty assertion list: {rows[0][0]}')
+
+    def test_main_check_refuses_a_non_str_assertion_element_row(self):
+        # closure-r7: the non-str element shape (the row's own assertion
+        # plus an int rider). Pre-guard this raised a bare TypeError inside
+        # `assertion in text` instead of the clean refusal.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][5] = [rows[0][5], 3]
+        self.assert_main_check_refused(
+            rows, f'#2392 non-str assertion element: {rows[0][0]}')
+
+    def test_main_check_refuses_a_non_str_assertion_scalar_row(self):
+        # closure-r7: the third shape -- the assertion column replaced by a
+        # non-str scalar. Same needle caliber as the two legs above.
+        rows = [list(row) for row in nc.mutations]
+        rows[0][5] = 3
+        self.assert_main_check_refused(
+            rows, f'#2392 non-str assertion: {rows[0][0]}')
+
     def test_main_binds_a_targeted_run_to_the_whole_table(self):
         # #2392 fix-r13 (review P2, the native-config wiring shape): the
         # guard-level cases above call check_literal_anchors directly, so a
