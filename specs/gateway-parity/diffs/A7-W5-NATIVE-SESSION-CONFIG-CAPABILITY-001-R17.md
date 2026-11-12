@@ -122,18 +122,24 @@ close / config 侧被服务、在这些门仍被拒。不放宽判分，不改
   「not the type error」前置断言）与 `submit-admit-cell-serves-wrong-id`
   （id 计算变异取 `home` 而非 `options.project`，绑放行格等值断言——
   fix-r2 评审 P2 处置：放行格此前零红侧）。`--check` →
-  `#1457 83 mutation anchors OK; #2065 70 literal anchors OK`；正式全表
+  `#1457 121 mutation anchors OK; #2065 75 literal anchors OK`（rebase 后
+  head `8ecbdee3b` 2026-11-12 实跑；分支旧树的 83/70 系 rebase 前输出，作废——
+  表内其余行为他单在 main 侧的登记，不属本件证据面）；正式全表
   82/82 KILLED、0 SURVIVED **量于交付提交 `243f9f3da`**（本机磁盘闸窗口期
   分轮跑完，合并口径 r2 15 + r3 2 + r4 9 + r5 56，各轮日志
   `negctl-full-local-attempt{2,3,4}.log` 与 `negctl-full-r5-a1.log`；
   attempt1 全 INVALID 是机器磁盘闸拒跑、非被测逻辑，不作证据；变异体 2 的
   杀死载荷 `Some([97,56,45,109,97,105,110])` = setup 注册项目 id，证能力门是
   唯一拒点）。fix 头定向复跑：fix-r1 两行 `negctl-fix-r1-targeted.log`
-  2/2 KILLED；fix-r2 三行（含新行）`negctl-fix-r2-targeted.log` 3/3 KILLED。
+  2/2 KILLED；fix-r2 三行（含新行）`negctl-fix-r2-targeted.log` 3/3 KILLED；
+  rebase 后 fix-r4 在 head `8ecbdee3b` 复跑三行（DS r6 sibling/boundary 双 P1
+  处置：数字不可复现处）`_tmp/20261112-issue-2617-fixr4/negctl-targeted.log`
+  3/3 KILLED（rc=0，2026-11-12 实测）。
 - 回归：`submit_workspace_id` 过滤 2/2（#2562 格）、`native_process::`
-  家族过滤在 head `6e857a941` 复跑 390 passed / 0 failed / 54 ignored
+  家族过滤在 head `8ecbdee3b` 复跑 397 passed / 0 failed / 54 ignored
   （rc=0、恰一行 `test result:`，2026-11-12 实测
-  `_tmp/20261112-issue-2617-fixr3/family-rerun.out`；fix-r3 按 MM boundary
+  `_tmp/20261112-issue-2617-fixr4/family-rerun.out`；rebase 前旧头 `6e857a941`
+  的 390 passed（fixr3/family-rerun.out）随 main 侧他单新增用例作废；fix-r3 按 MM boundary
   复核改数——早前 20261111 摘录 `native-process-family-postfix.out` 记
   390 passed / 1 failed，失败用例
   `settings_tests::reload_ticket_releases_after_settlement` 在本次 head
