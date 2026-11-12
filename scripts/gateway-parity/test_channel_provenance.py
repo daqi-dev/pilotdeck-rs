@@ -219,7 +219,8 @@ class ChannelProvenance(unittest.TestCase):
             return {'semanticComparison': semantic, 'missing': [], 'originals': []}
 
         failures = [(subprocess.CalledProcessError(128, ['git', 'ls-tree']), 'exit status'),
-                    (subprocess.TimeoutExpired(['git', 'ls-tree'], 10), 'timed out')]
+                    (subprocess.TimeoutExpired(['git', 'ls-tree'], 10), 'timed out'),
+                    (PermissionError(errno.EACCES, 'unreadable git'), 'unreadable git')]
         for error, detail in failures:
             with self.subTest(error=type(error).__name__):
                 self.d.subprocess = types.SimpleNamespace(
@@ -593,6 +594,8 @@ class ChannelProvenance(unittest.TestCase):
                  ({**base, 'differentFields': ['wireConnections']}, bindings),
                  ({**base, 'formalAcceptance': True}, bindings),
                  (base, None), (base, [bindings[0], {**bindings[1], 'httpSameSocket': 1}])]
+        cases.extend(({key: value for key, value in base.items() if key != missing}, bindings)
+                     for missing in ('equal', 'differentFields', 'formalAcceptance'))
         for comparison, carried in cases:
             with self.subTest(comparison=comparison, carried=carried):
                 cell = self._wire_proof_cell(comparison, carried)
@@ -600,6 +603,19 @@ class ChannelProvenance(unittest.TestCase):
                 self.assertNotIn('wireBindings', cell)
                 for gap in entries.CHANNEL_V2_WIRE_GAPS:
                     self.assertIn(gap, cell['missing'])
+                    self.assertNotIn(gap, cell['covered'])
+        for comparison in (None, [], 'invalid'):
+            with self.subTest(nonmapping=comparison):
+                self.assertIsNone(entries.channel_v2_wire_bindings(comparison))
+                cell = self._wire_proof_cell(comparison, bindings)
+                # The outer cell retains its existing fail-closed TypeError path.
+                self.assertEqual(cell['status'], 'FAIL', cell)
+                self.assertEqual(cell['rule'], 'ENTRY_CHANNEL_EVIDENCE', cell)
+                self.assertIn('not a mapping', cell['detail'])
+                self.assertNotIn('wireBindings', cell)
+                for gap in entries.CHANNEL_V2_WIRE_GAPS:
+                    self.assertIn(gap, cell['missing'])
+                    self.assertNotIn(gap, cell['covered'])
 
     def test_semantic_equality_and_retained_tcp_chunks_do_not_certify_wire(self):
         self.write_json('manifest.json', [

@@ -241,13 +241,19 @@ class PublicHttpControls(unittest.TestCase):
                                                     for profile in public.PROFILES for engine in ('ts', 'native')})
             inspection_path = Path(value['runs'][0]['proof']['inspect']['path'])
             healthy = d.read(inspection_path)
-            cases = [('missing', None), ('created', {'Status': 'created', 'Running': False, 'Pid': 0}),
+            missing = object()
+            cases = [('missing', missing), ('null', None), ('list', []), ('empty', {}),
+                     ('created', {'Status': 'created', 'Running': False, 'Pid': 0}),
                      ('exited', {'Status': 'exited', 'Running': False, 'Pid': 123}),
-                     ('zero', {'Running': True, 'Pid': 0}), ('bool', {'Running': True, 'Pid': True})]
+                     ('running-bool-required', {'Running': 1, 'Pid': 123}),
+                     ('zero', {'Running': True, 'Pid': 0}), ('bool', {'Running': True, 'Pid': True}),
+                     ('pid-float', {'Running': True, 'Pid': 123.0}),
+                     ('pid-string', {'Running': True, 'Pid': '123'}),
+                     ('pid-negative', {'Running': True, 'Pid': -1})]
             for label, state in cases:
                 with self.subTest(state=label):
                     changed = copy.deepcopy(healthy)
-                    if state is None:
+                    if state is missing:
                         changed[0].pop('State')
                     else:
                         changed[0]['State'] = state

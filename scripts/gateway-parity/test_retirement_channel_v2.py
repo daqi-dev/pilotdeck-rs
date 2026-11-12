@@ -1156,6 +1156,46 @@ class WireProjectionControls(unittest.TestCase):
             self.assertEqual(remasked['differentFields'], [])
             self.assertFalse(remasked['formalAcceptance'])
 
+            # A validated non-exempt wire difference must reach the final verdict.
+            changed = copy.deepcopy(independent_records)
+            socket = next(row['socket'] for row in changed if row['socket']['id'] == 3)
+            changed.append({'kind': 'fixture-tcp-data', 'socket': copy.deepcopy(socket),
+                            'payload': blob(ws_wire_frame(b'ping', opcode=9)), 'sequence': len(changed)})
+            different = compare(changed)
+            self.assertFalse(different['equal'])
+            self.assertEqual(different['differentFields'], ['wireWebsocketStreams'])
+            self.assertFalse(different['formalAcceptance'])
+
+            def unknown_uuid(source_raw, source_records, identity):
+                changed_raw, changed_records = copy.deepcopy(source_raw), copy.deepcopy(source_records)
+                request = changed_raw['persistedSessions'][0]['request']
+                original_request = copy.deepcopy(request)
+                request['probeUuid'] = identity  # An extra reference, never an entity definition.
+                matches = [index for index, row in enumerate(changed_records)
+                           if row['kind'] == 'fixture-ws-send'
+                           and json.loads(v2.payload(row['payload'])) == original_request]
+                self.assertEqual(len(matches), 1)
+                index = matches[0]
+                api, wire = changed_records[index:index + 2]
+                self.assertEqual((api['socket']['id'], wire['socket']['id'], wire['kind']),
+                                 (3, 3, 'fixture-tcp-write'))
+                value = json.dumps(request).encode()
+                api['payload'] = blob(value)
+                wire['payload'] = blob(ws_wire_frame(value, masked=True, mask_key=b'abcd'))
+                return changed_raw, changed_records
+
+            identity = '12345678-1234-4234-8234-123456789abc'
+            left_raw, left_records = unknown_uuid(ts_raw, records, identity)
+            for right_identity, should_equal in ((identity, True),
+                                                 ('87654321-4321-4321-8321-cba987654321', False)):
+                with self.subTest(unknown_uuid=right_identity):
+                    right_raw, right_records = unknown_uuid(raw, independent_records, right_identity)
+                    result = v2.compare_pair(left_raw, right_raw, left_records, right_records, files, files,
+                                             ts_root=roots[0], native_root=roots[1])
+                    self.assertEqual(result['equal'], should_equal)
+                    self.assertEqual(result['differentFields'], [] if should_equal else ['wireWebsocketStreams'])
+                    self.assertFalse(result['formalAcceptance'])
+
     def test_approved_random_fields_keep_original_proof_and_nonmask_headers(self):
         for role in ('mock-server', 'control-client'):
             for size in (10, 126, 65536):
@@ -1211,6 +1251,17 @@ class WireProjectionControls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, rule):
                     v2.wire_projection(raw, records)
 
+        for key in (base64.b64encode(b'x' * 15), base64.b64encode(b'x' * 17), b'', b'!not-base64!'):
+            with self.subTest(invalid_key=key):
+                raw, records = ws_wire_fixture('control-client')
+                accept = base64.b64encode(hashlib.sha1(key + b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+                records[0]['payload'] = blob(v2.payload(records[0]['payload']).replace(
+                    b'dGhlIHNhbXBsZSBub25jZQ==', key))
+                records[1]['payload'] = blob(v2.payload(records[1]['payload']).replace(
+                    b's3pPLMBiTxaQ9kYGzzhZRbK+xOo=', accept))
+                with self.assertRaisesRegex(ValueError, 'WS_WIRE_UPGRADE_KEY'):
+                    v2.wire_projection(raw, records)
+
     def test_business_headers_payload_and_unbound_uuid_remain_different(self):
         raw, records = ws_wire_fixture('control-client')
         expected = v2.wire_projection(raw, records)
@@ -1223,6 +1274,12 @@ class WireProjectionControls(unittest.TestCase):
         changed = copy.deepcopy(records)
         changed[0]['payload'] = blob(v2.payload(changed[0]['payload'])[:-2] + b'X-Business: kept\r\n\r\n')
         self.assertNotEqual(expected, v2.wire_projection(raw, changed))
+        responses = []
+        for value in (b'one', b'two'):
+            changed = copy.deepcopy(records)
+            changed[1]['payload'] = blob(v2.payload(changed[1]['payload'])[:-2] + b'X-Server: ' + value + b'\r\n\r\n')
+            responses.append(v2.wire_projection(raw, changed))
+        self.assertNotEqual(responses[0], responses[1])
         compare = v2._load('compare', _apparatus / 'compare.py')
         uuid_projections = []
         for identity in ('12345678-1234-4234-8234-123456789abc', '87654321-4321-4321-8321-cba987654321'):
