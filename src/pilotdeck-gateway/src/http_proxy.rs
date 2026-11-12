@@ -300,6 +300,23 @@ struct UpgradeReadGate<S> {
     /// reported to hyper only when they are, the same way hyper parks a
     /// mid-stream EOF behind a non-empty read buffer.
     withheld_eof: bool,
+    /// #2499 fix-r5 (review sibling#1, mirroring the sms lane): the waker the
+    /// withholding park leaves behind for the response's completion, the same
+    /// slot pattern this struct's [`SharedReadState::waker`] uses for the
+    /// upgrade pause. A parked gate is the connection's only reader, but hyper
+    /// does not re-poll a parked read on its own (its end-of-response
+    /// `maybe_notify` short-circuits on the io layer's `read_blocked` flag,
+    /// which the park just set), and the socket cannot be relied on either: at
+    /// the cap the withholding loop stops polling it, and on a production
+    /// `TcpStream` a zero-length poll after a full scratch read registers
+    /// nothing (the fix-r5 tokio probe `probe-tcp-empty-poll/probe-run.out`
+    /// legs 1/2b: no waker stored, the successor byte fires 0). So the park
+    /// stores this poll's waker in the slot and [`IdleBody::release`] — the
+    /// completion Node's llhttp answers pipelined heads at, one-by-one as each
+    /// previous response finishes (the fix-r5 Node probe
+    /// `probe-node-pipeline-serve.out` legs A/B: 513 responses, none
+    /// header-timed-out) — takes and wakes it.
+    release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 impl<S> UpgradeReadGate<S> {
     #[allow(clippy::too_many_arguments)] // The per-request headersTimeout state machine's inputs.
@@ -315,6 +332,7 @@ impl<S> UpgradeReadGate<S> {
         rearm: watch::Receiver<usize>,
         in_flight: Arc<AtomicUsize>,
         body_remaining: Arc<AtomicI64>,
+        release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
     ) -> Self {
         // A stop-less connection gets a never-true receiver: the gate only
         // consults its stop while the deadline is armed.
@@ -342,6 +360,7 @@ impl<S> UpgradeReadGate<S> {
             body_remaining,
             withheld_head: Vec::new(),
             withheld_eof: false,
+            release_waker,
         }
     }
 
@@ -624,15 +643,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                         .send_replace(Some(tokio::time::Instant::now()));
                 }
             }
-            if self.withheld_head.len() >= WITHHELD_HEAD_CAP {
-                // #1292 fix-r3: at the cap the gate no longer polls the
-                // socket, so nothing else would register a waker for the
-                // parked headers deadline — poll the sleep here, the same
-                // way `arm_started_head` parks it under this poll's waker.
-                if let Some(sleep) = self.headers_sleep.as_mut() {
-                    let _ = sleep.as_mut().poll(cx);
-                }
-            }
+            // #2499 fix-r5 (review sibling#1, mirroring the sms lane — this
+            // replaces fix-r3's cap-branch sleep re-poll): the parked gate's
+            // re-feed cannot ride on the socket — hyper does not re-poll a
+            // parked read on its own (its end-of-response `maybe_notify`
+            // short-circuits on the io layer's `read_blocked` flag, which this
+            // Pending just set), and at the cap the withholding loop above
+            // stops polling the socket, so no socket waker exists to ride on
+            // at all. Instead the park stores this poll's waker in the release
+            // slot for `IdleBody::release` — the response's completion, exactly
+            // where Node's llhttp serves pipelined heads (the fix-r5 Node
+            // probe: 512 parked complete heads all answered right after the
+            // previous response, never a 408 of their own). The parked
+            // deadline needs no extra registration either: the three-way above
+            // parks its sleep under this same waker on every poll it stays
+            // armed.
+            *self.release_waker.lock().unwrap() = Some(cx.waker().clone());
             return Poll::Pending;
         }
         // The response finished: hand the withheld head bytes to hyper's
@@ -936,6 +962,11 @@ struct IdleBody {
     /// #1292 fix-r1: the connection's per-request re-arm signal, bumped at the
     /// same body completion that re-arms the idle deadline.
     rearm: Option<watch::Sender<usize>>,
+    /// #2499 fix-r5: the withholding park's wake — the slot the read gate
+    /// leaves its waker in while a next head's bytes are parked behind this
+    /// response, so the completion here re-enters the gate and the parked
+    /// bytes re-feed, the same place Node's llhttp serves pipelined heads.
+    release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 impl IdleBody {
     /// Releases the slot and re-arms the idle deadline at body completion.
@@ -947,6 +978,20 @@ impl IdleBody {
         if let Some((guard, activity)) = self.held.take() {
             drop(guard);
             activity.send_replace(Some(tokio::time::Instant::now()));
+        }
+        // #2499 fix-r5 (review sibling#1, mirroring the sms lane): wake the
+        // parked withholding gate. The held guard's drop above must land first
+        // — the woken poll re-enters `poll_read`, and a still-held in-flight
+        // slot would just park it again instead of taking the re-feed branch.
+        // The mutant switch kills exactly this wake: nothing else re-polls a
+        // parked read (hyper's `maybe_notify` short-circuits on
+        // `read_blocked`), so the parked heads strand until their own
+        // deadline's 408 — the fix-r3 behavior the negative control has to
+        // keep killing.
+        if !crate::mutants::on("native-http-withheld-park-no-wake")
+            && let Some(waker) = self.release_waker.lock().unwrap().take()
+        {
+            waker.wake();
         }
     }
 }
@@ -1001,6 +1046,12 @@ where
     // the next request head is bounded by a fresh `headersTimeout` like
     // Node re-arms `last_message_start_` at every `on_message_begin`.
     let (rearm, rearm_rx) = watch::channel(0usize);
+    // #2499 fix-r5: the withholding park's wake slot — the gate parks the
+    // next head's bytes behind the streaming response with only this waker
+    // outstanding, and the response body's release takes it. Shared by both
+    // lanes' `IdleBody`s; the proxy lane never parks a withhold (no
+    // headers deadline), so its wake fires into an empty slot, harmless.
+    let release_waker = Arc::new(std::sync::Mutex::new(None::<std::task::Waker>));
     // #1292: the native lane bounds its still-unserved first head with
     // Node's `headersTimeout`; the proxy lane fronts a different TS
     // counterpart and keeps its previous behavior (no probe).
@@ -1020,12 +1071,14 @@ where
         rearm_rx,
         in_flight.clone(),
         body_remaining.clone(),
+        release_waker.clone(),
     );
     let served_heads_in_connection = served_heads.clone();
     let in_flight_in_connection = in_flight.clone();
     let activity_in_connection = activity.clone();
     let rearm_in_connection = rearm.clone();
     let body_remaining_in_connection = body_remaining.clone();
+    let release_waker_in_connection = release_waker.clone();
     let service = service_fn(move |request| {
         served_heads_in_connection.fetch_add(1, Ordering::Relaxed);
         // #1292 fix-r2: this request's body byte count. Node's parser sets
@@ -1062,6 +1115,7 @@ where
         let in_flight = InFlightRequest(in_flight_in_connection.clone());
         let activity = activity_in_connection.clone();
         let rearm = rearm_in_connection.clone();
+        let release_waker = release_waker_in_connection.clone();
         let handler = handler(request, lease);
         async move {
             let result = handler.await;
@@ -1087,6 +1141,7 @@ where
                             body,
                             held,
                             rearm: Some(rearm.clone()),
+                            release_waker,
                         }
                         .boxed()
                     }))

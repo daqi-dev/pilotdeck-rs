@@ -47,6 +47,21 @@ costs up to ~80 s of the 480 s budget).
 drains unobserved and holds the port, killed by both port-rebind cases) and
 `#2269` `sms-stop-drain-predrain-count` (the r1 pre-drain snapshot the
 truncation warn used to count with, killed by the bound case's warn count).
+`#2499` fix-r5 registers `sms-headers-withheld-park-no-wake` (the release
+wake that re-feeds a head parked at the withholding cap when the response
+completes — the fix-r4 empty-buffer poll was empirically inert on a
+production TcpStream, per the fix-r5 tokio probe). Killed by both fix-r5
+cells: the gate-level cell's counting waker never fires, and the end-to-end
+cell's second read — the first withheld head's response — never arrives (the
+parked request's own 404 still does; it never needed the re-feed). The
+never-completing-response 408 cell is not bound to *this* switch (the wake
+is not its discriminator) — it is bound to the three deadline switches its
+own doc names (`sms-headers-grid-off`: the mutant's 408 at the +15 s
+deadline itself fails the +29.46 s still-open probe;
+`sms-headers-408-bytes-off`: the landing answers with the silent close the
+EOF probe reads; `sms-header-read-no-timeout`: with the deadline gone the
+408 never comes at all), per the fix-r5 review's apparatus-vs-doc drift
+finding on the fix-r4 draft's unbacked sensitivity claims.
 """
 import argparse
 import os
@@ -73,19 +88,26 @@ switches = [
     ('sms-header-read-no-timeout', SMS / 'mod.rs',
      ['half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
       'a_follow_up_head_swallowed_in_the_same_read_as_the_previous_request_closes_on_the_standby_landing',
-      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing'],
+      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing',
+      'a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing'],
      ['#1955 the server retired the stalled head at the deadline',
       'swallowed in the same read as the previous request: the idle keep-alive '
       'connection was never closed',
       'swallowed with a read-ahead body segment: the idle keep-alive '
-      'connection was never closed']),
+      'connection was never closed',
+      'next head parked at the withholding cap: the 51-byte 408 never '
+      'arrived']),
     # #2499: the expiry answers with the pre-#2499 zero-byte close instead of
     # Node's 51-byte 408. Killed by the same wall-clock case's byte
     # assertion — the close still comes (at the landing), so only the
-    # missing 408 bytes distinguish the mutant.
+    # missing 408 bytes distinguish the mutant — and by the fix-r5
+    # never-completing cap cell, whose landing answer is the same silent
+    # close (EOF where the 408's bytes belong).
     ('sms-headers-408-bytes-off', SMS / 'mod.rs',
-     'half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
-     "#2499 the head deadline's answer is Node's canned 51-byte 408"),
+     ['half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
+      'a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing'],
+     ["#2499 the head deadline's answer is Node's canned 51-byte 408",
+      'next head parked at the withholding cap: EOF before the 408 arrived']),
     # #2499: the landing degenerates to the deadline itself instead of the
     # first connections-checker grid point strictly after it. Killed by both
     # paused-clock landing cells: the off-grid cell's mutant 408 fires at
@@ -101,13 +123,15 @@ switches = [
      ['the_408_lands_on_the_first_grid_point_after_the_deadline',
       'an_on_grid_deadline_fires_at_its_successor_grid_point',
       'a_follow_up_head_swallowed_in_the_same_read_as_the_previous_request_closes_on_the_standby_landing',
-      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing'],
+      'a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the_standby_landing',
+      'a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing'],
      ['stays unanswered between its +15 s deadline and the +30 s grid landing',
       'stays unanswered past its own +30 s deadline',
       'the follow-up head swallowed in the same read as the previous request '
       'keeps the connection open',
       'the follow-up head swallowed with a read-ahead body segment '
-      'keeps the connection open']),
+      'keeps the connection open',
+      "keeps the connection open before its deadline's +30 s grid landing"]),
     # #2499: the deadline never re-anchors at the awaited head's first byte —
     # the connect-anchored or standby arm survives. Killed by all three
     # re-anchor cells: the paused-clock delayed-first-head cell (the
@@ -203,6 +227,20 @@ switches = [
     ('sms-stop-drain-predrain-count', SMS / 'mod.rs',
      'stop_returns_at_the_drain_bound_when_a_connection_outlives_it',
      '#2026 the truncation warn counts only the connections still in the'),
+    # #2499 fix-r5 (review boundary#1/concurrency#1): `RearmBody::release`
+    # wakes the gate parked at the withholding cap through the release slot,
+    # so the parked head re-feeds the moment the response completes — no
+    # successor bytes needed (the fix-r4 empty-buffer poll it replaces was
+    # empirically inert on a production TcpStream, and hyper does not re-poll
+    # the parked read on its own). The mutant skips only the wake, so the
+    # gate-level cell's counting waker never fires and the end-to-end cell's
+    # second read — the first withheld head's response — never arrives (the
+    # paused clock freezes every timer, so the kill is deterministic).
+    ('sms-headers-withheld-park-no-wake', SMS / 'mod.rs',
+     ['a_next_head_parked_at_the_withholding_cap_wakes_at_the_response_release',
+      'a_capped_withheld_head_is_re_fed_and_served_when_the_response_completes'],
+     ['#2499 fix-r5: the RearmBody release woke the parked gate',
+      'the withheld head bytes were never re-fed to hyper']),
 ]
 GUARDED = [
     SMS / 'mod.rs',

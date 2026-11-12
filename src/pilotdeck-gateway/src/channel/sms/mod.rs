@@ -1218,6 +1218,25 @@ struct HeadersTimeoutGate<S> {
     /// mid-stream EOF behind a non-empty read buffer. A half-closed client
     /// still gets its response written first.
     withheld_eof: bool,
+    /// #2499 fix-r5 (review boundary#1/concurrency#1): the waker the
+    /// withholding park leaves behind for the response's completion, the
+    /// same slot pattern the native lane's `SharedReadState.waker` uses for
+    /// its upgrade pause. A parked gate is the only reader the connection
+    /// has, but hyper does not re-poll a parked read on its own (its
+    /// end-of-response `maybe_notify` short-circuits on the io layer's
+    /// `read_blocked` flag, which the park just set), and the socket cannot
+    /// be relied on either: at the cap the withholding loop stops polling
+    /// it, and on a production `TcpStream` a zero-length poll after a full
+    /// scratch read registers nothing — Linux answers `read(fd, ptr, 0)`
+    /// with `Ok(0)` while kernel data remains (the fix-r5 tokio probe,
+    /// `probe-tcp-empty-poll/probe-run.out` legs 1/2b: no waker stored, the
+    /// successor byte fires 0). So the park stores this poll's waker in the
+    /// slot and [`RearmBody::release`] — the same completion Node's llhttp
+    /// answers pipelined heads at, one-by-one as each previous response
+    /// finishes (the fix-r5 Node probe,
+    /// `probe-node-pipeline-serve.out` legs A/B: 513 responses, none
+    /// header-timed-out) — takes and wakes it.
+    release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 
 impl<S> HeadersTimeoutGate<S> {
@@ -1232,6 +1251,7 @@ impl<S> HeadersTimeoutGate<S> {
         in_flight: Arc<AtomicUsize>,
         body_remaining: Arc<AtomicI64>,
         stop: watch::Receiver<bool>,
+        release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
     ) -> Self {
         // #2499: the connection-establishment anchor — Node arms
         // `last_message_start_` at the accept; the gate constructs at the
@@ -1265,6 +1285,7 @@ impl<S> HeadersTimeoutGate<S> {
             timeout_408_closed: false,
             withheld_head: Vec::new(),
             withheld_eof: false,
+            release_waker,
         }
     }
 
@@ -1498,28 +1519,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for HeadersTimeoutGate<S> {
                 // head's first byte — Node's `on_message_begin`.
                 self.arm_started_head(cx, true);
             }
-            if self.withheld_head.len() >= WITHHELD_HEAD_CAP {
-                // #2499 fix-r4 (review concurrency#1): the withholding loop
-                // above broke at the cap without a socket read this poll,
-                // and hyper does not re-poll the read side on its own once
-                // the gate parks — its end-of-response re-poll
-                // (`try_keep_alive` → `maybe_notify`) short-circuits on the
-                // io layer's `read_blocked` flag, which this Pending just
-                // set — so the re-feed of the withheld bytes rides entirely
-                // on a socket wake. Poll the socket with an empty buffer
-                // purely to register that waker (a zero-length `filled`
-                // read consumes nothing; the result is ignored on purpose —
-                // real reads keep flowing through the withholding loop once
-                // the gate is polled again), and poll the deadline's sleep
-                // so the parked head still retires at the landing even if
-                // the client goes silent forever. Either wake (successor
-                // bytes, deadline landing) re-enters this poll.
-                let mut no_bytes = ReadBuf::new(&mut []);
-                let _ = Pin::new(&mut self.stream).poll_read(cx, &mut no_bytes);
-                if let Some(sleep) = self.headers_sleep.as_mut() {
-                    let _ = sleep.as_mut().poll(cx);
-                }
-            }
+            // #2499 fix-r5 (review boundary#1/concurrency#1, replacing fix-r4's
+            // empty-buffer socket poll): the parked gate's re-feed cannot ride
+            // on the socket — hyper does not re-poll a parked read on its own
+            // (its end-of-response `try_keep_alive` → `maybe_notify`
+            // short-circuits on the io layer's `read_blocked` flag, which this
+            // Pending just set), and the fix-r5 tokio probe showed a
+            // zero-length `poll_read` on a production `TcpStream` registers no
+            // waker once kernel data remains (`read(fd, ptr, 0)` answers
+            // `Ok(0)`; tokio only stores the waker on a `WouldBlock`, which on
+            // Linux a still-loaded socket never produces) — it worked only in
+            // the exactly-drained shape, a kernel-dependent accident, and on
+            // no shape at all past the cap where the loop above stops reading.
+            // Instead the park stores this poll's waker in the release slot
+            // for `RearmBody::release` — the response's completion, exactly
+            // where Node's llhttp serves pipelined heads (the fix-r5 Node
+            // probe: 512 parked complete heads all answered right after the
+            // previous response, never a 408 of their own). The parked
+            // deadline needs no extra registration either: the three-way above
+            // parks its sleep under this same waker on every poll it stays
+            // armed.
+            *self.release_waker.lock().unwrap() = Some(cx.waker().clone());
             return Poll::Pending;
         }
         // The response finished: hand the withheld head bytes to hyper's
@@ -1635,6 +1655,11 @@ struct RearmBody {
     rearm: watch::Sender<Option<tokio::time::Instant>>,
     in_flight: Arc<AtomicUsize>,
     released: bool,
+    /// #2499 fix-r5: the withholding park's wake — the slot the read gate
+    /// leaves its waker in while a next head's bytes are parked behind this
+    /// response, so the completion here re-enters the gate and the parked
+    /// bytes re-feed, the same place Node's llhttp serves pipelined heads.
+    release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 
 impl RearmBody {
@@ -1645,6 +1670,19 @@ impl RearmBody {
         self.released = true;
         self.in_flight.store(0, Ordering::Relaxed);
         self.rearm.send_replace(Some(tokio::time::Instant::now()));
+        // #2499 fix-r5 (review boundary#1/concurrency#1): wake the parked
+        // withholding gate. The `in_flight` clear above must land first — the
+        // woken poll re-enters `poll_read`, and a still-set flag would just
+        // park it again instead of taking the re-feed branch. The mutant
+        // switch kills exactly this wake: nothing else re-polls a parked read
+        // (hyper's `maybe_notify` short-circuits on `read_blocked`), so the
+        // parked heads strand until their own deadline's 408 — the fix-r4
+        // behavior the negative control has to keep killing.
+        if !crate::mutants::on("sms-headers-withheld-park-no-wake")
+            && let Some(waker) = self.release_waker.lock().unwrap().take()
+        {
+            waker.wake();
+        }
     }
 }
 
@@ -1744,17 +1782,23 @@ async fn serve_sms_connection<S>(
     let served_heads = Arc::new(AtomicUsize::new(0));
     let in_flight = Arc::new(AtomicUsize::new(0));
     let body_remaining = Arc::new(AtomicI64::new(0));
+    // #2499 fix-r5: the withholding park's wake slot — the gate parks the
+    // next head's bytes behind the streaming response with only this waker
+    // outstanding, and the response body's release takes it.
+    let release_waker = Arc::new(std::sync::Mutex::new(None::<std::task::Waker>));
     let service_shared = shared.clone();
     let service_served_heads = served_heads.clone();
     let service_in_flight = in_flight.clone();
     let service_body_remaining = body_remaining.clone();
     let service_rearm = rearm.clone();
+    let service_release_waker = release_waker.clone();
     let service = hyper::service::service_fn(move |request: Request<Incoming>| {
         let shared = service_shared.clone();
         let served_heads = service_served_heads.clone();
         let in_flight = service_in_flight.clone();
         let body_remaining = service_body_remaining.clone();
         let rearm = service_rearm.clone();
+        let release_waker = service_release_waker.clone();
         async move {
             served_heads.fetch_add(1, Ordering::Relaxed);
             in_flight.store(1, Ordering::Relaxed);
@@ -1770,6 +1814,7 @@ async fn serve_sms_connection<S>(
                         rearm,
                         in_flight,
                         released: false,
+                        release_waker,
                     })
                 })),
                 Err(destroy) => {
@@ -1792,6 +1837,7 @@ async fn serve_sms_connection<S>(
         in_flight,
         body_remaining,
         stop,
+        release_waker,
     );
     // #2499: the builder runs bare — hyper's own `header_read_timeout`
     // would close silently at the deadline itself, before the checker-grid
