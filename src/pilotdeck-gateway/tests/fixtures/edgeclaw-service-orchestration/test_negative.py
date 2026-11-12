@@ -30,11 +30,14 @@ Run with:
 
     python3 -B edgeclaw-service-orchestration/test_negative.py
 """
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -286,6 +289,13 @@ class PublicationControls(unittest.TestCase):
 
         disk = {}
 
+        def is_summary_tmp(name):
+            # #1087 fix-r5 (concurrency #3): the staging name is unique per
+            # run (`summary.json.<pid>.<serial>.tmp`), so match the shape, not
+            # one fixed spelling.
+            return (name.startswith('summary.json.')
+                    and name.endswith('.tmp'))
+
         class Model:
             real_write_text = Path.write_text
             real_replace = Path.replace
@@ -294,15 +304,15 @@ class PublicationControls(unittest.TestCase):
                 if self.parent == out and self.name == 'summary.json':
                     disk['direct'] = data
                     return None
-                if self.parent == out and self.name == 'summary.json.tmp':
-                    disk['staged'] = data
+                if self.parent == out and is_summary_tmp(self.name):
+                    disk.setdefault('staged', {})[self.name] = data
                     return Model.real_write_text(self, data, *args, **kwargs)
                 return Model.real_write_text(self, data, *args, **kwargs)
 
             def model_replace(self, destination, *args, **kwargs):
-                if self.parent == out and self.name == 'summary.json.tmp':
+                if self.parent == out and is_summary_tmp(self.name):
                     disk['renames'] = disk.get('renames', 0) + 1
-                    disk['summary'] = disk['staged']
+                    disk['summary'] = disk['staged'][self.name]
                 return Model.real_replace(self, destination, *args, **kwargs)
 
         source = Path(self.runner.__file__).resolve()
@@ -557,6 +567,316 @@ class PublicationControls(unittest.TestCase):
                         message + ' (a summary was written for a never-started run)')
         self.assertTrue(not list(out.glob('*.tmp')),
                         message + ' (a temp file was left behind)')
+
+    def test_refusal_survives_a_failed_marker_write(self):
+        """#1087 fix-r5 (boundary #3): a failing refusal-marker write must not
+        turn the exit-2 refusal into a traceback (rc=1, "ran and was red").
+
+        The reused directory keeps its stale summary when the marker write
+        fails, but the run still reports "never started".
+        """
+        out = self.out
+        stale = json.dumps(
+            {'controls': [{'name': 'twin-a', 'status': 'KILLED'}]}) + '\n'
+        (out / 'summary.json').write_text(stale)
+        argv = [str(Path(self.runner.__file__).resolve()), str(out),
+                'no-such-mutant']
+        real_write_text = Path.write_text
+
+        def failing_write_text(self_path, data, *args, **kwargs):
+            name = self_path.name
+            if (self_path.parent == out and name.startswith('summary.json.')
+                    and name.endswith('.tmp')):
+                raise OSError('disk full while staging the refusal marker')
+            return real_write_text(self_path, data, *args, **kwargs)
+
+        with patch.object(sys, 'argv', argv), \
+                patch.object(Path, 'write_text', failing_write_text):
+            code = self.runner.main()
+        message = '#1087 a failed marker write must not change the refusal code'
+        self.assertTrue(code == 2,
+                        message + ' (the refusal must still exit 2, not 1)')
+        self.assertTrue((out / 'summary.json').read_text() == stale,
+                        message + ' (the stale summary is unchanged after a '
+                        'failed marker write)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+
+    def _write_pipe_child(self, out, mode):
+        """A standalone driver that runs the delivered runner for a real pipe.
+
+        Only the process layer is faked — and only on the real module, so
+        ``unique_summary_tmp`` and ``detach_dead_streams`` stay the shipped
+        ones. The child sleeps briefly so the parent's close always lands
+        before the first announce print (measured race, see #1087 fix-r5).
+        """
+        fixtures = Path(self.runner.__file__).resolve().parents[1]
+        runner = Path(self.runner.__file__).resolve()
+        anchor = self.ANCHOR
+        old, new = self.OLD, self.NEW
+        test = 'twin_a_matches_ts'
+        test_file = 'pilotdeck-gateway/tests/edgeclaw_service_orchestration.rs'
+        source = self.source_a
+        kill_log = (
+            'running 1 test\n'
+            f'test {test} ... FAILED\n'
+            '\nfailures:\n'
+            f"thread '{test}' (2841) panicked at {test_file}:12:5:\n"
+            f'oracle mismatch: {anchor}\n'
+            'note: run with `RUST_BACKTRACE=1` environment variable to '
+            'display a backtrace\n'
+            'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; '
+            '0 filtered out\n'
+        )
+        green_log = (f'running 1 test\ntest {test} ... ok\n'
+                     'test result: ok. 1 passed; 0 failed; 0 ignored; '
+                     '0 measured; 0 filtered out\n')
+        driver = f'''\
+import subprocess
+import sys
+import time
+import types
+from pathlib import Path
+
+fixtures, runner, out, source = map(Path, sys.argv[1:5])
+mode = sys.argv[5]
+sys.path.insert(0, str(fixtures))
+import negative_process as process
+
+
+class Guard:
+    def __init__(self, snapshots):
+        self.snapshots = snapshots
+
+    def __enter__(self):
+        return dict(self.snapshots)
+
+    def __exit__(self, *exc):
+        return False
+
+
+def fake_mutating(root, paths, **kwargs):
+    return Guard({{path: path.read_bytes() for path in paths}})
+
+
+def fake_slot(script, **kwargs):
+    return types.SimpleNamespace(stdout='', stderr='')
+
+
+def fake_atomic(root, path, data, mode=None):
+    pass
+
+
+seen = {{}}
+
+
+def fake_run_owned(command, cwd, env, timeout):
+    target = command[-2]
+    count = seen.get(target, 0)
+    seen[target] = count + 1
+    log = {kill_log!r} if count == 1 else {green_log!r}
+    return subprocess.CompletedProcess(command, 101 if count == 1 else 0,
+                                       '', log)
+
+
+process.mutating_sources = fake_mutating
+process.wait_for_slot = fake_slot
+process.write_source_atomic = fake_atomic
+process.run_owned = fake_run_owned
+
+namespace = {{'__name__': 'negative_pipe_child', '__file__': str(runner)}}
+exec(compile(runner.read_text(), str(runner), 'exec'), namespace)
+namespace['MUTANTS'] = [dict(
+    name='sample', path=source, old={old!r}, new={new!r}, test={test!r},
+    anchor={anchor!r}, test_file={test_file!r}, suite='test')]
+namespace['ORCHESTRATION'] = source
+namespace['DREAM_RUN'] = source
+namespace['SNAPSHOTS'] = source
+namespace['STORAGE'] = source
+namespace['INDEXER'] = source
+if mode == 'refuse':
+    sys.argv = [str(runner), str(out), 'no-such-mutant']
+else:
+    sys.argv = [str(runner), str(out), 'sample']
+time.sleep(0.3)
+raise SystemExit(namespace['main']())
+'''
+        child = self.root / f'pipe-child-{mode}.py'
+        child.write_text(driver)
+        return child
+
+    def test_real_broken_pipe_keeps_the_abort_exit_code(self):
+        """#1087 fix-r5 (concurrency #2): the measured 120 defect, for real.
+
+        A consumer that closes the pipe (`negative.py OUT a b | head -1`)
+        turns the announce print into a BrokenPipeError. Without the detach
+        the interpreter-shutdown flush rewrites the abort exit code to 120
+        ("Exception ignored in: ..."), measured on this host. The shipped
+        runner must keep 3 and still publish one INVALID summary.
+        """
+        out = self.root / 'pipe-run'
+        out.mkdir()
+        child = self._write_pipe_child(out, 'abort')
+        process = subprocess.Popen(
+            [sys.executable, '-I', str(child),
+             str(Path(self.runner.__file__).resolve().parents[1]),
+             str(Path(self.runner.__file__).resolve()), str(out),
+             str(self.source_a), 'abort'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process.stdout.close()  # the read end is gone before the first print
+        _stdout, stderr = process.communicate(timeout=120)
+        message = '#1087 a broken stdout must keep the abort exit code 3'
+        self.assertTrue(process.returncode == 3,
+                        message + f' (got {process.returncode}, '
+                        f'stderr={stderr!r})')
+        self.assertTrue(b'Exception ignored' not in stderr,
+                        message + ' (the shutdown flush still saw the dead '
+                        'stream; the detach did not run)')
+        self.assertTrue(b'voided' in stderr,
+                        message + ' (the void diagnostic must still print)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue(all(row['status'] == 'INVALID'
+                            for row in payload['controls']),
+                        message + ' (the rows must be voided to INVALID)')
+        self.assertTrue(all('BrokenPipeError' in row['reason']
+                            for row in payload['controls']),
+                        message + ' (the abort reason must be recorded)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+
+    def test_real_closed_stderr_keeps_the_refusal_exit_code(self):
+        """#1087 fix-r5 (boundary #1): a real ``2>&-`` refusal keeps exit 2.
+
+        With fd 2 closed at exec time CPython sets ``sys.stderr = None`` and
+        the old unguarded diagnostic write crashed with rc=1 instead of the
+        "never started" code.
+        """
+        out = self.root / 'refuse-run'
+        out.mkdir()
+        child = self._write_pipe_child(out, 'refuse')
+        fixtures = Path(self.runner.__file__).resolve().parents[1]
+        result = subprocess.run(
+            ['/bin/sh', '-c',
+             f'exec {sys.executable} -I {child} {fixtures} '
+             f'{Path(self.runner.__file__).resolve()} {out} '
+             f'{self.source_a} refuse 2>&-'],
+            capture_output=True, timeout=120)
+        message = '#1087 a closed stderr must keep the refusal exit code 2'
+        self.assertTrue(result.returncode == 2,
+                        message + f' (got {result.returncode}, '
+                        f'stdout={result.stdout!r})')
+
+    def test_concurrent_runs_never_share_a_staging_file(self):
+        """#1087 fix-r5 (concurrency #3): two runs on one directory.
+
+        The staging name is unique per run (pid + serial), so two concurrent
+        runs on the same reused directory stage separately, each publishes
+        by its own rename, and neither can truncate the other's temp — the
+        fixed ``summary.json.tmp`` was a shared mutable resource.
+        """
+        out = self.out
+        sources = dict(self.sources)
+        out_dir, out_arg = out, str(out)
+        runner = self.runner
+        twin_mutants = self.mutants
+        disk = {'staged': {}, 'renames': 0}
+        barrier = threading.Barrier(2, timeout=30)
+        seen = threading.local()
+
+        def is_summary_tmp(name):
+            return (name.startswith('summary.json.')
+                    and name.endswith('.tmp'))
+
+        def fake_run_owned(command, cwd, env, timeout):
+            # Per-thread call counters: positive (green) -> negative (kill)
+            # -> restored (green) for every mutant of this run.
+            counts = getattr(seen, 'counts', None)
+            if counts is None:
+                counts = seen.counts = {}
+            test = command[-2]
+            count = counts.get(test, 0)
+            counts[test] = count + 1
+            if count == 1:
+                mutant = next(m for m in twin_mutants if m['test'] == test)
+                log = self._kill_log(test, mutant['test_file'])
+                return subprocess.CompletedProcess(command, 101, '', log)
+            return subprocess.CompletedProcess(
+                command, 0, '', self._green_log(test))
+
+        class Guard:
+            def __enter__(self):
+                return dict(sources)
+
+            def __exit__(self, *exc):
+                return False
+
+        real_write_text = Path.write_text
+        real_replace = Path.replace
+
+        def model_write_text(self, data, *args, **kwargs):
+            if self.parent == out_dir and is_summary_tmp(self.name):
+                first = self.name not in disk['staged']
+                disk['staged'][self.name] = data
+                if first:
+                    # Hold both stagings open at once: the second run must
+                    # still get its own name, not the first one's file.
+                    barrier.wait()
+                return real_write_text(self, data, *args, **kwargs)
+            return real_write_text(self, data, *args, **kwargs)
+
+        def model_replace(self, destination, *args, **kwargs):
+            if self.parent == out_dir and is_summary_tmp(self.name):
+                disk['renames'] += 1
+            return real_replace(self, destination, *args, **kwargs)
+
+        def run_once():
+            argv = [str(Path(runner.__file__).resolve()), out_arg,
+                    'twin-a', 'twin-b']
+            with patch.multiple(
+                    runner,
+                    MUTANTS=twin_mutants,
+                    mutating_sources=lambda root, paths, **kw: Guard(),
+                    run_owned=fake_run_owned,
+                    wait_for_slot=lambda script, **kw: types.SimpleNamespace(
+                        stdout='', stderr=''),
+                    write_source_atomic=lambda root, path, data, mode=None:
+                        None,
+                    time=types.SimpleNamespace(sleep=lambda seconds: None)), \
+                    patch.object(sys, 'argv', argv), \
+                    patch.object(Path, 'write_text', model_write_text), \
+                    patch.object(Path, 'replace', model_replace), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                return runner.main()
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            first = threading.Thread(target=run_once)
+            second = threading.Thread(target=run_once)
+            first.start()
+            second.start()
+            first.join(timeout=60)
+            second.join(timeout=60)
+        message = '#1087 concurrent runs must not share a staging file'
+        self.assertTrue(len(disk['staged']) == 2,
+                        message + f' (two runs staged {len(disk["staged"])} '
+                        'distinct temps; they shared one)')
+        self.assertTrue(disk['renames'] == 2,
+                        message + f' (each run must publish by its own rename, '
+                        f'got {disk["renames"]})')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue(payload['counts'] == {'KILLED': 2, 'SURVIVED': 0,
+                                              'INVALID': 0},
+                        message + ' (the surviving summary must be a whole '
+                        'document)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+        log_names = sorted(path.name for path in out.glob('*.log'))
+        self.assertTrue(len(log_names) == 12,
+                        message + f' (the label logs must not truncate each '
+                        f'other; got {log_names}')
+        self.assertTrue(len(set(name.rsplit('.', 2)[0]
+                                for name in log_names)) == 6,
+                        message + ' (the six labels keep their identity '
+                        'across the two run tokens)')
 
 
 if __name__ == '__main__':

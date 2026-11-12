@@ -50,6 +50,7 @@ cancelled dream's never-disposed stage (`stage-drop-cleanup` keeps that
 binding) while a FAILED explicit dispose keeps its residue like TS —
 `stage-drop-explicit-residue` binds the `restore-dispose-failure` oracle cell.
 """
+import itertools
 import json
 import os
 from pathlib import Path
@@ -60,8 +61,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_process import (
     SourceBaselineError,
+    detach_dead_streams,
     mutating_sources,
     run_owned,
+    unique_summary_tmp,
     wait_for_slot,
     write_source_atomic,
 )
@@ -94,6 +97,9 @@ FLUSH_FILTER_TEST = 'flush_session_filter_is_honored'
 # #1036 P2-5: the dream-cancellation cell — a dropped `dream` future must
 # still dispose its stage (Drop fallback) and keep the counters balanced.
 DREAM_CANCEL_TEST = 'dream_cancellation_disposes_stage_and_balances_counters'
+
+# Per-invocation serial for the label-log run token below.
+_RUN_SERIAL = itertools.count(1)
 
 
 ANCHORS = {
@@ -568,7 +574,12 @@ def classify(result, mutant):
 def main():
     output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else None
     if output is None:
-        print('usage: negative.py OUTPUT_DIR [mutant ...]', file=sys.stderr)
+        try:
+            print('usage: negative.py OUTPUT_DIR [mutant ...]', file=sys.stderr)
+        except (OSError, ValueError):
+            # #1087 fix-r5 (boundary #1): dead stderr must not turn a usage
+            # refusal into rc=1 ("ran and was red").
+            pass
         return 2
 
     def refuse_reused_summary(reason):
@@ -583,16 +594,40 @@ def main():
         """
         if output is None or not (output / 'summary.json').exists():
             return
-        tmp = output / 'summary.json.tmp'
-        tmp.write_text(json.dumps({'refused': reason}, indent=2) + '\n')
-        tmp.replace(output / 'summary.json')
+        # #1087 fix-r5 (boundary #3): a failing marker write must not turn the
+        # exit-2 refusal into a traceback (rc=1, "ran and was red"). The
+        # reason is remembered for the best-effort stderr line below and the
+        # refusal keeps its code either way.
+        try:
+            tmp = unique_summary_tmp(output)
+            tmp.write_text(json.dumps({'refused': reason}, indent=2) + '\n')
+            tmp.replace(output / 'summary.json')
+        except OSError as error:
+            marker_failure = f'could not invalidate the reused summary: {error}'
+        else:
+            marker_failure = None
+        try:
+            if marker_failure:
+                print(marker_failure, file=sys.stderr)
+            else:
+                print('refused; reused summary invalidated', file=sys.stderr)
+        except (OSError, ValueError):
+            # #1087 fix-r5 (boundary #1): stderr may be dead (`2>&-` or a
+            # closed stream); the code below is the contract, not the line.
+            pass
+        return marker_failure
 
     requested = sys.argv[2:]
     known = {mutant['name'] for mutant in MUTANTS}
     unknown = [name for name in requested if name not in known]
     if unknown:
         refuse_reused_summary('unknown mutant(s): run refused')
-        print(f'unknown mutant(s): {", ".join(unknown)}', file=sys.stderr)
+        try:
+            # #1087 fix-r5 (boundary #1): dead stderr must not turn an
+            # exit-2 refusal into rc=1.
+            print(f'unknown mutant(s): {", ".join(unknown)}', file=sys.stderr)
+        except (OSError, ValueError):
+            pass
         return 2
     selected = [
         mutant for mutant in MUTANTS if not requested or mutant['name'] in requested
@@ -603,12 +638,21 @@ def main():
     target = os.environ.get('CARGO_TARGET_DIR')
     if not target:
         refuse_reused_summary('CARGO_TARGET_DIR missing: run refused')
-        print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
+        try:
+            # #1087 fix-r5 (boundary #1): same guard as above.
+            print('CARGO_TARGET_DIR must be set by the caller', file=sys.stderr)
+        except (OSError, ValueError):
+            pass
         return 2
     output.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env['CARGO_TARGET_DIR'] = target
     results = []
+    # #1087 fix-r5 (concurrency #3): a per-invocation token keeps the label
+    # logs of two concurrent runs on the same reused directory from
+    # truncating each other, the same way the summary staging name above no
+    # longer collides.
+    run_token = f'{os.getpid()}.{next(_RUN_SERIAL)}'
 
     def run(label, mutant):
         command = [
@@ -624,7 +668,7 @@ def main():
         # `test <name> ... ok/FAILED` status line (#938 r14) that
         # passed()/classify() match exactly (#1053).
         args = ['--', mutant['test'], '--exact']
-        with (output / f'{label}.log').open('w') as log:
+        with (output / f'{label}.{run_token}.log').open('w') as log:
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
             log.write(gate.stdout + gate.stderr)
             log.flush()
@@ -663,7 +707,7 @@ def main():
             state: sum(row['status'] == state for row in results)
             for state in ('KILLED', 'SURVIVED', 'INVALID')
         }
-        tmp = output / 'summary.json.tmp'
+        tmp = unique_summary_tmp(output)
         tmp.write_text(
             json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n'
         )
@@ -698,11 +742,18 @@ def main():
         publish()
         try:
             print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
-        except OSError:
+        except (OSError, ValueError):
             # #1087 fix-r4 (concurrency #2): the summary is already
             # published, so a closed stderr must not replace the exit code
             # below — "aborted = 3" is the only contract left to keep.
+            # #1087 fix-r5: ValueError covers an in-process closed stream
+            # (``sys.stderr.close()``), OSError the real dead fd (``2>&-``).
             pass
+        if isinstance(error, (OSError, ValueError)):
+            # #1087 fix-r5 (concurrency #2): a stream-failure abort detached
+            # the dead fds first, so the interpreter-shutdown flush cannot
+            # rewrite the exit code below to 120 ("Exception ignored in:").
+            detach_dead_streams()
         if isinstance(error, SystemExit):
             # Normalize: 128+signum and any other raw code must not decide
             # how a coordinator reads this run (a 256/-256 code truncates to

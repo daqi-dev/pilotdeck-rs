@@ -37,6 +37,11 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+_FIXTURES = Path(__file__).resolve().parents[1]
+if str(_FIXTURES) not in sys.path:
+    sys.path.insert(0, str(_FIXTURES))
+import negative_process as shared_process
+
 
 def load_runner():
     source = Path(__file__).with_name('negative.py')
@@ -334,6 +339,9 @@ class PublicationControls(unittest.TestCase):
         fake.wait_for_slot = fake_slot
         fake.write_source_atomic = fake_atomic
         fake.target_environment = lambda root, env=None: None
+        # #1087 fix-r5: the shared detach helper stays the shipped one so the
+        # twins exercise the real dead-fd detection.
+        fake.detach_dead_streams = shared_process.detach_dead_streams
         saved_process = sys.modules.get('negative_process')
         saved_argv = sys.argv
         sys.modules['negative_process'] = fake

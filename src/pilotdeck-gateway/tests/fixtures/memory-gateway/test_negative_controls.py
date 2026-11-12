@@ -2,7 +2,8 @@
 #!/usr/bin/env python3
 """#1087 fix-r4 controls for the memory-gateway kill judge.
 
-The delivered judge (``negative_controls.py::classify_bound_run``) is the
+The delivered judge (``negative_controls.py::classify_bound_run`` — imported
+from ``negative_panic`` since #1087 fix-r5 simplify #1, no local copy) is the
 shared #813 criterion plus the #1087 fix-r4 aborted-run guard: the bound
 test's own ``FAILED`` status line, the marker inside that test's own panic
 payload, and libtest's own ``test result: FAILED.`` summary line. The controls

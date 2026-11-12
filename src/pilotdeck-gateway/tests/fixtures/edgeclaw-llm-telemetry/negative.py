@@ -5,6 +5,17 @@ All selected mutants are summarized, including failed build/positive/restoration
 --check-anchors is read-only. Stale anchors exit 2, never SURVIVED.
 The shared suite's runner targets --lib, so this integration adapter reuses its
 Case/passed helpers, adds no-run preflight and exact panic-block classification.
+
+#1087 fix-r5 (sibling #3): the verdict rows stay in memory for the whole
+guarded window and one final ``summary.json`` is published by a single rename
+only after ``mutating_sources`` restored and byte-verified the guarded source
+(the same skeleton as the edgeclaw tables). An abort inside the window — a
+cancellation, a restore failure, the source guard — voids the recorded rows,
+publishes one INVALID summary and exits 3; the old code lost the summary
+entirely on a cancellation (KeyboardInterrupt never reached the write) and
+reported a source-guard failure as "ran and red" (exit 1). Every guarded-source
+write in the window — mutation and restore alike — is one atomic rename
+(``write_source_atomic``), never a truncating write.
 """
 import json
 import os
@@ -14,7 +25,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (detach_dead_streams, mutating_sources,
+                              run_owned, unique_summary_tmp,
+                              wait_for_slot, write_source_atomic)
 from negative_suite import Case, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -124,13 +137,19 @@ def main():
     if sys.argv[1:] == ['--check-anchors']:
         print(f'{len(cases)} unique anchors; no mutation')
         return 0
+    # #1087 fix-r5 (sibling #3): a never-started run is exit 2, never the
+    # old bare string SystemExit (which exits 1 and reads like "ran and red").
     if not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
+        print('CARGO_TARGET_DIR must be supplied by caller', file=sys.stderr)
+        raise SystemExit(2)
     if len(sys.argv) < 2:
-        raise SystemExit('usage: negative.py OUT_DIR [NAME ...] | --check-anchors')
+        print('usage: negative.py OUT_DIR [NAME ...] | --check-anchors', file=sys.stderr)
+        raise SystemExit(2)
     selected = set(sys.argv[2:])
     if not selected <= {row[0] for row in cases}:
-        raise SystemExit('unknown mutation')
+        print(f'unknown mutation: {sorted(selected - {row[0] for row in cases})}',
+              file=sys.stderr)
+        raise SystemExit(2)
     chosen = [Case(name, path, old, new, test, messages[test] + ': ' + cells[name])
               for name, path, old, new, test in cases if not selected or name in selected]
     out = Path(sys.argv[1]).resolve()
@@ -156,36 +175,97 @@ def main():
         return result
 
     results = []
+
+    def write_summary():
+        """Publish the one final summary atomically (#1087 fix-r5, sibling #3).
+
+        Called exactly once per run, after ``mutating_sources`` restored and
+        byte-verified the guarded source — or from the abort handler, after
+        the same guard unwound. The old open('x') write was not atomic, and a
+        cancellation inside the window skipped it entirely.
+        """
+        counts = {state: sum(r['status'] == state for r in results)
+                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        tmp = unique_summary_tmp(out)
+        tmp.write_text(json.dumps({'controls': results, 'counts': counts},
+                                  indent=2) + '\n')
+        tmp.replace(out / 'summary.json')
+
+    def _void_pending(error):
+        """Void the recorded rows and publish one INVALID summary (sibling #3).
+
+        A cancellation or crash inside the guarded window is not a verdict:
+        the rows recorded so far are voided, the remaining mutants are
+        recorded void, and the single summary is published after the guard
+        unwound. The process then exits 3 — deliberately different from 2
+        ("never started", the refusals above) so a reader can tell a
+        cancelled run from one that never ran.
+        """
+        reason = f'runner: {type(error).__name__}: {error}'
+        for row in results:
+            row['status'] = 'INVALID'
+            row['reason'] = f"{row['reason']}; voided: {reason}"
+        for case in chosen[len(results):]:
+            results.append({'mutation': case.mutation, 'status': 'INVALID',
+                            'reason': f'voided: {reason}'})
+        write_summary()
+        try:
+            print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            # #1087 fix-r5 (concurrency #2): the summary is already
+            # published, so a closed stderr must not replace the exit code
+            # below — "aborted = 3" is the only contract left to keep.
+            pass
+        if isinstance(error, (OSError, ValueError)):
+            # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches
+            # the dead fds first, so the interpreter-shutdown flush cannot
+            # rewrite the exit code below to 120 ("Exception ignored in:").
+            detach_dead_streams()
+        if isinstance(error, SystemExit):
+            # Normalize: 128+signum and any other raw code must not decide
+            # how a coordinator reads this run.
+            raise SystemExit(3) from error
+        if not isinstance(error, Exception):
+            raise
+        raise SystemExit(3) from error
+
     try:
         with mutating_sources(root, [source]) as originals:
             for case in chosen:
                 state, reason = 'INVALID', 'positive failed'
                 try:
                     if passed(run(case.mutation + '-before', [case.test, '--', '--exact']), case.test):
-                        source.write_text(originals[source].decode().replace(case.old, case.new))
+                        # #1087 fix-r5 (sibling #3): one rename, never a
+                        # truncating in-place write. No `mode=`: the helper's
+                        # own fallback stat covers the shape (boundary #5).
+                        write_source_atomic(root, source,
+                                            originals[source].decode().replace(case.old, case.new).encode())
                         if run(case.mutation + '-compile', ['--no-run']).returncode != 0:
                             reason = 'mutant did not compile'
                         else:
                             state, reason = classify(run(case.mutation, [case.test, '--', '--exact']), case)
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - one cell must not hide the rest
                     state, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    source.write_bytes(originals[source])
+                    # Same #1087 fix-r5 window: the in-loop restore is also one
+                    # rename; the guard's own exit verification covers the bytes.
+                    write_source_atomic(root, source, originals[source])
                 try:
                     if not passed(run(case.mutation + '-restored', [case.test, '--', '--exact']), case.test):
                         state, reason = 'INVALID', reason + '; restored positive failed'
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - recorded, not raised
                     state, reason = 'INVALID', reason + f'; restore test: {error}'
                 results.append({'mutation': case.mutation, 'status': state, 'reason': reason})
                 print(f'{case.mutation}: {state}: {reason}', flush=True)
-    except Exception as error:
-        # A guard/restore failure prevents further mutation but accounts for all rows.
-        results = [{'mutation': c.mutation, 'status': 'INVALID', 'reason': f'source guard: {error}'} for c in chosen]
-    counts = {state: sum(r['status'] == state for r in results) for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    with (out / 'summary.json').open('x') as log:
-        json.dump({'controls': results, 'counts': counts}, log, indent=2)
-        log.write('\n')
-    print(json.dumps({'counts': counts, 'controls': results}), flush=True)
+    except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+        _void_pending(error)
+    # Reaching here means mutating_sources restored the guarded file and
+    # verified it against the baseline bytes. Only now may a summary exist.
+    write_summary()
+
+    print(json.dumps({'counts': {state: sum(r['status'] == state for r in results)
+                                        for state in ('KILLED', 'SURVIVED', 'INVALID')},
+                      'controls': results}), flush=True)
     return int(any(r['status'] != 'KILLED' for r in results))
 
 

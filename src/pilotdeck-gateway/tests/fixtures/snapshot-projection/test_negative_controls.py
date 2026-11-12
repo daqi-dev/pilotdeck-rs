@@ -2,7 +2,8 @@
 #!/usr/bin/env python3
 """#1087 fix-r4 controls for the snapshot-projection kill judge.
 
-The delivered judge (``negative_controls.py::classify_bound_run``) is the
+The delivered judge (``negative_controls.py::classify_bound_run`` — imported
+from ``negative_panic`` since #1087 fix-r5 simplify #1, no local copy) is the
 shared #813 criterion plus the #1087 fix-r4 aborted-run guard: the bound
 test's own ``FAILED`` status line, the marker inside that test's own panic
 payload, and libtest's own ``test result: FAILED.`` summary line. The controls
@@ -117,6 +118,23 @@ class SnapshotProjectionJudgeControls(unittest.TestCase):
         self.assertEqual(self.judge(log),
                          ("INVALID", "test failed outside the named assertion"),
                          "#1087 a sibling test's panic is not a kill")
+
+    def test_default_call_site_keeps_this_tables_survived_wording(self):
+        """#1087 fix-r5 (simplify #1) must not loosen the table's own wording.
+
+        The classifier moved to ``negative_panic`` whose default survived
+        wording is memory-gateway's ("bound test stayed green"); this table's
+        own "named test stayed green" must survive as the explicit call-site
+        argument, and the shared classifier must honor it.
+        """
+        source = Path(__file__).with_name('negative_controls.py').read_text()
+        self.assertIn('survived_reason="named test stayed green"', source,
+                      "#1087 the default call site must keep this table's wording")
+        status, reason = self.runner.classify_bound_run(
+            0, "", self.TEST, self.MARKER,
+            survived_reason="named test stayed green")
+        self.assertEqual((status, reason), ("SURVIVED", "named test stayed green"),
+                         "#1087 the shared classifier must honor the explicit wording")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from contextlib import contextmanager, nullcontext
 import builtins
 import fcntl
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -18,6 +19,7 @@ from pathlib import Path
 import re
 import signal
 import shutil
+import select
 import stat
 import subprocess
 import sys
@@ -879,6 +881,24 @@ PUBLISH_DIR = '.negctl-publish'
 
 DEFAULT_SOURCE_MODE = 0o644
 
+# Per-process serial for unique staging names below.
+_PUBLISH_SERIAL = itertools.count(1)
+
+
+def unique_summary_tmp(directory, name='summary.json'):
+    """Staging name for a one-rename summary publish (#1087 fix-r5, concurrency #3).
+
+    The evidence directories of the dir-reusing runners are shared across host
+    re-runs, so a fixed ``summary.json.tmp`` is a shared mutable resource: two
+    concurrent runs on the same directory can truncate each other's staging
+    file, and one run's rename can then publish the other's half-written
+    bytes — or crash on a temp that the other already renamed away. The name
+    carries the pid and a per-process serial, so concurrent stagings never
+    collide. It stays non-hidden on purpose: the existing leak checks
+    (``glob('*.tmp')``) must still see a residue.
+    """
+    return Path(directory) / f'{name}.{os.getpid()}.{next(_PUBLISH_SERIAL)}.tmp'
+
 
 def write_source_atomic(root, path, data, *, mode=None):
     """Publish source bytes in one rename, never a truncating in-place write.
@@ -926,6 +946,61 @@ def write_source_atomic(root, path, data, *, mode=None):
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _fd_is_dead(fd):
+    """True when the fd is closed (EBADF) or its peer is gone (POLLERR).
+
+    A broken pipe's write end reports POLLERR from poll(2) even though
+    fstat still succeeds, so both shapes are checked. A healthy stream
+    must never be reported dead: in-process callers (the twin tests) share
+    the interpreter's real fds, and detaching a live one would eat their
+    output for the rest of the process.
+    """
+    try:
+        os.fstat(fd)
+    except OSError:
+        return True
+    poller = select.poll()
+    poller.register(fd, select.POLLOUT)
+    try:
+        for _fd, events in poller.poll(0):
+            if events & select.POLLERR:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def detach_dead_streams():
+    """Point dead stdout/stderr fds at /dev/null (#1087 fix-r5, concurrency #2).
+
+    A cancelled run whose stdout is a broken pipe publishes its summary and
+    then raises SystemExit — but CPython's interpreter-shutdown flush of the
+    dead stream rewrites that exit code to 120 ("Exception ignored in:
+    <_io.TextIOWrapper ...>"). Redirecting the dead fds to /dev/null before
+    the exit keeps the intended code. Only genuinely dead fds (closed or
+    POLLERR, see ``_fd_is_dead``) are detached; streams without a usable
+    fileno (in-process test doubles) are skipped, and the helper never
+    raises.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            fd = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            continue
+        if not _fd_is_dead(fd):
+            continue
+        try:
+            null_fd = os.open(os.devnull, os.O_WRONLY)
+        except OSError:
+            return
+        try:
+            os.dup2(null_fd, fd)
+        except OSError:
+            pass
+        finally:
+            os.close(null_fd)
 
 
 @contextmanager

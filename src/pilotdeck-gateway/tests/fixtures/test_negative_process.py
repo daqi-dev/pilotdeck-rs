@@ -1827,5 +1827,104 @@ class TerminateHandlerRegistration(unittest.TestCase):
         self.assertEqual(cp.returncode, -signal.SIGQUIT)
 
 
+class DeadStreamDetach(unittest.TestCase):
+    """#1087 fix-r5 (concurrency #2): keep the abort exit code under dead fds.
+
+    A cancelled run whose stdout is a broken pipe publishes its summary and
+    raises SystemExit — but CPython's interpreter-shutdown flush rewrites
+    the exit code to 120 ("Exception ignored in: ..."). Measured on this
+    host. ``detach_dead_streams`` redirects only genuinely dead fds to
+    /dev/null, so the code survives; a healthy fd must never be detached.
+    """
+
+    def test_fd_is_dead_for_closed_and_broken_fds_only(self):
+        read_end, write_end = os.pipe()
+        self.assertFalse(negative_process._fd_is_dead(write_end),
+                         '#1087 a pipe with a live reader is not dead')
+        os.close(read_end)
+        self.assertTrue(negative_process._fd_is_dead(write_end),
+                        '#1087 a broken pipe (reader gone) must read dead')
+        os.close(write_end)
+        with tempfile.TemporaryFile() as healthy:
+            self.assertFalse(negative_process._fd_is_dead(healthy.fileno()),
+                             '#1087 a regular file fd is not dead')
+
+    def test_detach_keeps_a_broken_pipe_writable_and_leaves_healthy_fds(self):
+        read_end, write_end = os.pipe()
+        healthy_read, healthy_write = os.pipe()
+        try:
+            os.close(read_end)
+            # The streams carry private dups, so the interpreter's own fds
+            # are never touched by the detach below.
+            with patch.object(sys, 'stdout',
+                              os.fdopen(os.dup(write_end), 'w')), \
+                    patch.object(sys, 'stderr',
+                                 os.fdopen(os.dup(healthy_write), 'w')):
+                negative_process.detach_dead_streams()
+                # The broken stdout fd is now /dev/null: writing neither
+                # raises nor blocks.
+                sys.stdout.write('after detach\n')
+                sys.stdout.flush()
+                # The healthy stderr fd keeps its reader connected.
+                sys.stderr.write('still alive\n')
+                sys.stderr.flush()
+            self.assertEqual(os.read(healthy_read, 16), b'still alive\n',
+                             '#1087 a healthy fd must not be detached')
+        finally:
+            os.close(write_end)
+            os.close(healthy_write)
+            os.close(healthy_read)
+        # A stream without fileno (in-process test double) is skipped, never
+        # an error.
+        class FakeStream:
+            def fileno(self):
+                raise ValueError('fileno unsupported')
+
+        with patch.object(sys, 'stdout', FakeStream()), \
+                patch.object(sys, 'stderr', FakeStream()):
+            negative_process.detach_dead_streams()
+
+    def test_detach_keeps_the_exit_code_over_a_real_broken_pipe(self):
+        """The composed contract, measured end to end in a child process."""
+        fixtures = str(Path(__file__).resolve().parent)
+        child = (
+            'import sys, time\n'
+            f'sys.path.insert(0, {fixtures!r})\n'
+            'from negative_process import detach_dead_streams\n'
+            'time.sleep(0.3)\n'
+            'try:\n'
+            "    print('first line', flush=True)\n"
+            'except BrokenPipeError:\n'
+            '    pass\n'
+            'detach_dead_streams()\n'
+            'raise SystemExit(3)\n'
+        )
+        with tempfile.TemporaryDirectory(prefix='pdrs-detach-pipe-') as temp:
+            script = Path(temp) / 'child.py'
+            script.write_text(child)
+            process = subprocess.Popen(
+                [sys.executable, '-I', str(script)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process.stdout.close()  # the read end is gone before the second print
+            _stdout, stderr = process.communicate(timeout=60)
+        self.assertEqual(process.returncode, 3,
+                         '#1087 the exit code must stay 3, not the 120 the '
+                         f'shutdown flush rewrites it to (stderr={stderr!r})')
+        self.assertNotIn(b'Exception ignored', stderr,
+                         '#1087 the shutdown flush must not see the dead stream')
+
+    def test_unique_summary_tmp_differs_per_call_and_stays_visible(self):
+        first = negative_process.unique_summary_tmp('/tmp/out')
+        second = negative_process.unique_summary_tmp('/tmp/out')
+        self.assertNotEqual(first.name, second.name,
+                            '#1087 two stagings must never share one temp file')
+        for path in (first, second):
+            self.assertTrue(path.name.startswith('summary.json.'),
+                            '#1087 the staging name keeps its identity')
+            self.assertTrue(path.name.endswith('.tmp'),
+                            '#1087 the staging name must stay non-hidden so '
+                            'the glob leak checks still see a residue')
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

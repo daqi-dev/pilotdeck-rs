@@ -11,7 +11,8 @@ import subprocess
 import pending_reanchor as pending
 
 from negative_panic import named_test_failed, panic_evidence
-from negative_process import (mutating_sources, run_owned, wait_for_slot,
+from negative_process import (detach_dead_streams, mutating_sources,
+                              run_owned, wait_for_slot,
                               write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target)
@@ -349,12 +350,13 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
                 log.write(raw + f'\n{type(error).__name__}: {error}\n')
             raise
 
-    def record(case, status, reason):
+    def record(case, status, reason, *, announce=True):
         # Memory only: the final summary is published after the guarded
         # restore/re-verify window has closed successfully (#1076).
         results.append({'mutation': case.mutation, 'test': case.test,
                         'assertion': case.assertion, 'status': status, 'reason': reason})
-        print(f'{stem(case)}: {status}: {reason}', flush=True)
+        if announce:
+            print(f'{stem(case)}: {status}: {reason}', flush=True)
 
     # Where the guarded window raised, for the three-state exit contract:
     # 'enter' is a refusal to run (HEAD/baseline mismatch, busy lock, bad
@@ -434,9 +436,26 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
         # (missing is fail-closed), never the stale all-KILLED file (#1076).
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
+        # #1087 fix-r5 (sibling #1): the abort path must reach the summary
+        # publish even when the caller's stdout is already dead (a broken
+        # pipe from a closed reader, a closed stream) — an announced row
+        # raising here would skip publish_summary and leave no verdict file
+        # at all. The fill rows are recorded silently; publish is the only
+        # mandatory step.
         for case in cases[len(results):]:
-            record(case, 'INVALID', reason)
-        publish_summary(out, results)
+            record(case, 'INVALID', reason, announce=False)
+        try:
+            publish_summary(out, results)
+        finally:
+            # #1087 fix-r5 (concurrency #2): the summary is on disk, so the
+            # interpreter-shutdown flush of a dead stdout must not rewrite
+            # the exit code below to 120. Only a stream-failure abort detaches
+            # the real fds — an unrelated cancellation must not detach a
+            # healthy stdout (in-process callers keep their streams).
+            # OSError only: a ValueError body is an established #1076 refusal
+            # vehicle (an expired anchor), not a dead stream.
+            if phase != 'enter' and isinstance(error, OSError):
+                detach_dead_streams()
         # A raw SystemExit code must not decide the process status: 256/-256
         # truncate to zero on POSIX and a string code exits 1. Re-raise the
         # normalized code; a KeyboardInterrupt returns 2 from run_cases.
@@ -451,7 +470,14 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD', sc
         # here can only come from the guard's own restore/re-verify while
         # unwinding, so the run is void even though ``phase`` is 'body'.
         if (phase in ('restore', 'exit') or not isinstance(error, Exception)
+                or (phase != 'enter' and isinstance(error, OSError))
                 or (body_error is not None and error is not body_error)):
+            # #1087 fix-r5 (sibling #1): a dead stdout (broken pipe, closed
+            # fd) inside the guarded window is an environmental cancellation,
+            # not a refusal to run — the rows are void and the run exits 2
+            # like every other cancellation. A ValueError body keeps the
+            # historical in-window refusal code below (#1076: expired
+            # anchors and malformed registrations raise ValueError).
             return 2
         return 1
     # Reaching here means mutating_sources restored every source and verified

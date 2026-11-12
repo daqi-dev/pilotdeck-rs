@@ -56,8 +56,13 @@ def libtest_panic_log(payload, *, test=TEST, summary='present'):
     return '\n'.join(lines) + '\n'
 
 
-def extract_kill_expression():
-    """Pull the delivered overflow-branch `killed = (...)` verbatim."""
+def extract_kill_expression(branch):
+    """Pull a delivered `killed = (...)` assign verbatim.
+
+    ``branch='overflow'`` selects the marker-tuple branch's assignment (it
+    references the ``overflow`` helper); ``branch='marker'`` selects the
+    plain-marker branch's assignment (it references ``marker``).
+    """
     source = Path(__file__).with_name('negative.py')
     tree = ast.parse(source.read_text())
     for node in ast.walk(tree):
@@ -65,19 +70,30 @@ def extract_kill_expression():
                 target.id == 'killed' for target in node.targets
                 if isinstance(target, ast.Name))):
             continue
-        if any(isinstance(child, ast.Name) and child.id == 'overflow'
-               for child in ast.walk(node.value)):
+        names = {child.id for child in ast.walk(node.value)
+                 if isinstance(child, ast.Name)}
+        if branch in names:
             return ast.Expression(node.value)
-    raise AssertionError('the overflow-branch killed assign is missing')
+    raise AssertionError(f'the {branch}-branch killed assign is missing')
 
 
-KILLED = compile(extract_kill_expression(), 'negative.py:killed', 'eval')
+OVERFLOW_KILLED = compile(extract_kill_expression('overflow'),
+                          'negative.py:killed-overflow', 'eval')
+MARKER_KILLED = compile(extract_kill_expression('marker'),
+                        'negative.py:killed-marker', 'eval')
 
 
 def judge(returncode, raw, overflow):
-    return eval(KILLED, {'__builtins__': {}}, {
+    return eval(OVERFLOW_KILLED, {'__builtins__': {}}, {
         'returncode': returncode, 'raw': raw, 'overflow': overflow,
         'used_test': TEST, 'named_test_killed': named_test_killed,
+    })
+
+
+def judge_marker(returncode, raw, marker):
+    return eval(MARKER_KILLED, {'__builtins__': {}}, {
+        'returncode': returncode, 'raw': raw, 'used_test': TEST,
+        'marker': marker, 'named_test_killed': named_test_killed,
     })
 
 
@@ -121,6 +137,44 @@ class ProjectorOverflowJudgeControls(unittest.TestCase):
         self.assertTrue(
             not judge(101, raw, overflow_of(raw)),
             '#1087 a compile failure is excluded from both disjuncts')
+
+
+class ProjectorPlainMarkerJudgeControls(unittest.TestCase):
+    """#1087 fix-r5 (boundary #4): the plain-marker branch needs the summary.
+
+    The non-tuple mutants' judge accepted the named test's FAILED status and
+    panic payload without libtest's own summary line — the same aborted-run
+    false-kill shape the fix-r4 sweep closed for the overflow branch.
+    """
+
+    MARKER = 'range error at the projector boundary'
+
+    def test_named_marker_with_libtest_summary_kills(self):
+        raw = libtest_panic_log(f'assertion failed: {self.MARKER}')
+        self.assertTrue(
+            judge_marker(101, raw, self.MARKER),
+            '#1087 the named marker panic in a completed run kills')
+
+    def test_aborted_marker_without_summary_is_not_a_kill(self):
+        raw = libtest_panic_log(f'assertion failed: {self.MARKER}',
+                                summary=None)
+        self.assertTrue(
+            not judge_marker(-9, raw, self.MARKER),
+            '#1087 an aborted run without the FAILED summary line is not a '
+            'kill in the plain-marker branch either')
+
+    def test_compile_failure_does_not_kill(self):
+        raw = ('error: could not compile `pilotdeck-gateway` '
+               '(lib test) due to 1 previous error\n')
+        self.assertTrue(
+            not judge_marker(101, raw, self.MARKER),
+            '#1087 a compile failure is excluded from the plain-marker branch')
+
+    def test_unrelated_marker_is_not_a_kill(self):
+        raw = libtest_panic_log('called `Option::unwrap()` on a `None` value')
+        self.assertTrue(
+            not judge_marker(101, raw, self.MARKER),
+            '#1087 a FAILED run without the bound marker is not a kill')
 
 
 if __name__ == '__main__':

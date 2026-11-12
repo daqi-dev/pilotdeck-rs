@@ -38,6 +38,11 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+_FIXTURES = Path(__file__).resolve().parents[1]
+if str(_FIXTURES) not in sys.path:
+    sys.path.insert(0, str(_FIXTURES))
+import negative_process as shared_process
+
 
 def load_runner():
     source = Path(__file__).with_name('negative.py')
@@ -234,7 +239,8 @@ class PublicationControls(unittest.TestCase):
                         'the table must offer two controls with dedicated anchors')
 
     def _drive(self, *, fail_at=None, fail_with=None, restore_fails_at=None,
-               baseline_fails=False, stale_anchor=False):
+               baseline_fails=False, stale_anchor=False, arguments=None,
+               no_target=False):
         """Execute the delivered script once with the process layer mocked.
 
         ``fail_at`` is the 1-based ``run_owned`` call index (1 is the baseline
@@ -242,7 +248,9 @@ class PublicationControls(unittest.TestCase):
         ``write_source_atomic`` call index that raises instead of recording
         (5 is the first restore of the guarded window's own ``finally``).
         ``stale_anchor`` makes every guarded file lose its anchors, driving
-        the exit-2 stale-anchor refusal.
+        the exit-2 stale-anchor refusal. ``arguments`` replaces the selected
+        control names on argv, and ``no_target`` drops CARGO_TARGET_DIR, for
+        the pre-guard refusal controls (#1087 fix-r5, concurrency #1).
         """
         out = self.root / 'run'
         state = {'runs': 0, 'writes': 0, 'summary_existed': False}
@@ -306,6 +314,12 @@ class PublicationControls(unittest.TestCase):
             if restore_fails_at is not None and state['writes'] == restore_fails_at:
                 raise RuntimeError('twin restore failure')
 
+        def is_summary_tmp(name):
+            # #1087 fix-r5 (concurrency #3): the staging name is unique per
+            # run (`summary.json.<pid>.<serial>.tmp`), so match the shape.
+            return (name.startswith('summary.json.')
+                    and name.endswith('.tmp'))
+
         class Model:
             real_write_text = Path.write_text
             real_replace = Path.replace
@@ -314,26 +328,35 @@ class PublicationControls(unittest.TestCase):
                 if self.parent == out and self.name == 'summary.json':
                     disk['direct'] = data
                     return None
-                if self.parent == out and self.name == 'summary.json.tmp':
+                if self.parent == out and is_summary_tmp(self.name):
                     disk['staged'] = data
                 return Model.real_write_text(self, data, *args, **kwargs)
 
             def model_replace(self, destination, *args, **kwargs):
-                if self.parent == out and self.name == 'summary.json.tmp':
+                if self.parent == out and is_summary_tmp(self.name):
                     disk['renames'] = disk.get('renames', 0) + 1
                     disk['summary'] = disk['staged']
                 return Model.real_replace(self, destination, *args, **kwargs)
 
         source = Path(__file__).with_name('negative.py')
-        argv = [str(source), str(out)] + [name for name, _test in selected]
+        if arguments is None:
+            arguments = [name for name, _test in selected]
+        argv = [str(source), str(out)] + list(arguments)
         fake = types.ModuleType('negative_process')
         fake.mutating_sources = fake_mutating
         fake.run_owned = fake_run_owned
         fake.wait_for_slot = fake_slot
         fake.write_source_atomic = fake_atomic
         fake.target_environment = lambda root, env=None: None
+        # #1087 fix-r5: the shared publication helpers stay the shipped ones
+        # so the twins exercise the real unique-staging behavior.
+        fake.unique_summary_tmp = shared_process.unique_summary_tmp
+        fake.detach_dead_streams = shared_process.detach_dead_streams
         saved_process = sys.modules.get('negative_process')
         saved_argv = sys.argv
+        saved_target = os.environ.get('CARGO_TARGET_DIR')
+        if no_target and saved_target is not None:
+            del os.environ['CARGO_TARGET_DIR']
         sys.modules['negative_process'] = fake
         sys.argv = argv
         try:
@@ -348,6 +371,8 @@ class PublicationControls(unittest.TestCase):
             code = None
         finally:
             sys.argv = saved_argv
+            if saved_target is not None:
+                os.environ['CARGO_TARGET_DIR'] = saved_target
             if saved_process is None:
                 sys.modules.pop('negative_process', None)
             else:
@@ -505,6 +530,83 @@ class PublicationControls(unittest.TestCase):
         self.assertTrue(code.code == 2, message + ' (the refusal must exit 2)')
         self.assertTrue(not (out / 'summary.json').exists(),
                         message + ' (a summary was written for a never-started run)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+
+
+    def test_stale_anchor_refusal_survives_a_dead_stdout(self):
+        """#1087 fix-r5 (boundary #1 family): the stale-anchor report print
+        must not turn the exit-2 refusal into an in-window abort.
+
+        A host reader that closed the pipe (``| head -1``) makes the report
+        print raise; without the guard the refusal collapses into a voided
+        summary plus exit 3, and "never started" is read as "aborted".
+        """
+        class DeadStdout:
+            def write(self, data):
+                raise BrokenPipeError('stdout is closed')
+
+            def flush(self):
+                raise BrokenPipeError('stdout is closed')
+
+        with patch.object(sys, 'stdout', DeadStdout()):
+            code, state, disk, out = self._drive(stale_anchor=True)
+        message = '#1087 a dead stdout must not replace the refusal exit code'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the refusal must exit through SystemExit)')
+        self.assertTrue(code.code == 2, message + ' (the refusal must stay exit 2)')
+        self.assertTrue(not (out / 'summary.json').exists(),
+                        message + ' (a never-started run must publish nothing)')
+
+    def test_unknown_control_name_is_a_refusal_not_a_crash(self):
+        """#1087 fix-r5 (concurrency #1): a bad argv is exit 2, never an assert.
+
+        The old ``assert not unknown`` crashed with a traceback (rc=1, "ran
+        and was red") and — on a reused directory — left the previous run's
+        green ``summary.json`` readable as this run's evidence.
+        """
+        out = self.root / 'run'
+        out.mkdir()
+        (out / 'summary.json').write_text(json.dumps(
+            {'baseline': {'outcome': 'PASS'},
+             'cases': [{'name': self.selected[0][0], 'outcome': 'KILLED'}]}) + '\n')
+        code, state, disk, out = self._drive(
+            arguments=[self.selected[0][0], 'no-such-control'])
+        message = '#1087 an unknown control name must refuse, not crash'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the refusal must exit 2)')
+        self.assertTrue(code.code == 2, message + ' (the refusal must exit 2)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue('refused' in payload,
+                        message + ' (the stale green was not replaced by a '
+                        'refusal marker)')
+        self.assertTrue('cases' not in payload and 'baseline' not in payload,
+                        message + ' (the marker must carry no verdict rows)')
+        self.assertTrue(not list(out.glob('*.tmp')),
+                        message + ' (a temp file was left behind)')
+
+    def test_missing_target_dir_is_a_refusal_not_a_crash(self):
+        """#1087 fix-r5 (concurrency #1): a missing CARGO_TARGET_DIR is exit 2.
+
+        Same shape as the unknown control: the old ``assert target`` crashed
+        with rc=1 and kept a reused directory's stale green summary readable.
+        """
+        out = self.root / 'run'
+        out.mkdir()
+        (out / 'summary.json').write_text(json.dumps(
+            {'baseline': {'outcome': 'PASS'},
+             'cases': [{'name': self.selected[0][0], 'outcome': 'KILLED'}]}) + '\n')
+        code, state, disk, out = self._drive(no_target=True)
+        message = '#1087 a missing CARGO_TARGET_DIR must refuse, not crash'
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the refusal must exit 2)')
+        self.assertTrue(code.code == 2, message + ' (the refusal must exit 2)')
+        payload = json.loads((out / 'summary.json').read_text())
+        self.assertTrue('refused' in payload,
+                        message + ' (the stale green was not replaced by a '
+                        'refusal marker)')
+        self.assertTrue('cases' not in payload and 'baseline' not in payload,
+                        message + ' (the marker must carry no verdict rows)')
         self.assertTrue(not list(out.glob('*.tmp')),
                         message + ' (a temp file was left behind)')
 

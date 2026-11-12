@@ -389,8 +389,8 @@ def assertion_failure(log, test, case_id, throws_name):
     # same guard as `negative.py` and `_shared/negative_control.py`.
     if 'could not compile' in log:
         return False
-    if 'test result: FAILED.' not in log:
-        return False
+    # #1087 fix-r5 (simplify #2): the FAILED summary requirement moved into
+    # the shared named_test_killed default (require_summary=True).
     if not named_test_killed(log, test, f'case={case_id}'):
         return False
     if throws_name is None:

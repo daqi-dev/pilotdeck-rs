@@ -173,8 +173,8 @@ def assertion_failure(log, test):
     # twin controls in test_negative.py pin.
     if 'could not compile' in log:
         return False
-    if 'test result: FAILED.' not in log:
-        return False
+    # #1087 fix-r5 (simplify #2): the FAILED summary requirement moved into
+    # the shared named_test_killed default (require_summary=True).
     return named_test_killed(log, test,
                              [f'{anchor}/' for anchor in assertion_anchors])
 

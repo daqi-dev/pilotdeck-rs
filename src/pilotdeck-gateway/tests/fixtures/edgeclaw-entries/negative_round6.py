@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Round 6: compile each regression, require its runtime test to fail, restore bytes."""
+"""Round 6: compile each regression, require its runtime test to fail, restore bytes.
+
+#1087 fix-r5 (sibling #3): the verdict rows stay in memory for the whole
+guarded window and one final ``summary.json`` is published by a single rename
+only after ``mutating_sources`` restored and byte-verified the guarded sources
+(the same skeleton as the edgeclaw tables). An abort inside the window — a
+cancellation, a restore failure, the source guard — voids the recorded rows,
+publishes one INVALID summary and exits 3; the old write happened inside the
+window, so a cancellation mid-suite could leave no summary at all. Every
+guarded-source write in the window — mutation and restore alike — is one
+atomic rename (``write_source_atomic``), never a truncating write. A stale
+anchor is a refusal: exit 2 before any compile, nothing measured, nothing
+published.
+"""
 import argparse
 import contextlib
 import hashlib
@@ -12,8 +25,10 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                              target_environment, published_module)
+from negative_process import (detach_dead_streams, mutating_sources,
+                              published_module, run_owned, target_environment,
+                              unique_summary_tmp, wait_for_slot,
+                              write_source_atomic)
 
 p = argparse.ArgumentParser()
 p.add_argument('--out', required=True)
@@ -77,8 +92,12 @@ for path, test, run_anchor, slot_anchor in [
     (n1, 'test_negative_fix1', 'run_owned(cmd,',
      "wait_for_slot(root/'scripts/cargo-slots.sh')"),
     (n2, 'test_negative_ids',
-     'target.write_text(text.replace(old, new))\n            try:\n                run = run_owned(command,',
-     "assert text.count(old) == 1, (name, text.count(old))\n            slot = wait_for_slot(root/'scripts/cargo-slots.sh')"),
+     # #1087 fix-r5 (sibling #3): the ids runner's mutation publish moved from
+     # write_text to the shared atomic helper, so the meta-control anchors move
+     # with it (the slot anchor keeps pinning "reserve before expose").
+     'write_source_atomic(root, target, text.replace(old, new).encode())\n'
+     '            try:\n                run = run_owned(command,',
+     "text = originals[target].decode()\n            slot = wait_for_slot(root / 'scripts/cargo-slots.sh')"),
 ]:
     runner_mutations.extend([
         (path.stem+'-unowned', path, run_anchor,
@@ -113,16 +132,60 @@ runner_mutations.extend([
 ])
 rows = []
 env = target_environment(root)
-originals = {}
-runner_originals = {}
+# The guard snapshot's sha256 map, published only after the window closes;
+# None when the guard refused before it snapshotted anything.
+restored_sha = None
+# The rows this run will execute, in order, mirroring the two loops below.
+selected_mutations = [row for row in mutations if not args.only or args.only == row[0]]
+selected_runner_mutations = [row for row in runner_mutations if not args.only or args.only == row[0]]
 
 
-def record(name, run, log):
+def write_summary():
+    # #1087 fix-r5 (sibling #3, concurrency #3): one staging name per process,
+    # so two overlapping runs of the same table never share one fixed temp.
+    tmp = unique_summary_tmp(out)
+    tmp.write_text(json.dumps({'results': rows, 'restoredSha256': restored_sha},
+                              indent=2)+'\n')
+    tmp.replace(out/'summary.json')
+
+
+def _void_pending(error):
+    """Void the recorded rows and publish one INVALID summary (sibling #3)."""
+    reason = f'runner: {type(error).__name__}: {error}'
+    for row in rows:
+        row['killed'] = False
+        row['voided'] = reason
+    recorded = {row['name'] for row in rows}
+    for name in [row[0] for row in selected_mutations] + [row[0] for row in selected_runner_mutations]:
+        if name not in recorded:
+            rows.append({'name': name, 'exit': None, 'failures': None,
+                         'killed': False, 'voided': reason})
+    write_summary()
+    try:
+        print(f'voided {len(rows)} row(s): {reason}', file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass  # the summary is published; "aborted = 3" is the only contract left
+    if isinstance(error, (OSError, ValueError)):
+        # #1087 fix-r5 (concurrency #2): detach dead fds so the shutdown flush
+        # cannot rewrite the exit code below to 120.
+        detach_dead_streams()
+    if isinstance(error, SystemExit):
+        raise SystemExit(3) from error
+    if not isinstance(error, Exception):
+        raise
+    raise SystemExit(3) from error
+
+
+def record(name, run, log, killed):
     (out/(name+'.log')).write_text(log)
-    failures = [line for line in log.splitlines()
-                if 'panicked at' in line or 'left:' in line or 'right:' in line
-                or 'unowned subprocess.run' in line]
-    rows.append({'name': name, 'exit': run.returncode, 'failures': failures})
+    if killed:
+        failures = [line for line in log.splitlines()
+                    if 'panicked at' in line or 'left:' in line or 'right:' in line
+                    or 'unowned subprocess.run' in line]
+    else:
+        failures = []
+    rows.append({'name': name, 'exit': run.returncode, 'failures': failures,
+                 'killed': killed})
     print(f'{name}: detected at runtime; exit {run.returncode}; '+ '; '.join(failures)[:500],
           flush=True)
 
@@ -162,43 +225,68 @@ def runner_control(test, path, candidate, module_name=None):
     return subprocess.CompletedProcess(argv, code, stream.getvalue(), '')
 
 
-# One lock and one baseline check cover product sources *and* the runner
-# scripts executed by the meta-controls (only their in-memory code changes).
-# The runner takes the same lock
-# reentrantly in this process (see runner_control), so holding the outer
-# snapshot cannot deadlock the inner runner.
-selected_runner_paths = ([n, n1, n2, np] if not args.only or any(m[0] == args.only for m in runner_mutations)
-                         else [])
-with mutating_sources(root, [e, a, f, s, o] + selected_runner_paths) as originals:
-    for name, path, old, new, test in mutations:
-        if args.only and args.only != name:
-            continue
-        text = originals[path].decode()
-        assert text.count(old) == 1, (name, text.count(old))
-        # Reserve the Cargo slot before exposing the mutation.
-        slot = wait_for_slot(root/'scripts/cargo-slots.sh')
-        path.write_text(text.replace(old, new))
-        try:
-            command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '--locked', '--offline',
-                       '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
-            run = run_owned(command, env=env, cwd=root, timeout=180)
-            log = slot.stdout + slot.stderr + run.stdout + run.stderr
-            assert run.returncode == 101 and 'test result: FAILED. 0 passed; 1 failed;' in log and 'could not compile' not in log, log[-2000:]
-            record(name, run, log)
-        finally:
-            path.write_bytes(originals[path])
-    for name, path, old, new, test, marker in runner_mutations:
-        if args.only and args.only != name:
-            continue
-        text = originals[path].decode()
-        assert text.count(old) == 1, (name, text.count(old))
-        run = runner_control(test, path, text.replace(old, new, 1),
-                             'negative_process' if path == np else None)
-        log = run.stdout + run.stderr
-        assert run.returncode and marker in log and 'FAILED (failures=1)' in log, log[-2000:]
-        record(name, run, log)
-    (out/'summary.json').write_text(json.dumps({'results': rows, 'restoredSha256': {
-        str(path.relative_to(root)): hashlib.sha256(content).hexdigest()
-        for path, content in originals.items()
-    }}, indent=2)+'\n')
-assert len(rows) == (1 if args.only else len(mutations) + len(runner_mutations)), 'empty or partial negative suite'
+try:
+    # One lock and one baseline check cover product sources *and* the runner
+    # scripts executed by the meta-controls (only their in-memory code changes).
+    # The runner takes the same lock
+    # reentrantly in this process (see runner_control), so holding the outer
+    # snapshot cannot deadlock the inner runner.
+    selected_runner_paths = ([n, n1, n2, np] if not args.only or any(m[0] == args.only for m in runner_mutations)
+                             else [])
+    # #1087 fix-r5 (sibling #3): the snapshot name has exactly one binding
+    # (the with-as capture), so anchor_selfcheck can keep reading it.
+    with mutating_sources(root, [e, a, f, s, o] + selected_runner_paths) as originals:
+        restored_sha = {str(path.relative_to(root)): hashlib.sha256(content).hexdigest()
+                       for path, content in originals.items()}
+        # A stale anchor is a harness defect: refuse before any compile (exit 2,
+        # nothing measured, nothing published).
+        for name, path, old, _new, _test in selected_mutations + selected_runner_mutations:
+            count = originals[path].decode().count(old)
+            if count != 1:
+                print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
+                raise SystemExit(2)
+        for name, path, old, new, test in mutations:
+            if args.only and args.only != name:
+                continue
+            # Reserve the Cargo slot before exposing the mutation.
+            slot = wait_for_slot(root/'scripts/cargo-slots.sh')
+            # #1087 fix-r5 (sibling #3): one rename, never a truncating
+            # in-place write; no `mode=` — the helper's own fallback stat
+            # covers the shape (boundary #5).
+            write_source_atomic(root, path, originals[path].decode().replace(old, new).encode())
+            try:
+                command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '--locked', '--offline',
+                           '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
+                run = run_owned(command, env=env, cwd=root, timeout=180)
+                log = slot.stdout + slot.stderr + run.stdout + run.stderr
+                killed = (run.returncode == 101
+                          and 'test result: FAILED. 0 passed; 1 failed;' in log
+                          and 'could not compile' not in log)
+                record(name, run, log, killed)
+            finally:
+                # Same #1087 fix-r5 window: the in-loop restore is also one
+                # rename; the guard's own exit verification covers the bytes.
+                write_source_atomic(root, path, originals[path])
+        for name, path, old, new, test, marker in runner_mutations:
+            if args.only and args.only != name:
+                continue
+            run = runner_control(test, path, originals[path].decode().replace(old, new, 1),
+                                 'negative_process' if path == np else None)
+            log = run.stdout + run.stderr
+            killed = (bool(run.returncode) and marker in log and 'FAILED (failures=1)' in log)
+            record(name, run, log, killed)
+except SystemExit as error:
+    if error.code == 2:
+        # The deliberate stale-anchor refusal: nothing was measured, so nothing
+        # is published — "never started" leaves no summary behind.
+        raise
+    _void_pending(error)
+except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+    _void_pending(error)
+# Reaching here means mutating_sources restored the guarded files and verified
+# them against the baseline bytes. Only now may a summary exist.
+write_summary()
+killed = [row for row in rows if row['killed']]
+expected = (1 if args.only else len(mutations) + len(runner_mutations))
+print(f'summary: {len(killed)}/{len(rows)} killed', flush=True)
+sys.exit(0 if rows and len(rows) == expected and len(killed) == len(rows) else 1)

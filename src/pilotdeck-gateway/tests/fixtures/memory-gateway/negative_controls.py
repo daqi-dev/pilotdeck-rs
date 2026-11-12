@@ -27,7 +27,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
+# #1087 fix-r5 (simplify #1): the bound-run classifier is the shared one —
+# keep importing it, do not re-add a local copy.
+from negative_panic import classify_bound_run, named_test_killed
 from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse_unusable_target, registered)
 from negative_process import (mutating_sources, run_owned, wait_for_slot)  # noqa: E402
@@ -298,30 +300,6 @@ def compile_check():
 
 
 ENV = os.environ.copy()
-
-
-def classify_bound_run(returncode, log, test, marker, *,
-                       survived_reason="bound test stayed green",
-                       killed_reason="named assertion failed",
-                       unbound_reason="test failed outside the named assertion"):
-    """(status, reason) for one bound-test run.
-
-    #1087: KILLED is only the named test's own FAILED status line plus the
-    marker inside that test's own panic payload (negative_panic judges both,
-    so a sibling's panic or ordinary stdout is never evidence).
-    #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
-    SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
-    transcript without libtest's own summary (measured on a real libtest
-    process), so the FAILED summary line is a separate requirement, the same
-    guard as `_shared/negative_control.py`.
-    """
-    if returncode == 0:
-        return "SURVIVED", survived_reason
-    if "test result: FAILED." not in log:
-        return "INVALID", "no libtest FAILED summary line (aborted run or harness error)"
-    if named_test_killed(log, test, marker):
-        return "KILLED", killed_reason
-    return "INVALID", unbound_reason
 
 
 def main():

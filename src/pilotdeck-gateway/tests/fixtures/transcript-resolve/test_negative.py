@@ -21,6 +21,7 @@ import importlib.util
 import sys
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 
 def load_runner():
@@ -129,31 +130,131 @@ class TranscriptResolveJudgeControls(unittest.TestCase):
         self.assertTrue(not self.judge(log, 0, self.TEST, self.ASSERTION),
                         '#1087 a green bound test is not a kill')
 
-    def test_cargo_pins_the_named_test_with_exact(self):
-        """The libtest filter stays exact: one test per process."""
-        source = Path(__file__).with_name('negative_controls.py').read_text(
-            encoding='utf-8')
-        self.assertIn("'--', '--exact'", source,
-                      '#1087 the cargo invocation must keep --exact so the '
-                      'named test is the only test in the process')
+class PublicationBehavior(unittest.TestCase):
+    """#1087 fix-r5 (boundary #6): behavioral twins, not source literals.
 
-    def test_mutation_write_is_one_atomic_rename(self):
-        """#1087 fix-r4 (sibling #5): the mutation publish is one rename.
+    The old controls asserted substrings of the delivered source
+    (``'--', '--exact'`` and the ``write_source_atomic`` call text). These
+    controls execute the delivered ``main`` with only the process layer
+    mocked and pin the behavior instead: every stage runs the one named
+    test, the kill lands in the published summary, and the mutation publish
+    goes through the shared single-rename helper while the guarded source
+    is never written directly.
+    """
 
-        A truncating ``write_text`` killed mid-write-back leaves a half-
-        written source the next preflight refuses; the shared publish
-        helper keeps the single-rename contract, and the restore bytes are
-        the guard's own exit verification, not a local re-assert.
-        """
-        source = Path(__file__).with_name('negative_controls.py').read_text(
-            encoding='utf-8')
-        self.assertIn('write_source_atomic(root, source, changed.encode())',
-                      source,
-                      '#1087 the mutation publish must go through the '
-                      'shared single-rename helper')
-        self.assertNotIn('assert source.read_bytes() == original', source,
-                         '#1087 the restore bytes are verified by '
-                         'mutating_sources on exit, not re-asserted locally')
+    def setUp(self):
+        import os
+        import tempfile
+        self._tempfile = tempfile.TemporaryDirectory(
+            prefix='transcript-resolve-twin-')
+        self.addCleanup(self._tempfile.cleanup)
+        self.out = Path(self._tempfile.name).resolve() / 'run'
+        self.runner = load_runner()
+        # main() refuses to run without a caller-owned build tree.
+        self.saved_target = os.environ.get('CARGO_TARGET_DIR')
+        os.environ['CARGO_TARGET_DIR'] = str(self.out / 'target')
+        if self.saved_target is None:
+            self.addCleanup(os.environ.pop, 'CARGO_TARGET_DIR', None)
+        else:
+            self.addCleanup(os.environ.__setitem__, 'CARGO_TARGET_DIR',
+                            self.saved_target)
+
+    def _drive(self):
+        import contextlib
+        import subprocess
+        import types
+        state = {'seen': {}, 'atomic': [], 'direct_writes': []}
+        runner, out = self.runner, self.out
+
+        @contextlib.contextmanager
+        def fake_mutating(root, paths, **kwargs):
+            yield {path: path.read_bytes() for path in paths}
+
+        def fake_slot(script, **kwargs):
+            return types.SimpleNamespace(stdout='', stderr='')
+
+        def fake_run_owned(command, cwd, env, timeout):
+            # The command tail is ``<test> -- --exact``; the per-test call
+            # order is positive (green) -> negative (kill) -> restored
+            # (green), so the exact filter's effect is observable: the log
+            # of every stage names exactly the one bound test.
+            test = command[-3]
+            count = state['seen'].get(test, 0)
+            state['seen'][test] = count + 1
+            if count == 1:
+                payload = 'transcript resolve matrix: relative-deleted'
+                log = (
+                    'running 1 test\n'
+                    f'test {test} ... FAILED\n'
+                    '\nfailures:\n'
+                    f"thread '{test}' (2841) panicked at "
+                    'tests/transcript_resolve.rs:12:5:\n'
+                    f'assertion `left == right` failed: {payload}\n'
+                    'note: run with `RUST_BACKTRACE=1` environment variable '
+                    'to display a backtrace\n'
+                    'test result: FAILED. 0 passed; 1 failed; 0 ignored; '
+                    '0 measured; 0 filtered out\n'
+                )
+                return subprocess.CompletedProcess(command, 101, log, '')
+            log = (f'running 1 test\ntest {test} ... ok\n'
+                   'test result: ok. 1 passed; 0 failed; 0 ignored; '
+                   '0 measured; 0 filtered out\n')
+            return subprocess.CompletedProcess(command, 0, log, '')
+
+        def fake_atomic(root, path, data, *, mode=None):
+            state['atomic'].append((path, bytes(data)))
+
+        real_write_bytes = Path.write_bytes
+
+        def model_write_bytes(self, data, *args, **kwargs):
+            # The guarded product source may only be published through the
+            # shared helper; a direct write_bytes is the truncating shape.
+            state['direct_writes'].append(self)
+            return real_write_bytes(self, data, *args, **kwargs)
+
+        argv = [str(Path(runner.__file__).resolve()), str(out),
+                'cwd-empty-fallback']
+        with patch.object(runner, 'mutating_sources', fake_mutating), \
+                patch.object(runner, 'wait_for_slot', fake_slot), \
+                patch.object(runner, 'run_owned', fake_run_owned), \
+                patch.object(runner, 'write_source_atomic', fake_atomic), \
+                patch.object(sys, 'argv', argv), \
+                patch.object(Path, 'write_bytes', model_write_bytes):
+            runner.main()
+        return state, out
+
+    def test_every_stage_runs_the_named_test_behind_exact(self):
+        """Behavioral ``--exact`` pin: one named test per process, always."""
+        import json
+        state, out = self._drive()
+        message = '#1087 every cargo invocation must run the named test'
+        self.assertTrue(list(state['seen']) == ['relative_base_deleted_cwd'],
+                        message + f' (the runs used {list(state["seen"])})')
+        self.assertTrue(state['seen']['relative_base_deleted_cwd'] == 3,
+                        message + ' (positive/negative/restored all ran)')
+        for label in ('cwd-empty-fallback-positive',
+                      'cwd-empty-fallback-negative',
+                      'cwd-empty-fallback-restored'):
+            log = (out / f'{label}.log').read_text()
+            self.assertTrue('running 1 test\n' in log,
+                            message + f' ({label} did not run exactly one test)')
+        summary = json.loads((out / 'summary.json').read_text())
+        self.assertTrue(all(row['killed'] for row in summary),
+                        message + ' (the killed rows must record the runs)')
+
+    def test_mutation_publish_goes_through_the_shared_helper(self):
+        """Behavioral rename pin: one atomic publish, never a direct write."""
+        state, out = self._drive()
+        message = '#1087 the mutation publish must be one shared-helper rename'
+        self.assertTrue(len(state['atomic']) == 1,
+                        message + f' (expected exactly one atomic publish, '
+                        f'got {len(state["atomic"])})')
+        path, data = state['atomic'][0]
+        self.assertTrue(data != path.read_bytes(),
+                        message + ' (the published bytes were not the mutant)')
+        guarded = [p for p in state['direct_writes'] if p.suffix == '.rs']
+        self.assertTrue(not guarded,
+                        message + ' (the guarded source was written directly)')
 
 
 if __name__ == '__main__':

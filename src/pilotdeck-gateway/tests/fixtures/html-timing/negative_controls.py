@@ -216,9 +216,9 @@ def outcome(result, test, expects=None):
     # named test's FAILED line and payload (the ``--nocapture`` SIGKILL
     # shape) is not a kill. A timeout is already INVALID above (the
     # caller's TimeoutExpired branch), so this only closes the SIGKILL /
-    # crash shape.
+    # crash shape. #1087 fix-r5 (simplify #2): the FAILED summary requirement
+    # moved into the shared named_test_killed default (require_summary=True).
     killed = (bool(failure) and matched
-              and 'test result: FAILED.' in log
               and named_test_killed(log, test, failure))
     return log, killed, failure
 

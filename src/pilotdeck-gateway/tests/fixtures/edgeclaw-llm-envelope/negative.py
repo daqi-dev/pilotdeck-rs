@@ -22,6 +22,7 @@ Run the decode-crlf sample first, or list the names:
 The ``# oracle`` comments name the inputs whose expected value flips; the
 RESULT for fix-r1 lists the exact ``cases[i]`` index of every witness.
 """
+import itertools
 import json
 import os
 from pathlib import Path
@@ -31,11 +32,15 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                              write_source_atomic)
+from negative_process import (detach_dead_streams, mutating_sources,
+                              run_owned, unique_summary_tmp,
+                              wait_for_slot, write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/envelope.rs'
+
+# Per-invocation serial for the label-log run token below.
+_RUN_SERIAL = itertools.count(1)
 
 cases = [
     # Drop the brace-bounded fast path: a multi-object response returns only the first object.
@@ -286,18 +291,72 @@ def classify(log, returncode, expected, test):
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list'
+out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else None
+
+
+def _refuse_summary(reason):
+    """Invalidate a reused directory's stale summary (#1087 fix-r4, concurrency #3).
+
+    The evidence directory is claimed with ``mkdir(exist_ok=True)`` so a host
+    re-run can land in the same path; an exit-2 "never started" refusal
+    must not leave the previous run's green ``summary.json`` readable
+    there as this run's evidence. The marker is one rename, carries no
+    verdict rows, and leaves a fresh directory untouched — before the first
+    run there is nothing to invalidate.
+
+    #1087 fix-r5 (boundary #3): a failing marker write must not turn the
+    refusal into a traceback (rc=1, "ran and was red") — the reason is
+    reported best-effort and the caller keeps its exit-2 code either way.
+    """
+    if out is None or not (out / 'summary.json').exists():
+        return
+    try:
+        tmp = unique_summary_tmp(out)
+        tmp.write_text(json.dumps({'refused': reason}, indent=2) + '\n')
+        tmp.replace(out / 'summary.json')
+    except OSError as error:
+        try:
+            print(f'could not invalidate the reused summary: {error}',
+                  file=sys.stderr)
+        except (OSError, ValueError):
+            pass
+
+
+def _refuse(message):
+    """#1087 fix-r5 (concurrency #1): an early check is a refusal, not a crash.
+
+    The old ``assert`` traceback exited 1 — "ran and was red" — and left a
+    reused directory's previous green summary readable as this run's
+    evidence. Now the stale summary is invalidated by one marker rename and
+    the run exits 2 ("never started"), the same contract the in-window
+    stale-anchor refusal keeps.
+    """
+    _refuse_summary(f'{message}: run refused')
+    try:
+        print(f'INVALID: {message}', file=sys.stderr)
+    except (OSError, ValueError):
+        # #1087 fix-r5 (boundary #1): stderr may be dead (`2>&-` gives
+        # sys.stderr=None, a closed stream raises); the code is the contract.
+        pass
+    raise SystemExit(2)
+
+
+if out is None:
+    _refuse('usage: negative.py OUT_DIR [NAME ...] | negative.py --list')
 selected = sys.argv[2:]
 unknown = set(selected) - set(names)
-assert not unknown, f'unknown controls: {sorted(unknown)}'
+if unknown:
+    _refuse(f'unknown controls: {sorted(unknown)}')
 if selected:
     cases = [case for case in cases if case[0] in selected]
-assert cases, 'no controls selected'
+if not cases:
+    _refuse('no controls selected')
 
-out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+if not target:
+    _refuse('negative.py requires CARGO_TARGET_DIR from the caller')
 out.mkdir(parents=True, exist_ok=True)
+run_token = f'{os.getpid()}.{next(_RUN_SERIAL)}'
 
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
@@ -320,26 +379,9 @@ def write_summary(current_baseline):
     run mid-suite, and an interrupt inside the write could leave an empty or
     half-written JSON document.
     """
-    tmp = out / 'summary.json.tmp'
+    tmp = unique_summary_tmp(out)
     tmp.write_text(json.dumps(
         {'baseline': current_baseline, 'cases': results}, indent=2) + '\n')
-    tmp.replace(out / 'summary.json')
-
-
-def _refuse_summary(reason):
-    """Invalidate a reused directory's stale summary (#1087 fix-r4, concurrency #3).
-
-    The evidence directory is claimed with ``mkdir(exist_ok=True)`` so a
-    host re-run can land in the same path; an exit-2 "never started"
-    refusal must not leave the previous run's green ``summary.json``
-    readable there as this run's evidence. The marker is one rename,
-    carries no verdict rows, and leaves a fresh directory untouched —
-    before the first run there is nothing to invalidate.
-    """
-    if not (out / 'summary.json').exists():
-        return
-    tmp = out / 'summary.json.tmp'
-    tmp.write_text(json.dumps({'refused': reason}, indent=2) + '\n')
     tmp.replace(out / 'summary.json')
 
 
@@ -365,11 +407,17 @@ def _void_pending(error):
     write_summary(baseline)
     try:
         print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
-    except OSError:
+    except (OSError, ValueError):
         # #1087 fix-r4 (concurrency #2): the summary is already published, so
         # a closed stderr must not replace the exit code below — "aborted = 3"
-        # is the only contract left to keep.
+        # is the only contract left to keep. #1087 fix-r5: ValueError covers
+        # an in-process closed stream, OSError the real dead fd.
         pass
+    if isinstance(error, (OSError, ValueError)):
+        # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches the
+        # dead fds first, so the interpreter-shutdown flush cannot rewrite
+        # the exit code below to 120 ("Exception ignored in:").
+        detach_dead_streams()
     if isinstance(error, SystemExit):
         # Normalize: 128+signum and any other raw code must not decide how a
         # coordinator reads this run (a 256/-256 code truncates to a zero
@@ -397,10 +445,16 @@ try:
             report = '\n'.join(
                 f'STALE ANCHOR {name}: {count} matches in {relative}'
                 for name, relative, count in stale) + '\n'
-            (out / 'stale-anchors.log').write_text(report)
-            print(report, end='', flush=True)
-            print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run',
-                  flush=True)
+            (out / f'stale-anchors.{run_token}.log').write_text(report)
+            try:
+                print(report, end='', flush=True)
+                print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run',
+                      flush=True)
+            except (OSError, ValueError):
+            # #1087 fix-r5 (boundary #1 family): a dead stdout must not
+            # turn this exit-2 refusal into an in-window abort (the
+            # report is already on disk in the stale-anchors log).
+                pass
             sys.exit(2)
         baseline_ok = False
         try:
@@ -413,7 +467,7 @@ try:
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
-            (out / 'baseline.log').write_text(log)
+            (out / f'baseline.{run_token}.log').write_text(log)
             passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
             baseline_ok = returncode == 0 and passed is not None
             baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
@@ -460,7 +514,7 @@ try:
                 # A red baseline makes every mutation's "failure" untrustworthy.
                 if outcome == 'KILLED' and not baseline_ok:
                     outcome = 'INVALID'
-                (out / f'{name}.log').write_text(
+                (out / f'{name}.{run_token}.log').write_text(
                     'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
                     slots_text + log + f'\nexit={returncode}\n')
                 results.append({'name': name, 'test': test, 'outcome': outcome,

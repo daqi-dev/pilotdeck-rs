@@ -202,13 +202,8 @@ def failure_is_bound(log, fragment, test):
     # false-kill shapes the twin controls in test_negative.py pin.
     if 'could not compile' in log:
         return False
-    # #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
-    # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
-    # transcript without libtest's own summary (measured on a real libtest
-    # process), so the FAILED summary line is a separate requirement, the
-    # same guard as `_shared/negative_control.py`.
-    if 'test result: FAILED.' not in log:
-        return False
+    # #1087 fix-r5 (simplify #2): the FAILED summary requirement moved
+    # into the shared named_test_killed default (require_summary=True).
     return named_test_killed(log, test, fragment)
 
 

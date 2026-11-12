@@ -525,6 +525,69 @@ class CancellationTests(unittest.TestCase):
         self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
                          '#1076 the published counts must be INVALID after SystemExit')
 
+    def test_closed_stdout_voids_rows_publishes_and_returns_2(self):
+        """#1087 fix-r5 (sibling #1): the abort path must survive a dead stdout.
+
+        A consumer that closed the pipe turns record()'s announce print into
+        a BrokenPipeError. The old handler filled the remaining rows through
+        the same announcing record(), so a dead stdout skipped the publish and
+        left no verdict file at all. Now the fill is silent, the publish is
+        mandatory, and a stream-failure cancellation returns 2 like every
+        other cancellation (#1076 exit contract: unverified/voided = 2).
+        """
+
+        class ClosedStdout:
+            def write(self, data):
+                raise BrokenPipeError('consumer closed the pipe')
+
+            def flush(self):
+                pass
+
+        with tempfile.TemporaryDirectory(prefix='pdrs-1087-suite-closed-') as directory:
+            root = Path(directory)
+            source = root / 'fixture.txt'
+            source.write_bytes(b'original')
+            out = root / 'logs'
+            out.mkdir()
+            case = suite.Case('one', source, 'original', 'mutant', TEST, ANCHOR)
+
+            @contextlib.contextmanager
+            def guard(_root, _paths, **_kwargs):
+                yield {source: b'original'}
+
+            def run(command, **_kwargs):
+                if source.read_text() == 'mutant':
+                    return output('kill')
+                return output('pass')
+
+            def mutate(text, _scope, replacements):
+                old, new = replacements[0]
+                return text.replace(old, new, 1)
+
+            previous = sys.stdout
+            sys.stdout = ClosedStdout()
+            try:
+                with patch.object(suite, 'mutating_sources', new=guard), \
+                        patch.object(suite, 'wait_for_slot',
+                                     return_value=output('pass')), \
+                        patch.object(suite, 'run_owned', side_effect=run):
+                    code = suite.run_cases(
+                        root, [case], out,
+                        {'CARGO_TARGET_DIR': str(root / 'target')}, mutate)
+            finally:
+                sys.stdout = previous
+            message = '#1087 the abort path must publish under a closed stdout'
+            self.assertTrue(code == 2,
+                            message + f' (a stream-failure cancellation must '
+                            f'return 2, got {code!r})')
+            path = out / 'summary.json'
+            summary = json.loads(path.read_text()) if path.is_file() else None
+            self.assertIsNotNone(summary, message + ' (no summary was published)')
+            self.assertEqual([row['status'] for row in summary['controls']],
+                             ['INVALID'], message + ' (the rows were not voided)')
+            self.assertIn('BrokenPipeError', summary['controls'][0]['reason'],
+                          message + ' (the abort reason must be recorded)')
+
     def test_publish_summary_publishes_atomically(self):
         with tempfile.TemporaryDirectory(prefix='pdrs-1076-suite-atomic-') as directory:
             out = Path(directory)

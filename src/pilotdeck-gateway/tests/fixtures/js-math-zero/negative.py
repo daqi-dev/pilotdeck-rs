@@ -55,7 +55,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import (mutating_sources, run_owned, wait_for_slot,
+from negative_process import (detach_dead_streams, mutating_sources,
+                               run_owned, wait_for_slot,
                                write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
@@ -310,7 +311,10 @@ def classify(log, returncode, expected, test):
     ran = re.search(r'^running (\d+) tests?$', log, re.MULTILINE)
     if ran is None or int(ran.group(1)) != 1:
         return 'INVALID'
-    if returncode != 0 and 'test result: FAILED.' in log:
+    if returncode != 0:
+        # #1087 fix-r5 (simplify #2): libtest's own ``test result: FAILED.``
+        # summary requirement moved into the shared named_test_killed default
+        # (require_summary=True), same verdict, one spelling.
         if named_test_killed(log, test, expected):
             return 'KILLED'
         return 'INVALID'
@@ -480,11 +484,17 @@ def _void_pending(error):
     write_summary(baseline)
     try:
         print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
-    except OSError:
+    except (OSError, ValueError):
         # #1087 fix-r4 (concurrency #2): the summary is already published, so
         # a closed stderr must not replace the exit code below — "aborted = 3"
-        # is the only contract left to keep.
+        # is the only contract left to keep. #1087 fix-r5: ValueError covers
+        # an in-process closed stream, OSError the real dead fd.
         pass
+    if isinstance(error, (OSError, ValueError)):
+        # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches the
+        # dead fds first, so the interpreter-shutdown flush cannot rewrite
+        # the exit code below to 120 ("Exception ignored in:").
+        detach_dead_streams()
     if isinstance(error, SystemExit):
         # Normalize: 128+signum and any other raw code must not decide how a
         # coordinator reads this run (a 256/-256 code truncates to a zero
@@ -549,8 +559,11 @@ try:
                     # truncating in-place write; the shared publish helper
                     # (#1903) keeps a SIGKILL mid-write from leaving a source
                     # the next preflight would refuse as "differs from HEAD".
-                    write_source_atomic(root, path, changed.encode(),
-                                        mode=path.stat().st_mode & 0o7777)
+                    # #1087 fix-r5 (boundary #5): no explicit `mode=` — the
+                    # helper's own fallback stat covers a target the mutant
+                    # deleted mid-window, and a bare stat here would raise
+                    # FileNotFoundError and bypass DEFAULT_SOURCE_MODE.
+                    write_source_atomic(root, path, changed.encode())
 
                     # Requirement: every mutant must compile before its test verdict.
                     compiled, compile_log = run(name + '-compile', [*extra, '--no-run'])
@@ -570,9 +583,9 @@ try:
                 finally:
                     # Same #1087 fix-r4 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes; the guard's own
-                    # exit verification covers the bytes.
-                    write_source_atomic(root, path, originals[path],
-                                        mode=path.stat().st_mode & 0o7777)
+                    # exit verification covers the bytes. No `mode=` (fix-r5,
+                    # boundary #5): same helper fallback as the mutation write.
+                    write_source_atomic(root, path, originals[path])
 
                 # Restored bytes must pass the same named test.
                 if status == 'KILLED':
@@ -586,10 +599,9 @@ try:
                 print(f'{name}: {status}: {reason}', flush=True)
         finally:
             # Same #1087 fix-r4 window: the final restore is also one rename,
-            # never a truncating write_bytes.
+            # never a truncating write_bytes. No `mode=` (fix-r5, boundary #5).
             for guarded in paths:
-                write_source_atomic(root, guarded, originals[guarded],
-                                    mode=guarded.stat().st_mode & 0o7777)
+                write_source_atomic(root, guarded, originals[guarded])
 except SystemExit as error:
     if error.code == 1:
         # The deliberate baseline failure: the guard already restored and

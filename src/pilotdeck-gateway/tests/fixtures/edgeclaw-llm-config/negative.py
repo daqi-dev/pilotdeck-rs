@@ -34,7 +34,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import (mutating_sources, run_owned, wait_for_slot,
+from negative_process import (detach_dead_streams, mutating_sources,
+                              run_owned, wait_for_slot,
                               write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
@@ -451,11 +452,17 @@ def _void_pending(error):
     write_summary(baseline)
     try:
         print(f'voided {len(results)} row(s): {reason}', file=sys.stderr, flush=True)
-    except OSError:
+    except (OSError, ValueError):
         # #1087 fix-r4 (concurrency #2): the summary is already published, so
         # a closed stderr must not replace the exit code below — "aborted = 3"
-        # is the only contract left to keep.
+        # is the only contract left to keep. #1087 fix-r5: ValueError covers
+        # an in-process closed stream, OSError the real dead fd.
         pass
+    if isinstance(error, (OSError, ValueError)):
+        # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches the
+        # dead fds first, so the interpreter-shutdown flush cannot rewrite
+        # the exit code below to 120 ("Exception ignored in:").
+        detach_dead_streams()
     if isinstance(error, SystemExit):
         # Normalize: 128+signum and any other raw code must not decide how a
         # coordinator reads this run (a 256/-256 code truncates to a zero

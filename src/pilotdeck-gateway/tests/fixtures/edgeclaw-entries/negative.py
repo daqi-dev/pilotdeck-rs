@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
 """Mutate one production behavior at a time, require a runtime assertion, restore bytes.
 Run from repository root after normal entries tests pass. Logs stay in --out.
+
+#1087 fix-r5 (sibling #3): the verdict rows stay in memory for the whole
+guarded window and one final ``summary.json`` is published by a single rename
+only after ``mutating_sources`` restored and byte-verified the guarded sources
+(the same skeleton as the edgeclaw tables). An abort inside the window — a
+cancellation, a restore failure, the source guard — voids the recorded rows,
+publishes one INVALID summary and exits 3; the old ``finally``-inside-the-window
+write left a partial all-killed-looking summary behind when the run was
+cancelled mid-suite. Every guarded-source write in the window — mutation and
+restore alike — is one atomic rename (``write_source_atomic``), never a
+truncating write. A stale anchor is a refusal: exit 2 before any compile,
+nothing measured, nothing published.
 """
 import argparse, hashlib, json, os, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (detach_dead_streams, mutating_sources, run_owned,
+                              unique_summary_tmp, wait_for_slot, write_source_atomic)
 p=argparse.ArgumentParser();p.add_argument('--out',required=True);args=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[5];os.chdir(root)
 out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
@@ -48,27 +61,88 @@ if sys.platform == 'win32':
  mutations.append(('dangling-root-remove',f,'super::node_fs::rm_sync(&self.root)?;','if self.root.exists() {super::node_fs::rm_sync(&self.root)?;}','clearAllMemoryData-dangling-root'))
 else:
  mutations.append(('dangling-root-remove',f,'            let canonical = fs::canonicalize(parent)?;','            let canonical = fs::canonicalize(parent)?;\n            if !self.root.exists() { return Ok(()); }','clearAllMemoryData-dangling-root'))
-with mutating_sources(root, [e, a, f, o]) as originals:
- rows=[]
+rows=[]
+# The guard snapshot's sha256 map, published only after the window closes;
+# None when the guard refused before it snapshotted anything.
+restored_sha=None
+def write_summary():
+ # #1087 fix-r5 (sibling #3, concurrency #3): one staging name per process, so
+ # two overlapping runs of the same table never share one fixed temp file.
+ tmp=unique_summary_tmp(out)
+ tmp.write_text(json.dumps({'results':rows,'restoredSha256':restored_sha},indent=2)+'\n')
+ tmp.replace(out/'summary.json')
+def _void_pending(error):
+ """Void the recorded rows and publish one INVALID summary (sibling #3)."""
+ reason=f'runner: {type(error).__name__}: {error}'
+ for row in rows:
+  row['killed']=False;row['voided']=reason
+ for name,_path,_old,_new,case in mutations[len(rows):]:
+  rows.append({'name':name,'case':case,'exit':None,'failure':None,'killed':False,'voided':reason})
+ write_summary()
  try:
+  print(f'voided {len(rows)} row(s): {reason}',file=sys.stderr,flush=True)
+ except (OSError,ValueError):
+  pass  # the summary is published; "aborted = 3" is the only contract left
+ if isinstance(error,(OSError,ValueError)):
+  # #1087 fix-r5 (concurrency #2): detach dead fds so the shutdown flush
+  # cannot rewrite the exit code below to 120.
+  detach_dead_streams()
+ if isinstance(error,SystemExit):
+  raise SystemExit(3) from error
+ if not isinstance(error,Exception):
+  raise
+ raise SystemExit(3) from error
+try:
+ # #1087 fix-r5 (sibling #3): the snapshot name has exactly one binding
+ # (the with-as capture), so anchor_selfcheck can keep reading it.
+ with mutating_sources(root,[e,a,f,o]) as originals:
+  restored_sha={str(p):hashlib.sha256(b).hexdigest() for p,b in originals.items()}
+  # A stale anchor is a harness defect: refuse before any compile (exit 2,
+  # nothing measured, nothing published).
+  for name,path,old,_new,_case in mutations:
+   count=originals[path].decode().count(old)
+   if count!=1:
+    print(f'STALE ANCHOR {name}: {count} matches',file=sys.stderr)
+    raise SystemExit(2)
   for name,path,old,new,case in mutations:
    env=os.environ.copy();env['PDRS_ENTRIES_CASE']=case
    # Hold the source lock, reserve a Cargo slot, then expose the mutation for
    # the shortest possible window (the owned test run only).
    slot=wait_for_slot(root/'scripts/cargo-slots.sh')
    if slot.returncode:raise RuntimeError('cargo slots full')
-   text=originals[path].decode();assert text.count(old)==1,(name,text.count(old));path.write_text(text.replace(old,new))
+   # #1087 fix-r5 (sibling #3): one rename, never a truncating in-place write;
+   # no `mode=` — the helper's own fallback stat covers the shape (boundary #5).
+   write_source_atomic(root,path,originals[path].decode().replace(old,new).encode())
    cmd=['cargo','test','--manifest-path','src/Cargo.toml','--locked','--offline','-p','pilotdeck-gateway','--test','edgeclaw_entries','--','--exact','ts_entries_and_failure_residue_replay','--nocapture']
    try:
     run=run_owned(cmd,env=env,timeout=100)
-   finally:path.write_bytes(originals[path])
+   finally:
+    # Same #1087 fix-r5 window: the in-loop restore is also one rename; the
+    # guard's own exit verification covers the bytes.
+    write_source_atomic(root,path,originals[path])
    log=run.stdout+run.stderr;(out/(name+'.log')).write_text(log)
-   assert run.returncode!=0 and 'scenario ' in log and 'observation ' in log and 'could not compile' not in log,(name,log[-1500:])
-   failure=next(line.strip() for line in log.splitlines() if 'scenario ' in line and 'observation ' in line)
-   diff=pathlib.Path(failure.rsplit('diff ',1)[1]);(out/(name+'.json')).write_bytes(diff.read_bytes())
-   rows.append({'name':name,'case':case,'exit':run.returncode,'failure':failure});print(name+': killed; '+failure,flush=True)
- finally:
-  for path,content in originals.items():path.write_bytes(content)
-  for path,content in originals.items():assert path.read_bytes()==content
-  (out/'summary.json').write_text(json.dumps({'results':rows,'restoredSha256':{str(p):hashlib.sha256(b).hexdigest() for p,b in originals.items()}},indent=2)+'\n')
- assert len(rows)==len(mutations)
+   killed=(run.returncode!=0 and 'scenario ' in log and 'observation ' in log and 'could not compile' not in log)
+   row={'name':name,'case':case,'exit':run.returncode,'killed':killed}
+   if killed:
+    failure=next(line.strip() for line in log.splitlines() if 'scenario ' in line and 'observation ' in line)
+    diff=pathlib.Path(failure.rsplit('diff ',1)[1]);(out/(name+'.json')).write_bytes(diff.read_bytes())
+    row['failure']=failure
+    print(name+': killed; '+failure,flush=True)
+   else:
+    row['failure']=None
+    print(name+': not killed; exit '+str(run.returncode),flush=True)
+   rows.append(row)
+except SystemExit as error:
+ if error.code==2:
+  # The deliberate stale-anchor refusal: nothing was measured, so nothing is
+  # published — "never started" leaves no summary behind.
+  raise
+ _void_pending(error)
+except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+ _void_pending(error)
+# Reaching here means mutating_sources restored the guarded files and verified
+# them against the baseline bytes. Only now may a summary exist.
+write_summary()
+killed=[row for row in rows if row['killed']]
+print(f'summary: {len(killed)}/{len(rows)} killed',flush=True)
+sys.exit(0 if rows and len(killed)==len(rows) else 1)

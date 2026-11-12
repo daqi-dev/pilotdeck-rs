@@ -4,8 +4,14 @@
 
 Replaces the Cargo payload with a bounded child tree; no build or helper edit.
 The runners still execute their first real mutation and their finally blocks.
+
+#1087 fix-r5 (sibling #3): the owned-payload timeout is an abort inside the
+guarded window, so the runner now voids its rows, publishes one INVALID
+summary and exits 3 (the raw TimeoutExpired no longer escapes; the pids file
+written by the ready leader still proves the payload ran owned).
 """
 import errno
+import json
 import os
 from pathlib import Path
 import runpy
@@ -63,6 +69,12 @@ class RunnerControls(unittest.TestCase):
                     self.assertTrue(command[0] == 'cargo',
                                     '#1166 the cargo test must be the payload command; got '
                                     + repr(command[0]))
+                    # #1087 fix-r5: the real sample run caught a rewritten
+                    # command whose 'offline' had lost its dashes; the flag
+                    # spelling is contract, so pin it where cargo is mocked.
+                    self.assertIn('--offline', command,
+                                  '#1087 the cargo payload must spell --offline '
+                                  'with its dashes: ' + repr(command))
                     self.assertTrue(calls == ['scanner', 'slot'],
                                     '#1166 the workspace scanner must run before slot reservation and cargo')
                     calls.append('cargo')
@@ -86,10 +98,26 @@ class RunnerControls(unittest.TestCase):
                                 return owned(command, **kwargs)
                             return payload(command, **kwargs)
                         with patch.object(negative_process, 'run_owned', side_effect=dispatch):
-                            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                            with self.assertRaises(SystemExit) as stopped:
                                 runpy.run_path(str(FIXTURES/name), run_name='__main__')
-                    self.assertIn('owned-ready', caught.exception.output,
-                                  '#1166 the owned payload leader must report readiness')
+                    self.assertTrue(stopped.exception.code == 3,
+                                    '#1087 fix-r5 (sibling #3): the owned-payload timeout '
+                                    'is an in-window abort; the voided summary must pair '
+                                    'with exit 3')
+                    summary = json.loads((Path(temp)/'logs'/'summary.json').read_text())
+                    self.assertTrue(summary['results'],
+                                    '#1087 the abort must still publish the full row table')
+                    self.assertTrue(all(row.get('voided') for row in summary['results']),
+                                    '#1087 the abort must void every row')
+                    self.assertTrue(all('runner: TimeoutExpired' in row['voided']
+                                        for row in summary['results']),
+                                    '#1087 the void reason must record the owned timeout')
+                    # The leader writes the pids file only after its child
+                    # printed 'ready' and it printed 'owned-ready', so a
+                    # non-empty file is the payload's owned-readiness evidence.
+                    self.assertTrue(pids_file.read_text().split(),
+                                    '#1166 the owned payload leader must report readiness '
+                                    'before the timeout')
                     self.assertTrue(calls == ['scanner', 'slot', 'cargo'],
                                     '#1166 the workspace scanner must run before slot reservation and cargo')
                     pids = [int(p) for p in pids_file.read_text().split()]

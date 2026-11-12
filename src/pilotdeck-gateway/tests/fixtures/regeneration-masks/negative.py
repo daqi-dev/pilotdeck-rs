@@ -85,12 +85,13 @@ def classify(result, test, anchors):
     # #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
     # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
     # transcript without libtest's own summary (measured on a real libtest
-    # process), so the FAILED summary line is a separate requirement, the
-    # same guard as `_shared/negative_control.py`.
+    # process), so the FAILED summary line is a separate requirement —
+    # #1087 fix-r5 (simplify #2) it is now the shared named_test_killed
+    # default (require_summary=True), not a local copy.
     log = result.stdout + result.stderr
     if passed(result, test):
         return 'SURVIVED', 'bound test still passed'
-    if (result.returncode != 0 and 'test result: FAILED.' in log
+    if (result.returncode != 0
             and named_test_killed(log, test, anchors)):
         return 'KILLED', 'bound test failed at its assertion'
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
