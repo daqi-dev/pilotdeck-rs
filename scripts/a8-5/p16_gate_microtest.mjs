@@ -177,8 +177,9 @@ await section("T4", async () => {
     srv.once("error", (e) => rej(e));
     srv.listen(PORT_MT, "127.0.0.1", res);
   });
+  let ka;
   try {
-    const ka = await keepAliveProbe(PORT_MT);
+    ka = await keepAliveProbe(PORT_MT);
     assert.equal(ka.freeSocketKeys().length, 0, "#T4 请求前池空");
     const once1 = await ka.once("/health");
     assert.equal(once1.ok, true, "#T4 once 应成功");
@@ -203,10 +204,14 @@ await section("T4", async () => {
   } finally {
     // fix-r4：listen 失败（EADDRINUSE reject）时 srv.listening=false——不 close
     // （对未 listen 的 server close 回调带 ERR_SERVER_NOT_RUNNING，徒增噪声）。
+    // fix-r7（DS r6 concurrency#2 处置）：失败路径也要有界收场——closeAllConnections
+    // 须先于 await close（keep-alive 空闲连接会让 close 回调永不落定），agent 池
+    // 一并兜底销毁（try 正常尾部的 destroy 重复调用是幂等 no-op）。
+    if (ka) ka.destroy();
+    srv.closeAllConnections?.();
     if (srv.listening) {
       await new Promise((res) => srv.close(() => res()));
     }
-    srv.closeAllConnections?.();
   }
 });
 
