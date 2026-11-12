@@ -335,7 +335,11 @@ struct UpgradeReadGate<S> {
     /// completion Node's llhttp answers pipelined heads at, one-by-one as each
     /// previous response finishes (the fix-r5 Node probe
     /// `probe-node-pipeline-serve.out` legs A/B: 513 responses, none
-    /// header-timed-out) — takes and wakes it.
+    /// header-timed-out) — takes and wakes it. fix-r9: a woken poll that
+    /// re-parks behind an unflushed tail leaves its waker back here, and
+    /// `poll_flush`'s confirming transition — the write side's `finish` for
+    /// that shape — takes and wakes it in turn
+    /// ([`take_and_wake_release_slot`]).
     release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 impl<S> UpgradeReadGate<S> {
@@ -845,6 +849,20 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 if !crate::mutants::on("native-http-flush-clear-off") {
                     self.write_pending.store(false, Ordering::Relaxed);
                 }
+                // #2499 fix-r9 (merge review concurrency#1/sibling#1/
+                // boundary#1, the three-role collision): a gate parked behind
+                // this unflushed tail re-parked here — the release woke it
+                // into `withholding_mid_stream`, which held on the very flag
+                // this branch just cleared, and stored its waker back in the
+                // release slot. This flush completion is the write side's
+                // `finish` — the place Node serves a pipelined head whose
+                // previous response ended with an unflushed tail — so the
+                // same transition must take the slot and wake, or the parked
+                // head strands until its own deadline with no one left to
+                // re-poll the gate (hyper's `maybe_notify` short-circuits on
+                // the read the park blocked, and the parked deadline only
+                // fires the 408 lane much later). Empty slot: a no-op.
+                take_and_wake_release_slot(&self.release_waker);
                 Poll::Ready(Ok(()))
             }
             other => other,
@@ -1055,6 +1073,21 @@ impl Drop for InFlightRequest {
     }
 }
 
+/// #2499 fix-r9 (merge review concurrency#1's P3, applied to both release
+/// paths this diff touches): the one "take, then wake" shape the release
+/// slot's two wakers share — the value is taken out of the lock's critical
+/// section *before* `wake()` runs, so no `std::sync::Mutex` guard is ever
+/// held across the call (a re-entrant waker would deadlock on the
+/// non-reentrant mutex, a panicking one would poison it for the gate's next
+/// park). An empty slot is a no-op. The sms lane's same-shaped site
+/// (`channel/sms/mod.rs`) is pre-existing and stays untouched here.
+fn take_and_wake_release_slot(slot: &Arc<std::sync::Mutex<Option<std::task::Waker>>>) {
+    let waker = slot.lock().expect("release waker slot").take();
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
 /// #1250: a response body that keeps the request's in-flight slot held until
 /// the body has actually finished streaming, and arms the keep-alive idle
 /// deadline at that completion — Node's idle timer arms at the response
@@ -1072,6 +1105,9 @@ struct IdleBody {
     /// leaves its waker in while a next head's bytes are parked behind this
     /// response, so the completion here re-enters the gate and the parked
     /// bytes re-feed, the same place Node's llhttp serves pipelined heads.
+    /// fix-r9: a body that ends with an unflushed tail re-parks the woken
+    /// gate behind `write_pending`, so the gate's confirming `poll_flush`
+    /// takes the slot again — the flush is Node's `finish` for that shape.
     release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
     /// #1517 fix-r1: the connection's shared write-side flag — the frame
     /// hand-off means hyper's write side now owns bytes it has not confirmed,
@@ -1116,11 +1152,10 @@ impl IdleBody {
         // parked read (hyper's `maybe_notify` short-circuits on
         // `read_blocked`), so the parked heads strand until their own
         // deadline's 408 — the fix-r3 behavior the negative control has to
-        // keep killing.
-        if !crate::mutants::on("native-http-withheld-park-no-wake")
-            && let Some(waker) = self.release_waker.lock().unwrap().take()
-        {
-            waker.wake();
+        // keep killing. fix-r9: the take-and-wake itself moved into
+        // [`take_and_wake_release_slot`], shared with the flush-side release.
+        if !crate::mutants::on("native-http-withheld-park-no-wake") {
+            take_and_wake_release_slot(&self.release_waker);
         }
     }
 }
