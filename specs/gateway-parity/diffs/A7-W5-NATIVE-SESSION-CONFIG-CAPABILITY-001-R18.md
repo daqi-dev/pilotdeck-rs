@@ -1,5 +1,5 @@
 ---
-id: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R15
+id: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R18
 original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 ---
 
@@ -7,7 +7,10 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
 更正件（R 链，承接 `A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R14`；frontmatter
 `original` 按账本机器规则指基础 ID，与 R9-R14 同法，承接关系由文件名与正文表达。
-本件在分支内原编 R14，rebase 时 main 侧另一更正件已占 R14，顺位改号 R15，内容未变）。
+编号沿革：本件在分支内原编 R14，rebase 时 main 侧另一更正件已占 R14，顺位改号
+R15；fix-r8 评审（P1）发现 R15/R16 已被在队单占用（R15：PR #2960 与 #2786，
+R16：#2786；见 main 侧 -R17:42-48 的取号口径与 add/add 队列冲突），再改取
+首个未占号 R18，内容未变）。
 登记 #1623（r1 + fix-r2）落地后 -R6 的三处陈述过时——用例名、负控绑定、
 rewind_files 门。不改判分语义、不放宽任何口径；旧条目按只追加规则保留原样，
 审计以本条与 -R6 并读为准（-R6 对 #1604 迁移本身的记录仍准确）。

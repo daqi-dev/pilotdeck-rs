@@ -1475,32 +1475,6 @@ fn validate(input: &JsValue) -> Option<JsValue> {
     {
         return Some(check("INVALID_RUN_ID", "runId must be 1-128 characters and contain only letters, numbers, '.', '_', ':', or '-'.".into(), true));
     }
-    // #1623 方案 B at the turn entry: submit_turn is the main write path — the
-    // wire sessionKey reaches `RunRef` raw (`string(field(&input,"sessionKey"))`
-    // keeps the UTF-16 units) and the assembly storage chain renders it through
-    // `sanitize_session_id`, so a lone-surrogate key appends into `s\u{FFFD}`'s
-    // transcript (fix-r2 probe A, `_tmp/20261111-issue-1623/fix-r2/`). TS
-    // submitTurn has no sessionKey gate at all (InProcessGateway.ts:764-845,
-    // measured `_tmp/20261111-issue-1623/fix-r2/probe_ts_gates.log`); the
-    // rejection is the registered A7-W5-SESSION-KEY-SURROGATE-REJECT-001
-    // divergence, extended to this entry. Only the unpaired shape is refused —
-    // a paired surrogate (astral) or an explicit U+FFFD stays a legal identity.
-    // The gate sits after the mode/basePermissionMode and runId checks on
-    // purpose (fix-r8 review #2): TS answers those first for a combined-invalid
-    // input (`{mode:"bogus", sessionKey:"\u{D800}"}` gets INVALID_PERMISSION_MODE
-    // there), and the same batch's config family orders the same way
-    // (methods/config.rs checks mode, then busy, then the sessionKey gate) —
-    // keeping it ahead would flip the error code against TS. It still fires
-    // before the busy refusal (begin_turn runs after this validation pass).
-    if let JsValue::String(key) = field(input, "sessionKey")
-        && crate::native_process::has_unpaired_surrogate(key.units())
-    {
-        return Some(check(
-            "INVALID_SESSION_KEY",
-            crate::native_process::SESSION_KEY_SURROGATE_MESSAGE.into(),
-            false,
-        ));
-    }
     let value = field(input, "trustedContext");
     if !matches!(value, JsValue::Undefined) {
         let JsValue::Array(values) = value else {
@@ -1538,6 +1512,34 @@ fn validate(input: &JsValue) -> Option<JsValue> {
         return Some(check(
             "INVALID_MAX_BUDGET_USD",
             "maxBudgetUsd must be a positive finite number.".into(),
+            false,
+        ));
+    }
+    // #1623 方案 B at the turn entry: submit_turn is the main write path — the
+    // wire sessionKey reaches `RunRef` raw (`string(field(&input,"sessionKey"))`
+    // keeps the UTF-16 units) and the assembly storage chain renders it through
+    // `sanitize_session_id`, so a lone-surrogate key appends into `s\u{FFFD}`'s
+    // transcript (fix-r2 probe A, `_tmp/20261111-issue-1623/fix-r2/`). TS
+    // submitTurn has no sessionKey gate at all (InProcessGateway.ts:764-845,
+    // measured `_tmp/20261111-issue-1623/fix-r2/probe_ts_gates.log`); the
+    // rejection is the registered A7-W5-SESSION-KEY-SURROGATE-REJECT-001
+    // divergence, extended to this entry. Only the unpaired shape is refused —
+    // a paired surrogate (astral) or an explicit U+FFFD stays a legal identity.
+    // The gate closes this validation pass on purpose (fix-r8/r9 reviews):
+    // TS's submitTurn validates mode/basePermissionMode, runId, trustedContext,
+    // and maxBudgetUsd before any turn-state admission, and for a
+    // combined-invalid input it answers the field error first
+    // (`{mode:"bogus", sessionKey:"\u{D800}"}` gets INVALID_PERMISSION_MODE;
+    // `{sessionKey:"\u{D800}", trustedContext:"x"}` gets
+    // INVALID_TRUSTED_CONTEXT, oracle.json:1188). Keeping the gate ahead of
+    // any field check flips the error code against TS. It still fires before
+    // the busy refusal (begin_turn runs only after validate() returns None).
+    if let JsValue::String(key) = field(input, "sessionKey")
+        && crate::native_process::has_unpaired_surrogate(key.units())
+    {
+        return Some(check(
+            "INVALID_SESSION_KEY",
+            crate::native_process::SESSION_KEY_SURROGATE_MESSAGE.into(),
             false,
         ));
     }
