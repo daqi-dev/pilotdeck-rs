@@ -5,8 +5,9 @@
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
-import inspect
+import io
 import json
 import os
 import subprocess
@@ -206,6 +207,76 @@ def main() -> int:
                    for ln in cp.stdout.splitlines()):
             fails.append(f"judge：首登争抢 + 补跑 PASS 应归并到 available（补跑形态）：{cp.stdout}")
 
+        # 修 2 写入侧（#3056 fix-r4，MM sibling#1 P1）：判重含类别与形态——同键同形态的后到记录，
+        # 只有已有记录不轻于它（_merge_rank 同一序）才标 superseded。两向都要：
+        # 向一：先 PASS 后同形态计入类失败 → 失败**不得**被 superseded 抹掉（停手信号不漏报）
+        led10 = tmp / "wside1" / "ledger.jsonl"
+        run("register", str(led10), "#11/ds/r1", "--status", "PASS", "--note", "先 PASS")
+        cp = run("register", str(led10), "#11/ds/r1", "--status", "ERROR", "--note", "后到失败")
+        if cp.returncode != 0 or "superseded" in cp.stdout:
+            fails.append(f"register：同形态先 PASS 后计入类失败，失败不应标 superseded（rc={cp.returncode}、{cp.stdout}）")
+        wrecs = [json.loads(x) for x in led10.read_text().splitlines()]
+        if len(wrecs) != 2 or wrecs[1].get("superseded") is not False:
+            fails.append(f"register：先 PASS 后失败，失败行 superseded 应为 False（{[r.get('superseded') for r in wrecs]}）")
+        cp = run("count", str(led10))
+        if cp.returncode != 0 or "#11/ds: 1" not in cp.stdout:
+            fails.append(f"count：先 PASS 后计入类失败，停手计数应见该失败（rc={cp.returncode}、{cp.stdout}）")
+        # 向二：先计入类失败后同形态 PASS → 后到 PASS 被更严的已有失败压回 superseded
+        #（补跑翻绿不抹失败，r3 修 2 的归并口径落到写入侧）
+        led11 = tmp / "wside2" / "ledger.jsonl"
+        run("register", str(led11), "#11/mm/r1", "--status", "ERROR", "--note", "先失败")
+        cp = run("register", str(led11), "#11/mm/r1", "--status", "PASS", "--note", "后到 PASS")
+        if cp.returncode != 0 or "superseded" not in cp.stdout:
+            fails.append(f"register：同形态先失败后 PASS，PASS 应标 superseded（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("count", str(led11))
+        if cp.returncode != 0 or "#11/mm: 1" not in cp.stdout:
+            fails.append(f"count：先失败后同形态 PASS，计数仍为 1 不因翻绿清零（rc={cp.returncode}、{cp.stdout}）")
+
+        # 修 3.2（DS boundary#2 P2）：空 / 纯空白 / 不存在的台账路径 fail-closed rc 2——
+        # 静默当空台账计会把「路径写错」混进「真的没有失败」，rc 1/0/2 三态就失真
+        for cmd, badpath in (("count", ""), ("judge", ""), ("count", "   "), ("judge", "   ")):
+            cp = run(cmd, badpath)
+            if cp.returncode != 2 or "fail-closed" not in cp.stderr:
+                fails.append(f"{cmd}：空/纯空白台账路径应 rc=2 fail-closed（rc={cp.returncode}、{cp.stderr.strip()[:60]}）")
+        cp = run("count", str(tmp / "nope" / "nope.jsonl"))
+        if cp.returncode != 2 or "不存在" not in cp.stderr:
+            fails.append(f"count：不存在的台账应 rc=2 且文案含「不存在」（rc={cp.returncode}、{cp.stderr.strip()[:60]}）")
+        cp = run("judge", str(tmp / "nope2.jsonl"))
+        if cp.returncode != 2 or "不存在" not in cp.stderr:
+            fails.append(f"judge：不存在的台账应 rc=2 且文案含「不存在」（rc={cp.returncode}、{cp.stderr.strip()[:60]}）")
+
+        # 修 3.1（MM sibling#2 P2）：print 路径的 OSError 收成干净 rc 2——stdout 管道早关
+        # （BrokenPipeError，旧码会 traceback + 退出码 120）不得冒充 / 掩盖停手信号。
+        # 大台账（20000 键，count 输出 ~290 KiB，远超 64 KiB 管道缓冲）：读者读 3 行即关管道，
+        # 写端剩余输出必然撞 EPIPE，须收成 rc 2 而非 traceback
+        big = tmp / "bigpipe" / "ledger.jsonl"
+        big.parent.mkdir(parents=True, exist_ok=True)
+        with big.open("w", encoding="utf-8") as bf:
+            for i in range(20000):
+                bf.write(json.dumps({"key": f"#{i}/ds/r1", "ts": "t", "status": "ERROR",
+                                     "resource_contention": False, "rerun": False,
+                                     "superseded": False, "note": ""}) + "\n")
+        pp = subprocess.Popen([sys.executable, "-I", str(LEDGER), "count", str(big)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              env=dict(os.environ))
+        for _ in range(3):
+            pp.stdout.readline()
+        pp.stdout.close()
+        pipe_rc = pp.wait()
+        pipe_err = pp.stderr.read()
+        if pipe_rc != 2 or "Traceback" in pipe_err:
+            fails.append(f"修3.1：管道早关应收成 rc=2 无 traceback（rc={pipe_rc}、{pipe_err.strip()[:80]}）")
+        # 同款：stderr 关闭（fd 2 关 → EBADF / sys.stderr 为 None）时告警 print 也不得崩栈——
+        # bash 显式 2>&- 起子进程跑坏路径 register（父路径是普通文件，makedirs 即拒），仍应干净 rc 2
+        blocker2 = tmp / "blocker2"
+        blocker2.write_text("x", encoding="utf-8")
+        cp = subprocess.run(["bash", "-c", 'exec "$0" -I "$1" register "$2" "$3" --status PASS 2>&-',
+                             sys.executable, str(LEDGER), str(blocker2 / "l.jsonl"), "#1/ds/r1"],
+                            capture_output=True, text=True, env=dict(os.environ))
+        if cp.returncode != 2 or "Traceback" in cp.stdout or "Traceback" in cp.stderr:
+            fails.append(f"修3.1：stderr 关闭应干净 rc=2 不崩栈（rc={cp.returncode}、"
+                         f"{cp.stdout[:60]}、{cp.stderr[:60]}）")
+
         # 修 5 负控：落盘失败 fail-closed（rc 2、干净文案不崩栈），短写/异常回滚不留半行
         blocker = tmp / "blocker"
         blocker.write_text("x", encoding="utf-8")
@@ -283,12 +354,11 @@ def main() -> int:
         if rc != 2 or led8.read_bytes():
             fails.append(f"register：写前 fstat OSError 应 rc=2 不落半行（rc={rc}、剩 {led8.read_bytes()!r}）")
 
-        # 修 5（MM concurrency#2）：count / judge 读路径共享锁——静态断言 + 慢写者冒烟。
+        # 修 5（MM concurrency#2）：count / judge 读路径共享锁——慢写者冒烟 + 不取锁的行为负控。
         # 真并发负控的构造：写者子进程持 LOCK_EX 写半行后睡 3 s 再补写整行；读者（count 子进程）
         # 必须在共享锁上等写者放锁再快照——不取锁会立刻读到残行，坏行 fail-closed 连坐 rc 2。
-        rsrc = inspect.getsource(flg.read_lines)
-        if "fcntl.flock" not in rsrc or "LOCK_SH" not in rsrc:
-            fails.append("修5：read_lines 读路径须取共享锁（LOCK_SH）与写者互斥")
+        # （#3056 fix-r4 修 3.6：删「读源码文本找 fcntl.flock/LOCK_SH」的静态断言——
+        # 源码里写不写锁字样证明不了运行时真取锁，改由下面的不取锁行为负控钉住。）
         led9 = tmp / "readerlock" / "ledger.jsonl"
         led9.parent.mkdir(parents=True, exist_ok=True)
         ready = tmp / "half-done"
@@ -317,8 +387,57 @@ def main() -> int:
                 if cp.returncode != 0 or "#9/ds: 1" not in cp.stdout:
                     fails.append(f"修5：写者持锁补写期间 count 应等锁读整行（rc={cp.returncode}、"
                                  f"{cp.stdout.strip()[:60]}、{cp.stderr.strip()[:60]}）")
+                # 修 3.3（DS concurrency#1 + MM P3 同向）：等锁不静默——写者持锁期间读者
+                # 抢不到 LOCK_SH，须先往 stderr 打一行「等待台账锁」再转阻塞
+                #（对齐 check_outcome_parity.py:141-143 惯例，观测上区分「等锁」与「死锁」）
+                if "等待台账锁" not in cp.stderr:
+                    fails.append(f"修3.3：等锁应先往 stderr 打一行「等待台账锁」（{cp.stderr.strip()[:60]}）")
         finally:
             pw.wait(timeout=60)
+
+        # 修 3.6 行为负控：猴补 flock 为 no-op（锁整体失效）后，慢写者持锁补写半行的窗口内
+        # read_lines 会读到残行——坏行 fail-closed SystemExit(2) 且文案含「不是 JSON」。
+        # （静态断言只能证明源码里有锁字样，证明不了运行时真取锁；此负控红 = 锁是唯一防线。）
+        led12 = tmp / "noreadlock" / "ledger.jsonl"
+        led12.parent.mkdir(parents=True, exist_ok=True)
+        ready2 = tmp / "half-done2"
+        slow2 = tmp / "slowwriter2.py"
+        slow2.write_text(
+            "import fcntl, os, sys, time\n"
+            "fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)\n"
+            "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+            "os.write(fd, b'{\"key\": \"#12/ds/r1\", \"sta')\n"
+            "open(sys.argv[2], 'w').close()\n"
+            "time.sleep(3)\n"
+            "os.write(fd, b'tus\": \"ERROR\"}\\n')\n"
+            "fcntl.flock(fd, fcntl.LOCK_UN)\n"
+            "os.close(fd)\n", encoding="utf-8")
+        pw2 = subprocess.Popen([sys.executable, "-I", str(slow2), str(led12), str(ready2)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ))
+        try:
+            for _ in range(200):
+                if ready2.exists():
+                    break
+                time.sleep(0.05)
+            if not ready2.exists():
+                fails.append("修3.6：慢写者未就绪（ready 标记 10 s 内未出现）")
+            else:
+                real_flock2 = flg.fcntl.flock
+                _buf = io.StringIO()
+                try:
+                    flg.fcntl.flock = lambda fd, op: 0
+                    try:
+                        with contextlib.redirect_stderr(_buf):
+                            flg.read_lines(str(led12))
+                        fails.append("修3.6：不取锁读半行不应成功（read_lines 未抛）")
+                    except SystemExit as e:
+                        if e.code != 2 or "不是 JSON" not in _buf.getvalue():
+                            fails.append(f"修3.6：不取锁读半行应 SystemExit(2) 且文案含「不是 JSON」"
+                                         f"（code={e.code}、{_buf.getvalue()[:60]}）")
+                finally:
+                    flg.fcntl.flock = real_flock2
+        finally:
+            pw2.wait(timeout=60)
 
     for f in fails:
         print("FAIL", f)
