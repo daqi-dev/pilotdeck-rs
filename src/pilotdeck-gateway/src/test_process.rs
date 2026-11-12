@@ -86,6 +86,13 @@ fn rerun_fsize_blocks() -> u64 {
         // and inside `OnceLock::get_or_init` one D-state write on a dead
         // mount pinned the probing thread and every later `rerun_exact`
         // caller — the exact failure mode this module exists to remove.
+        // fix-r4 (concurrency#1): the probe's stderr goes to a file, the same
+        // shape `rerun_exact` gives its captures — a piped stderr is drained
+        // only after the child exits, so a shell that wrote more than the
+        // pipe's capacity (16 KiB on this host) before exiting blocked the
+        // probe in its write and read as a D-state at the deadline below. A
+        // file never blocks on a lingering writer.
+        let probe_err_path = scratch.path().join("block.err");
         let mut probe = Command::new("/bin/sh")
             .arg("-c")
             .arg("ulimit -f 1; head -c 4096 /dev/zero > \"$1\"")
@@ -93,7 +100,9 @@ fn rerun_fsize_blocks() -> u64 {
             .arg(&probe_path)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::from(std::fs::File::create(&probe_err_path).expect(
+                "#1723 create the ulimit -f unit probe's stderr capture",
+            )))
             .process_group(0)
             .spawn()
             .expect("#1723 spawn the wrapper shell's ulimit -f unit probe");
@@ -125,22 +134,21 @@ fn rerun_fsize_blocks() -> u64 {
             std::thread::sleep(RERUN_POLL);
         }
         guard.disarm();
-        let mut probe_stderr = Vec::new();
-        if let Some(mut stderr) = probe.stderr.take() {
-            let _ = stderr.read_to_end(&mut probe_stderr);
-        }
+        // fix-r4 (concurrency#1): the capture is a file, so this read cannot
+        // block and needs no pipe to drain — the same bounded read the rerun
+        // captures get, kept for the assertion's evidence below.
+        let probe_stderr = read_capped(&probe_err_path);
         let landed = match stream_len(&probe_path) {
             Ok(len) => len,
             Err(error) => panic!("#1723 the ulimit -f unit probe's file is unreadable: {error}"),
         };
         assert!(
-            landed > 0 && landed < 4096 && RERUN_OUTPUT_LIMIT % landed == 0,
+            landed > 0 && landed < 4096 && RERUN_OUTPUT_LIMIT.is_multiple_of(landed),
             "#1723 the wrapping shell's ulimit -f unit is {landed} B per block, which is not \
              among the supported units (a divisor of the {RERUN_OUTPUT_LIMIT} B capture cap, \
              smaller than the probe's 4096 B write; the full write itself is a shell that may \
              have refused the ulimit) — the kernel ceiling cannot be verified to sit at the cap \
-             on this host. Probe stderr: {}",
-            String::from_utf8_lossy(&probe_stderr)
+             on this host. Probe stderr: {probe_stderr}"
         );
         RERUN_OUTPUT_LIMIT / landed
     })
@@ -247,12 +255,14 @@ impl RerunOutput {
 
     /// #1723 fix-r3 (simplify#1): the "was not stopped by this harness" pass
     /// condition, shared by the audits that spell it out — the Linux
-    /// `rerun_audit_case` and the unix grandchild test below; their cfg
-    /// differs, so only the predicate can be shared, not a whole function.
-    /// Equivalent to `finished_on_its_own() || (!timed_out && !overflow)`:
-    /// both distribute to `!overflow && (status.success() || !timed_out)`.
+    /// `rerun_audit_case`, the unix grandchild test below, and the slack
+    /// retention worker's rerun assertion (#2322); their cfg differs, so only
+    /// the predicate can be shared, not a whole function. fix-r4
+    /// (boundary#1): the first disjunct delegates to [`Self::finished_on_its_own`]
+    /// instead of re-spelling it, so the two judgments cannot drift apart.
+    /// Equivalent to `!overflow && (status.success() || !timed_out)`.
     pub(crate) fn ended_its_own_or_unstopped(&self) -> bool {
-        !self.overflow && (self.status.success() || !self.timed_out)
+        self.finished_on_its_own() || (!self.timed_out && !self.overflow)
     }
 }
 
@@ -301,6 +311,62 @@ fn finished_on_its_own_branches_on_the_outcome_not_the_clock() {
     assert!(
         !rerun(0, false, true, true).finished_on_its_own(),
         "#1723 a rerun whose capture hit the cap did not finish on its own"
+    );
+}
+
+/// #1723 fix-r4 (sibling#2): the merged pass condition's contract, pinned the
+/// same way the split's is above — `ended_its_own_or_unstopped` is the
+/// judgment the audits branch on (`rerun_audit_case`, the grandchild test, the
+/// slack retention worker in #2322), and no audit path constructs
+/// `RerunOutput` directly, so the same race window that justified the split's
+/// contract test hides this predicate too: without these rows a mutant that
+/// dropped the `finished_on_its_own` arm would pass every deterministic path
+/// (a stopped rerun's status is a `SIGKILL`, never `success()`), which is
+/// exactly the "stopped read as pass" defect class the predicate exists to
+/// remove. One row below is the delta from [`RerunOutput::finished_on_its_own`]:
+/// a rerun that failed on its own was still not stopped by this harness — the
+/// audits hand that failure to their receipt assertion instead of blaming a
+/// stop.
+#[cfg(unix)]
+#[test]
+fn ended_its_own_or_unstopped_branches_on_who_stopped_it() {
+    use std::os::unix::process::ExitStatusExt;
+    fn rerun(status: i32, timed_out: bool, stopped: bool, overflow: bool) -> RerunOutput {
+        RerunOutput {
+            status: ExitStatus::from_raw(status),
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            timed_out,
+            stopped,
+            overflow,
+        }
+    }
+    // The deadline fired in the same poll window the leader exited cleanly:
+    // it finished on its own, so the judgment is still "not stopped" — the
+    // pre-split merged judgment read this row as stopped.
+    assert!(
+        rerun(0, true, true, false).ended_its_own_or_unstopped(),
+        "#1723 a rerun that finished on its own inside the deadline's window was not stopped by \
+         this harness"
+    );
+    // The delta from `finished_on_its_own`: a rerun that failed on its own was
+    // not stopped by this harness either — the audits' receipt assertion is
+    // what fails it, not a stop it never suffered.
+    assert!(
+        rerun(0x0100, false, false, false).ended_its_own_or_unstopped(),
+        "#1723 a rerun that failed on its own was not stopped by this harness"
+    );
+    // A rerun the deadline genuinely beat, or one the kernel's file-size cap
+    // ended: both were stopped before they could finish.
+    assert!(
+        !rerun(0x0100, true, true, false).ended_its_own_or_unstopped(),
+        "#1723 a rerun the deadline stopped was stopped by this harness"
+    );
+    assert!(
+        !rerun(0, false, true, true).ended_its_own_or_unstopped(),
+        "#1723 a rerun whose capture hit the cap was stopped before it finished"
     );
 }
 

@@ -29,12 +29,26 @@ its bound libtest parent must fail at the matching "#1723 ..." assertion:
   poll window reads as stopped again. Bound to the predicate's own
   contract test, which constructs RerunOutput directly: the race window
   is too narrow to drive deterministically through rerun_exact.
+* ended-its-own-merged — the merged pass predicate `ended_its_own_or_unstopped`
+  (what rerun_audit_case, the grandchild test and the slack retention worker
+  branch on, fix-r4) loses its `finished_on_its_own` arm and regresses to the
+  same pre-split clock judgment. Bound to the merged predicate's own contract
+  test, same construction-only reason as the row above: no audit path
+  constructs RerunOutput, and a stopped rerun's status is a SIGKILL, never
+  `success()`, so the deterministic paths cannot catch the dropped arm.
 * fsize-unit-constant-trusted — the ulimit -f unit probe trusts a
   compile-time constant again instead of the bytes it measured (2048 B is
   wrong on every measured host), so a drifted unit table must fail
   closed. Bound to owned_rerun_hits_the_kernel_output_cap: the probe runs
   before any rerun, so the bound parent dies at the probe's own
   assertion.
+* probe-hang-deadline — the ulimit -f unit probe's command is replaced by an
+  unbounded `sleep`, so the probe never writes its file and the 10 s probe
+  deadline must group-kill it and fail the bound parent at the probe's own
+  panic — the bound that keeps a hung probe from pinning every later
+  rerun_exact caller through the OnceLock. The reverse direction (mutating
+  the deadline away) can only hang the parent and is INVALID by nature, not
+  a kill; it is deliberately not a row.
 
 Every row runs its positive control, compiles the mutant (a mutant that
 does not compile is INVALID, never a kill), runs the bound parent, then
@@ -43,11 +57,15 @@ KILLED/SURVIVED/INVALID with their reason and summarized at the end — no
 first-failure abort. Rows bound to a Linux-only parent
 (#[cfg(target_os = "linux")]) are recorded SKIPPED on other hosts instead
 of INVALID — but only after observing the premise, never assuming it: the
-anchor count is checked on every host, and a `cargo test --list --exact`
-run must select zero tests before a row is recorded SKIPPED. A premise
-the listing disproves (a relaxed cfg, a renamed test) is INVALID and
-fails the run, never a silent skip plus exit 0. A run with zero KILLED
-rows still exits nonzero: nothing was verified.
+anchor count *and the bound parent's own `fn <leaf>(` definition* are
+checked on every host (a renamed or deleted parent test keeps the anchor
+count and would otherwise skip silently forever), and a `cargo test --list`
+run — carried out inside the same `mutating_sources` tree lock as the rows,
+so it compiles the baseline and not another runner's mutant — must carry a
+known-to-exist control test and must not select the bound parent before a
+row is recorded SKIPPED. A premise the listing disproves (a relaxed cfg, a
+renamed test) is INVALID and fails the run, never a silent skip plus exit
+0. A run with zero KILLED rows still exits nonzero: nothing was verified.
 """
 import argparse
 import difflib
@@ -81,6 +99,8 @@ CARGO_TARGETS = {
     'test_process::the_sampler_reports_a_pid_that_leaves_and_returns':
         ['-p', 'pilotdeck-gateway', '--lib'],
     'test_process::finished_on_its_own_branches_on_the_outcome_not_the_clock':
+        ['-p', 'pilotdeck-gateway', '--lib'],
+    'test_process::ended_its_own_or_unstopped_branches_on_who_stopped_it':
         ['-p', 'pilotdeck-gateway', '--lib'],
 }
 
@@ -150,6 +170,29 @@ MUTATIONS = [
      'landed == 2048',
      'test_process::owned_rerun_hits_the_kernel_output_cap',
      "#1723 the wrapping shell's ulimit -f unit is"),
+    # fix-r4 (sibling#2): the merged pass predicate loses its
+    # `finished_on_its_own` arm and regresses to the pre-split clock
+    # judgment — the audits' pass condition again reads a leader that
+    # finished on its own inside the deadline's poll window as stopped.
+    # Bound to the predicate's own contract test (same
+    # construction-only reason as finished-on-its-own-merged: no audit
+    # path constructs RerunOutput, and a stop-path status is a SIGKILL,
+    # never success()).
+    ('ended-its-own-merged', SOURCE,
+     'self.finished_on_its_own() || (!self.timed_out && !self.overflow)',
+     '!self.timed_out && !self.overflow',
+     'test_process::ended_its_own_or_unstopped_branches_on_who_stopped_it',
+     "#1723 a rerun that finished on its own inside the deadline's window was not stopped by this harness"),
+    # fix-r4 (sibling#3): the probe never finishes on its own — the 10 s
+    # probe deadline must group-kill it and fail the bound parent at the
+    # probe's own panic instead of pinning every later rerun_exact caller
+    # through the OnceLock. Deterministic: the mutant's sleep far exceeds
+    # the deadline, so the kill lands within it on any host.
+    ('probe-hang-deadline', SOURCE,
+     r'.arg("ulimit -f 1; head -c 4096 /dev/zero > \"$1\"")',
+     r'.arg("sleep 100")',
+     'test_process::owned_rerun_hits_the_kernel_output_cap',
+     '#1723 the ulimit -f unit probe was still running'),
 ]
 
 
@@ -218,35 +261,60 @@ def main():
 
     # fix-r3 (boundary#2/concurrency#2): a SKIPPED row's premise — the exact
     # filter cannot select the bound parent on this host — is observed, not
-    # assumed. One listing per bound parent, cached: the listing compiles the
-    # test binary, so it pays the same cargo slot the rows themselves do.
+    # assumed. One listing per cargo target, cached (fix-r4, simplify#5: the
+    # Linux-only parents share one `-p pilotdeck-gateway --lib` target, so
+    # per-test keys would re-run an identical listing): the listing compiles
+    # the test binary, so it pays the same cargo slot the rows themselves do.
     listed = {}
 
+    # fix-r4 (boundary#2): the listing must itself be proven alive — a
+    # listing that ran against an empty or drifted compilation surface
+    # selects nothing for every name, which is indistinguishable from the cfg
+    # the skip is supposed to be about. This test exists on every host the
+    # row table can run on (#[cfg(unix)], not in LINUX_ONLY_TESTS), so its
+    # absence means the listing, not the cfg, is broken.
+    SANITY_TEST = 'test_process::finished_on_its_own_branches_on_the_outcome_not_the_clock'
+
     def list_selects(test):
-        """(error, selects): `error` is None when the listing ran; `selects`
-        is whether the exact filter can select `test` on this host.
-        `--list` prints one `name: test` line per selectable test; a parent
-        the filter cannot select prints none (`0 tests, 0 benchmarks`)."""
-        if test not in listed:
+        """(error, selects, sane): `error` is None when the listing ran;
+        `selects` is whether the bound parent is selectable on this host, and
+        `sane` is whether the listing carried the known-to-exist control test.
+        `--list` (no exact filter) prints one `name: test` line per test in
+        the compiled surface: a parent behind #[cfg(target_os = "linux")]
+        prints none on other hosts — and so does a parent that no longer
+        exists, which is why the caller also anchors the parent's own `fn`
+        and why `sane` must be checked before a none-selection is believed."""
+        target = tuple(CARGO_TARGETS[test])
+        if target not in listed:
             slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600, interval=10)
             save(f'{test}-list.slots.log', slots.stdout + slots.stderr)
             try:
                 result = run_owned([
                     'cargo', 'test', '--manifest-path', 'src/Cargo.toml',
                     *CARGO_TARGETS[test],
-                    '--', '--list', '--exact', test,
+                    '--', '--list',
                 ], cwd=ROOT, env=env, timeout=900)
             except subprocess.TimeoutExpired as error:
-                listed[test] = (f'--list timed out after {error.timeout}s', None)
-                return listed[test]
+                listed[target] = (f'--list timed out after {error.timeout}s', None)
+                return listed[target] + (None,)
             log = result.stdout + result.stderr
             save(f'{test}-list.log', log)
             save(f'{test}-list.exit', f'{result.returncode}\n')
             if result.returncode != 0 or 'could not compile' in log:
-                listed[test] = (f'--list exited {result.returncode}', None)
+                listed[target] = (f'--list exited {result.returncode}', None)
             else:
-                listed[test] = (None, f'{test}: test' in result.stdout)
-        return listed[test]
+                listed[target] = (None, result.stdout)
+        error, full = listed[target]
+        if error is not None:
+            return error, None, None
+        # A cache hit for a shared target still leaves this row's own
+        # evidence file — the bytes are the same listing. Membership is a
+        # whole-line compare, not a substring: a test whose name merely ends
+        # in the bound parent's would otherwise satisfy it.
+        if not (args.output / f'{test}-list.log').exists():
+            save(f'{test}-list.log', full)
+        lines = full.split('\n')
+        return None, f'{test}: test' in lines, f'{SANITY_TEST}: test' in lines
 
     summary = []
     for name, source, old, new, test, assertion in selected:
@@ -255,23 +323,44 @@ def main():
             # instead of trusting the static whitelist — and run the
             # host-independent anchor check for SKIPPED rows too, so a
             # drifted anchor does not wait for a Linux host to surface.
+            # fix-r4 (concurrency#2): the listing runs inside the same
+            # `mutating_sources` window (tree lock) — outside it another
+            # runner's mutation of the same source could be what the listing
+            # compiles, so a broken mutant would land here as "cannot
+            # observe the premise" and the premise would not be a baseline
+            # fact at all.
+            # fix-r4 (boundary#2): the anchor check also counts the bound
+            # parent's own definition — a renamed or deleted parent test
+            # keeps the mutation anchor count and would otherwise skip
+            # silently forever on every non-Linux host.
             with mutating_sources(ROOT, [source], baseline=args.baseline) as snapshots:
                 content = snapshots[source].decode()
-            count = content.count(old)
-            if count != 1:
-                status, reason = 'INVALID', f'anchor count {count}'
-            else:
-                error, selects = list_selects(test)
-                if error is not None:
-                    status, reason = 'INVALID', f'cannot observe the skip premise: {error}'
-                elif selects:
+                defined = f'fn {test.rsplit("::", 1)[-1]}(' in content
+                count = content.count(old)
+                if count != 1:
+                    status, reason = 'INVALID', f'anchor count {count}'
+                elif not defined:
                     status, reason = 'INVALID', (
-                        'skip premise broken: the exact filter selects the bound parent '
-                        f'{test} on {sys.platform}; fix the cfg or LINUX_ONLY_TESTS')
+                        f'bound parent {test} is not defined in the source; renamed or deleted '
+                        '— the row cannot be skipped on a rename')
                 else:
-                    status, reason = 'SKIPPED', (
-                        f'bound parent {test} is #[cfg(target_os = "linux")]; unreachable '
-                        f'on {sys.platform} (verified: --list --exact selects no test)')
+                    error, selects, sane = list_selects(test)
+                    if error is not None:
+                        status, reason = 'INVALID', f'cannot observe the skip premise: {error}'
+                    elif not sane:
+                        status, reason = 'INVALID', (
+                            'cannot observe the skip premise: the listing carried no known '
+                            f'test ({SANITY_TEST} not listed)')
+                    elif selects:
+                        status, reason = 'INVALID', (
+                            'skip premise broken: the exact filter selects the bound parent '
+                            f'{test} on {sys.platform}; fix the cfg or LINUX_ONLY_TESTS')
+                    else:
+                        status, reason = 'SKIPPED', (
+                            f'bound parent {test} is #[cfg(target_os = "linux")]; unreachable '
+                            f'on {sys.platform} (verified: --list carries the sanity control '
+                            'and selects no such test, and '
+                            f'fn {test.rsplit("::", 1)[-1]} is still defined in the source)')
             save(f'{name}.json', json.dumps(
                 {'name': name, 'status': status, 'reason': reason}, indent=2) + '\n')
             summary.append({'name': name, 'status': status, 'reason': reason})

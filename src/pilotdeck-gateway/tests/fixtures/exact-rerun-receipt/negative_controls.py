@@ -12,7 +12,10 @@ the grep helper is bound to its handshake panic because its receipt is the
 handshake itself, not a libtest summary). The rss-probe row is macOS-only
 (its bound parent is `#[cfg(target_os = "macos")]`-gated) and the two
 locale-pin rows need the real TS baseline (PDRS_BASELINE); absent hosts
-record those rows SKIPPED rather than KILLED or INVALID. A run with zero
+record those rows SKIPPED rather than KILLED or INVALID — the rss-probe skip
+only after observing the premise (fix-r4 sibling#4: anchor count, the bound
+parent's own fn, and a tree-locked `cargo test --list` that carries the
+target's probe control while selecting no such parent). A run with zero
 KILLED rows still exits nonzero: nothing was verified.
 """
 import argparse
@@ -21,6 +24,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -108,7 +112,9 @@ IGNORED_PARENTS = {
 # the bound test does not exist, the positive control can never pass, and the
 # row would be INVALID by construction. Default runs on other platforms drop
 # the row; an explicit selection there is recorded SKIPPED (neither KILLED nor
-# INVALID) and does not fail the run.
+# INVALID) and does not fail the run. fix-r4 (sibling#4): the skip is observed
+# before it is recorded — see the platform block in main() for the anchor, fn
+# and listing checks; a premise the listing disproves is INVALID instead.
 DARWIN_ONLY = {'rss-probe-exact-rename'}
 
 # #942 fix-r2 (r3 review Codex P1 + Claude boundary P2#1): the two locale-pin
@@ -567,6 +573,12 @@ def main():
         if not selected <= {row[0] for row in mutations}:
             parser.error('unknown mutation name')
         mutations = [row for row in mutations if row[0] in selected]
+    args.output.mkdir(parents=True, exist_ok=False)
+
+    def save(name, text):
+        with (args.output / name).open('x') as stream:
+            stream.write(text)
+
     summary = []
     if sys.platform != 'darwin':
         # DARWIN_ONLY rows cannot run here (the bound parent does not compile
@@ -577,13 +589,76 @@ def main():
         # control regenerates oracle.json and compares bytes, but Linux
         # directory traversal order differs from macOS so the comparison fails
         # outside the exact masks regardless of PDRS_BASELINE presence.
+        # fix-r4 (sibling#4): the DARWIN_ONLY skip premise is observed, not
+        # assumed — the same shape audit-rerun-boundary got for its Linux-only
+        # rows. The anchor count and the bound parent's own `fn <leaf>(` must
+        # still hold (a renamed parent keeps the mutation anchor and would
+        # otherwise skip silently forever), and a `cargo test --list` under
+        # the same `mutating_sources` tree lock must carry the target's
+        # known-to-exist control test (`probe` compiles on every host) while
+        # not selecting the macOS-only parent. Deliberately NOT applied to
+        # cron-store/native-management-style platform rows: their bound tests
+        # skip *at runtime* (the test exists and the listing selects it on
+        # every host), so "the listing selects nothing" can never be their
+        # premise; their guard is the full-row `--check` anchor instead.
         non_darwin = DARWIN_ONLY | BASELINE_MACOS_ONLY
         requested = set(args.mutations) if args.mutations else non_darwin
         for name in sorted(requested & DARWIN_ONLY):
-            summary.append({'name': name, 'status': 'SKIPPED',
-                           'reason': 'bound parent compiles only on macOS '
-                                     '(#[cfg(target_os = "macos")])'})
-            print(f'{name}: SKIPPED: macOS-only bound parent', flush=True)
+            row = next(r for r in mutations if r[0] == name)
+            darwin_source, old, test = row[1], row[2], row[4]
+            with mutating_sources(root, [darwin_source], baseline=args.baseline) as snapshots:
+                content = snapshots[darwin_source].decode()
+                defined = f'fn {test}(' in content
+                count = content.count(old)
+                if count != 1:
+                    entry = {'name': name, 'status': 'INVALID',
+                             'reason': f'anchor count {count}'}
+                elif not defined:
+                    entry = {'name': name, 'status': 'INVALID',
+                             'reason': f'bound parent {test} is not defined in the '
+                                       'source; renamed or deleted — the row cannot be '
+                                       'skipped on a rename'}
+                else:
+                    slots = wait_for_slot(root / 'scripts/cargo-slots.sh',
+                                         timeout=600, interval=10)
+                    save(f'{name}-list.slots.log', slots.stdout + slots.stderr)
+                    try:
+                        result = run_owned([
+                            'cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                            *CARGO_TARGETS[test], '--', '--list',
+                        ], cwd=root, env=env, timeout=900)
+                        log = result.stdout + result.stderr
+                        save(f'{name}-list.log', log)
+                        save(f'{name}-list.exit', f'{result.returncode}\n')
+                    except subprocess.TimeoutExpired as error:
+                        result, log = None, f'--list timed out after {error.timeout}s'
+                    if result is None or result.returncode != 0 or 'could not compile' in log:
+                        entry = {'name': name, 'status': 'INVALID',
+                                 'reason': f'cannot observe the skip premise: '
+                                           f'{log.splitlines()[-1] if log else "no listing"}'}
+                    else:
+                        # Whole-line compares: a test whose name merely ends in
+                        # the bound parent's would satisfy a substring match.
+                        listed_lines = result.stdout.split('\n')
+                        if 'probe: test' not in listed_lines:
+                            entry = {'name': name, 'status': 'INVALID',
+                                     'reason': 'cannot observe the skip premise: the listing '
+                                               'carried no known test (probe not listed)'}
+                        elif f'{test}: test' in listed_lines:
+                            entry = {'name': name, 'status': 'INVALID',
+                                     'reason': 'skip premise broken: the listing selects the '
+                                               f'bound parent {test} on {sys.platform}; fix '
+                                               'the cfg or DARWIN_ONLY'}
+                        else:
+                            entry = {'name': name, 'status': 'SKIPPED',
+                                     'reason': 'bound parent compiles only on macOS '
+                                               '(#[cfg(target_os = "macos")]) — verified: '
+                                               '--list carries the probe control and selects '
+                                               'no such test, and fn is still defined in the '
+                                               'source'}
+            summary.append(entry)
+            save(f'{name}.json', json.dumps(entry, indent=2) + '\n')
+            print(f'{name}: {entry["status"]}: {entry["reason"]}', flush=True)
         for name in sorted(requested & BASELINE_MACOS_ONLY):
             summary.append({'name': name, 'status': 'SKIPPED',
                            'reason': 'positive control regenerates oracle.json '
@@ -604,11 +679,9 @@ def main():
                                       '(PDRS_BASELINE) for its positive control'})
             print(f'{name}: SKIPPED: needs PDRS_BASELINE', flush=True)
         mutations = [row for row in mutations if row[0] not in needs_baseline]
-    args.output.mkdir(parents=True, exist_ok=False)
-
-    def save(name, text):
-        with (args.output / name).open('x') as stream:
-            stream.write(text)
+    # (args.output.mkdir and save moved above the platform-skip blocks: the
+    # DARWIN_ONLY premise check leaves its own evidence files before any row
+    # runs — fix-r4 sibling#4.)
 
     def run(label, test, compile_only=False):
         slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=10)
