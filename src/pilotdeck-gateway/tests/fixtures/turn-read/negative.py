@@ -183,20 +183,26 @@ args = sys.argv[1:]
 if args and args[0] == '--check':
     if len(args) != 1:
         refuse('turn-read --check takes no output directory and no mutation names')
-    texts = {path: path.read_text() for path in (source, registry_source)}
-    tests_text = tests_source.read_text()
-    for name, path, before, after, test in mutants:
-        count = texts[path].count(before)
-        if count != 1:
-            refuse(f'turn-read {name}: stale anchor (expected 1, got {count})')
-        if before == after:
-            refuse(f'turn-read {name}: no-op mutation (before == after)')
-        if not (declares_test(tests_text, test)
-                or declares_test(tests_text, test, macro='scenario!')):
-            refuse(f'turn-read {name}: bound test not declared in read_tests.rs: {test}')
-    names = [name for name, *_ in mutants]
-    if len(set(names)) != len(names):
-        refuse('turn-read roster has duplicate mutation names')
+    # fix-r7 (review concurrency#1): the source reads and the declares_test
+    # gate live inside the refusal envelope — a missing or renamed tests file
+    # is a clean rc 2 "never started" (#2391 contract), not a traceback rc 1.
+    try:
+        texts = {path: path.read_text() for path in (source, registry_source)}
+        tests_text = tests_source.read_text()
+        for name, path, before, after, test in mutants:
+            count = texts[path].count(before)
+            if count != 1:
+                refuse(f'turn-read {name}: stale anchor (expected 1, got {count})')
+            if before == after:
+                refuse(f'turn-read {name}: no-op mutation (before == after)')
+            if not (declares_test(tests_text, test)
+                    or declares_test(tests_text, test, macro='scenario!')):
+                refuse(f'turn-read {name}: bound test not declared in read_tests.rs: {test}')
+        names = [name for name, *_ in mutants]
+        if len(set(names)) != len(names):
+            refuse('turn-read roster has duplicate mutation names')
+    except (ValueError, OSError) as error:
+        refuse(f'turn-read --check could not audit the tree: {error}')
     print(f'turn-read: {len(mutants)} mutation anchors OK; '
           f'{len(mutants)} bound tests declared')
     raise SystemExit(0)

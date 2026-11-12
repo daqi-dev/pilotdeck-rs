@@ -246,6 +246,10 @@ jobs:
           # 四家夹具的 --check 一并进 CI。native-config / turn-submit 已有 --check；
           # turn-read / turn-publish 的 --check 为本轮新增（只读锚点唯一性 + 名册无
           # 重复，零 cargo）。任一锚点漂移即本步非零退出；全量杀灭轮仍由协调者在宿主跑。
+          # #2692 fix-r7（评审 sibling#1）：native-config / turn-submit 的 --check 补
+          # 上 fix-r6 给 blankkey / turn-read / turn-publish 加的绑定测试名声明门禁
+          # （declares_test；turn-read / turn-publish 同轮把缺文件/改名的边界从
+          # traceback rc 1 收进 rc 2 拒跑）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
           python3 -I src/pilotdeck-gateway/tests/fixtures/turn-submit/negative.py --check
           python3 -I src/pilotdeck-gateway/tests/fixtures/turn-read/negative.py --check

@@ -717,19 +717,26 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
                 // each loaded record by the same template literal (RunRegistry
                 // .ts:70) and V8's recursive array join folds a nested
                 // container to `""` while it has stack left and throws
-                // "Maximum call stack size exceeded" when it does not. At the
-                // registry's own load call shape (fix-r6 probe, Node 22.22.0
-                // / v8 12.4.254.21-node.33: constructor → initialize →
-                // withFileLock → refreshFromDisk → the key template) the
-                // boundary is 2560 levels fold, 2561 throws; `JSON.parse`
-                // itself is iterative and loads any depth. A record past the
-                // shared 2000-level spelling bound but inside that fold band
-                // is skipped here — TS keeps it under the folded `""` key,
-                // but every read of it throws on the record clone, so
-                // "single record invisible, the rest readable" is the aligned
-                // shape (registered divergence). At or beyond the throw band
-                // the load fails like TS's does (#251 boundary oracle: TS
-                // `get` rejects with the same RangeError).
+                // "Maximum call stack size exceeded" when it does not. The
+                // boundary is 2560 levels fold, 2561 throws, measured on
+                // every load chain that reaches the template (fix-r7 probe,
+                // Node 22.22.0 / v8 12.4.254.21-node.33: the boot chain
+                // constructor → initialize → withFileLock → refreshFromDisk,
+                // and get / events / accept's own re-reads — the template
+                // runs in refreshFromDisk's post-await resumption frame,
+                // whose stack is caller-independent, and a 50-frame
+                // synchronous prefix under get() leaves it unmoved);
+                // `JSON.parse` itself is iterative and loads any depth. A
+                // record past the shared 2000-level spelling bound but
+                // inside that fold band is skipped here — TS keeps it under
+                // the folded `""` key, where a folded-spelling get returns
+                // it through the record clone up to 2557 levels and the
+                // clone throws the same RangeError from 2558 (fix-r7 probe,
+                // the get call shape), so "single record invisible, the
+                // rest readable" is the registered Rust-side shape
+                // (registered divergence). At or beyond the throw band
+                // every read face fails like TS's does (#251 boundary
+                // oracle: TS `get` rejects with the same RangeError).
                 if [project, session, run_id]
                     .into_iter()
                     .map(array_nesting)
@@ -817,16 +824,26 @@ fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsStri
 /// the previous 2621 was a probe-harness artifact — a bare `String()` call
 /// on a shallower stack). Measured on the #2692 probe machine, Node 22.22.0
 /// (v8 12.4.254.21-node.33), by driving the baseline's real `FileRunRegistry`
-/// — constructor → initialize → withFileLock → refreshFromDisk → the key
-/// template — over snapshots with the deep record on disk
-/// (`_tmp/20261026-issue-2692/fix-r6/node-probe/fold-band-loadpoint.out` and
-/// `fold-band-bisect.out`): 2560 levels fold, 2561 throws, identical for a
-/// scalar leaf and an empty innermost array. Stack-dependent, like every V8
-/// recursion bound — a shallower caller measures higher (2621), so the
-/// constant deliberately tracks the load path, the deepest real caller; the
+/// over snapshots with the deep record on disk. fix-r6 bisected the boot
+/// chain — constructor → initialize → withFileLock → refreshFromDisk → the
+/// key template (`_tmp/20261026-issue-2692/fix-r6/node-probe/`
+/// `fold-band-loadpoint.out` and `fold-band-bisect.out`); fix-r7 (review
+/// boundary#1 again) bisected the same edge on every other read chain that
+/// reaches the template — get / events / accept re-reading a snapshot that
+/// appeared after construction, plus a 50-frame synchronous prefix under
+/// get() as the production-request-frames control
+/// (`_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-reads.out`): all
+/// five chains fold 2560 and throw 2561, identical for a scalar leaf and
+/// an empty innermost array. The stack under the template is the post-await
+/// resumption frame of `refreshFromDisk` itself, so it does not depend on
+/// the lexical caller — the prefix control confirms the caller's frames are
+/// popped at the first await. Stack-dependent only through that resumption
+/// shape, like every V8 recursion bound — a shallower direct call measures
+/// higher (2621) — so the constant deliberately tracks the load path; the
 /// #251 boundary fixture ran 10,000, far past it either way.
 /// `read_snapshot` bands an un-rekeyable record on this: inside the band it
-/// skips the record, beyond the band the load fails the way TS's load does.
+/// skips the record, beyond the band the load fails the way TS's load does
+/// on every read face.
 ///
 /// The band counts array nesting levels — one per joined array, the same
 /// caliber as `to_string_units`' frames — not the depth of the deepest leaf

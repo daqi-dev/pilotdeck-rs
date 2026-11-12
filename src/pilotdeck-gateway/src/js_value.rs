@@ -13,10 +13,11 @@
 //! record): `String(a)` throws from depth 2516; the A6-JSVALUE-DEPTH-001
 //! oracle (#1550) has 2100 converting and 3000 throwing, and nested objects
 //! trip it as early as 1887. The same V8 recursion bound measured at the run
-//! registry's own load call shape folds one level deeper
-//! (`storage::run_registry::TS_KEY_FOLD_DEPTH`, #2692 fix-r6 probe on Node
-//! v22.22.0 / v8 12.4.254.21-node.33: 2560 folds, 2561 throws) — two stack
-//! prefixes, two boundaries, not a contradiction. Known divergence: Rust's
+//! registry's own load call shapes folds 45 levels deeper, not one
+//! (`storage::run_registry::TS_KEY_FOLD_DEPTH`, #2692 fix-r7 probe on Node
+//! v22.22.0 / v8 12.4.254.21-node.33: every registry load chain folds 2560
+//! and throws 2561, against this prefix's 2515) — two stack prefixes, two
+//! boundaries, not a contradiction. Known divergence: Rust's
 //! limit is a fixed constant, while V8's varies with the caller's stack
 //! shape, so the constant sits low and depths between it and V8's real limit
 //! throw here but convert in TS.

@@ -148,6 +148,14 @@ mutant_anchor = {
     'lease-acquisition-skipped': ('message', 'attachments must record lease_release and after_turn'),
     'always-acquire-lease': ('message', 'lease_release recorded without an attachment lease'),
 }
+# #2692 fix-r7 (review sibling#1): --check also proves every bound test is
+# still declared in the one file that owns its module (adapter.check's
+# module-table gate, the same one native-blankkey / turn-read / turn-publish
+# carry from fix-r6).
+AUDITED_MODULES = (
+    ('runtime::turn::submit::tests::', test_source),
+    ('runtime::turn::submit_host::tests::', host_source.with_name('submit_host_tests.rs')),
+)
 
 
 def build():
@@ -168,7 +176,7 @@ def build():
                        prelude=('poison the leases mutex mid-turn',) if kind == 'location' else (),
                        payload_pattern=adapter.legacy_payload(anchor) if kind == 'message' else '')
         entries.append(adapter.Mutation(binding, target, before, after, scenario, capability))
-    adapter.check(entries, oracle)
+    adapter.check(entries, oracle, AUDITED_MODULES)
     return entries, oracle
 
 

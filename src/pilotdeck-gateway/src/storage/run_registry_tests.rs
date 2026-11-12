@@ -958,22 +958,30 @@ fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
 // a deep-array sessionKey record (TS persists it before the result clone
 // throws), so one can sit on disk when the registry reopens. V8's key
 // template join folds 2560 levels of nesting (array_nesting caliber) to ""
-// and throws past that, measured at the registry's real load call shape —
-// constructor → initialize → withFileLock → refreshFromDisk → the key
-// template — on the baseline's own FileRunRegistry, Node 22.22.0
+// and throws past that, measured at every one of the registry's real load
+// call shapes — the boot chain (constructor → initialize → withFileLock →
+// refreshFromDisk → the key template, fix-r6) and get / events / accept's
+// own re-reads plus a 50-frame synchronous prefix under get() (fix-r7,
+// review boundary#1: all five chains share the edge because the template
+// runs in refreshFromDisk's post-await resumption frame, whose stack is
+// caller-independent), on the baseline's own FileRunRegistry, Node 22.22.0
 // (`_tmp/20261026-issue-2692/fix-r6/node-probe/fold-band-loadpoint.out`,
-// `fold-band-bisect.out`; the previous 2621 was a shallower-stack probe
-// artifact, fix-r6 review boundary#1); Rust cannot re-spell past the shared
-// 2000-level bound at all. Inside the fold band the record is skipped — TS
-// keeps it under the folded "" key but every read of it throws on the record
-// clone, so "single record invisible, the rest readable" is the aligned
-// shape (registered divergence). Past the band the load fails like TS's get
-// does (#251 boundary oracle). fix-r5 calibrates the band to the join's own
-// frame count (one per array, `array_nesting`): a scalar leaf and an empty
-// innermost array throw at the same level on a fixed caller stack
-// (`fix-r5/node-probe/fold-band-stackdep.out`), and fix-r6 re-measured both
-// shapes sharing the boundary at the real load call shape too, so both leaf
-// shapes share every boundary below.
+// `fold-band-bisect.out`, and
+// `_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-reads.out`; the
+// previous 2621 was a shallower-stack probe artifact, fix-r6 review
+// boundary#1); Rust cannot re-spell past the shared 2000-level bound at
+// all. Inside the fold band the record is skipped — TS keeps it under the
+// folded "" key, where a folded-spelling get returns it through the record
+// clone up to 2557 levels and the clone throws the same RangeError from
+// 2558 (`fix-r7/node-probe/fold-band-inband-reads.out`), so "single record
+// invisible, the rest readable" is the registered Rust-side shape
+// (registered divergence). Past the band the load fails like TS's get does
+// on every read face (#251 boundary oracle). fix-r5 calibrates the band to
+// the join's own frame count (one per array, `array_nesting`): a scalar
+// leaf and an empty innermost array throw at the same level on a fixed
+// caller stack (`fix-r5/node-probe/fold-band-stackdep.out`), and fix-r6
+// re-measured both shapes sharing the boundary at the real load call shape
+// too, so both leaf shapes share every boundary below.
 #[test]
 fn deep_session_key_record_reopens_without_bricking_the_other_records() {
     let scratch = Scratch::new();
@@ -991,7 +999,8 @@ fn deep_session_key_record_reopens_without_bricking_the_other_records() {
     };
     // Inside the fold band, both leaf shapes: the null record stays readable,
     // the deep record is invisible under every spelling, and the skip is
-    // counted. 2560 is the band's in-edge at the real load call shape.
+    // counted. 2560 is the band's in-edge at every real load call shape
+    // (fix-r7).
     for (depth, empty_leaf) in [(2001, false), (2560, false), (2560, true)] {
         let text = snapshot_with(depth, empty_leaf);
         fs::write(&path, &text).unwrap();
@@ -1050,6 +1059,70 @@ fn deep_session_key_record_reopens_without_bricking_the_other_records() {
             "#2692 the load failure carries V8's RangeError text"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        assert!(!lock_path(&path).exists());
+        no_temporaries(&scratch.0);
+    }
+    // fix-r7 (review boundary#1): the band gates every read face, not just
+    // the open — a snapshot that appears after the registry was opened (the
+    // cross-process handoff the lock-and-reload exists for) is loaded by
+    // get / events / accept on their own read chains, and TS measured those
+    // chains sharing the boot boundary (fold-band-reads.out), so every face
+    // bands identically here too: in-band the deep record is skipped and
+    // the anchor stays readable, past the band the read fails with V8's
+    // RangeError text.
+    for empty_leaf in [false, true] {
+        fs::remove_file(&path)
+            .unwrap_or_else(|error| panic!("#2692 the spent snapshot must be removable: {error}"));
+        let registry = FileRunRegistry::open(&path)
+            .unwrap_or_else(|error| panic!("#2692 an empty home must open: {error}"));
+        fs::write(&path, snapshot_with(2560, empty_leaf)).unwrap();
+        let record = registry
+            .get(&run(None, "null", "run-a1"))
+            .unwrap_or_else(|error| {
+                panic!("#2692 depth 2560 after open skips the deep record on the get face: {error}")
+            })
+            .expect("#2692 the anchor survives the deep record on the get face");
+        assert_eq!(
+            field(record.as_json(), "sessionKey"),
+            &JsValue::Null,
+            "#2692 the null record keeps its JSON null body on the get face"
+        );
+        assert!(
+            registry
+                .get(&run(None, "", "run-deep"))
+                .unwrap_or_else(|error| panic!("#2692 the get face must read, not fail: {error}"))
+                .is_none(),
+            "#2692 the skipped deep record is invisible on the get face"
+        );
+        assert_eq!(
+            registry.skipped_unrekeyable(),
+            1,
+            "#2692 the get face's own re-read counted the in-band skip"
+        );
+        fs::write(&path, snapshot_with(2561, empty_leaf)).unwrap();
+        for face in ["get", "events", "accept"] {
+            let result = match face {
+                "get" => registry.get(&run(None, "null", "run-a1")).map(|_| ()),
+                "events" => registry
+                    .events(&run(None, "null", "run-a1"), None, None)
+                    .map(|_| ()),
+                _ => registry
+                    .accept(&accept_input(&run(None, "null", "run-a1"), "m1"))
+                    .map(|_| ()),
+            };
+            match result {
+                Err(RunRegistryError::Invalid(message)) => assert_eq!(
+                    message, "Maximum call stack size exceeded",
+                    "#2692 depth 2561 past the band fails the {face} read with V8's RangeError text"
+                ),
+                _ => panic!("#2692 depth 2561 past the band must fail the {face} read"),
+            }
+        }
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            snapshot_with(2561, empty_leaf),
+            "#2692 the failed read leaves the snapshot bytes as they were"
+        );
         assert!(!lock_path(&path).exists());
         no_temporaries(&scratch.0);
     }

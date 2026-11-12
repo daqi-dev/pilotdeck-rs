@@ -23,7 +23,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
+from negative_suite import (Case, bind_module_file, classify, declares_test,
+                            invalidate_completed, passed, publish_summary)
 
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
@@ -890,6 +891,22 @@ LITERAL_ANCHORS = [
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
                 MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
+# #2692 fix-r7 (review sibling#1): --check also proves every bound test is
+# still declared -- a renamed test used to leave the roster's string constant
+# green until the host's cargo round (the gate native-blankkey / turn-read /
+# turn-publish already carry from fix-r6). The full module path binds to the
+# one file that declares it (negative_suite.bind_module_file), then
+# declares_test matches the fn / table / scenario! form with comments and
+# literals blanked.
+AUDITED_MODULES = (
+    ('native_process::methods::config::tests::', CONFIG),
+    ('native_process::methods::session_dir::tests::', SESSION_DIR),
+    ('native_process::tests::review::', REVIEW_TESTS),
+    ('runtime::session::factory::tests::', FACTORY_TESTS),
+    ('runtime::turn::live::stream_tests::', LIVE_TESTS),
+    ('native_process::methods::cron::cron_tests::', CRON_TESTS),
+    ('native_process::management_tests::', MANAGEMENT_TESTS),
+)
 
 
 def _assertions(case):
@@ -992,10 +1009,21 @@ def main():
         # Guard first: it reports an unreadable scanned file as a clean refusal,
         # while the anchor probe below would raise a bare OSError on the same tree.
         check_literal_anchors(selected_rows)
-        for case in selected_rows:
-            mutate(case, case.path.read_text())
+        # fix-r7 (review sibling#1): the same envelope covers the bound-test
+        # gate below -- a missing or renamed tests file is a clean refusal,
+        # not a traceback.
+        try:
+            for case in selected_rows:
+                mutate(case, case.path.read_text())
+                tests_path, short = bind_module_file(case.test, AUDITED_MODULES)
+                if not declares_test(tests_path.read_text(), short):
+                    raise ValueError(f'bound test not declared: '
+                                     f'{case.mutation} -> {case.test}')
+        except (ValueError, OSError) as error:
+            raise SystemExit(f'#1457 {error}')
         print(f'#1457 {len(selected_rows)} mutation anchors OK; '
-              f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK')
+              f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK; '
+              f'{len(selected_rows)} bound tests declared')
         return 0
     if not args:
         raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')

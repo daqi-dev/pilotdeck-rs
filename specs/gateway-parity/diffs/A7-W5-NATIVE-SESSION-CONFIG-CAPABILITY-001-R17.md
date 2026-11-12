@@ -17,7 +17,12 @@ CLAUDE.md 分级升 P0）。其三，登记差异①连带的新**答案形状**
 回显经迭代无上限序列化器完整作答，而 TS 侧返回路径的 `structuredClone` 在该深度抛错
 （评审 boundary#2）。fix-r6（评审 r6b）更正本件两处：带边界常量按**真实加载点**重测
 （前值 2621 是探针 harness 浅栈产物，实为 2560/2561），「答案形状」段的 clone 边界
-措辞按补测改写（不再主张未探的「≤2000 两侧都成」）。R15/R16 原字节不动，账本只追加。
+措辞按补测改写（不再主张未探的「≤2000 两侧都成」）。fix-r7（评审 r7）更正本件三处：
+带边界常量的实测覆盖从单一 initialize 链扩到**全部读链**（get / events / accept /
+50 帧同步前缀对照，四链与 boot 同界 2560/2561——评审 P1 担心的「get 链界更高」实测
+不成立）；「带内每次读都会在 clone 上抛」句按实测改准（折叠拼法 get 至 2557 层成、
+2558 起抛）；差异④「跳过 vs load 失败」的读面钉扩到 open 之后的 get / events /
+accept 三面。R15/R16 原字节不动，账本只追加。
 
 ## 基线依据
 
@@ -41,16 +46,34 @@ Node v22.22.0（`process.versions` 记录于探针输出首行：`node v22.22.0
   2621 起全抛，`JSON.stringify` 3000 层仍成、模板拼法与 clone 同界 → fix-r5
   「clone 自 2100 起抛」是其探针调用形态（更深栈）下的值，直测下边界在
   (2100, 2621) 未探、随调用栈前缀漂移。
+- fix-r7 `_tmp/20261026-issue-2692/fix-r7/node-probe/`（HEAD `016d2647c`，评审 P1
+  的覆盖修法）：`fold-band-reads.out` 以基线真 `FileRunRegistry` 对**每条到达 key
+  模板的读链**二分——boot（initialize 链复跑，本宿主复现 2560/2561）、get / events /
+  accept 对 open 之后才落盘的快照各自重读（跨进程交接形态）、get+50 帧（50 层同步
+  递归底部调 get，对照「生产请求处理帧加深栈」的担忧）——五链 × 两叶形全部
+  **2560 折 / 2561 抛**：key 模板运行在 `refreshFromDisk` 的 await 后恢复帧里，栈与
+  词法调用方无关，前缀帧在 get 第一个 await 即弹出（对照腿实测同界）。
+  `fold-band-inband-reads.out`：带内（boot 装载）读深记录的真实行为——折叠拼法
+  get 在 2001/2100 层**成功返回记录**、2557 层止、**2558 起抛同一 RangeError**（get
+  调用形态下 clone 的边界），深拼法 get 同界 → 「带内每次读都会在 clone 上抛」不成立
+  （fix-r6 loadpoint 的 2100「deep-record read: ok」即已反例），Rust「跳过单条、其余
+  可读」是登记的 Rust 侧形状而非 TS 逐层对齐。
 
 ## Rust 行为
 
 - 折叠带判据（`storage/run_registry.rs`）：`container_depth` 更名重写为
   `array_nesting`——只计数组嵌套层数（每个被 join 的数组一层，对象为叶子，
   `[object Object]` 不递归），与 `to_string_units` frames 同口径；`TS_KEY_FOLD_DEPTH`
-  fix-r6 按真实加载点实测改 2560（原 2621 为浅栈探针产物）。效果：2561 层起
-  （空内叶与标量叶同界）记录让 load 失败（`Maximum call stack size exceeded`），
-  与 TS 的 `get` 失败对齐；2001..2560 带内两形状仍走既有「跳过单条、其余可读」
-  登记形状。
+  fix-r6 按真实加载点实测改 2560（原 2621 为浅栈探针产物），fix-r7 把实测覆盖从单一
+  initialize 链扩到**全部读链**（boot / get / events / accept / get+50 帧同步前缀对照，
+  `fold-band-reads.out`：五链 × 两叶形全部 2560 折 / 2561 抛——key 模板运行在
+  `refreshFromDisk` 的 await 后恢复帧里，栈与词法调用方无关，生产请求帧在 get 首个
+  await 即弹出，故常量无需按调用点分带、维持 2560）。效果：2561 层起（空内叶与
+  标量叶同界）记录让读失败（`Maximum call stack size exceeded`），与 TS 的 boot
+  initialize / get / events / accept 五链 load 失败对齐（fix-r7 实测）；2001..2560 带内
+  两形状仍走既有「跳过单条、其余可读」登记形状——TS 侧折叠拼法 get 至 2557 层返回
+  记录、2558 起 clone 抛同一 RangeError（`fold-band-inband-reads.out`），并非
+  「带内每次读都抛」。
 - 生产信号面（差异④）：`read_snapshot` 跳过臂加进程级累计计数
   `UNREKEYABLE_SKIPPED`（`AtomicUsize`，每跳过一条每读 +1），文件末尾
   `pub fn unrekeyable_skips()`（`storage/mod.rs` re-export）供生产读取；每次
@@ -64,15 +87,19 @@ Node v22.22.0（`process.versions` 记录于探针输出首行：`node v22.22.0
   线上响应面）序列化，不走 `js_value::json_stringify`（2000 层保守上限，仅服务
   provider bodies/tools/MCP，不在响应面）。3000 层深键的 miss 回显在 Rust 侧完整
   成答；TS 侧返回路径经 `structuredClone`——clone 直测 1999/2000/2100 全成（两叶
-  形）、2621 起全抛，(2100, 2621) 之间未探且随调用栈前缀漂移（fix-r5 探针形态下
-  2100 起抛）；机制按 ts-prodkey-probe cell e 推断，如实注明。已实测的分歧带为
-  ≥2621 层的回显（clone 抛、迭代序列化器成）；≤2100 直测两侧都成。
+  形）、2621 起全抛；fix-r7 在真 get 调用形态下实测折叠拼法读 2557 层止、2558 起
+  抛（`fold-band-inband-reads.out`），边界随调用栈前缀漂移（fix-r5 探针形态下
+  2100 起抛）；机制按 ts-prodkey-probe cell e 推断，如实注明。已实测的分歧带：真
+  get 调用形态下 ≥2558 层的读（clone 抛、迭代序列化器成）；直测下 ≥2621 层的
+  回显；≤2100 直测两侧都成。
 
 ## 范围
 
-只覆盖评审 fix-r5 五条（boundary#1/#2/#3、sibling#3、P3#4/#5）与 fix-r6 六条
-（boundary#1-5、sibling#1-2）对应的判据口径更正、信号面、答案形状登记与负控装置
-维护。不覆盖、不改动：R15 差异④「跳过 vs load 失败」的分工语义与批准状态（仍是
+只覆盖评审 fix-r5 五条（boundary#1/#2/#3、sibling#3、P3#4/#5）、fix-r6 六条
+（boundary#1-5、sibling#1-2）与 fix-r7 五条（P1 全读链实测、P2 探针证据入树与
+路径登记、P2a 带内读措辞、P2 两家 --check 补 declares_test 门禁、P2a turn-read /
+turn-publish 拒跑信封）对应的判据口径更正、信号面、答案形状登记与负控装置维护。
+不覆盖、不改动：R15 差异④「跳过 vs load 失败」的分工语义与批准状态（仍是
 登记待批，人复核可否决）；带内跳过记录在 persist 重写时被丢弃这一行为本身（信号面
 只让丢弃可见，改丢不丢属结构性修法，待裁决）；`replacement.rs` pending/reservations
 字符串域折叠（sibling#1，已由 A7.8-INTERACTION-NONSTRING-OWNER-001-R1 登记，结构性
@@ -111,7 +138,21 @@ P3 各条（sibling#3-8、boundary#6-8，含 `MAX_ARRAY_DEPTH < TS_KEY_FOLD_DEPT
 - CI 接线（评审 sibling#3）：`negative-controls` job 的「绑定漂移自检」步补四行
   `--check`——native-config、turn-submit（已有 `--check`，先前未接线）与 turn-read、
   turn-publish（本轮新增只读 `--check`：锚点唯一性 + 名册无重复，零 cargo，同
-  #1433/#2391/#2495 先例；fix-r6 起另核 no-op 变异与绑定测试名）。
+  #1433/#2391/#2495 先例；fix-r6 起另核 no-op 变异与绑定测试名）。fix-r7（评审
+  sibling#1）：native-config 的 `--check` 补 `bind_module_file` + `declares_test`
+  门禁（7 模块前缀表，输出增报 `70 bound tests declared`）；turn-submit 经
+  `_negkit/submit.py check(modules=…)` 同款门禁（同源消费者 failure-guard 一并
+  传表，其门禁在每次变更轮的 build() 亦跑）；turn-read / turn-publish 把源文件
+  读取与 declares_test 收进 `try/except (ValueError, OSError): refuse(...)` 信封
+  （缺文件 / 改名 → rc 2 `INVALID:`，#2391 契约，评审 concurrency#1）。
+- 读面钉（fix-r7，评审 P1）：
+  `storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
+  追加 open 之后落盘快照的读面腿：2560 层 get 跳过计数 + 锚记录可读、2561 层
+  get / events / accept 三面均 `Err`（`Maximum call stack size exceeded`）、快照
+  字节不变；带边界常量五链实测后维持 2560（探针输出
+  `_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-reads.out` 与
+  `fold-band-inband-reads.out`，与 fix-r6 三份一并随证据目录带回，sha256 见该轮
+  RESULT.md）。
 - 账本闸门：`check_frozen.py` 的 `check_diffs` 规则要求本件 frontmatter `original`
   写基础 ID（已写 `-001`）；R15/R16 原字节不动。
 
@@ -124,4 +165,9 @@ P3 各条（sibling#3-8、boundary#6-8，含 `MAX_ARRAY_DEPTH < TS_KEY_FOLD_DEPT
 同日 fix-r6 worker 更正两处：带边界常量按真实加载点（constructor → initialize →
 withFileLock → refreshFromDisk → key 模板）实测从 2621 改 2560（浅栈探针产物），
 「答案形状」段 clone 边界措辞按 1999/2000/2100 补测改写（不再主张未探的
-「≤2000 两侧都成」）。人复核否决则循账本规则出 `-R18` 更正。
+「≤2000 两侧都成」）。同日 fix-r7 worker 再更正三处：带边界实测覆盖扩到全部读链
+（五链 × 两叶形同界 2560/2561，评审 P1 的「get 链界更高 / 生产链更低」两向担忧均
+实测不成立——key 模板在 `refreshFromDisk` 的 await 后恢复帧运行，栈与词法调用方
+无关）；「带内每次读都在 clone 上抛」措辞按实测改准（折叠拼法 get 至 2557 层成、
+2558 起抛）；两家漏跟的 `--check` 门禁与 turn-read / turn-publish 的拒跑信封随读面
+钉一并登记。人复核否决则循账本规则出 `-R18` 更正。
