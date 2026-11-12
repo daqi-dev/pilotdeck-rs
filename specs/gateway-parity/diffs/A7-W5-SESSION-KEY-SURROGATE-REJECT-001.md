@@ -176,7 +176,13 @@ subagents/tasks 注册表，`task.session_id == *session_key` 精确 JsString
   `set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key`
   （busy 会话上 blank key → SESSION_BUSY）与
   `set_permission_mode_blank_key_answers_the_session_key_gate`（无 busy +
-  blank key → INVALID_SESSION_KEY；把 busy 分支挪到 key 门之后，前者转红）；fix-r2 三门各一组（拒绝 + FFFD/成对代理对照）：
+  blank key → INVALID_SESSION_KEY；把 busy 分支挪到 key 门之后，前者转红）；
+  fix-r13 追加同拼写 busy 的直接 pin
+  `set_permission_mode_reports_busy_for_a_turn_held_on_the_surrogate_key`
+  （同拼写代理 key 上的活 turn → SESSION_BUSY，与 submit 侧
+  `submit_turn_surrogate_gate_precedes_the_busy_refusal` 对称成对）；
+  复算另跑 `cargo test -p pilotdeck-gateway --lib -- set_permission_mode_`
+  命中上述三 pin；fix-r2 三门各一组（拒绝 + FFFD/成对代理对照）：
   `runtime/turn/submit_tests.rs`
   `submit_turn_rejects_lone_surrogate_session_key`（error-event 形状 +
   session factory 未达）与 `submit_turn_keeps_fffd_and_paired_surrogate_keys`、

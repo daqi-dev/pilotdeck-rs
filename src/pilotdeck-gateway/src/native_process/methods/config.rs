@@ -2088,6 +2088,45 @@ mod tests {
         teardown(&r).await;
     }
 
+    /// #1623 fix-r13 (review r12 sibling#2): symmetric with the submit-side
+    /// pin (`submit_turn_surrogate_gate_precedes_the_busy_refusal`) — a turn
+    /// held under the same lone-surrogate spelling makes `set_permission_mode`
+    /// answer `SESSION_BUSY` (the busy gate matches the request's original
+    /// spelling exactly; this is the divergence #3033 records, and after #1623
+    /// only a test fixture can register a turn under a surrogate spelling).
+    #[tokio::test]
+    async fn set_permission_mode_reports_busy_for_a_turn_held_on_the_surrogate_key() {
+        let (_scratch, r) = setup_fixture();
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("the surrogate spelling holds a live turn in the fixture");
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([
+                    ("sessionKey", JsValue::String(key.clone())),
+                    ("mode", "plan".into()),
+                ]),
+            )
+            .await
+            .expect_err("a surrogate-keyed turn is busy for permission");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#3033 the same surrogate spelling answers busy for permission"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change permission mode during an active turn.",
+            "#3033 the surrogate key keeps permission's busy message"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
     /// #1872 (fix-r2 arbitration of the DS P1): with no turn anywhere, a
     /// blank sessionKey falls through permission's busy gate to its
     /// sessionKey gate — the real TS wiring's callback rejects it there
