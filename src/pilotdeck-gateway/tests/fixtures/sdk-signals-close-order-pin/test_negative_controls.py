@@ -441,6 +441,16 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
                         '#1800 abort reasons must keep the revoked prefix and '
                         'name the failure, got '
                         + repr([row['reason'] for row in summary['results']]))
+        # #2981 fix-r6（DS sibling#1，P2-a）：补 compiled 列引脚，与兄弟
+        # assert_rows（sdk-signals）同形同源——runner 每行都发布 compiled
+        # （record()），撤销经共享 invalidate_completed 把它置 False
+        # （negative_suite，#1037）；只钉 status 不钉 compiled 时，撤销段
+        # 丢失 compiled 复位是无人看见的回归（删掉复位本文件照绿）。
+        self.assertTrue([row['compiled'] for row in summary['results']]
+                        == [False] * len(SELECTION),
+                        '#1800 an aborting run must revoke compilation'
+                        ' receipts too, got '
+                        + repr([row['compiled'] for row in summary['results']]))
         self.assertEqual(summary['counts'],
                          {'KILLED': 0, 'SURVIVED': 0, 'INVALID': len(SELECTION)},
                          '#1800 an aborting run must revoke every kill and count '
@@ -457,6 +467,14 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
                          'rows, or every revoke assertion below is vacuous')
         self.assertEqual([row['reason'] for row in summary['results']],
                          [HEALTHY_REASON] * len(SELECTION))
+        # #2981 fix-r6（DS sibling#1，P2-a）：healthy 形态与兄弟同形——
+        # 撤销段把 compiled 复位成 False 的回归只会打红 abort 侧，healthy
+        # 侧钉住「每行健康 kill 真的带了编译收据」。
+        self.assertTrue([row['compiled'] for row in summary['results']]
+                        == [True] * len(SELECTION),
+                        '#1800 a healthy kill records its compilation'
+                        ' receipt, got '
+                        + repr([row['compiled'] for row in summary['results']]))
         self.assertEqual(summary['counts'],
                          {'KILLED': len(SELECTION), 'SURVIVED': 0, 'INVALID': 0})
         self.assertEqual(self.counts_line(process.stdout)['counts'],
