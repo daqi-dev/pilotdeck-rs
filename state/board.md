@@ -5931,3 +5931,8 @@ mbp2 已复用归属明确的 automation 树并同步 clean e5f9f58a4，68/22/26
 ### 2026-11-12 22:0x CST · 修复正文类型漏判，继续源码构建接续
 
 #3062批准范围保持，r8新发现独立#3068：真实chunked JSON {"raw":"X"}与文本X通过完整字节验证后被两投影误等；root已收JSON/text/bytes互斥比较包络，oracle/models、重复key语义、合法数字溢出拒绝、其它header/心跳/全序不变。macmini独占148全Git导出+423a/3778两覆盖实跑78/22/26共126PASS、19真实HTTP原件复算和原16WS控制通过；旧49b59在独立完整合成compare_pair反例精确True!=False失败，恢复同1PASS，源/原件/工具前后认证且7子组清理。真实协议结果不冒充真实TS/native业务验收。r8原62审查行与所有PARTIAL保留，三争议有原字节证据送第三谱系，101Date必带前提已被两份原握手反证，不扩人批。root持正式树，ts_reference持验证回存与新提交双审，audit_delivery持有限事实核验，remote_setup持macmini源码依赖：CMake/pkgconf已私有源码编译，标准fetch两次未齐字体包，正按已验官方URL/lock校验补源；本机主仓预算153540104KiB为ok。mbp2仍待恢复、cb8不再访问，Linux与完整渠道/退役/冻结/人签字未完成。下一步提交本修复、增量双审并启动已准备的Darwin实际构建；证据本树_tmp/20261112-wave1-validation/{wire-value-validation,wire-value-arbitration-r2,r8-findings.md,macmini-source-dependencies}，不接管他树或切用户服务。
+
+
+### 2026-11-12 22:2x CST · 比较表示收敛，Darwin 暴露实际源码依赖缺口
+
+5f17已gitleaks推送；r9两家八角色完成但原2P1/11P2保留。audit在旧423a完整合成pair实跑证明binary真分支与/v1 models局部相等均仍被最终比较判差，不据误读改协议；本批root将models/channelStreams内部比较输出统一typed envelope，raw/models业务oracle不变并补空body/null/空字符串控制。macmini2cc6/7bb实际79PASS、同19HTTP/16WS复算匹配，3子组清理、8277源/捕获/工具前后认证，不重跑不变22/26；下一步固定提交、两家窄增量复核。另macmini已补全322 registry/固定regress源码，Droid/Noto由本机只下载官方source再逐lock校验转入，所有timeout/partial保留；CMake/pkgconf私有源码构建完成。5f17真实Darwin fmt PASS，strictclippy在GLib intl依赖FAIL，现有全局gettext未注入、wrap禁下载保持，remote_setup正在核最小固定源码闭包再修；无Git导出不作正式retirement binary。root持正式写，ts_reference持验证/评审，audit持争议事实，remote_setup持Darwin依赖；mbp2仍待恢复、cb8禁用，未接管他树或切服务。新证据在本树_tmp/20261112-wave1-validation/{wire-comparison-followup-validation,r9-comparison-facts,macmini-source-dependencies}；完整渠道/宿主/冻结/退役与人签字仍未完成。

@@ -263,7 +263,8 @@ class ChannelV2Controls(unittest.TestCase):
         self.assertEqual(len(result['contexts']), 2)
         self.assertNotIn('status', result)
         self.assertNotIn('attachment', result['scope'])
-        self.assertEqual(result['models'][0][0]['temperature'], 0.2)
+        self.assertEqual(result['models'][0][0]['wireKind'], 'json')
+        self.assertEqual(result['models'][0][0]['value']['temperature'], 0.2)
 
     def test_old_profile_cannot_be_relabelled_by_consumer(self):
         data = fixture()
@@ -1076,6 +1077,11 @@ class WireProjectionControls(unittest.TestCase):
             (b'NaN', b'Infinity', True, False),
             (b'NaN', b'NaN', True, True),
             (b'{"n":NaN}', b'{"n":null}', True, False),
+            (b'', b'', True, True),
+            (b'', b'""', True, False),
+            (b'', b'null', True, False),
+            (b'null', b'null', True, True),
+            (b'\xffb', b'\xffb', True, True),
             # Existing JSON semantics remain, including duplicate-key last-wins.
             (b'{"a":1,"a":2}', b'{"a":2}      ', True, True),
             (b'{"a":2}', b' { "a": 2 } ', True, True),
@@ -1099,7 +1105,8 @@ class WireProjectionControls(unittest.TestCase):
             headers.pop('transfer-encoding', None)
             if chunked:
                 headers['transfer-encoding'] = 'chunked'
-                framed = (f'{len(body):x}\r\n'.encode() + body + b'\r\n0\r\n\r\n')
+                chunk = f'{len(body):x}\r\n'.encode() + body + b'\r\n' if body else b''
+                framed = chunk + b'0\r\n\r\n'
             else:
                 headers['content-length'] = str(len(body))
                 framed = body
@@ -1155,6 +1162,36 @@ class WireProjectionControls(unittest.TestCase):
         # existing canonical comparison boundary, not silently made text.
         with self.assertRaises(ValueError):
             v2.canonical(v2._wire_value(b'1e999'))
+
+    def test_model_and_channel_comparisons_keep_payload_types(self):
+        # Component projections, not synthetic evidence of full business runs.
+        raw, records, _ = fixture()
+        seed = v2.transport_observation(raw, records)['exchanges'][0]
+        def model(body):
+            pair = copy.deepcopy(seed)
+            pair['request'].update(url='/v1/probe', body=blob(body))
+            trace = {'exchanges': [pair], 'channelSent': [], 'channelReceived': []}
+            return v2.transport_projection(trace)
+        left, right = model(b'{"raw":"X"}'), model(b'X')
+        self.assertNotEqual(left['models'], right['models'])
+        self.assertNotEqual(left['exchanges'], right['exchanges'])
+
+        def channel(body, binary):
+            trace = {'exchanges': [], 'channelReceived': [], 'channelSent': [
+                {'sequence': 1, 'socket': {'id': 7, 'localPort': 28690, 'remotePort': 41000},
+                 'payload': blob(body), 'binary': binary}]}
+            return v2.transport_projection(trace)['channelStreams']
+        for binary in (False, True):
+            with self.subTest(binary=binary):
+                self.assertNotEqual(channel(b'{"rawBytesHex":"ff62"}', binary),
+                                    channel(b'\xffb', binary))
+        self.assertEqual(channel(b'\xffb', True)[0][0]['payload'],
+                         {'wireKind': 'bytes', 'value': 'ff62'})
+        self.assertNotEqual(channel(b'{}', False), channel(b'{}', True))
+        self.assertNotEqual(channel(b'', False), channel(b'""', False))
+        self.assertNotEqual(channel(b'NaN', False), channel(b'Infinity', False))
+        self.assertEqual(channel(b'NaN', False)[0][0]['payload'],
+                         {'wireKind': 'text', 'value': 'NaN'})
 
     def test_http_then_upgrade_keeps_same_socket_relationship(self):
         raw, http_records = http_wire_fixture()

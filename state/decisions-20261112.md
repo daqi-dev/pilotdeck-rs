@@ -26,3 +26,8 @@
 - **选项与后果 / 执行**：只修 wire 能挡文本误等，但 HTTP API 投影仍保留碰撞和非 UTF-8 异常。采用两层共同的 JSON/text/bytes 互斥包络，业务 JSON 必须嵌入其 JSON 包络，不能伪装内部文本标记。已锚 UUID/时钟仍在原内层形状归一。Node 实测拒绝的 NaN/±Infinity 按既有非 JSON 全文规则保留，合法数值溢出仍原 canonical 拒绝；重复 JSON key 保持固定 Node 与既有 Python 的后值覆盖，不擅改该语义。
 
 **可复用原则**：比较器的内部类型标记不能与业务输入共享无标签的表示空间。断言由完整 `compare_pair` 类型碰撞控制、Content-Length 对照、JSON 语义正控及 NaN/数值溢出边界落实；旧实现须在精确文本碰撞控制上实际失败，不能拿无关异常代替检出。
+
+
+### #3068 后续：内部比较表示统一，业务 oracle 不变
+
+自决 · 待复核（AI 代批，待人复核）。r9两条局部形状P1已用旧423a完整合成compare_pair实测：最终均判差，不把局部字段相等当成真实假通过，原评语保留。全仓读方核实只有内部温度断言读取comparison.models裸形状，entries只转存；因此将models与channelStreams的比较输出也统一JSON/text/bytes包络，减少双重解析及非法常量的非预期canonical异常。这里的models比较字段不同于raw.models业务oracle：后者及transport_observation的decoded认证仍不动。合法JSON语义、同socket请求/响应绑定、长度/顺序/头策略、已锚实体归一保持；空体/null/空字符串控制与同19HTTP/16WS原件复算判定实效。此前5f17记录描述其当时的裸models比较输出，后续以本段为准；不新增#3062例外，不移除冻结/双审前提。

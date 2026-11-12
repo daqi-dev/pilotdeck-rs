@@ -994,9 +994,9 @@ def transport_projection(trace):
         request_headers = contracts.header_fields([f'{k}: {v}'.encode('latin-1')
                           for k, v in zip(request['rawHeaders'][::2], request['rawHeaders'][1::2])])
         require(request_headers.get('authorization', [None]) == [request['headers'].get('authorization')], 'HTTP_AUTHORIZATION')
-        body = decoded(payload(request['body']))
+        body = _wire_value(payload(request['body']))
         exchanges.setdefault(identity, []).append({'method': request['method'], 'target': request['url'],
-                          'requestHeaders': request_headers, 'request': _wire_value(payload(request['body'])),
+                          'requestHeaders': request_headers, 'request': body,
                           'statusLine': status, 'responseHeaders': {key: value for key, value in headers.items()
                           if key not in {'date', 'connection', 'keep-alive', 'transfer-encoding'}},
                           'response': _wire_value(payload(response['body']))})
@@ -1013,10 +1013,8 @@ def transport_projection(trace):
         endpoint = tuple(socket.get(key) for key in ('localHost', 'localPort', 'remoteHost', 'remotePort'))
         require(endpoints.setdefault(identity, endpoint) == endpoint, 'WS_SOCKET_IDENTITY')
         data = payload(row['payload'])
-        try:
-            value = json.loads(data) if row.get('binary') is not True else {'rawBytesHex': data.hex()}
-        except (ValueError, UnicodeDecodeError):
-            value = {'rawBytesHex': data.hex()}
+        value = ({'wireKind': 'bytes', 'value': data.hex()} if row.get('binary') is True
+                 else _wire_value(data))
         channels.setdefault(identity, []).append({'direction': direction, 'binary': row.get('binary'), 'payload': value})
     return {'models': sorted(models.values(), key=canonical),
             'exchanges': sorted(exchanges.values(), key=canonical),

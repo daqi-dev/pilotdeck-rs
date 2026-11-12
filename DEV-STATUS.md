@@ -24,7 +24,7 @@
 | 错误隔离 | 单渠道源码或子进程探针的 I/O/超时失败落入该渠道结果，其余渠道继续产生结果；不由 producer 成功推断运行见证 |
 | 测试接线修复 | 8 处旧源码锚点重新绑定实际实现，匹配数量与断言保持；11 个采集/打包/私有 C 副本实验按既有规则精确登记；完整自检结果单独记录 |
 | 本批审查修复 | 补最终比较层的 ping/未知 UUID 反例、key 长度/编码与 101 业务头边界；补 Git PermissionError、严格 State/Pid、wire proof 缺字段/非对象拒绝矩阵。六条 API server evidence 改指实际入口，状态仍为 rust-unaccepted |
-| 正文类型碰撞修复 | #3068 在 wire 与 HTTP exchanges 比较层给 JSON/text/bytes 加互斥类型包络，修复 chunked JSON `{"raw":"X"}` 与文本 `X` 误等；models/oracle、重复 key 后值覆盖、合法数值溢出拒绝保持，非法 JSON 常量按完整文本比较 |
+| 正文类型碰撞修复 | #3068 在 wire 与 HTTP exchanges 比较层给 JSON/text/bytes 加互斥类型包络，修复 chunked JSON `{"raw":"X"}` 与文本 `X` 误等；raw/models 业务 oracle、重复 key 后值覆盖、合法数值溢出拒绝保持；models/channelStreams 等内部比较字段统一包络，非法 JSON 常量按完整文本比较 |
 
 ## 当前已取得的实测
 
@@ -44,6 +44,8 @@
 | ws.send 帧粒度仲裁 | macmini-01 同版本/同源码 ws8.21.0：普通及 128KiB 消息每次 send 一帧；显式分片两次 send、两帧、一条接收消息。六格共 8 send / 8 数据帧 / 6 message，原解析器和清理通过；不代表完整 TS Server 或正式 Linux preload 通过 | `ws-send-frame-arbitration/SUMMARY.md` |
 | macmini 审后测试候选 | 581 Git 导出加三份明确哈希绑定的测试覆盖文件：75 wire / 22 来源 / 26 HTTP 全通过；同原件 16 反控匹配，删去 WS 差异选择的实际 mutant 被精确断言判杀、恢复后通过。8277 源文件、35 捕获及工具前后不变，进程组已消失；r1 预检 FAIL 保留 | `approved-v2-macmini-r2/` |
 | #3068 修复实测 | macmini 独占148 Git导出+consumer423a/test3778两份精确覆盖：78 wire +22来源 +26 HTTP共126 PASS；19真实HTTP原件两投影复算及旧16 WS控制通过。旧49b59的独立合成完整比较反例精确1FAIL（True != False），恢复423a同1PASS；8277源、35 WS原件、59 HTTP证据及工具前后不变、7自有子组清理 | `wire-value-validation/` |
+| #3068 表示一致性补充 | 5f17精确源码+consumer2cc6/test7bb两覆盖：有改动的79项通过，同19HTTP/16WS复算符合预期，3子组清理、8277源与捕获/工具前后不变；未重复不变22/26。业务oracle仍原shape，新增空body/null/空字符串控制，空chunk为单终止 | `wire-comparison-followup-validation/RESULT.md` |
+| macmini Darwin首次构建 | clean5f17完整8277文件Git导出，fmt PASS；严格clippy在GLib原生依赖intl处FAIL，wrap下载继续禁止。现有全局gettext未注入，正在补合法源码闭包；此无Git导出仅可作Darwin编译证据，不能交正式retirement binary | `macmini-source-dependencies/` |
 
 266 项 ignored 已逐名分类，不计通过。r7 的 26 个自有容器均已移除，589 个小型原件与 cb8 逐字节一致。历史构建、权限、格式、变异编译和预检失败继续保留。
 
@@ -59,6 +61,8 @@ r7 的 #3062 增量在固定 581aaa767 上取得两家各四角色有效 final�
 
 r8 固定148的补审原文共62条P0/P1/P2表行，含重复发现及不完整角色，逐字保存在 `r8-findings.md`，不能将其计为62个独立问题或全门通过。GLM新发现的正文类型碰撞已由19格真实HTTP实证，独立#3068代码修复及上述126/19/16验证完成，待新提交双谱系增量复核。STARTUP_CALL、wireBindings与101 Date的分歧按有限原字节证据送第三谱系仲裁；后者两次完整真实101均无Date，不新增Date豁免。旧DeepSeek direct通道仅alias守卫拒绝canonical响应的失败保留，复用既有已修run-review-roles入口，不改工具和原评语。
 
+r9两家各四角色完成，原2条P1/11条P2保留在 `r9-findings.md`。旧423a的独立实际仲裁已走完整合成compare_pair：binary=true的JSON字节/ff62得到[channelStreams,wireWebsocketStreams]差异；额外/v1/probe两种正文虽models局部相等，但exchanges与wireHttpStreams判差，最终均equal=false。见 `r9-comparison-facts/SUMMARY.md`，不是实际双引擎capture。后续小批统一全部内部比较正文表示并补空值控制，不改raw/models业务oracle，也不根据binary分支误读改协议标准；新79项及原件复算已过，等新提交两家增量复核。
+
 ## 还未闭合
 
 1. mbp2 连通后在新源版本执行 Rust 构建、真实 negative_anchor_selfcheck 入口、83 项迁移负控、两项 SMS 长耗时测试及可执行的重锚控制；7 个 Linux 监听器负控仍缺合适环境。Linux 专属用例在 Darwin 的零匹配不得计通过；已取消的 cb8 批次不得补写 PASS。
@@ -68,4 +72,4 @@ r8 固定148的补审原文共62条P0/P1/P2表行，含重复发现及不完整�
 5. 全部 150 入口、四 host、session、retirement、冷切回滚与真实使用验收。A7 已被安全审查拒绝的范围保持 NOT_RUN，不重试或绕过；人眼体验和最终签字仍待人工。
 6. 最终源版本的独立双审、推送前 gitleaks 和 Draft PR 整理。所有必需条件闭合前不入合并队列、不宣称完整替换通过。
 
-下一步提交 #3068 并完成两谱系增量复核；126项及19 HTTP/16 WS复算按精确文件SHA复用，不冒称整个新HEAD的Rust回归。macmini的CMake/pkg-config已从源码私有构建，仍在补最后两份锁定字体源码，完整Darwin离线构建未启动；mbp2待恢复。Linux、完整渠道、冻结、宿主和退役验收分别按原规则推进，未运行项不计通过。
+下一步提交表示一致性补充并做两家小增量复核；79项及19 HTTP/16 WS复算按精确文件SHA复用。macmini所有322 registry来源已核、CMake/pkgconf从源码私有构建，但首次真实Darwin严格检查暴露GLib intl闭包缺失，继续按锁定源码修复，不借全局库或解除wrap守卫。mbp2仍待恢复；Linux、完整渠道、冻结、宿主和退役验收分别按原规则推进。
