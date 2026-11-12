@@ -1035,8 +1035,9 @@ def wire_projection(raw, records):
 
     Socket numbers and capture offsets locate originals; they are not protocol
     fields. Whole streams may be reordered across sockets, never within one.
-    Original TCP bytes remain in the source-bound transport receipt. No new
-    mask, handshake, business-ID or heartbeat normalization is introduced.
+    Original TCP bytes remain in the source-bound transport receipt.
+    #3062 authorizes only the validated WebSocket key/accept/mask exception
+    below for channel-v2; business IDs, heartbeat and stream order stay exact.
     """
     http = http_wire_observation(raw, records)
     websocket = ws_wire_observation(raw, records, http)
@@ -1060,15 +1061,24 @@ def wire_projection(raw, records):
         frames = []
         for frame in connection['interleaving']:
             frames.append({key: frame[key] for key in (
-                'direction', 'opcode', 'fin', 'rsv', 'masked', 'lengthCode',
-                'payloadLength', 'wireHeaderHex', 'maskKeyHex')})
+                'direction', 'opcode', 'fin', 'rsv', 'masked', 'lengthCode', 'payloadLength')})
+            # #3062: the parser validates each original mask, binds
+            # data payloads to API events, and retains full control payloads.
+            # Keep non-mask header bytes; full originals stay in wire proof.
+            frames[-1]['wireHeaderPrefixHex'] = (frame['wireHeaderHex'][:-8] if frame['masked']
+                                                  else frame['wireHeaderHex'])
+            frames[-1]['maskKeyBytes'] = 4 if frame['masked'] else 0
             frames[-1]['payload'] = (_wire_value(frame['payload']) if frame['opcode'] in (0, 1)
                                       else {'rawBytesHex': frame['payload'].hex()})
         websocket_streams.append({
             'role': connection['role'],
             'priorHttp': http_streams.pop(connection['socket']['id'], []),
-            'requestLine': upgrade['request']['line'], 'requestHeaders': upgrade['request']['headers'],
-            'statusLine': upgrade['response']['line'], 'responseHeaders': upgrade['response']['headers'],
+            'requestLine': upgrade['request']['line'],
+            'requestHeaders': {**upgrade['request']['headers'],
+                               'sec-websocket-key': ['<validated-16-byte-key>']},
+            'statusLine': upgrade['response']['line'],
+            'responseHeaders': {**upgrade['response']['headers'],
+                                'sec-websocket-accept': ['<validated-derived-accept>']},
             'frames': frames,
             'messages': {direction: [
                 {'binary': message['binary'], 'frames': message['frames'],
@@ -1081,7 +1091,7 @@ def wire_projection(raw, records):
 
 
 def compare_pair(ts_raw, native_raw, ts_records, native_records, ts_files, native_files, *, ts_root, native_root):
-    """Compare authenticated captures using only the existing frozen normalizer.
+    """Compare authenticated captures under the approved wire and entity rules.
 
     Roots must be the verified preserved directories with their complete home
     and project bytes. The caller checks their receipt/inode/hash provenance.

@@ -5918,3 +5918,7 @@ root 独占 `codex/gateway-wave1-completion` 开发树，45 个摘取文件及 6
 ### 2026-11-12 19:2x CST · 用户停用 cb8，迁移 mbp2
 
 用户最新指令“别用 cb8 了，可以考虑换到 mbp2 上”覆盖旧 cb8-only。4b855f9ef 已经 gitleaks 扫描15提交无泄漏并推至 codex/gateway-wave1-completion；cb8本轮仅8/10构建阶段完成，按用户要求安全取消，34份原件逐SHA回存、owned容器移除/双PID消失/双锁释放，candidate未生成，后续prepare/83/SMS/7监听器/8重锚变异均NOT_RUN，不再访问cb8。已完成的完整锚扫描6226/0ERROR与122控制保持真实通过，旧c2完整回归6654/1/266总FAIL原件不改。新r6两谱系因三超时/一超预算均不完整，有效P1指独立WS连接随机nonce/mask逐字节比较，先在mbp2真实仲裁，未授权归一化或改冻结标准。mbp2已核Darwin arm64/Rust1.99/固定Node22.22，当前无Linux容器，主仓dev/takeover由他任务持有且dirty，禁止接管；remote_setup核原独立嵌套树，audit_delivery准备Darwin可执行范围，ts_reference负责有界wire实测，root继续持有本机源码。迁移与原件索引在本树_tmp/20261112-wave1-validation/{validation-latest.json,mbp2-migration-handoff.json,host-switch-20261112.md}。下一步优先迁可真实执行部分，Linux专属零匹配不算通过；完整替换、最终双审、冻结重登记与人签字仍未完成。
+
+### 2026-11-12 20:19 CST · 获批有限 WS 例外，mbp2 依赖就绪但连接中断
+
+mbp2 已复用归属明确的 automation 树并同步 clean e5f9f58a4，68/22/26/122 共238项Python控制与6226锚点扫描通过；CMake从源码构建、六个锁定源码包补齐、297包离线解析通过，未下载预编译程序。Rust r1容量缓存过期、r2离线缺包失败均保留，后者fmt通过但未开始实际编译。真实ws组件两次相同业务连接证实随机key/Accept/mask导致八处差异，用户已明确批准#3062有限channel-v2例外；root收24行消费者改动及75项测试版本，原始字节、其余字段/UUID/心跳/次数/同连接全序保留，新决策和追加差异条目同批入库。mbp2最新三次SSH超时，该执行线已挂起，获批后75/22/26与同原件16反控复算尚未运行，旧批准前候选成绩不倒填；root固定源码、ts_reference准备两谱系评审，audit_delivery保留新头Rust构建接续方案，待用户确认机器连通后执行。cb8不再访问；其他树、用户服务和A7边界不动。证据在本树_tmp/20261112-wave1-validation，当前完整替换、正式双审/冻结登记和人签字仍未通过；下一步先完成可独立的审查，连接恢复后实跑新版本。
