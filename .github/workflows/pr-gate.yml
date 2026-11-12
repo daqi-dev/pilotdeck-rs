@@ -17,7 +17,13 @@ jobs:
         with:
           fetch-depth: 0  # 补丁指纹要算 git diff <base>...<head>，浅克隆没有 merge-base
       - name: 显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）
-        continue-on-error: true  # 取不到只影响「沿用」（指纹算不出 → 拒收旧块），不挡 head 一致的 PR
+        # fix-r6 起本 step 喂的不只是指纹：PR_BASE/PR_HEAD 也是修复轮主信号（PR 范围提交标题
+        # 集合，git log PR_BASE..PR_HEAD）的输入。取不到时的降级路径：两 ref 在下一步解析失败
+        # → git log 非零退出 → 修复轮判定 fail-closed 拒收（不得当非修复轮放行）；--base/
+        # --head/--repo 只缺其一件（本地路径形态）→ check-pr-gate 打 stderr 显式告警
+        # 「修复轮主信号不可用：缺 …」后降级正文首行兜底；指纹算不出 → 结果块 head 不符时
+        # 不再沿用。不挡两 ref 都解析成功、head 一致的 PR
+        continue-on-error: true
         env:
           BASE_REF: ${{ github.base_ref }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}

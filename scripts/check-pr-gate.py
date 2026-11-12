@@ -19,8 +19,10 @@
      提交天然包含在集合内，不单独走一条路）——对集合内每条标题套同一判据：类型词
      （fix/chore/docs/feat/refactor/test/style/perf/build/ci/revert）开头 + 可选 `(scope)`/`!` +
      冒号〔半/全角〕或空白分隔 + 行内 `fix-r<N>`（ASCII 词边界）；任一标题命中即判为修复轮 PR，
-     **轮号取所有命中标题中 fix-r<N> 的最大 N**（同一分支会累积 rN→rN+1 多个修复提交，
-     当前轮=max）。fix-r5 只看 head 单标题时，head 提交标题不带 `fix-rN` 的修复轮 PR（多提交
+     **每条命中标题的轮号 = 行内首个 fix-r<N>**（标题里引用**别的单**的轮号——board 同步尾标题
+     `chore(state) board …#2691 fix-r2…#2692 fix-r8 在跑`——只取首个，不再被当成本轮，
+     fix-r7 / DS r6 boundary#1），**再跨标题取 max**（同一分支会累积 rN→rN+1 多个修复提交，
+     当前轮=真实修复提交的最大轮）。fix-r5 只看 head 单标题时，head 提交标题不带 `fix-rN` 的修复轮 PR（多提交
      轮的尾提交常是 `chore: sync board` / typo / merge 提交，`specs/README.md:59` 提交规约并不
      要求每个提交带 fix-rN）被判非修复轮，fixtype / residual / 多块一致整套跳过 = 假 PASS；
      本地 `--body-file` 不传 `--head` 的路径同样收窄。scope / 时间戳 / `PR` / `#N(+#N)*` 等
@@ -28,11 +30,14 @@
      设 ≤20 有界间隔会把 17 条真实形态判漏）。正文回显不是任何路径的主信号（行内词表判据
      r2→r3→r4 三轮不收敛，全量词表证明「结构化标题」与「类型词开头的散文」两群在行内无判别量，
      见 state/decisions-20261113.md「#3056 fix-r4 修 1 停点裁定」），**别再往正文正则里加词**；
-     正文只作**兜底**：--base/--head 任一缺失（本地 `--body-file` 不传 head 的路径）或集合全不
+     正文只作**兜底**：--base/--head/--repo 任一缺失（本地 `--body-file` 不传 head 的路径——
+     缺件先打 stderr 显式告警说明主信号缺失原因，不静默降级，fix-r7）或集合全不
      命中时，看正文第一个非空行是否含 `fix-r<N>`（宽松口径，fix-r1 P0 的 CJK 连写首行
      「修复fix-r5：」靠它；非首行正文回显不再识别——**有意收窄**，fix-r6 起有负控钉死）。
      git log 失败（git 起不来 / 非零退出）fail-closed 拒收，**不得当「非修复轮」放行**；
-     空集（base==head 等，无提交可判）是合法状态，与 git 失败区分开。
+     空输出两分（fix-r7，DS r6 boundary#3）：base==head 是合法空集（无提交可判），head 是
+     base 的祖先（--base/--head 传反 / base 是 head 的后代，`git merge-base --is-ancestor` 判）
+     按坏范围 fail-closed 拒收写明原因——不得当合法空集落到正文首行兜底静默丢主信号。
      修复轮 PR 的每个结果块须带 `fixtype=<枚举式|结构性|不适用>`
      （字面三值，子类字样一律写「结构性」）；N≥4 另须正文恰一个 `<!-- pdrs-residual: <非空> -->`
      （无上一轮写字面值「无上一轮」，空白与占位符不算，围栏 / 引用块里的示例不算声明——口径与任务书侧
@@ -115,8 +120,12 @@ WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) +
 def fix_round_from_title(title: str):
     """单条提交标题判修复轮（fix_round_from_titles 集合主信号的逐条判据，#3056 fix-r6；
     判据见 TITLE_HEAD 注释）：类型词开头前缀 + 行内 fix-r<N>，取首个匹配的轮号；不匹配返回
-    None（调用方走正文首行兜底）。标题里多个 fix-r<N> 时取首个；集合侧另有 max 规则
-    （fix_round_from_titles），单标题输入两者等价。"""
+    None（调用方走正文首行兜底）。标题里多个 fix-r<N> 时取首个——引用**别的单**的轮号
+    （board 同步尾标题 `…#2691 fix-r2…#2692 fix-r8 在跑`）不算本标题的轮号（fix-r7，DS r6
+    boundary#1：旧集合路径对单标题内所有 fix-rN 取 finditer+max，引用轮 2→8/26 被当当前轮，
+    实际 fix-r2 的 PR 被抬过 N≥4 门槛要求 residual ＝假 FAIL）；fix_round_from_titles 在此
+    之上只做**跨标题**取 max——语义统一为「每标题首个、跨标题 max」，单条标题输入的集合
+    结果就是本函数的返回值。"""
     if not TITLE_HEAD.match(title):
         return None
     m = FIXROUND_RE.search(title)
@@ -133,10 +142,15 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
       「非修复轮」放行**：判不出是不是修复轮就跳过 fixtype/residual 检查，正是 r3/r4 双撞
       P0 的假 PASS 面；
     - (None, "") = 缺 --base/--head/--repo 任一（不是错误：本地 --body-file 不传 head 的
-      路径走正文首行兜底——非首行正文回显不再识别，**有意收窄**，fix-r6 起有负控钉死）；
-    - ([], "") = 空集（base==head 等，无提交可判）：**合法状态**，不是 git 失败，按「集合
-      全不命中」走正文首行兜底。空 subject 提交在集合里只是一条不命中的标题（%s 输出空行，
-      过滤掉），不再像 fix-r5 的 head 单标题路径那样单独 fail-closed。
+      路径走正文首行兜底——非首行正文回显不再识别，**有意收窄**，fix-r6 起有负控钉死；
+      调用方 main 打 stderr 显式告警说明缺哪件，不静默降级，fix-r7）；
+    - ([], "") = 空集：**只有 base==head**（无提交可判）是合法空集，不是 git 失败，按「集合
+      全不命中」走正文首行兜底。git log **空输出且 base≠head** 是坏范围（head 是 base 的
+      祖先：--base/--head 传反 / base 是 head 的后代，`git rev-parse` 比对 + `git
+      merge-base --is-ancestor` 判）——fail-closed 拒收写明原因，不得当合法空集静默丢主信号
+      （fix-r7，DS r6 boundary#3）。空 subject 提交在集合里只是一条不命中的标题（%s 输出
+      非空字节流、过滤后为空列表），不算零提交、不触发上面的坏范围判定，也不再像 fix-r5 的
+      head 单标题路径那样单独 fail-closed。
 
     字节模式 + surrogateescape 解码（fix-r5 惯例沿用）：标题含非 UTF-8 字节不崩溃
     （text=True 的 strict 解码会抛未捕获 UnicodeDecodeError = 裸崩溃），ASCII 正则不受
@@ -150,21 +164,45 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
         return None, f"git 起不来（{e}）"
     if cp.returncode != 0:
         return None, f"git log 退出码 {cp.returncode}：{cp.stderr.decode('utf-8', 'replace').strip()[:120]}"
+    if not cp.stdout:
+        # fix-r7 修 2.2（DS r6 boundary#3）：git log 零提交（空字节输出）两分——base==head 是
+        # 合法空集；否则 head 必是 base 的祖先（--base/--head 传反 / base 是 head 的后代），按
+        # 坏范围 fail-closed，不得当合法空集落到正文首行兜底静默丢主信号。git log 已成功 →
+        # 两个 ref 都可解析；rev-parse / merge-base 起不来或非零按 git 失败同款 fail-closed。
+        # 注意判据是**空字节**而不是过滤后空列表：单个空 subject 提交输出 "\n"（非空字节流），
+        # 是「有提交、标题不命中」的合法形态（fix-r6 行为钉死，有负控）。
+        try:
+            rp = subprocess.run(["git", "-C", repo, "rev-parse", f"{base}^{{commit}}", f"{head}^{{commit}}"],
+                                capture_output=True)
+            anc = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", base, head],
+                                 capture_output=True)
+        except OSError as e:
+            return None, f"git 起不来（{e}）"
+        if rp.returncode != 0:
+            return None, f"git log 空输出但 base/head 解析失败（rev-parse 退出码 {rp.returncode}）"
+        shas = rp.stdout.split()
+        if len(shas) == 2 and shas[0] == shas[1]:
+            return [], ""
+        why = ("base 不是 head 的祖先（--base/--head 传反或 base 是 head 的后代）" if anc.returncode != 0
+               else "base 是 head 的祖先但范围为空（异常形态，fail-closed）")
+        return None, (f"git log {base[:12]}..{head[:12]} 空输出且 base≠head：{why}"
+                      "——不得当合法空集走正文兜底（fail-closed）")
     return [t.strip() for t in cp.stdout.decode("utf-8", "surrogateescape").split("\n") if t.strip()], ""
 
 
 def fix_round_from_titles(titles: list[str]):
-    """PR 范围提交标题集合判修复轮（**主信号**，#3056 fix-r6）：对集合内每条标题套
-    fix_round_from_title 的同一判据（TITLE_HEAD 前缀 + 行内 FIXROUND_RE），任一命中即判
-    修复轮。轮号选择规则：取所有命中标题中 fix-r<N> 的**最大 N**——同一分支会累积 rN→rN+1
-    多个修复提交（fix-r3 修完又叠 fix-r5，两个标题都在 base..head 里），当前轮=max；取到旧
-    轮号会让 N≥4 的 residual 门槛跟着旧轮走（拿 fix-r2 判 fix-r5 的 PR 会漏 residual 要求）。
-    单条标题内多个 fix-r<N> 同取 max（同一规则：当前轮=集合内最大轮号）。全部不命中返回
-    None（调用方走正文首行兜底）。"""
-    rounds: list[int] = []
-    for t in titles:
-        if TITLE_HEAD.match(t):
-            rounds.extend(int(m.group(1)) for m in FIXROUND_RE.finditer(t))
+    """PR 范围提交标题集合判修复轮（**主信号**，#3056 fix-r6；轮号取法 fix-r7 改）：对集合内
+    每条标题套 fix_round_from_title 的同一判据（TITLE_HEAD 前缀 + 行内 FIXROUND_RE），任一
+    命中即判修复轮。轮号选择规则：**每条标题的轮号 = 行内首个 fix-r<N>，再跨标题取 max**。
+    跨标题取 max 是因为同一分支会累积 rN→rN+1 多个修复提交（fix-r3 修完又叠 fix-r5，两个
+    标题都在 base..head 里），当前轮=真实修复提交的最大轮——取到旧轮号会让 N≥4 的 residual
+    门槛跟着旧轮走（拿 fix-r2 判 fix-r5 的 PR 会漏 residual 要求）。每标题取首个是因为标题里
+    引用**别的单**的轮号（board 同步尾标题 `chore(state) board …#2691 fix-r2…#2692 fix-r8
+    在跑` 是 fix-r6 动机场景的常见形态）不该被当成本轮：旧实现对单标题内所有 fix-rN 取
+    finditer+max，实际 fix-r2 的 PR 被引用轮号抬过 N≥4 门槛、被要求 residual ＝假 FAIL
+    （DS r6 boundary#1，真实证据 _tmp/20261113-3056-fixr6/wordlist-set-coverage.txt 列 12 条
+    首个≠max，最坏 2→26）。全部不命中返回 None（调用方走正文首行兜底）。"""
+    rounds = [r for t in titles if (r := fix_round_from_title(t)) is not None]
     return max(rounds) if rounds else None
 
 
@@ -471,7 +509,7 @@ def main() -> int:
     g.add_argument("--pr")
     ap.add_argument("--head", default=os.environ.get("PR_HEAD", ""), help="PR 当前 head SHA；给定时与结果块 head= 比对，并作为修复轮判定的主信号源（与 --base 同给时取 base..head 提交标题集合，须 --repo 可达）")
     ap.add_argument("--base", default=os.environ.get("PR_BASE", ""), help="PR base SHA；与 --head 同给时算当前补丁指纹（head 不等时比对）、取修复轮主信号（base..head 提交标题集合）并复算 fixtype=不适用 的 diff 路径")
-    ap.add_argument("--repo", default=".", help="算补丁指纹、复算「不适用」路径、读 head 提交标题的 git 仓库（须含 base 与 head 两个提交）")
+    ap.add_argument("--repo", default=".", help="算补丁指纹、复算「不适用」路径、读 PR 范围提交标题（修复轮主信号，须 --base 与 --head 同给）的 git 仓库（须含 base 与 head 两个提交）")
     a = ap.parse_args()
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
@@ -487,6 +525,14 @@ def main() -> int:
         print("check-pr-gate: 需要 --body-file / --pr / 环境变量 PR_BODY", file=sys.stderr)
         return 2
     patch = patch_fingerprint(a.repo, a.base, a.head) if a.head and a.base else ""
+    # fix-r7 修 2.1（DS r6 boundary#2）：--base/--head/--repo 只给一部分（如给了 --head 缺
+    # --base）不得静默降级为「无主信号」——先打 stderr 显式告警说明缺失原因，再走正文首行
+    # 兜底；三件全缺（本地 --body-file 不传 head 的路径）同告警。只消灭静默，不改变返回语义。
+    sig_missing = [f"--{n}" for n, v in (("base", a.base), ("head", a.head), ("repo", a.repo)) if not v]
+    if sig_missing:
+        print(f"check-pr-gate: 修复轮主信号（PR 范围提交标题集合，git log <base>..<head>）不可用："
+              f"缺 {' '.join(sig_missing)}——已降级为正文首行兜底（修复轮判定只看正文第一个非空行；"
+              f"权威路径请 --base 与 --head 同给，且 --repo 指向含这两个提交的仓库）", file=sys.stderr)
     errs = check(body, a.head, patch, a.base, a.repo)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")
