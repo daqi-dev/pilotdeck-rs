@@ -108,9 +108,25 @@ if api_err:
         with open(trace, "a") as f:
             f.write(f"end {time.time()}\n")
     sys.exit(1)
+if mode == "synthetic_only_success":  # 只有 <synthetic> 占位事件但 result 成功：谱系无从证明，必须拒（不得 issubset 空集恒真）
+    print(json.dumps({"type": "assistant", "message": {"model": "<synthetic>",
+                                                       "content": [{"type": "text", "text": "占位"}]}}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": conf["final"],
+                      "total_cost_usd": 0, "modelUsage": {model: {}}}), flush=True)
+    sys.exit(0)
 if mode != "no_assistant":
-    resp = "wrong-model-x" if mode in ("wrong_resp", "wrong_resp_quotes") else {"glm-5.3-mb": "GLM-5.3",  # 真网关回显展示名
-                                                                                "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}.get(model, model)
+    alias = conf.get("aliases", {})  # 由测试注入 rrr.RESP_MODEL_ALIAS，避免别名表双抄漂移
+    if mode in ("wrong_resp", "wrong_resp_quotes"):
+        resp = "wrong-model-x"
+    elif mode == "other_lineage":  # 别家的规范名：两形白名单也不得放行
+        resp = next((v for k, v in alias.items() if k != model), "wrong-model-x")
+    elif mode == "raw_resp":  # llm-center 有时原样回显请求名：同一家的第二种合法形
+        resp = model
+    else:
+        resp = alias.get(model, model)  # 真网关回显展示名（默认规范形）
+    if mode == "mixed_resp":  # 一轮里两种形混出：都算同一家
+        print(json.dumps({"type": "assistant", "message": {"model": alias.get(model, model), "content": []}}), flush=True)
+        resp = model
     # 评审本仓 scripts 时正文必然引用这些字样：真换模型不得因为正文提到 API Error/ECONNRESET 就被判成通道错误
     blocks = [{"type": "text", "text": "我先读 run-review-roles.py，它会把 API Error: Connection dropped (ECONNRESET) 写成 detail。"}] \
         if mode == "wrong_resp_quotes" else []
@@ -182,7 +198,8 @@ def _run(gate, rrr, out_base: Path) -> int:
 
         def run(name: str, mode: str, runner: str = "zai", timeout: int = 20) -> tuple[int, str]:
             # 污染的父环境：旧网关头、provider 选择器、他家令牌都不得传进评审进程
-            (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL, "keys": {
+            (tmp / "fake.json").write_text(json.dumps({"mode": mode, "log": str(log), "final": FINAL,
+                                                       "aliases": dict(rrr.RESP_MODEL_ALIAS), "keys": {
                 "zai_file": secret, "anth_file": anth_secret, "mmx_file": mmx_secret, "ds_file": ds_secret,
                 "zai_parent": "zai-parent-x", "anth_parent": "anth-parent-x", "mmx_parent": "mmx-parent-x",
                 "ds_parent": "ds-parent-x"}}))
@@ -277,6 +294,14 @@ def _run(gate, rrr, out_base: Path) -> int:
         if any(ds_secret in p.read_text(errors="replace") for p in (out_base / "deepseek-ok").rglob("*") if p.is_file()):
             fails.append("deepseek-ok：密钥不得落盘")
 
+        # llm-center 响应名两形（2026-11-12 实测）：规范名 / 原样请求名 / 一轮混出，都算同一家并过闸
+        rc, s = run("ds-raw-echo", "raw_resp", runner="deepseek")
+        if rc != 0 or "simplify:PASS" not in s or gate_errs(s):
+            fails.append(f"ds-raw-echo：原样回显请求名应全 PASS 且过闸（rc={rc}）")
+        rc, s = run("glm-mixed-echo", "mixed_resp", runner="zai")
+        if rc != 0 or "simplify:PASS" not in s or gate_errs(s):
+            fails.append(f"glm-mixed-echo：规范名与原样名混出应全 PASS 且过闸（rc={rc}）")
+
         # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
         for name, mode, want, runner in [("extra-tool", "extra_tool", "TOOLS_VIOLATION", "zai"), ("wrong-init", "wrong_init", "ERROR", "zai"),
                                          ("wrong-resp", "wrong_resp", "ERROR", "zai"), ("wrong-usage", "wrong_usage", "ERROR", "zai"),
@@ -286,7 +311,9 @@ def _run(gate, rrr, out_base: Path) -> int:
                                          ("wrong-init-mmx", "wrong_init", "ERROR", "minimax"),
                                          ("wrong-resp-mmx", "wrong_resp", "ERROR", "minimax"),
                                          ("wrong-init-ds", "wrong_init", "ERROR", "deepseek"),
+                                         ("wrong-resp-ds", "wrong_resp", "ERROR", "deepseek"),
                                          ("wrong-usage-ds", "wrong_usage", "ERROR", "deepseek"),
+                                         ("other-lineage-ds", "other_lineage", "ERROR", "deepseek"),
                                          ("no-assistant", "no_assistant", "ERROR", "zai"), ("noverdict", "noverdict", "PARTIAL", "zai")]:
             rc, s = run(name, mode, runner=runner)
             if rc == 0 or want not in s or not gate_errs(s):
@@ -300,6 +327,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             trace_f = tmp / f"{name}.trace"
             trace_f.write_text("")
             (tmp / "fake.json").write_text(json.dumps({"log": str(log), "final": FINAL, "keys": {"mmx_file": mmx_secret},
+                                                       "aliases": dict(rrr.RESP_MODEL_ALIAS),
                                                        "trace": str(trace_f), **conf}))
             out = out_base / name
             cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "minimax", "--claude-bin", str(fake),
@@ -451,6 +479,13 @@ def _run(gate, rrr, out_base: Path) -> int:
         if ev.count("start") != 1 or "未重试" not in detail or "剩余时限 0s" not in detail:
             fails.append(f"api-conn-nolefttime：剩余时限不足时不得重试（起了 {ev.count('start')} 次、{detail}）")
         print(f"api-conn-nolefttime: attempts={ev.count('start')} detail={detail}")
+
+        # ⑰ 只有 <synthetic> 占位事件但 result 成功：real_resp 为空时 issubset 恒真不得放行，判模型不符
+        rc, st, s, ev = run_one("synthetic-only", {"mode": "synthetic_only_success"})
+        detail = st.get("detail", "")
+        if st.get("status") != "ERROR" or "模型不符" not in detail:
+            fails.append(f"synthetic-only：占位响应不得过模型守卫（{st.get('status')}、{detail}）")
+        print(f"synthetic-only: status={st.get('status')} detail={detail}")
 
         # 缺钥：fixture 文件没有该键、父环境却有——必须拒绝，不回退父环境（无条件断言，开发机与 CI 一致）
         empty = tmp / "empty.env"
