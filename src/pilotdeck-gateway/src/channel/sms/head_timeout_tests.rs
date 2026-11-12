@@ -511,6 +511,37 @@ async fn read_sms_response(client: &mut tokio::io::DuplexStream, what: &str) {
     }
 }
 
+/// #2499 fix-r4: read one 404 response on the paused clock through the
+/// windowed probe pattern. Unlike [`read_sms_response`] (whose cells have
+/// the response guaranteed by an earlier probe), the withholding-cap cells'
+/// whole point is that the response only arrives if the gate hands hyper the
+/// parked bytes, so a missing re-feed must fail here with the cell's own
+/// message instead of stalling the harness's 60 s wall guard.
+async fn read_sms_response_windowed(client: &mut tokio::io::DuplexStream, what: &str) {
+    let mut buffer = Vec::new();
+    while !latin1_string(&buffer).contains("\r\n\r\nNot Found") {
+        let mut chunk = [0u8; 256];
+        let pending = tokio::time::timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut chunk));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        let read = match pending.await {
+            Ok(read) => read.unwrap_or_else(|error| panic!("#2499 {what}: {error}")),
+            Err(_elapsed) => panic!(
+                "#2499 {what}: the response never arrived — the withheld head \
+                 bytes were never re-fed to hyper"
+            ),
+        };
+        if read == 0 {
+            panic!(
+                "#2499 {what}: EOF before the response arrived (buffer so far: \
+                 {:?})",
+                latin1_string(&buffer)
+            );
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
 /// #2499 fix-r1: read one full TwiML response of this lane — the 200 the
 /// sms path answers with, content-length framed, ending in the empty
 /// `TWIML_OK` body (the same marker discipline as [`read_sms_response`]).
@@ -572,6 +603,38 @@ fn spawn_paused(
         grid_interval,
     ));
     (client, task, stop)
+}
+
+/// #2499 fix-r4: the withholding-cap cells' spawn — [`spawn_paused`]'s
+/// construction with the two changes the cap shape needs: a 128 KiB duplex
+/// (the 32 KiB flood must land without a reader) and the shared handle
+/// returned to the caller (the runtime mutex's lock is the cells' interleave
+/// control: `route_request` parks the handler on it before the path check,
+/// holding the request in flight for exactly as long as the test holds the
+/// guard).
+#[allow(clippy::type_complexity)]
+fn spawn_paused_with_shared(
+    headers_timeout: Option<Duration>,
+    grid_interval: Duration,
+) -> (
+    tokio::io::DuplexStream,
+    tokio::task::JoinHandle<()>,
+    Arc<SmsShared>,
+) {
+    let grid_anchor = tokio::time::Instant::now();
+    let (server, client) = tokio::io::duplex(128 * 1024);
+    let (_stop, stop_rx) = watch::channel(false);
+    let channel = SmsChannel::new(options(PORT_PAUSED_CELLS, headers_timeout));
+    let shared = channel.shared.clone();
+    drop(channel);
+    let task = tokio::spawn(serve_sms_connection(
+        server,
+        shared.clone(),
+        stop_rx,
+        grid_anchor,
+        grid_interval,
+    ));
+    (client, task, shared)
 }
 
 /// #1955/#2499 negative pair: a half-sent head — and a connection that never
@@ -1288,6 +1351,239 @@ async fn a_follow_up_head_swallowed_with_a_read_ahead_body_segment_closes_on_the
         .await;
         task.await
             .expect("#2499 the read-ahead follow-up cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 fix-r4 (r4 review concurrency#1 — the gate-level half): a next head
+/// parked at the withholding cap keeps a **socket** waker registered. The
+/// review's scenario: the cap branch parks after the withholding loop
+/// breaks at [`WITHHELD_HEAD_CAP`] without a socket read, hyper parks its
+/// io read there for good (its end-of-response re-poll short-circuits on
+/// the io layer's `read_blocked` flag, which the parked `Pending` just set),
+/// and the parked deadline's sleep — polled on every gate poll by the
+/// deadline check above the withholding branch — is not the only wake the
+/// park should keep. Nothing else in that poll registers the client's
+/// waker, so successor bytes arriving during the park would sit unread
+/// until the deadline's landing. The fix-r4 hardening polls the socket
+/// with an empty buffer purely to register that waker (a zero-`filled`
+/// read consumes nothing; the result is ignored on purpose — real reads
+/// keep flowing through the withholding loop once the gate is polled
+/// again). This cell pins the contract at the gate itself, the native
+/// lane's `withheld_next_head_bytes_stay_bounded_while_a_response_streams`
+/// shape: a counting waker, exactly the cap's worth of next-head bytes
+/// (8 × the withholding loop's 4096 scratch, so the loop breaks at the cap
+/// with the duplex fully drained — a leftover byte would let the empty
+/// poll return `Ready` without registering), and the client's next byte
+/// must fire the count.
+#[tokio::test(start_paused = true)]
+async fn a_next_head_parked_at_the_withholding_cap_keeps_the_socket_waker_registered() {
+    use std::task::Wake;
+    struct Counter(AtomicUsize);
+    impl Wake for Counter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let counter = Arc::new(Counter(AtomicUsize::new(0)));
+    let waker = std::task::Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+    let (io, mut client) = tokio::io::duplex(128 * 1024);
+    let mut gate = HeadersTimeoutGate::new(
+        io,
+        Some(Duration::from_secs(15)),
+        tokio::time::Instant::now(),
+        NODE_CONNECTIONS_CHECKING_INTERVAL,
+        // The state a connection is really in when the withholding path
+        // engages: the awaited request's head parsed (one head served, its
+        // CL: 0 body owed nothing) and its response in flight.
+        Arc::new(AtomicUsize::new(1)),
+        watch::channel(None::<tokio::time::Instant>).1,
+        Arc::new(AtomicUsize::new(1)),
+        Arc::new(AtomicI64::new(0)),
+        watch::channel(false).1,
+    );
+    let flood = vec![b'X'; WITHHELD_HEAD_CAP];
+    client
+        .write_all(&flood)
+        .await
+        .expect("#2499 write the capped flood without a reader");
+    let mut bytes = [0u8; 1];
+    assert!(
+        Pin::new(&mut gate)
+            .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+            .is_pending(),
+        "#2499 fix-r4: the gate parks a next head parked at the withholding cap"
+    );
+    assert!(
+        gate.withheld_head.len() >= WITHHELD_HEAD_CAP,
+        "#2499 fix-r4: the withholding loop stopped at the cap ({} bytes) — \
+         the shape this cell pins",
+        gate.withheld_head.len()
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r4: no wake before the client writes — the parked poll \
+         registered its wakers without firing them"
+    );
+    // The client's next byte is the wake the hardening exists for: without
+    // the cap branch's empty-buffer socket poll nothing registered this
+    // waker, and the count would still read 0 here.
+    client
+        .write_all(b"Y")
+        .await
+        .expect("#2499 write the waking byte");
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "#2499 fix-r4: the next head's first successor byte woke the parked \
+         gate — the cap branch's empty-buffer socket poll registered the \
+         client's waker"
+    );
+}
+
+/// #2499 fix-r4 (r4 review concurrency#1 — the hyper-side half): a next head
+/// parked at the withholding cap is re-fed and **served** once successor
+/// bytes arrive after the response completed. The review asked whether
+/// hyper 1.x necessarily re-polls the gate's read after the response body
+/// finishes — a parked cap return could otherwise strand the head until
+/// the deadline's 408. Source-traced answer (hyper 1.7.0 `proto/h1`): the
+/// dispatcher's `poll_loop` polls read before write every iteration and
+/// its `let _ = self.poll_read(cx)?` swallows `Poll::Pending` (`Poll`'s
+/// `Try` impl carries `Pending` as a value, not a break), so the
+/// response's write side always proceeds — but the end-of-response
+/// re-poll (`try_keep_alive` → `maybe_notify`) short-circuits on the io
+/// layer's `read_blocked` flag, which the gate's parked `Pending` has
+/// just set. So no: hyper does not re-poll on its own once the gate
+/// parked, and the re-feed rides entirely on a socket wake — exactly
+/// what the fix-r4 hardening keeps alive. The cap branch's
+/// empty-buffer socket poll leaves the client's waker registered, the
+/// successor bytes' arrival re-enters the gate's poll with `in_flight`
+/// back at 0, and the re-feed branch hands hyper the withheld buffer.
+/// This cell pins that end-to-end: the handler parks on the channel's
+/// runtime mutex (locked before the path check — the test's hold is the
+/// interleave control), the flood arrives while the request is in flight
+/// (hyper's `mid_message_detect_eof` → `force_io_read` polls the gate on
+/// every loop iteration, so the withholding branch engages and parks at
+/// the cap), and after the release plus one successor head, BOTH
+/// responses must arrive — the parked request's and the re-fed withheld
+/// head's. The flood is exactly [`WITHHELD_HEAD_CAP`] bytes of complete
+/// 64-byte heads (512 × 64): a single over-budget head would be rejected
+/// by Node's 16 KiB header-span admission (`node_parser_admission`), so
+/// the cap's worth has to be many pipelined heads; exactly the cap keeps
+/// the duplex fully drained at the park. Removing the hardening's empty
+/// poll makes this cell's second read fail — without the registered
+/// waker the successor bytes wake nothing, and the withheld heads wait
+/// for their own deadline 408 instead (the r4 one-off text-mutation
+/// probe, raw output in the round's RESULT).
+#[tokio::test(start_paused = true)]
+async fn a_capped_withheld_head_is_re_fed_and_served_once_successor_bytes_arrive() {
+    manual_clock(async {
+        let (mut client, task, shared) = spawn_paused_with_shared(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        // The interleave control: `route_request` takes the runtime mutex
+        // before the path check, so the awaited request's handler parks
+        // here while its `in_flight` flag is already 1 and its CL: 0 body
+        // is owed nothing — the exact state the withholding branch keys on.
+        let runtime = shared.runtime.lock().await;
+        client
+            .write_all(b"POST /not-the-sms-path HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .expect("#2499 write the parked request");
+        yield_a_beat().await;
+        // The flood: exactly the cap's worth of complete heads.
+        let head = "POST /not-the-sms-path HTTP/1.1\r\nHost: xy\r\nContent-Length: 0\r\n\r\n";
+        assert_eq!(head.len(), 64, "#2499 fix-r4: the flood head is 64 bytes");
+        let flood = head.repeat(WITHHELD_HEAD_CAP / 64);
+        assert_eq!(
+            flood.len(),
+            WITHHELD_HEAD_CAP,
+            "#2499 fix-r4: the flood is exactly the cap"
+        );
+        client
+            .write_all(flood.as_bytes())
+            .await
+            .expect("#2499 write the capped flood of next heads");
+        yield_a_beat().await;
+        // The release lets the handler finish; hyper writes the response,
+        // flushes, and parks its read for good — no re-poll of its own (the
+        // `maybe_notify` `read_blocked` short-circuit in the doc comment).
+        drop(runtime);
+        yield_a_beat().await;
+        // One successor head: its arrival is the socket wake the re-feed
+        // rides on, and the wake only exists because the cap branch
+        // registered the client's waker (the fix-r4 hardening).
+        client
+            .write_all(head.as_bytes())
+            .await
+            .expect("#2499 write the successor head");
+        // Both responses must arrive: the parked request's 404 first, then
+        // the re-fed withheld head's.
+        read_sms_response_windowed(&mut client, "the parked request's response").await;
+        read_sms_response_windowed(&mut client, "the re-fed withheld head's response").await;
+        drop(client);
+        task.await
+            .expect("#2499 the withholding-cap re-feed cell's serve task join");
+    })
+    .await;
+}
+
+/// #2499 fix-r4 (r4 review concurrency#1 — the deadline twin, the review's
+/// 「cap 截断后、无后继字节」shape): a next head parked at the withholding
+/// cap whose response then completes and whose client goes silent is
+/// retired by its own deadline's grid landing — never re-fed (hyper does
+/// not re-poll read on its own, per the re-feed cell's trace), never left
+/// parked forever, and never earlier than the landing. The withheld head's
+/// first byte armed its own deadline at the withholding (t ≈ 0), so a
+/// +15 s deadline on the 30 s grid lands at +30 s; the probes bracket it
+/// (+29.46 s still open, +30.06 s the 51-byte 408 + EOF). The +29.46 s
+/// probe is the `sms-headers-grid-off` discriminator (the mutant's 408
+/// lands at the +15 s deadline itself and latches under the advance), and
+/// the 408's bytes carry `sms-headers-408-bytes-off` (a byte-silent close)
+/// and `sms-header-read-no-timeout` (a close that never comes).
+#[tokio::test(start_paused = true)]
+async fn a_capped_withheld_head_with_no_successor_bytes_gets_its_408_at_the_landing() {
+    manual_clock(async {
+        let (mut client, task, shared) = spawn_paused_with_shared(
+            Some(Duration::from_secs(15)),
+            NODE_CONNECTIONS_CHECKING_INTERVAL,
+        );
+        let runtime = shared.runtime.lock().await;
+        client
+            .write_all(b"POST /not-the-sms-path HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .expect("#2499 write the parked request");
+        yield_a_beat().await;
+        let head = "POST /not-the-sms-path HTTP/1.1\r\nHost: xy\r\nContent-Length: 0\r\n\r\n";
+        assert_eq!(head.len(), 64, "#2499 fix-r4: the flood head is 64 bytes");
+        client
+            .write_all(head.repeat(WITHHELD_HEAD_CAP / 64).as_bytes())
+            .await
+            .expect("#2499 write the capped flood of next heads");
+        yield_a_beat().await;
+        // The release lets the response complete; the client then goes
+        // silent — no successor bytes, so no socket wake ever re-enters the
+        // gate. The response's arrival is the "body completed" half of the
+        // review's question, answered here by the parked request's 404.
+        drop(runtime);
+        read_sms_response_windowed(&mut client, "the parked request's response").await;
+        // t = +29.46 s: before the withheld head's +30 s landing.
+        tokio::time::advance(Duration::from_millis(29_400)).await;
+        probe_still_open(
+            &mut client,
+            "#2499 the capped withheld head keeps the connection open before \
+             its deadline's +30 s grid landing",
+        )
+        .await;
+        // t = +30.06 s: the landing — and this head received bytes, so the
+        // answer is the 408, not the silent close.
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "next head parked at the withholding cap").await;
+        task.await
+            .expect("#2499 the withholding-cap deadline cell's serve task join");
     })
     .await;
 }

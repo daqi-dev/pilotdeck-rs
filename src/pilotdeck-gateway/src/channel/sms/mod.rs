@@ -1499,9 +1499,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for HeadersTimeoutGate<S> {
                 self.arm_started_head(cx, true);
             }
             if self.withheld_head.len() >= WITHHELD_HEAD_CAP {
-                // At the cap the gate no longer polls the socket, so
-                // nothing else would register a waker for the parked head
-                // deadline — poll the sleep here.
+                // #2499 fix-r4 (review concurrency#1): the withholding loop
+                // above broke at the cap without a socket read this poll,
+                // and hyper does not re-poll the read side on its own once
+                // the gate parks — its end-of-response re-poll
+                // (`try_keep_alive` → `maybe_notify`) short-circuits on the
+                // io layer's `read_blocked` flag, which this Pending just
+                // set — so the re-feed of the withheld bytes rides entirely
+                // on a socket wake. Poll the socket with an empty buffer
+                // purely to register that waker (a zero-length `filled`
+                // read consumes nothing; the result is ignored on purpose —
+                // real reads keep flowing through the withholding loop once
+                // the gate is polled again), and poll the deadline's sleep
+                // so the parked head still retires at the landing even if
+                // the client goes silent forever. Either wake (successor
+                // bytes, deadline landing) re-enters this poll.
+                let mut no_bytes = ReadBuf::new(&mut []);
+                let _ = Pin::new(&mut self.stream).poll_read(cx, &mut no_bytes);
                 if let Some(sleep) = self.headers_sleep.as_mut() {
                     let _ = sleep.as_mut().poll(cx);
                 }
