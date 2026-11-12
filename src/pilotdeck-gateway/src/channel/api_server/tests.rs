@@ -2606,7 +2606,10 @@ async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
         TcpStream::connect(address).await.is_err(),
         "stop must disable the listening socket, not only drop one descriptor"
     );
-    assert!(duplicate.local_addr().is_ok(), "the duplicate is still owned");
+    assert!(
+        duplicate.local_addr().is_ok(),
+        "the duplicate is still owned"
+    );
     drop(duplicate);
 }
 

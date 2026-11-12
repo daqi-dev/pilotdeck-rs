@@ -468,7 +468,9 @@ async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
     // ran before stop; Connection: close leaves no unrelated drain delay.
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
-        .write_all(b"GET /not-the-sms-path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .write_all(
+            b"GET /not-the-sms-path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
         .await
         .unwrap();
     let mut response = Vec::new();
@@ -487,7 +489,10 @@ async fn stop_disables_listening_even_while_a_duplicate_descriptor_is_alive() {
         "stop must disable the listening socket, not only drop one descriptor"
     );
     assert!(shared.runtime.lock().await.client.is_none());
-    assert!(duplicate.local_addr().is_ok(), "the duplicate is still owned");
+    assert!(
+        duplicate.local_addr().is_ok(),
+        "the duplicate is still owned"
+    );
     drop(duplicate);
 }
 

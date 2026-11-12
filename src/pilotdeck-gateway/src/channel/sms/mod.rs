@@ -811,8 +811,8 @@ fn start_server(listener: TcpListener, server_shared: Arc<SmsShared>) -> ServerE
             // drain retired was still counted — the bound case in
             // `head_timeout_tests.rs` kills the mutant by its warn
             // text (3 where the aborted set holds 2).
-            let pre_drain_count = crate::mutants::on("sms-stop-drain-predrain-count")
-                .then(|| connections.len());
+            let pre_drain_count =
+                crate::mutants::on("sms-stop-drain-predrain-count").then(|| connections.len());
             let drain = async { while connections.join_next().await.is_some() {} };
             if crate::mutants::on("sms-stop-drain-unbounded") {
                 drain.await;
