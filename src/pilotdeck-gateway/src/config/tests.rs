@@ -692,11 +692,15 @@ fn config_object_value_keeps_the_collection_tag() {
     );
 }
 
-/// Both production call sites (`mod.rs` schemaVersion, `sections.rs`
-/// alwaysOn.language) must pass the class through. Testing `string_coercible`
-/// alone left them free to re-collapse the error into a `TypeError`; a YAML
-/// mapping with an own `toString: null` is the reachable thrower, and TS calls
-/// `String(value)` on it unguarded (#1550 修 r6, r6 评审 P2).
+/// Both YAML load sites (`mod.rs` schemaVersion, `sections.rs`
+/// alwaysOn.language) must pass the class through; the third
+/// `require_string_coercible` caller (`binding.rs`'s `encodeURIComponent`) is
+/// pinned by its own binding test
+/// (`uri_component_coercion_is_bounded_instead_of_aborting`). Testing
+/// `string_coercible` alone left them free to re-collapse the error into a
+/// `TypeError`; a YAML mapping with an own `toString: null` is the reachable
+/// thrower, and TS calls `String(value)` on it unguarded (#1550 修 r6, r6 评审
+/// P2).
 #[test]
 fn coercion_error_class_survives_both_config_call_sites() {
     for (site, data) in [

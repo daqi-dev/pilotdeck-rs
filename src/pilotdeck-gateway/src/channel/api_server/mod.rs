@@ -313,8 +313,12 @@ pub(crate) fn parse_cors_origins(value: &JsValue) -> Vec<String> {
                 // surface is pinned by unit tests. `String(item)` can also
                 // throw (a too-deep join, an own `toString`), which the TS
                 // constructor propagates; resolve is infallible, so those
-                // entries drop out instead.
-                crate::js_value::display(item).unwrap_or_default()
+                // entries drop out instead — the checked joiner drops an own
+                // `toString` where the unchecked `display` used to keep it as
+                // `[object Object]` (#1833 fix-r2).
+                crate::js_value::to_string_units_checked(item)
+                    .map(|units| String::from_utf16_lossy(&units))
+                    .unwrap_or_default()
             })
             .filter(|item| !item.is_empty())
             .collect(),
