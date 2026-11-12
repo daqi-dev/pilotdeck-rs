@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import net from 'node:net';
 import { syncBuiltinESMExports } from 'node:module';
 import { root, baseline, requireUI } from './env.mjs';
@@ -351,7 +351,9 @@ export async function deploySelfCheck(check) {
   } finally { await rm(directory, { recursive: true }); }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+// #2759 fix-r9（DS r8 sibling P1 处置）：pathname 已百分号编码，路径含空格/%/CJK 时
+// 与 argv[1] 永不相等、守卫失火；改 fileURLToPath 归一（与 p16 微测 T12 同法）。
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const checks = [];
   await deploySelfCheck(async (name, operation) => {
     try { await operation(); checks.push({ name, status: 'PASS' }); }
