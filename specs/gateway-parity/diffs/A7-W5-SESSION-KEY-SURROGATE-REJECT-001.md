@@ -48,7 +48,9 @@ file-history 目录。
 （`INVALID_SESSION_KEY` + `sessionKey must not contain an unpaired surrogate.`，
 同一 RequestError 构造，无第三种错误协议）。`session_dir.rs:66`（resume/
 close/delete/rename/tag 五调用方）与 `config.rs:69`（session_model_set/
-clear、permission/thinking/style 族写路径）的家族包装全部委托该共享守卫。
+clear、permission/thinking/style 族写路径）的家族包装全部委托该共享守卫
+（`:66`/`:69` 为包装 doc 首行；fn 定义行在 `session_dir.rs:76` /
+`config.rs:81`，行号口径统一由跟进单 #2993 承接）。
 fix-r2 追加三个入口：`runtime/turn/submit.rs` `validate()` 顶部（主写路径：
 wire sessionKey 原样进 `RunRef`，经生产 `assembly.rs` create_storage 链落盘；
 错误走该入口既有 error-event 通道
@@ -61,6 +63,13 @@ wire sessionKey 原样进 `RunRef`，经生产 `assembly.rs` create_storage 链�
 有损渲染 `<id>.jsonl` 文件名）。三处共用同一谓词 `has_unpaired_surrogate`
 与同一文案常量 `SESSION_KEY_SURROGATE_MESSAGE`（`methods/mod.rs` 定义、
 经 `native_process.rs` re-export），仍无第二种错误协议。
+fix-r4 追加第四个入口（#2992）：`session_model.rs` `execute()` 的
+sessionKey 门在 blank/非字符串门后对 String 值追加同一
+`has_unpaired_surrogate` 判定 + `SESSION_KEY_SURROGATE_MESSAGE`（该入口
+`sanitize_session` 有损渲染 `<id>.jsonl` 文件名后读 saved/effective model
+选择，与 `native_archive` 的 `session()` 逐字同构；错误码沿用账本该入口
+既有映射 `ledger.json` `INVALID_SESSION_KEY` →
+`NativeSessionModelSelectionPort.ts:120`，无新错误协议）。
 成对代理（astral 字符，如 U+10000 = D800 DC00）与显式 U+FFFD 仍是合法
 key；存储层 `sanitize_session_id`（`transcript_adapter.rs:2162`）保持有损
 别名不动（方案 B 残余：防线是入口守卫，非磁盘身份单射化，
@@ -73,19 +82,24 @@ key；存储层 `sanitize_session_id`（`transcript_adapter.rs:2162`）保持有
 与 config 族写路径入口（r1，经共享 `require_session_key`）；fix-r2 追加
 三个入口——`submit_turn`（主写路径）、`tools_rewind_files`（有磁盘别名面：
 transcript 读 + file-history 工作树还原）、`native_archive` 族（有磁盘
-别名面：`session_id()` 有损渲染 transcript 文件名）。三处 TS 侧实测
-（fix-r2 `_tmp/20261111-issue-1623/fix-r2/probe_ts_gates.log`，Node
-v22.22.0）：submitTurn（`InProcessGateway.ts:764-845`）与
+别名面：`session_id()` 有损渲染 transcript 文件名）；fix-r4 追加第四个
+入口——`session_model_get`（本地路由 `dispatch.rs:102-116`，读路径别名面：
+`sanitize_session` 有损渲染 `<id>.jsonl` 后读 saved/effective model 选择，
+#2992）。四处 TS 侧实测（fix-r2 `_tmp/20261111-issue-1623/fix-r2/probe_ts_gates.log`
+与 fix-r4 `_tmp/20261026-issue-1623/fix-r4/probe_ts_session_model_gate.log`，
+Node v22.22.0）：submitTurn（`InProcessGateway.ts:764-845`）与
 rewindFilesForSdk（`ProjectRuntimeRegistry.ts:1125-1131`）**均无**
 sessionKey 门，native_archive 族仅 `?.trim()` blank 门
-（`createLocalGateway.ts:1619-1620`，孤立代理放行）——三处拒绝均为本条
+（`createLocalGateway.ts:1619-1620`，孤立代理放行），
+session_model_get 的 `requireSessionKey`（`NativeSessionModelSelectionPort.ts:118-121`）
+亦只有同一 blank 门（`"s\uD800".trim()` 非空放行）——四处拒绝均为本条
 「比 TS 严」的延伸，非 TS 对齐。**不覆盖**：
 ① `record_agent_status_message`（`session_dir.rs:494-499` plain
 `as_string` 读键 → `session_transcript_path` → 冷路径
 `append_metadata_with_lease` 落盘，代理拼写确实别名；但账本
 `specs/gateway-coverage/ledger.json` 的 `record_agent_status_message`
-错误分支无 `INVALID_SESSION_KEY` 条目——TS 无该门，两侧同险同形，
-属 TS 一致面，非本条制造；跟进单另开）；② `close_project_sessions`
+错误分支无 `INVALID_SESSION_KEY` 条目——本条不据此入口延伸（区别于
+已加门各处：该入口账本无错误分支可挂）；跟进单 #2998）；② `close_project_sessions`
 等的 `projectKey`（#2083 已钉代理放行，trim 门共享但拒绝只挂
 sessionKey）；③ `new_session` 生成的 key（channelKey 有 UTF-8 门，
 前缀只含配置项目拼写，生产不可达，R13 已登记）；④ permission/
@@ -120,7 +134,15 @@ subagents/tasks 注册表，`task.session_id == *session_key` 精确 JsString
   `rewind_files_keeps_fffd_and_paired_surrogate_keys`（对照过门走到
   NO_CHECKPOINT）、`native_archive/tests.rs`
   `archive_gate_rejects_lone_surrogate_session_key`（session() 门 +
-  response() wire 层）与 `archive_gate_keeps_fffd_and_paired_surrogate_keys`。
+  response() wire 层）与 `archive_gate_keeps_fffd_and_paired_surrogate_keys`；
+  fix-r4 一组：`session_model/tests.rs`
+  `session_model_get_rejects_lone_surrogate_session_key`（入口门 +
+  code/共享文案断言）与 `session_model_get_keeps_fffd_and_paired_surrogate_keys`
+  （对照：显式 U+FFFD 与成对代理各自 seed 的 saved 选择被自己的拼写读到），
+  另 `runtime/turn/submit_tests.rs`
+  `submit_turn_surrogate_gate_precedes_the_busy_refusal`（busy 会话上门先于
+  `session_busy` 应答的次序钉：持有 turn 预留后 submit，断言
+  INVALID_SESSION_KEY error-event 且无 `session_busy` 事件）。
   录制原件回放四面（`production_default_archive_wire_goldens` /
   `archive_native_materialized_138_rpcs_match_with_explicit_path_relocation` /
   pairing 的 `native_archives_match_production_wire_and_do_not_reach_upstream`
@@ -139,16 +161,23 @@ subagents/tasks 注册表，`task.session_id == *session_key` 精确 JsString
   `submit-entry-surrogate-guard-removed`（`submit.rs` 门条件 → `&& false`）、
   `rewind-entry-surrogate-guard-removed`（`methods/tools.rs` 门调用退回
   `required_trimmed`）、`archive-entry-surrogate-guard-removed`
-  （`native_archive.rs` 门分支 `if false`），均须 KILLED。计数不写死：
+  （`native_archive.rs` 门分支 `if false`）；fix-r4 追加
+  `session-model-entry-surrogate-guard-removed`（`session_model.rs` 门条件
+  → `if false`，绑 reject 用例的 expect_err 专属串），均须 KILLED。计数不写死：
   `python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check`
-  实报为准（fix-r2 时点 126 变异锚 / 80 literal anchor 全过，rebase 后 `--check` 复算同数）。
+  实报为准（fix-r4 时点 127 变异锚 / 81 literal anchor 全过；`--check` 为只读
+  复算、不持树锁——该口径措辞由跟进单 #2993 承接）。
 - 复算：`cargo test -p pilotdeck-gateway --lib -- surrogate` 须全绿
   （r1 十一例 + fix-r2 六例
   `submit_turn_{rejects,keeps}_*` / `rewind_files_{rejects,keeps}_*` /
-  `archive_gate_{rejects,keeps}_*`；该过滤器同时命中 r1 守卫级与 #2083
-  projectKey 用例）；TS 侧
+  `archive_gate_{rejects,keeps}_*` + fix-r4 三例
+  `session_model_get_{rejects,keeps}_*` /
+  `submit_turn_surrogate_gate_precedes_the_busy_refusal`；该过滤器同时命中
+  r1 守卫级与 #2083 projectKey 用例）；TS 侧
   `node _tmp/20261111-issue-1623/probe1_ts_lone_surrogate.mjs` 与 fix-r2
-  `node _tmp/20261111-issue-1623/fix-r2/probe_ts_gates.mjs`。
+  `node _tmp/20261111-issue-1623/fix-r2/probe_ts_gates.mjs`、fix-r4
+  `node` 实测 `_tmp/20261026-issue-1623/fix-r4/probe_ts_session_model_gate.log`
+  （`"s\uD800".trim()` 非空放行 + 两种拼写同 `73 efbfbd` 字节）。
 
 ## 批准记录
 

@@ -94,10 +94,18 @@ ARCHIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_archive/tests.rs'
 # different file from the TOOLS path above (native_process/tools.rs, the
 # host session tools' admission source).
 METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
+# #1623 fix-r4: the local-routing read's sessionKey gate (session_model_get)
+# — its `sanitize_session` renders the same lossy `<id>.jsonl` name the
+# native_archive family refuses (#2992). SESSION_MODEL_TESTS carries the
+# bound test's assertion literal (the #1864 mutate-writer / read-test
+# precedent).
+SESSION_MODEL = ROOT / 'src/pilotdeck-gateway/src/session_model.rs'
+SESSION_MODEL_TESTS = ROOT / 'src/pilotdeck-gateway/src/session_model/tests.rs'
 CFG = 'native_process::methods::config::tests::'
 SUBMIT_T = 'runtime::turn::submit::tests::'
 TOOLS_T = 'native_process::methods::tools::tests::'
 ARCHIVE_T = 'native_archive::tests::'
+SESSION_MODEL_T = 'session_model::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -700,6 +708,16 @@ mutations = [
      '        JsValue::String(s) if false =>',
      ARCHIVE_T + 'archive_gate_rejects_lone_surrogate_session_key',
      '#1623 the archive gate rejects the lone-surrogate key'),
+    # #1623 fix-r4: the local-routing read's own gate — `session_model_get`
+    # renders the key through `sanitize_session` (`from_utf16_lossy`) before
+    # the `<id>.jsonl` join (#2992), so removing this gate re-opens the same
+    # cross-session read the archive gate closes. Bound to the reject test's
+    # `expect_err` marker (the runner's panic-payload binding).
+    ('session-model-entry-surrogate-guard-removed', SESSION_MODEL,
+     '    if crate::native_process::has_unpaired_surrogate(session_string.units()) {',
+     '    if false {',
+     SESSION_MODEL_T + 'session_model_get_rejects_lone_surrogate_session_key',
+     '#1623 session_model_get rejects the lone-surrogate session key'),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
     # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
     # Dropping the null arm restores the pre-#2272 shape where an explicit
@@ -1443,6 +1461,8 @@ mutations = [
 # #1623 fix-r2: the three fix-r2 entry gates (submit_turn validate,
 # rewind_files request gate, native_archive session gate) joined with one
 # row and one literal anchor each.
+# #1623 fix-r4: the session_model_get entry gate joined with one row and one
+# literal anchor.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1545,6 +1565,8 @@ LITERAL_ANCHORS = [
     (SUBMIT_TESTS, "#1623 the surrogate key answers the entry gate's error event"),
     (METHODS_TOOLS, '#1623 rewind_files rejects the lone-surrogate key'),
     (ARCHIVE_TESTS, '#1623 the archive gate rejects the lone-surrogate key'),
+    # #1623 fix-r4: the local-model read entry's bound literal (its tests file).
+    (SESSION_MODEL_TESTS, '#1623 session_model_get rejects the lone-surrogate session key'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
@@ -1555,7 +1577,8 @@ LITERAL_ANCHORS = [
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
                 MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS,
-                SUBMIT, SUBMIT_TESTS, ARCHIVE, ARCHIVE_TESTS, METHODS_TOOLS)
+                SUBMIT, SUBMIT_TESTS, ARCHIVE, ARCHIVE_TESTS, METHODS_TOOLS,
+                SESSION_MODEL, SESSION_MODEL_TESTS)
 
 
 def _assertions(case):
