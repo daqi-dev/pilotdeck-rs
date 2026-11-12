@@ -568,7 +568,8 @@ class CheckoutProvenance(unittest.TestCase):
                'native_evidence.py', 'observer.py', 'run_round.py',
                'session_domain.py', 'test_safety.py',
                'test_channel_provenance.py', 'test_retirement_channel_v2.py',
-               'test_retirement_public_http.py', 'test_project_clock_scope.py',
+               'test_retirement_public_http.py', 'test_retirement_standard_http.py',
+               'test_project_clock_scope.py',
                'controls/run_all.py', 'controls/prerequisites.py',
                'controls/session_domain.py')
 

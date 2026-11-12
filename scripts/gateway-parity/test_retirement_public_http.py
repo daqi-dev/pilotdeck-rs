@@ -157,6 +157,105 @@ def mock_evidence():
 
 
 class PublicHttpControls(unittest.TestCase):
+    def test_deployment_inspection_requires_running_positive_integer_pid(self):
+        root = _apparatus.parent.parent
+        (root / '_tmp').mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(prefix='public-http-deployment-', dir=root / '_tmp')
+        self.addCleanup(temporary.cleanup)
+        folder = Path(temporary.name).resolve()
+        baseline = folder / 'baseline'
+        (baseline / 'node_modules').mkdir(parents=True)
+        node = folder / 'node/bin/node'
+        node.parent.mkdir(parents=True)
+        node.write_bytes(b'unit Node identity; subprocess output is mocked')
+        package_root = folder / 'package'
+        fixture = root / 'src/pilotdeck-gateway/tests/fixtures'
+        producer = fixture / 'retirement-public-http/layout.py'
+        preflight = fixture / 'native-channel-production/network-preflight.py'
+        collector = fixture / 'retirement-public-http/produce.py'
+        contract_path = Path(contracts.__file__)
+
+        def ref(path):
+            return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+
+        def write(path, value):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(value) + '\n')
+            return ref(path)
+
+        def require(ok, rule, detail):
+            if not ok:
+                raise ValueError(rule + ': ' + detail)
+
+        native = types.SimpleNamespace(source={'files': [
+            {'path': str(path.relative_to(root)), 'sha256': ref(path)['sha256']}
+            for path in (producer, preflight, collector, contract_path)]})
+        d = types.SimpleNamespace(ROOT=root, require=require, _load=lambda *args: contracts,
+                                  read=lambda path: json.loads(Path(path).read_text()),
+                                  common=types.SimpleNamespace(tree_digest=lambda path: 'unit-dependencies'))
+        runtime = {'source': '/app/source', 'bin': '/app/source/bin', 'home': '/app/home',
+                   'project': '/app/project', 'tmp': '/app/tmp', 'workspaces': '/app/workspaces',
+                   'controlPort': 28610, 'providerPort': 28690}
+        revision = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
+        packaging = write(folder / 'package.json', {'root': str(package_root), 'assets109': [],
+                                                   'preservedMtimes': {}})
+        value = {'packaging': packaging, 'producer': ref(producer), 'runtime': runtime,
+                 'baseline': {'path': str(baseline), 'revision': revision}, 'node': ref(node),
+                 'baselineDependencies': {'path': str(baseline / 'node_modules'), 'sha256': 'unit-dependencies'},
+                 'runs': []}
+        for profile in public.PROFILES:
+            for engine in ('ts', 'native'):
+                run = folder / (profile + '-' + engine)
+                name = profile + '-' + engine
+                mounts = {str(path): (str(path), True) for path in (
+                    Path('/usr'), Path('/lib'), Path('/etc/ld.so.cache'), root, baseline,
+                    node.parent.parent, Path('/home/clawbox-08/opt/libuv-1.52.1'))}
+                mounts.update({'/app/source': (str(baseline), True),
+                               '/app/source/bin': (str(package_root / 'bin'), True), str(run): (str(run), False)})
+                if engine == 'native':
+                    mounts['/app/source/skills'] = (str(package_root / 'source/skills'), True)
+                mounts.update({runtime[key]: (str(run / key), False)
+                               for key in ('home', 'project', 'tmp', 'workspaces')})
+                inspection = {'Name': '/' + name, 'State': {'Running': True, 'Pid': 123},
+                              'HostConfig': {'NetworkMode': 'none', 'ReadonlyRootfs': True},
+                              'Config': {'WorkingDir': '/app/project',
+                                         'Image': 'sha256:eb58eb269804b8a9b2bb9ceeb9a175cac9b79612d4c8dafe0a987b277bd55683',
+                                         'Cmd': ['/usr/libexec/docker/docker-init', '--', '/usr/bin/python3', '-I', '-B',
+                                                 str(preflight), str(run / 'network-preflight'), str(collector),
+                                                 '--mode', 'collect', '--engine', engine, '--profile', profile]},
+                              'Mounts': [{'Type': 'bind', 'Destination': destination, 'Source': source, 'RW': not ro}
+                                         for destination, (source, ro) in mounts.items()]}
+                value['runs'].append({'profile': profile, 'engine': engine, 'proof': {
+                    'command': write(run / 'container-command.json', {'name': name}),
+                    'inspect': write(run / 'container-inspect.json', [inspection]),
+                    'cleanup': write(run / 'container-cleanup.json',
+                                     {'name': name, 'ownedContainerStillRunning': '', 'clientExitCode': 0})}})
+        deployment = write(folder / 'deployment.json', value)
+        # Authenticate the actual layout/proof files and run all deployment
+        # checks; package verification is an independent, already tested face.
+        with patch.object(public, 'verify_package', return_value={'executables': {}, 'originals': []}), \
+                patch.object(public.subprocess, 'check_output', side_effect=lambda command, **kwargs:
+                             revision if 'rev-parse' in command else ''):
+            verified = public.verify_deployment(d, native, deployment)
+            self.assertEqual(set(verified['runs']), {(profile, engine)
+                                                    for profile in public.PROFILES for engine in ('ts', 'native')})
+            inspection_path = Path(value['runs'][0]['proof']['inspect']['path'])
+            healthy = d.read(inspection_path)
+            cases = [('missing', None), ('created', {'Status': 'created', 'Running': False, 'Pid': 0}),
+                     ('exited', {'Status': 'exited', 'Running': False, 'Pid': 123}),
+                     ('zero', {'Running': True, 'Pid': 0}), ('bool', {'Running': True, 'Pid': True})]
+            for label, state in cases:
+                with self.subTest(state=label):
+                    changed = copy.deepcopy(healthy)
+                    if state is None:
+                        changed[0].pop('State')
+                    else:
+                        changed[0]['State'] = state
+                    value['runs'][0]['proof']['inspect'] = write(inspection_path, changed)
+                    deployment = write(folder / 'deployment.json', value)
+                    with self.assertRaisesRegex(ValueError, 'PUBLIC_HTTP_LAYOUT_INSPECT.*while running'):
+                        public.verify_deployment(d, native, deployment)
+
     def test_provider_preserves_complete_model_and_response(self):
         model = {'model': 'mock', 'messages': [{'role': 'user', 'content': 'other input'}]}
         body = b'{"choices":[]}'

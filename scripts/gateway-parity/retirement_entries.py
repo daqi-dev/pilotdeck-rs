@@ -423,13 +423,16 @@ def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
               and expected_host.resolve() == expected_host and sha(expected_host) == expected_sha,
               'ENTRY_CHANNEL_PROCESS', 'fixed executable identity changed')
     if executable_role == 'ts-node':
-        versions = json.loads(d.subprocess.check_output(
-            [str(expected_host), '-p', 'JSON.stringify(process.versions)'], timeout=5))
-        d.require([versions.get(key) for key in ('node', 'icu', 'uv')] == ['22.22.0', '78.2', '1.52.1']
-                  and d.subprocess.check_output(['git', '-C', str(baseline), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
-                      == d.RETIREMENT_BASELINE_REVISION
-                  and not d.subprocess.check_output(['git', '-C', str(baseline), 'status', '--porcelain', '--untracked-files=no'], timeout=10).strip(),
-                  'ENTRY_CHANNEL_PROCESS', 'fixed TS process source or runtime changed')
+        try:
+            versions = json.loads(d.subprocess.check_output(
+                [str(expected_host), '-p', 'JSON.stringify(process.versions)'], timeout=5))
+            d.require([versions.get(key) for key in ('node', 'icu', 'uv')] == ['22.22.0', '78.2', '1.52.1']
+                      and d.subprocess.check_output(['git', '-C', str(baseline), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
+                          == d.RETIREMENT_BASELINE_REVISION
+                      and not d.subprocess.check_output(['git', '-C', str(baseline), 'status', '--porcelain', '--untracked-files=no'], timeout=10).strip(),
+                      'ENTRY_CHANNEL_PROCESS', 'fixed TS process source or runtime changed')
+        except (OSError, d.subprocess.SubprocessError) as error:
+            d.require(False, 'ENTRY_CHANNEL_PROCESS', f'cannot read fixed TS process source or runtime: {error}')
         runtime_baseline = str(baseline) if deployment is None else deployment['baseline']['path']
         imports = []
         for preload in preload_refs:
@@ -629,28 +632,31 @@ def verify_channel_ts_sources(d, baseline):
         d.require(mode in (b'100644', b'100755') and kind == b'blob',
                   'ENTRY_CHANNEL_SOURCE', 'unsupported fixed TS source alias')
         expected[name.decode()] = identity.decode()
-    actual = set()
-    def walk_error(error):
-        raise error
-    for name in roots:
-        folder = baseline / name
-        d.require(folder.is_dir() and folder.resolve() == folder,
-                  'ENTRY_CHANNEL_SOURCE', 'fixed TS source root is missing or aliased')
-        for directory, dirs, names in os.walk(folder, followlinks=False, onerror=walk_error):
-            for name_ in dirs + names:
-                path = Path(directory) / name_
-                d.require(not path.is_symlink() and (path.is_dir() or path.is_file()),
-                          'ENTRY_CHANNEL_SOURCE', 'fixed TS source contains an alias or non-regular entry')
-            actual.update(str((Path(directory) / name_).relative_to(baseline)) for name_ in names)
-    actual.update(name for name in fixed if (baseline / name).exists())
-    d.require(actual == set(expected), 'ENTRY_CHANNEL_SOURCE', 'fixed TS source has extra or missing files')
-    for name, identity in expected.items():
-        path = baseline / name
-        d.require(path.resolve() == path, 'ENTRY_CHANNEL_SOURCE', 'fixed TS file is aliased')
-        content = path.read_bytes()
-        obj = b'blob ' + str(len(content)).encode() + b'\0' + content
-        actual_hash = hashlib.sha1(obj).hexdigest() if len(identity) == 40 else hashlib.sha256(obj).hexdigest()
-        d.require(actual_hash == identity, 'ENTRY_CHANNEL_SOURCE', 'fixed TS source bytes differ: ' + name)
+    try:
+        actual = set()
+        def walk_error(error):
+            raise error
+        for name in roots:
+            folder = baseline / name
+            d.require(folder.is_dir() and folder.resolve() == folder,
+                      'ENTRY_CHANNEL_SOURCE', 'fixed TS source root is missing or aliased')
+            for directory, dirs, names in os.walk(folder, followlinks=False, onerror=walk_error):
+                for name_ in dirs + names:
+                    path = Path(directory) / name_
+                    d.require(not path.is_symlink() and (path.is_dir() or path.is_file()),
+                              'ENTRY_CHANNEL_SOURCE', 'fixed TS source contains an alias or non-regular entry')
+                actual.update(str((Path(directory) / name_).relative_to(baseline)) for name_ in names)
+        actual.update(name for name in fixed if (baseline / name).exists())
+        d.require(actual == set(expected), 'ENTRY_CHANNEL_SOURCE', 'fixed TS source has extra or missing files')
+        for name, identity in expected.items():
+            path = baseline / name
+            d.require(path.resolve() == path, 'ENTRY_CHANNEL_SOURCE', 'fixed TS file is aliased')
+            content = path.read_bytes()
+            obj = b'blob ' + str(len(content)).encode() + b'\0' + content
+            actual_hash = hashlib.sha1(obj).hexdigest() if len(identity) == 40 else hashlib.sha256(obj).hexdigest()
+            d.require(actual_hash == identity, 'ENTRY_CHANNEL_SOURCE', 'fixed TS source bytes differ: ' + name)
+    except OSError as error:
+        d.require(False, 'ENTRY_CHANNEL_SOURCE', 'cannot read fixed TS source bytes: ' + str(error))
 
 
 

@@ -142,6 +142,8 @@ def verify_deployment(d,native,deployment_ref):
  for row in value['runs']:
   proof=row['proof'];command_file=artifact(d,proof['command']);run=command_file.parent;command=d.read(command_file);inspections=d.read(artifact(d,proof['inspect']));cleanup=d.read(artifact(d,proof['cleanup']))
   d.require(len(inspections)==1,'PUBLIC_HTTP_LAYOUT_INSPECT','one owned container required');inspection=inspections[0];config=inspection['Config'];host=inspection['HostConfig']
+  state=inspection.get('State',{})
+  d.require(isinstance(state,dict) and state.get('Running') is True and type(state.get('Pid')) is int and state['Pid']>0,'PUBLIC_HTTP_LAYOUT_INSPECT','container inspection was not captured while running')
   d.require(inspection['Name']=='/'+command['name'] and cleanup['name']==command['name'] and cleanup['ownedContainerStillRunning']=='' and type(cleanup['clientExitCode']) is int and cleanup['clientExitCode']==0,'PUBLIC_HTTP_LAYOUT_CLEANUP','owned container did not reap cleanly')
   d.require(host['NetworkMode']=='none' and host['ReadonlyRootfs'] is True and config['WorkingDir']=='/app/project' and config['Image']=='sha256:eb58eb269804b8a9b2bb9ceeb9a175cac9b79612d4c8dafe0a987b277bd55683','PUBLIC_HTTP_LAYOUT_ISOLATION','container profile changed')
   actual={x['Destination']:(x['Source'],not x['RW']) for x in inspection['Mounts'] if x['Type']=='bind'}

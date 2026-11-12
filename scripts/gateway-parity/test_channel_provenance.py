@@ -155,6 +155,41 @@ class ChannelProvenance(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_SOURCE.*cannot read fixed TS source tree'):
             entries.verify_channel_ts_sources(self.d, self.out / 'missing-checkout')
 
+    def test_source_walk_and_file_read_errors_have_a_source_rule(self):
+        baseline = self.out / 'source-baseline'
+        names = ('src/unit.ts', 'packages/sdk/src/unit.ts',
+                 'package.json', 'pnpm-lock.yaml', 'tsconfig.json')
+        tree = []
+        for name in names:
+            path = baseline / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            content = b'unit fixed source\n'
+            path.write_bytes(content)
+            identity = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
+            tree.append(b'100644 blob ' + identity.encode() + b'\t' + name.encode() + b'\0')
+        self.d.subprocess = types.SimpleNamespace(check_output=Mock(return_value=b''.join(tree)),
+                                                 SubprocessError=subprocess.SubprocessError)
+        entries.verify_channel_ts_sources(self.d, baseline)
+        scandir, read_bytes = os.scandir, Path.read_bytes
+
+        def deny_source_directory(path):
+            if Path(path) == baseline / 'src':
+                raise PermissionError(errno.EACCES, 'unit unreadable source directory', str(path))
+            return scandir(path)
+
+        def deny_source_file(path):
+            if path == baseline / 'src/unit.ts':
+                raise PermissionError(errno.EACCES, 'unit unreadable source file', str(path))
+            return read_bytes(path)
+
+        # Real os.walk must dispatch its onerror callback; do not stub the walk.
+        with patch.object(entries.os, 'scandir', side_effect=deny_source_directory):
+            with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_SOURCE.*unit unreadable source directory'):
+                entries.verify_channel_ts_sources(self.d, baseline)
+        with patch.object(Path, 'read_bytes', deny_source_file):
+            with self.assertRaisesRegex(EvidenceError, 'ENTRY_CHANNEL_SOURCE.*unit unreadable source file'):
+                entries.verify_channel_ts_sources(self.d, baseline)
+
     def test_git_failures_do_not_abort_other_channel_results(self):
         self.write_json('manifest.json', [
             {'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},
@@ -199,6 +234,81 @@ class ChannelProvenance(unittest.TestCase):
                 self.assertIn(detail, cells[rows[0]['id']]['detail'])
                 self.assertEqual(cells[rows[1]['id']]['status'], 'BLOCKED')
                 self.assertEqual(cells[rows[1]['id']]['semanticComparison'], semantic)
+
+    def _assert_ts_process_failure_is_per_channel(self, error_type):
+        manifest = self.write_json('manifest.json', [
+            {'path': 'pilotdeck-gateway', 'sha256': 'unit-native'},
+            {'path': 'pilotdeck-agent-loop-sidecar', 'sha256': 'unit-sidecar'},
+        ])
+        source = {'files': []}
+        source_ref = self.write_json('source.json', source)
+        native = types.SimpleNamespace(manifest=Path(manifest['path']), manifest_sha=manifest['sha256'],
+                                       source_manifest=Path(source_ref['path']), source_sha=source_ref['sha256'],
+                                       source=source)
+        raw_ref = self.write_json('native-evidence.json', {
+            'sourceManifestSha256': native.source_sha, 'gatewaySha256': 'unit-native',
+            'sidecarSha256': 'unit-sidecar', 'fixedTS': self.d.RETIREMENT_BASELINE_REVISION,
+        })
+        receipt_ref = self.write_json('ts-receipt.json', {
+            'schemaVersion': 1, 'channel': 'telegram', 'rawEvidence': raw_ref,
+            'sourceManifest': source_ref, 'candidateManifest': manifest, 'runtimeLibraries': None,
+        })
+        rows = [{'id': 'gateway.channel:' + channel, 'profile': 'native-eight-v2',
+                 'rawEvidence': raw_ref, 'processReceipt': receipt_ref}
+                for channel in ('telegram', 'discord')]
+        self.write_json('channels.json', {'schemaVersion': 1, 'entries': rows})
+        transport = self.out / 'transport.jsonl'
+        transport.write_text('')
+        evidence = dict(self.evidence, receipt={'transportTrace': reference(transport)})
+        applicability = {face: {'applicable': False, 'kinds': []}
+                         for face in ('attachment', 'channelInteraction')}
+        semantic = {'equal': True, 'differentFields': [], 'formalAcceptance': False}
+        node = self.out / 'unit-node'
+        node.write_bytes(b'unit fixture; check_output is mocked, never executed')
+        node_ref = reference(node)
+        baseline = self.out / 'unit-baseline'
+        probes = [([str(node), '-p', 'JSON.stringify(process.versions)'], 5,
+                   b'{"node":"22.22.0","icu":"78.2","uv":"1.52.1"}'),
+                  (['git', '-C', str(baseline), 'rev-parse', 'HEAD'], 10,
+                   self.d.RETIREMENT_BASELINE_REVISION.encode()),
+                  (['git', '-C', str(baseline), 'status', '--porcelain', '--untracked-files=no'], 10, b'')]
+        real_verify = entries.verify_owned_process
+
+        def verify(d, actual_native, receipt, raw, channel):
+            if channel == 'telegram':
+                # Exercise the actual TS helper and its identity guards; only
+                # the unrelated native lane and subprocess outputs are synthetic.
+                return real_verify(d, actual_native, receipt, raw, channel,
+                                   executable_role='ts-node', node_ref=node_ref, baseline=baseline)
+            return evidence
+
+        for index, (command, timeout, _) in enumerate(probes):
+            with self.subTest(probe=command):
+                error = (error_type(128, command) if error_type is subprocess.CalledProcessError
+                         else error_type(command, timeout))
+                check_output = Mock(side_effect=[probe[2] for probe in probes[:index]] + [error])
+                self.d.subprocess = types.SimpleNamespace(check_output=check_output,
+                                                         SubprocessError=subprocess.SubprocessError)
+                with patch.object(entries, 'verify_owned_process', side_effect=verify), \
+                        patch.object(entries, 'channel_applicability', return_value=applicability), \
+                        patch.object(entries, 'channel_v2_comparison', return_value={
+                            'semanticComparison': semantic, 'missing': [], 'originals': []}):
+                    cells = entries.channel_results(self.d, native, self.out, baseline=baseline)
+                self.assertEqual(check_output.call_count, index + 1)
+                check_output.assert_called_with(command, timeout=timeout)
+                self.assertEqual(len(cells), 32)
+                self.assertEqual(cells[rows[0]['id']]['status'], 'FAIL')
+                self.assertEqual(cells[rows[0]['id']]['rule'], 'ENTRY_CHANNEL_PROCESS')
+                self.assertIn('cannot read fixed TS process source or runtime', cells[rows[0]['id']]['detail'])
+                self.assertIn(str(error), cells[rows[0]['id']]['detail'])
+                self.assertEqual(cells[rows[1]['id']]['status'], 'BLOCKED')
+                self.assertEqual(cells[rows[1]['id']]['semanticComparison'], semantic)
+
+    def test_ts_process_exit_failures_do_not_abort_other_channel_results(self):
+        self._assert_ts_process_failure_is_per_channel(subprocess.CalledProcessError)
+
+    def test_ts_process_timeouts_do_not_abort_other_channel_results(self):
+        self._assert_ts_process_failure_is_per_channel(subprocess.TimeoutExpired)
 
     def test_v2_roles_accept_the_actual_registered_sources(self):
         entries.channel_v2_roles(self.d, self.native, self.raw, self.evidence)
