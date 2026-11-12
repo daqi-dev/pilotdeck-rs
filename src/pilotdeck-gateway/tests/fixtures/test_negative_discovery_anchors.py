@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 280 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 3 with unresolvable shapes only, 75 in both; 1480 keys: 416 bare-filename joins and 1064 shared-helper import keys.
+# 281 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 3 with unresolvable shapes only, 75 in both; 1503 keys: 418 bare-filename joins and 1085 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -148,7 +148,7 @@ KNOWN_BLIND = {
     '_negkit/negative_compare_verdicts.py': '1 key',
     '_negkit/negative_contract.py': '4 keys',
     '_negkit/negative_non_head.py': '5 keys',
-    '_negkit/negative_submit_migration.py': '10 keys',
+    '_negkit/negative_submit_migration.py': '13 keys',
     '_shared/negative_control.py': '4 keys + 6 unresolvable',
     '_shared/negative_sqlite_header.py': '6 keys',
     '_shared/regeneration-negative.py': '6 keys',
@@ -225,7 +225,7 @@ KNOWN_BLIND = {
     'edgeclaw-text/negative.py': '4 keys',
     'exact-receipt-yaml/negative_controls.py': '1 key',
     'exact-rerun-receipt/negative_controls.py': '1 key',
-    'failure-guard/negative.py': '7 keys',
+    'failure-guard/negative.py': '13 keys',
     'fe-baseline-report/negative_controls.py': '2 unresolvable',
     'fe-coexist/negative_controls.py': '1 key',
     'file-history-cwd/negative_controls.py': '9 keys',
@@ -275,6 +275,7 @@ KNOWN_BLIND = {
     'native-archive-cwd/negative_controls.py': '7 keys',
     'native-archive-cwd/negative_proxy.py': '6 keys',
     'native-archive-cwd/negative_regeneration.py': '6 keys',
+    'native-blankkey-submit/negative_controls.py': '6 keys',
     'native-collation/negative_controls.py': '8 keys',
     'native-config/negative_controls.py': '6 keys + 1 unresolvable',
     'native-cron/negative_controls.py': '6 keys',
@@ -395,8 +396,8 @@ KNOWN_BLIND = {
     'turn-gateway-clock-edge/negative_controls.py': '6 keys',
     'turn-gateway/negative-fence.py': '10 keys',
     'turn-gateway/negative.py': '6 keys',
-    'turn-publish/negative.py': '5 keys',
-    'turn-read/negative.py': '5 keys',
+    'turn-publish/negative.py': '7 keys',
+    'turn-read/negative.py': '7 keys',
     'turn-replay/negative.py': '7 keys',
     'turn-runner/forward_negative.py': '13 keys',
     'turn-runner/input_negative.py': '10 keys',
@@ -407,7 +408,7 @@ KNOWN_BLIND = {
     'turn-runner/runner_negative.py': '4 keys',
     'turn-submit-admission/negative_controls.py': '2 keys',
     'turn-submit-panic-close/negative.py': '5 keys + 2 unresolvable',
-    'turn-submit/negative.py': '6 keys',
+    'turn-submit/negative.py': '10 keys',
     'ui-server-parity-isolation/negative_controls.py': '3 unresolvable',
     'unsafe-config-boundary/negative_controls.py': '4 keys',
     'upload-gateway/negative_controls.py': '3 keys',
