@@ -6566,3 +6566,28 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 6 | PR #2968 rust 重跑终态 → 绿则 gate 复核入队，红则挂起转独立诊断 | 协调者 | 21:0x |
 | 7 | #3056 本机代理收货 → 评审 → PR | 协调者 | 22:3x |
 | 8 | macmini SSD 新盘接上 → 恢复 /Volumes/pdrs-host → 远端恢复（cb8 停用不变） | 人（硬件）+ 协调者（恢复） | 人侧无期限 |
+
+### 段末增记（20:38–22:38，coord2/e7）
+
+1. **PR #3060（#2781 修卡）与 board PR #3063 均 MERGED**，邮箱核平（merge-queue squash 的 noreply 属正常）。
+2. **#2692 停轮裁决（长尾卡判据 4，AI 代批待人复核，决策卡 `state/decisions-20261112.md`「#2692 r13 停轮」节随本批另一 PR 落）**：fix-r13 双谱系独立撞同一 P0（新增全仓共享断言普查器按表名白名单取表，约 55 张大写形状表静默放行、尺子假通过，协调者实测复现）→ rN=13 ≥ 3 出 P0 不再开修复轮，**撤件收口**：普查器整件删除（债表快照正本 = a00925dee，重建转新开的 **#3069** P2-跟进），ROW_PINS 主体与红腿保留。撤件轮 closure-r1 本机代理完成（3 文件 +12/−447，selfcheck 7/7、红腿全绿、悬空引用全零），提交 `518624472` 已推送，**DS+MM 撤件增量评审在飞**（`_tmp/20261112-2692-closure-review-{deepseek,minimax}/`）→ 过则贴 PR #2960 → gate → 入队。
+3. **六条评审车道收齐分诊完毕**（2981/3043 fix-r3、2968 fix-r12 各 DS+MM，四角色全 PASS 无 PARTIAL）：
+   - **#2981**：MM sibling P1（入场侧账本证明零覆盖）+ 4 条 a 类 P2 → **fix-r4 已派本机 GLM**（含相位化注入改造；任务书 `_build/wt-2981/_tmp/20261026-issue-2981/fix-r4/`，带 fixtype/residual 字段）。
+   - **#2968（承载 #2795）**：双谱系同撞 P1（same-json-surfaces 双锁冻结尺子假 FAIL）+ stimulus-plan 桩盲 + memory 臂启动期失败面退化（两家 4 条 P2 同族收敛）→ **fix-r13 已派本机 GLM**（树 wt-2795）。
+   - **#3043**：仅 2 条 a 类 P2（截断式原地写换原子发布器 + 拒绝用例补 `assertFalse(out.exists())`），但与 2981 同改 `sdk-signals-close-order-pin/test_negative_controls.py`，按同文件串行规则**排队等 2981 合入后派 fix-r4**。
+4. **#3056 修复轮协调者侧先行件完成**：评审 MM P1「ops 模板失配」已修——pdrs-ops 两个任务书入口（dispatch-fix.sh / assemble.sh）11-12 起扫描 `--fixtype=`/`--residual=` 参数并注入任务书头部、缺字段 rc 2 拒派（与 3056 分支 checker 端到端正负控已验：注入过、剥字段红），模板补「修复轮字段」节，提交 `6ff54f2` 已落 ops 共享 checkout main。**3056 fix-r1 本机代理仍在跑**。
+5. **2499 fix-r7 DS 增量评审仍在飞**（等待器在挂，`_tmp/20261112-2499-fixr7-review-ds/`）。
+6. 巡场：human-comments 无新增；fleet 全空（本机 P1 2/2 被两修复轮占满属正常载荷，盘 147.1/200 GiB 在限内、树 56/60）；cb8 停用不变；macmini SSD 恢复仍 BLOCKED 待人确认（888 GB 旧数据可弃 + exFAT→APFS 重格）。
+
+### 未结义务表（22:38）
+
+| # | 未结义务 | 唯一责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | #2692 撤件双谱系评审收块 → 无 P0/P1 则贴 PR #2960 → gate → 入队 → MERGED 后 #2692 关单检查（#3069 承接残差 OPEN） | 协调者 | 23:1x |
+| 2 | #2981 fix-r4 收货 → 核验推送 → DS+MM 增量评审 → PR（Refs #2981 前置 #1800） | 协调者 | 24:3x |
+| 3 | #2968 fix-r13（树 wt-2795）收货 → 核验推送 → 双谱系增量评审 → 贴 PR #2968 → gate → 入队 | 协调者 | 24:3x |
+| 4 | #3043 fix-r4 等 2981 合入后派（同文件串行）；两条 P2 评审原文已备 | 协调者 | 2981 MERGED 即办 |
+| 5 | #3056 fix-r1 代理收货 → 核验推送 → DS+MM 评审（含 MM boundary 重跑）→ 开 PR（先查有无别的开 PR 碰 run-review-roles.py） | 协调者 | 23:5x |
+| 6 | 2499 fix-r7 DS 评审收块 → 贴 PR #2959（fix-r6/r7 证据拷主仓 `_tmp/20261026-issue-2499/`）→ gate → 入队 | 协调者 | 23:3x |
+| 7 | 2692 决策卡 PR（state/decisions-20261112.md 9 行已在本机工作区）单独走全量 PR 落 main | 协调者 | 22:5x |
+| 8 | macmini SSD 新盘恢复 pdrs-host 卷：等人确认 888 GB 可弃 + exFAT→APFS | 人（确认）+ 协调者（恢复） | 人侧无期限 |
