@@ -465,7 +465,9 @@ class AbortAccountingTests(_RunnerDriver, unittest.TestCase):
             '#2981 a busy source lock must abort at rc 2, got '
             f'{process.returncode}: {process.stderr!r}{process.stdout!r}')
         busy_reason = (ABORT_PREFIX + 'TimeoutError: source lock busy: '
-                      + str(tree / '.negative-source.lock'))
+                      + str((tree / '.negative-source.lock').resolve()))
+        # resolve()：runner 从已解析的 __file__ 自算 root（macOS 上 mkdtemp 给
+        # /var/folders、resolve 后是 /private/var/folders，不解析即假红）
         self.assert_rows(summary, [busy_reason] * len(SELECTION))
         self.assertTrue(self.counts_line(process.stdout)['counts']['INVALID']
                         == len(SELECTION),
