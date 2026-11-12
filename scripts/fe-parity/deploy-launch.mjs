@@ -2,7 +2,8 @@
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { baseline, root, requireUI, ownedPath } from './env.mjs';
 import { prepareRuntime, runtimeConfig } from './real-launch.mjs';
 import { assertRealGitBin } from './real-git.mjs';
@@ -61,4 +62,4 @@ async function main() {
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { stopping = true; replacement?.kill(signal); });
   supervisor.run();
 }
-if (process.argv[1] === new URL(import.meta.url).pathname) await main();
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) await main();
