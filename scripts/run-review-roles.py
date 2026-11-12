@@ -562,6 +562,18 @@ def main() -> int:
         print(f"run-review-roles: 找不到 {a.claude_bin}", file=sys.stderr)
         return 2
     out.mkdir(parents=True, exist_ok=True)
+    # out 目录互斥（#3056 fix-r2 修 2，DS concurrency#1 = MM2 concurrency#2）：原件守卫是
+    # check-then-act 目录扫描，两个并发同 --out 的进程可同时通过守卫并互相截断/交错证据
+    # （TOCTOU 窗口 = git diff 期间原件尚未落盘）。目录内建 .lock，flock(LOCK_EX|LOCK_NB)
+    # 持到进程结束；占用时硬拒，文案与「已有原件」区分（rc 同为 2、语义不同）。
+    try:
+        lock_fd = os.open(out / ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"run-review-roles: out 目录已被占用（{out}/.lock 被另一进程持有）——同目录并发会互相"
+              "截断证据，等在跑的结束或换独立 out 目录（内存「lock-use-flock」）", file=sys.stderr)
+        return 2
+    # lock_fd 故意不 close：持到进程结束，退出由内核释放（单进程一个 fd，不累积）
     # #3056 H（义务 7）：齐块判定以原件（<角色>.md / .jsonl / .err / summary.md / status.json /
     # diff.patch）为准——目录里已有原件即拒跑（复跑/分批须换独立 out 目录，覆盖会让原轮证据变成复跑字节）。
     originals = originals_in(out)
@@ -628,6 +640,10 @@ def main() -> int:
         except SlotTimeout as e:
             # #3056：名额排队超时属争抢类（首次排除、补跑后仍争抢计入）
             results[r] = error_rec(r, str(e), contention=True)
+            return
+        except Exception as e:  # noqa: BLE001 —— 名额闸的其它异常（如 PDRS_REVIEW_SLOTS_* 非数字）也不得
+            # 杀 worker 线程：results 缺键 → 主线程 KeyError、status.json/summary 残缺（#3056 fix-r2 修 4）
+            results[r] = error_rec(r, f"名额闸异常 {type(e).__name__}")
             return
         try:
             results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model, a.budget_usd)

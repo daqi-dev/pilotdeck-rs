@@ -700,6 +700,57 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.check(nf_ok, head):
             fails.append(f"waiver 正控：非修复轮声明合法 fixtype 应过闸：{gate.check(nf_ok, head)}")
 
+        # —— #3056 fix-r2：CJK 词边界 / 围栏未闭合 / 围栏口径统一 / 首行识别（修 3①/6/8/9）——
+        # 修 3①（MM2 sibling#1）：\b 换成 ASCII 环视——中文紧贴不再吞边界（「已Fixes #1」旧口径
+        # \b 两侧都是 \w → 判「缺 issue 关联」，合规 PR 假 FAIL）
+        if gate.check("<!-- pr-gate:waiver 纯文档轮豁免说明文字足够长 -->\n已Fixes #1\n", head):
+            fails.append(f"修3① 正控：「已Fixes #1」应算 issue 关联：{gate.check('<!-- pr-gate:waiver 纯文档轮豁免说明文字足够长 -->\\n已Fixes #1\\n', head)}")
+        if gate.check("<!-- pr-gate:waiver 纯文档轮豁免说明文字足够长 -->\nRefs #3056的说明见正文\n", head):
+            fails.append("修3① 正控：「Refs #3056的说明」应算 issue 关联")
+        errs = gate.check("<!-- pr-gate:waiver 纯文档轮豁免说明文字足够长 -->\nFixes #12x 不是关联\n", head)
+        if not any("缺 issue" in e for e in errs):
+            fails.append(f"修3① 负控：「Fixes #12x」不应算 issue 关联：{errs}")
+        # MARKER 同族：结果块 pr-gate:v1 后中文紧贴仍识别（旧 \b 会判「缺结果块」）
+        if gate.check(fixpr(s.replace("pr-gate:v1 ", "pr-gate:v1中文注记 ", 1)), head, fp3):
+            fails.append(f"修3① 正控：pr-gate:v1 后中文紧贴的结果块应识别：{gate.check(fixpr(s.replace('pr-gate:v1 ', 'pr-gate:v1中文注记 ', 1)), head, fp3)}")
+
+        # 修 6（DS boundary#1 = MM2 boundary#1）：围栏未闭合 → 报「围栏没有闭合」而不是「缺 pdrs-residual」
+        errs = gate.check(fixpr(s, res="```\n<!-- pdrs-residual: 上轮洞是边界暴露，围栏未吞我 -->\n"), head, fp3)
+        if not any("围栏没有闭合" in e for e in errs) or any("pdrs-residual" in e for e in errs):
+            fails.append(f"修6 负控：围栏未闭合应报「围栏没有闭合」（fail-closed）而不是「缺 pdrs-residual」：{errs}")
+
+        # 修 8（DS sibling#1）：围栏 / 引用块 / 缩进块里的示例不算声明——blocks / waiver / issue 关联同一口径
+        bad_head_block = s.replace(f"head={head}", "head=" + "9" * 40).replace(f" patch={fp3}", "")
+        fenced = "```\n" + bad_head_block + "```\n"
+        if gate.check(f"fix(gateway) #1 fix-r5：围栏示例不算块\n\n{s}\n{fenced}{residual}Refs #1\n", head, fp3):
+            fails.append(f"修8 正控：围栏里的示例结果块（坏头无指纹）不应计入块数：{gate.check(f'fix(gateway) #1 fix-r5：围栏示例不算块\\n\\n{s}\\n{fenced}{residual}Refs #1\\n', head, fp3)}")
+        errs = gate.check("```\n<!-- pr-gate:waiver 围栏里的示例豁免说明文字足够长 -->\n```\nRefs #1\n", head)
+        if not any("缺角色审计结果块" in e for e in errs):
+            fails.append(f"修8 负控：围栏里的示例豁免不算声明（应判缺块）：{errs}")
+        errs = gate.check("<!-- pr-gate:waiver 纯文档轮豁免说明文字足够长 -->\n```\nRefs #1\n```\n", head)
+        if not any("缺 issue 关联" in e for e in errs):
+            fails.append(f"修8 负控：围栏里的 Refs #1 不算 issue 关联：{errs}")
+        errs = gate.check("<!-- pr-gate:waiver 纯文档轮豁免说明文字足够长 -->\n> Refs #1 引用块里的示例\n", head)
+        if not any("缺 issue 关联" in e for e in errs):
+            fails.append(f"修8 负控：引用块里的 Refs #1 不算 issue 关联：{errs}")
+
+        # 修 9（MM2 boundary#2）：首行不是标题回显（badge / 概述 / 结果块在前）时扫首个标题回显行
+        if gate.fix_round_from_body("![ci](https://example.com/b.svg)\n\nfix(gateway) #1 fix-r5：停泊补 waker\n") != 5:
+            fails.append("修9 正控：首行是 badge 时标题回显行应识别 fix-r5")
+        if gate.fix_round_from_body("## 概述\n\nfix(tools) #3056 fix-r2：修台账\n") != 2:
+            fails.append("修9 正控：首行是概述标题时标题回显行应识别 fix-r2")
+        if gate.fix_round_from_body("## 概述\n\n上轮 fix-r5 评审指出的问题已处理。\n") is not None:
+            fails.append("修9 负控：正文中间的提及（非标题形态）不应识别为修复轮")
+        if gate.fix_round_from_body("## 概述\n\nfix-r5 任务书在 _tmp 目录\n") is not None:
+            fails.append("修9 负控：无标题形态的 fix-r5 字样不应识别为修复轮")
+        badge_body = "![ci](https://example.com/b.svg)\n\n" + fixpr(s)
+        if gate.check(badge_body, head, fp3):
+            fails.append(f"修9 正控：badge 首行 + 标题回显 + 齐字段应过闸：{gate.check(badge_body, head, fp3)}")
+        plain_block = s.replace(" fixtype=结构性", "")
+        mention_body = f"## 概述\n\n上轮 fix-r5 评审指出的问题已处理。\n\n{plain_block}\nRefs #1\n"
+        if gate.check(mention_body, head, fp3):
+            fails.append(f"修9 负控：非标题形态的提及不应触发修复轮判定（不要求 fixtype）：{gate.check(mention_body, head, fp3)}")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
@@ -782,6 +833,40 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"rerun-clobber：崩溃残留 {leftover} 应 rc=2 拒跑（rc={cp.returncode}、{cp.stderr.strip()[:150]}）")
             if (d / leftover).read_text() != "old bytes\n":
                 fails.append(f"rerun-clobber：{leftover} 不得被改动")
+        # 修 2（DS concurrency#1 = MM2 concurrency#2）：out 目录 flock 互斥——持锁进程在跑时，
+        # 第二个同 --out 的进程必须硬拒且文案与「已有原件」区分（TOCTOU 窗口内原件尚未落盘，
+        # 清单扫描拦不住并发互相截断证据）
+        lockd = out_base / "locked-out"
+        lockd.mkdir(parents=True, exist_ok=True)
+        lockfd = os.open(lockd / ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(lockfd, fcntl.LOCK_EX)
+            cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                                 "--worktree", str(wt), "--base", "HEAD~1", "--out", str(lockd),
+                                 "--roles", "simplify", "--dry-run"], capture_output=True, text=True, env=dict(os.environ))
+            if cp.returncode != 2 or "占用" not in cp.stderr or "原件" in cp.stderr:
+                fails.append(f"out 锁：持锁进程在跑时应 rc=2 报「占用」（与「已有原件」区分）（rc={cp.returncode}、{cp.stderr.strip()[:150]}）")
+        finally:
+            fcntl.flock(lockfd, fcntl.LOCK_UN)
+            os.close(lockfd)
+        # 修 4（DS concurrency#2）：名额闸异常（PDRS_REVIEW_SLOTS_* 非数字）不杀 worker 线程——
+        # 每角色 status=ERROR 落盘（与额度耗尽 ERROR 同形态）、status.json/summary 完整、主线程不 KeyError 崩栈
+        cp = subprocess.run([sys.executable, "-I", str(RUNNER), "--runner", "minimax", "--claude-bin", str(fake),
+                             "--env-file", str(envfile), "--worktree", str(wt), "--base", "HEAD~1",
+                             "--out", str(out_base / "slot-exn"), "--roles", ROLES],
+                            capture_output=True, text=True,
+                            env=dict(os.environ, PDRS_REVIEW_SLOTS_MINIMAX="6x"))
+        st_se = json.loads((out_base / "slot-exn" / "status.json").read_text(encoding="utf-8")) \
+            if (out_base / "slot-exn" / "status.json").exists() else {}
+        s_se = (out_base / "slot-exn" / "summary.md").read_text(encoding="utf-8") \
+            if (out_base / "slot-exn" / "summary.md").exists() else ""
+        if ("Traceback" in cp.stderr or "KeyError" in cp.stderr or cp.returncode != 1
+                or set(st_se) != set(ROLES.split(","))
+                or not all(st_se[r].get("status") == "ERROR" and st_se[r].get("resource_contention") is False
+                           and "名额闸异常" in (st_se[r].get("detail") or "") for r in st_se)
+                or any(f"{r}:ERROR" not in s_se for r in ROLES.split(","))):
+            fails.append(f"名额闸异常：四角色应各落 ERROR rec 不崩栈、流程走完（rc={cp.returncode}、"
+                         f"{cp.stderr.strip()[:150]}、rec={ {r: st_se.get(r, {}).get('status') for r in ROLES.split(',')} }）")
         # item 5：原件清单的角色名从 ROLES 派生（不双份维护）——每个角色的 .md/.jsonl/.err 都算原件，
         # 非角色名 / 其它扩展不算
         with tempfile.TemporaryDirectory() as od:

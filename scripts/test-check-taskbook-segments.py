@@ -68,6 +68,12 @@ case("人日多条取最大（0.1 + 2）", 1,
      "# #1\n约 0.1 人日（前置准备）\n后续约 2 人日\n", must=["分段交付"])
 case("大包 rs 路径回退（9 个）", 1,
      "# #1\n" + "\n".join(f"- src/m{i}/x.rs" for i in range(9)), must=["分段交付"])
+# 修 3②（MM2 sibling#2）：`\.rs` 右边界是 ASCII 环视——中文紧贴（「x.rs是本包要改的」）仍要数到
+# 该路径（\b 两侧都是 \w 会漏计 → 卡阈值 8 时大包被判小包，假 PASS）；.rsx 仍不算
+case("大包 rs 路径回退 CJK 紧贴（9 个）", 1,
+     "# #1\n" + "\n".join(f"- src/m{i}/x.rs是本包要改的" for i in range(9)), must=["分段交付"])
+case("rs 路径回退：.rsx 不算（9 个，正控）", 0,
+     "# #1\n" + "\n".join(f"- src/m{i}/x.rsx" for i in range(9)))
 case("段时长 > 90 min", 1, BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 120 min |"), must=["120 min > 90 min"])
 case("缺 续跑 一节", 1, BIG_SCOPE + SEGMENTS_OK.split("## 续跑")[0], must=["续跑"])
 case("续跑 写「无需进度文件」", 1,
@@ -1354,6 +1360,18 @@ def run():
         ok = (ctbs.FIXTYPE_VALUES == _gate.FIXTYPE_VALUES and len(_assign) == 1
               and "_gate_module()" in _assign[0])
         print(f"{'PASS' if ok else 'FAIL'}  FIXTYPE_VALUES 派生自 check-pr-gate（同一集合，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 13) residual 标记正则单源（#3056 fix-r2 修 7，DS simplify#1 / MM2 sibling#5）：
+        # 任务书侧 RESIDUAL_RE 必须派生自 check-pr-gate.py 的 RESIDUAL_MARKER（同一 pattern 与
+        # flags），且赋值行不得再写 re.compile 拷贝——两份同字面拷贝会在改标记语法时一侧判「缺」、
+        # 另一侧认声明（任务书侧与 PR 侧对同一份文本给出相反结论，假 FAIL / 假 PASS 分歧）
+        _r_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("RESIDUAL_RE = ")]
+        ok = (ctbs.RESIDUAL_RE.pattern == _gate.RESIDUAL_MARKER.pattern
+              and ctbs.RESIDUAL_RE.flags == _gate.RESIDUAL_MARKER.flags and len(_r_assign) == 1
+              and "_gate_module()" in _r_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_RE 派生自 check-pr-gate 的 RESIDUAL_MARKER（同一正则，不复制第二份）")
         fails += 0 if ok else 1
 
 

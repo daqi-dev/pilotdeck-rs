@@ -152,6 +152,60 @@ def main() -> int:
         if cp.returncode != 0 or "#2692/ds" in cp.stdout:
             fails.append(f"race：并发同键均首次争抢，count 不计入（{cp.stdout}）")
 
+        # 修 1（MM concurrency#1 P1）负控：count 按键归并——同键「首次失败 + 补跑失败」只计 1、
+        # 不触发停手；同链×谱系两个不同键各一次失败才计 2、rc=1
+        led3 = tmp / "merge" / "ledger.jsonl"
+        run("register", str(led3), "#7/ds/r1", "--status", "ERROR", "--note", "首登失败")
+        run("register", str(led3), "#7/ds/r1", "--status", "ERROR", "--rerun", "--note", "补跑仍失败")
+        cp = run("count", str(led3))
+        if cp.returncode != 0 or "#7/ds: 1" not in cp.stdout or "停手" in cp.stdout:
+            fails.append(f"count：同键首登+补跑失败应按键归并只计 1、rc=0（rc={cp.returncode}、{cp.stdout}）")
+        run("register", str(led3), "#7/ds/r2", "--status", "ERROR", "--note", "另一轮失败")
+        cp = run("count", str(led3))
+        if cp.returncode != 1 or "#7/ds: 2" not in cp.stdout or "停手" not in cp.stdout:
+            fails.append(f"count：不同键各一次失败应计 2 触发停手 rc=1（rc={cp.returncode}、{cp.stdout}）")
+
+        # 修 5 负控：落盘失败 fail-closed（rc 2、干净文案不崩栈），短写/异常回滚不留半行
+        blocker = tmp / "blocker"
+        blocker.write_text("x", encoding="utf-8")
+        cp = run("register", str(blocker / "led.jsonl"), "#1/ds/r1", "--status", "ERROR")
+        if cp.returncode != 2 or "Traceback" in cp.stderr or "fail-closed" not in cp.stderr:
+            fails.append(f"register：父目录是普通文件应 rc=2 干净拒跑（rc={cp.returncode}、{cp.stderr.strip()[:80]}）")
+        adir = tmp / "adir"
+        adir.mkdir()
+        cp = run("register", str(adir), "#1/ds/r1", "--status", "ERROR")
+        if cp.returncode != 2 or "Traceback" in cp.stderr or "fail-closed" not in cp.stderr:
+            fails.append(f"register：台账路径是目录应 rc=2 干净拒跑（rc={cp.returncode}、{cp.stderr.strip()[:80]}）")
+        # 写入中途 OSError：回滚到写前长度，半行不落盘（进程内直调 register，monkeypatch os.write）
+        led4 = tmp / "short" / "ledger.jsonl"
+        led4.parent.mkdir(parents=True, exist_ok=True)
+        led4.write_text("", encoding="utf-8")
+        real_write = os.write
+
+        def _boom(fd: int, data: bytes) -> int:
+            real_write(fd, data[:5])  # 先落 5 字节半行再炸，验证回滚
+            raise OSError("ENOSPC（模拟）")
+
+        try:
+            flg.os.write = _boom
+            rc = flg.register(str(led4), "#1/ds/r1", "ERROR", False, False, "")
+        finally:
+            flg.os.write = real_write
+        if rc != 2 or led4.read_bytes() != b"":
+            fails.append(f"register：写入中途 OSError 应 rc=2 且回滚半行（rc={rc}、剩 {led4.read_bytes()!r}）")
+
+        # 短写不抛异常（每次只写 3 字节）：循环补写整行，count 仍能正常解析
+        try:
+            flg.os.write = lambda fd, data: real_write(fd, data[:3])
+            rc = flg.register(str(led4), "#2/ds/r1", "ERROR", False, False, "")
+        finally:
+            flg.os.write = real_write
+        if rc != 0:
+            fails.append(f"register：短写应循环补写成功（rc={rc}）")
+        cp = run("count", str(led4))
+        if cp.returncode != 0 or "#2/ds: 1" not in cp.stdout or "fail-closed" in cp.stderr:
+            fails.append(f"count：短写补写后台账应是整行可解析（rc={cp.returncode}、{cp.stdout}、{cp.stderr.strip()[:60]}）")
+
     for f in fails:
         print("FAIL", f)
     print(f"test-fixround-ledger: {'全部通过' if not fails else f'{len(fails)} 项失败'}")

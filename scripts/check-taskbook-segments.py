@@ -252,7 +252,10 @@ PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|预期|估算|�
                         r"([0-9]+(?:\.[0-9]+)?)\s*(?:个)?\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
 # URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
-RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
+# `\.rs` 的右边界不用 \b（#3056 fix-r2 修 3②，MM2 sibling#2）：Python 的 \w 含 CJK，「src/a.rs是文件」
+# 这类中文紧贴写法 \b 两侧都是 \w → 数不到该路径 → 卡在回退阈值 8 时大包被判小包（假 PASS）。
+# 与 :96 BARE_PLACEHOLDER 同款 ASCII 环视。
+RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs(?![A-Za-z0-9_])")
 # 代码围栏（CommonMark）：闭合行须同字符、长度 **≥** 开栏、独占一行（只许前后空白）。
 # 逐行扫（FENCE_OPEN + _fence_spans），正则写不干净：修前要求闭合串与开栏串**完全相等**，
 # ```` ``` ```` 开、```` ```` ```` 收的标准写法被判「围栏没有闭合」→ 整份任务书 rc 2（假 ERROR）。
@@ -1205,7 +1208,10 @@ def _gate_module():
 FIXTYPE_VALUES = _gate_module().FIXTYPE_VALUES
 # 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明
 FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
-RESIDUAL_RE = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
+# residual 标记正则不复制：PR 侧 check-pr-gate.py 的 RESIDUAL_MARKER 是源（#3056 fix-r2 修 7，
+# DS simplify#1 / MM2 sibling#5）——两份同字面拷贝会在改标记语法时一侧判「缺」另一侧认声明。
+# 配对测试断言两处 pattern 一致（同 FIXTYPE_VALUES 的单源做法）。
+RESIDUAL_RE = _gate_module().RESIDUAL_MARKER
 RESIDUAL_NONE = "无上一轮"   # 字面值：没有上一轮时允许（空答不算答）
 
 
