@@ -6476,3 +6476,29 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ### 下一步
 按未结义务表序推进，不空等；下一个交接点 ~06:45。
+
+## 2026-11-13 06:22 交接段（coord2/e7；上一段 04:45）
+
+### 做了什么
+1. **终块潮五连收**：① 1087 MM 终块 4/4 PASS **P1=9 P2=14**——P1 全同族（守卫三式与 run_token 化只打点名文件、同形兄弟未枚举，r6/r7 两批写法分裂），PR #3042 评论 6837016581；② 1723 fix-r3 DS 4/4 PASS P0=P1=0 P2=9（折 6 修点）；③ 2692 MM 终块 4/4 PASS P0=P1=0 P2=3（修复轮 3 用完）；④ 3056 MM 块不完整（concurrency TIMEOUT + boundary PARTIAL）但 **P1×2 打在尺子**（fixround-ledger 退出码 120 半修 + check-pr-gate 轮号低估跳 residual 必填＝假通过面），PR #3074 评论 6837312228；⑤ 2499 DS+MM 双块 4/4 PASS P0=P1=0（P2 折两簇，半数打在冻结台账 R6）。
+2. **三修复轮在飞**：1087 **fix-r8 结构性**（本机 glm：共享层正本 dead_stream_print/new_run_token/refuse_summary + EBADF 修 + 代表 twin，全族 grep 词表矩阵=收货判据，切段 S1-S3）；1723 fix-r4（本机 glm，6 修点：slack:1164 第三处谓词迁移/SKIPPED listing 挪锁内/探针排水/SKIPPED 前提实证/契约配对/探针上界负控行）；3056 派 macmini-01。**派单事故自纠**：3056 链实到 r7，我误按 fix-r5 派（fix-assemble 覆盖树内旧 r5 的 review/task，remote-worker 清理删旧 DONE/final.patch；旧轮证据主仓 _tmp/20261113-3056-fixr*/全套在、交付本体在分支 git）。判定不杀 worker（内容正确），**收货时按 fix-r8 改标落盘**（提交标题、证据目录改名），residual 措辞偏差（误写「上轮 fix-r4」实为 r5 换信号源遗留）一并登记。
+3. **2692/2499 收口**：开 **#3093**（2692 MM P2×3：活体工作树竞态/共享执行器守卫未跟/守卫四抄口径分叉）、**#3094**（1087 进程级 twin 家族化 + llm-index twin 缺）、**#3095**（2499 r10 变异语义登记漂移 + R6 冻结账本更正件，冻结件更正走 R6-R1 新增件程序）；#2960/#2959 闸门 PASS（2960 正文旧 head 块归档+MM 块补进正文——**闸门只认正文块，评论不算**）双双入队（auto_merge=true 实证）。
+4. **队列弹跳根因澄清**：3078 21:06Z 队列 run 各 job 卡 in_progress+null conclusion＝队列重构取消（#3089 21:08Z 合 main 触发），非真红；06:03 重入队（run 43316314686 在跑，~50 min）。3071 同窗被弹（21:06Z），已重入队（"already queued"实证，排 3078 后）。2959/2960 在其后。
+5. **sweep-0612**：红灯 8b 前置活性红 **15 张**（#1853/#2425/#2301 昨 21:3x 关闭后未重判，系 P2 wave 关单潮下游）→ 子代理重判中（报告落 _tmp/20261113-premise-wave/report.md）；红灯 9 exit=97 两张已知陈旧；磁盘 ~131 GiB（WARN 线下）；human-comments 空。#3091（决策卡五张，head 61bcbd59e）全量 CI 在跑。
+6. 三 worker 哨兵 bxoi0kwu1（exit 文件逐个报行）；看板 mark：2960/3074/2499 评审轮次已记（--impl GLM）。
+
+### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查）
+| # | 下一步动作 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3078 MERGED → 核邮箱 → main ci.yml 字节比对 → 关 3086 → rerun 3085 → Re-run 3057 → 积压 38 张逐张换块入队 → 2968 Re-run 后入队 → 3071/2959/2960 依次落 | coord2/e7（bohgf5njw） | 07:30 |
+| 2 | 1087 fix-r8 收货（矩阵核验：四组 grep 词表逐条对上）→ DS 增量 + MM 终块（修 P1 轮双谱系）→ 贴 #3042 → gate → 入队 | coord2/e7（bxoi0kwu1） | 08:30 |
+| 3 | 1723 fix-r4 收货 → merge origin/main 解 CONFLICTING（fixtures/README.md 真合并）→ push → 核 CI run 起 → MM 终块对最终 head → gate → 入队 | coord2/e7（bxoi0kwu1） | 08:30 |
+| 4 | 3056 fix-r8（现挂 r5 名）收货：**改标 fix-r8**（提交标题/证据目录改名/residual 偏差登记）→ 双谱系增量评审 → 贴 #3074 → gate → 入队 | coord2/e7（bxoi0kwu1） | 08:30 |
+| 5 | 前置活性红 15 张重判报告消化（三件套：处置评论+board 行+下游）→ 与 P2 wave C 类 100 张（3078 合入解锁潮后）合批清 | coord2/e7（子代理在跑） | 07:15 |
+| 6 | #3093/#3094/#3095 跟进单：处置登记（各自前置于 2692/1087/2499 关单收口自查）；#3092 同 | coord2/e7 | 各 PR 合入后 |
+| 7 | #3091 决策卡 PR 全量 CI 收块入队 | coord2/e7 | 08:00 |
+| 8 | 1087 批 2（S2 三表）等 #3042 收口后同树串行派 | coord2/e7 | MM 终块过闸后 |
+| 9 | macmini 888 GB 确认 + pdrs-host 卷恢复（人侧） | 人 + coord2/e7 | 人侧无期限 |
+
+### 下一步
+按未结义务表序推进，不空等；下一个交接点 ~08:45。
