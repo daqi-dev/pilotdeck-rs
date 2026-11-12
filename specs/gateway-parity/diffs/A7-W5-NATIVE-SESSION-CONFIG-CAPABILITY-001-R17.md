@@ -113,23 +113,31 @@ close / config 侧被服务、在这些门仍被拒。不放宽判分，不改
   且 served id 逐字等于
   `SnapshotProjects::new(home, cwd=空).workspace_id(residual)`（fix-r1
   评审 P2 处置：放行格有鉴别力，不只是一段合法 UTF-8 字符串）。
-- 负控（`tests/fixtures/native-config/negative_controls.py` 新增两行）：
+- 负控（`tests/fixtures/native-config/negative_controls.py` 新增三行）：
   `submit-surrogate-project-key-rejected`（lossy 转换变异回
-  `to_utf8().ok()` 拒绝门，绑上述用例 code 断言）与
+  `to_utf8().ok()` 拒绝门，绑上述用例 code 断言）、
   `submit-serve-gate-removed`（能力门 `if false &&` 失效，绑
-  「not the type error」前置断言）。`--check` →
-  `#1457 82 mutation anchors OK; #2065 69 literal anchors OK`；正式全表
-  82/82 KILLED、0 SURVIVED（提交后本机分轮跑完，证据
-  `_build/wt-2617/_tmp/20261111-issue-2617/negctl-full-local*.log` 与
-  `negctl-full-r5-a*.log`；变异体 2 的杀死载荷 `Some([97,56,45,109,97,105,110])`
-  = setup 注册项目 id，证能力门是唯一拒点）。
+  「not the type error」前置断言）与 `submit-admit-cell-serves-wrong-id`
+  （id 计算变异取 `home` 而非 `options.project`，绑放行格等值断言——
+  fix-r2 评审 P2 处置：放行格此前零红侧）。`--check` →
+  `#1457 83 mutation anchors OK; #2065 70 literal anchors OK`；正式全表
+  82/82 KILLED、0 SURVIVED **量于交付提交 `243f9f3da`**（本机磁盘闸窗口期
+  分轮跑完，合并口径 r2 15 + r3 2 + r4 9 + r5 56，各轮日志
+  `negctl-full-local-attempt{2,3,4}.log` 与 `negctl-full-r5-a1.log`；
+  attempt1 全 INVALID 是机器磁盘闸拒跑、非被测逻辑，不作证据；变异体 2 的
+  杀死载荷 `Some([97,56,45,109,97,105,110])` = setup 注册项目 id，证能力门是
+  唯一拒点）。fix 头定向复跑：fix-r1 两行 `negctl-fix-r1-targeted.log`
+  2/2 KILLED；fix-r2 三行（含新行）`negctl-fix-r2-targeted.log` 3/3 KILLED。
 - 回归：`submit_workspace_id` 过滤 2/2（#2562 格）、`native_process::`
-  模块 391/391、gateway lib 全量 5371 passed（worker cb8 原始输出
-  `cargo-test-no-run.out` / `gateway-lib-full-postfix.out`，2 例环境性
-  flake 隔离复跑过）。
+  模块 391/391、gateway lib 全量 5371 passed / 2 failed / 237 ignored
+  （worker cb8 原始输出 `cargo-test-no-run.out` /
+  `gateway-lib-full-postfix.out`；2 失败之一为 feishu / wecom_callback
+  测试共用固定端口 18990 的套件内并发撞面 `EADDRINUSE`、另一为时序预算，
+  均隔离复跑通过——全量并行复跑须注意该 18990 撞面）。
 - 账本闸门：`diffs/` 只追加（本件为新增文件，R13 及更早字节未动），
   `check_frozen.py --base origin/main` PASS（输出 30 entries，该计数指冻结
-  正文件的条目；`--print-ledger` 合并视图已含本件）。
+  正文件的条目；`--print-ledger` 合并视图已含本件；fix-r2 头原始输出
+  `check-frozen-fix.out`）。
 
 ## 批准记录
 

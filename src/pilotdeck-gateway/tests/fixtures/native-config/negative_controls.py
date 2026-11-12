@@ -644,12 +644,18 @@ mutations = [
      '#2562 explicit null is not an error with the recorder on'),
     # ── #2617: the submit path's string branch converts a lone-surrogate
     # projectKey lossily — the #2083 close-path shape (`session_dir.rs`), same
-    # judge same fix (TS resolver chain runs the key to completion; probes
-    # `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out` +
-    # `_tmp/20261111-issue-2617/probe-submit-surrogate-resolver.out`). The
-    # first row re-adds the pre-#2617 `to_utf8` rejection, so the anchor's
-    # code assertion dies first; the second row disables the capability gate
-    # itself, so the anchor's reject-cell `.expect_err` dies on the served Ok.
+    # judge same fix (the TS resolver chain runs the key to completion without
+    # throwing — it lands on the process cwd's project, not necessarily the
+    # configured one; probes `_tmp/20261111-issue-2617-probe/
+    # probe-submit-surrogate.out` + `_tmp/20261111-2617-evidence/
+    # probe-submit-surrogate-resolver.out`, whose "resolves like the fallback"
+    # flag is tautological — the script pinned `fallbackProjectRoot =
+    # process.cwd()`). The first row re-adds the pre-#2617 `to_utf8`
+    # rejection, so the anchor's code assertion dies first; the second row
+    # disables the capability gate itself, so the anchor's reject-cell
+    # `.expect_err` dies on the served Ok; the third row serves another
+    # directory's id, so the admit cell's id-equality assertion is the kill
+    # point (it otherwise has no red side).
     ('submit-surrogate-project-key-rejected', SERVICES,
      '            let project = String::from_utf16_lossy(project.units());',
      '            let project = project\n'
@@ -662,6 +668,15 @@ mutations = [
      '            if false && !self.options.serves_project(&project) {',
      'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
      '#2617 the surrogate projectKey is not the type error'),
+    # fix-r2 (MM sibling-2 / boundary-1): the admit cell's id-equality
+    # assertion had no red side — both rows above die in the reject cell.
+    # This row serves another directory's id (home instead of the configured
+    # project), so the admit cell's equality assertion is the only kill point.
+    ('submit-admit-cell-serves-wrong-id', SERVICES,
+     '            let project = self.options.project.to_string_lossy();',
+     '            let project = self.options.home.to_string_lossy();',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     "#2617 the admit cell answers the residual project's own workspace id"),
     # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
     # path — with the null arm dropped the admission refusal (isolated-project
     # message) answers before the method's own `?.trim()` gate, so the null
@@ -1324,6 +1339,8 @@ mutations = [
 # #2617 (rebase 改数，基线从分支旧 80/62 前移到 main 108/65): the two submit
 # surrogate rows above joined the table with their two MANAGEMENT_TESTS pins,
 # so the counts moved to 110 rows / 67 literal-anchor entries.
+# #2617 fix-r2 (同前移): the admit-cell row (the id-equality red side) joined
+# with its pin, so the counts moved to 111 rows / 68 literal-anchor entries.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -1392,6 +1409,7 @@ LITERAL_ANCHORS = [
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
     (MANAGEMENT_TESTS, '#2617 the surrogate projectKey reaches the capability gate'),
     (MANAGEMENT_TESTS, '#2617 the surrogate projectKey is not the type error'),
+    (MANAGEMENT_TESTS, "#2617 the admit cell answers the residual project's own workspace id"),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
