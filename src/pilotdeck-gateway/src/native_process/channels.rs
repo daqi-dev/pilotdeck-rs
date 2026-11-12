@@ -257,16 +257,30 @@ fn fixture_channel_endpoints() -> ChannelEndpointOverrides {
     let Some(origin) = test_channel_loopback_origin() else {
         return ChannelEndpointOverrides::default();
     };
-    let dingtalk_send = format!("{origin}/dingtalk/send");
+    loopback_channel_endpoints(origin)
+}
+
+/// Replace only the network origin. The production token, connection and
+/// per-message webhook paths remain visible to the common TS/native fixture.
+fn loopback_channel_endpoints(origin: String) -> ChannelEndpointOverrides {
+    let dingtalk_origin = origin.clone();
     ChannelEndpointOverrides {
         slack_api_base: Some(origin.clone()),
         feishu_api_base: Some(origin.clone()),
         telegram_api_root: Some(origin.clone()),
         discord_api_root: Some(origin.clone()),
         qq_api_base: Some(origin.clone()),
-        qq_token_url: Some(format!("{origin}/qq/token")),
-        dingtalk_stream_endpoint: Some(format!("{origin}/dingtalk/open")),
-        dingtalk_webhook_route: Some(Arc::new(move |_| dingtalk_send.clone())),
+        qq_token_url: Some(format!("{origin}/app/getAppAccessToken")),
+        dingtalk_stream_endpoint: Some(format!("{origin}/v1.0/gateway/connections/open")),
+        dingtalk_webhook_route: Some(Arc::new(move |source| {
+            let Ok(source_url) = url::Url::parse(source) else {
+                return source.to_owned();
+            };
+            let mut target = url::Url::parse(&dingtalk_origin).expect("validated loopback origin");
+            target.set_path(source_url.path());
+            target.set_query(source_url.query());
+            target.into()
+        })),
         ..Default::default()
     }
 }
@@ -1032,7 +1046,29 @@ impl crate::channel::protocol::ChannelUpdatePort for UnboundChannelSystem {
 
 #[cfg(test)]
 mod loopback_fixture_origin_tests {
-    use super::parse_test_channel_loopback_origin;
+    use super::{loopback_channel_endpoints, parse_test_channel_loopback_origin};
+    #[test]
+    fn production_paths_survive_loopback_origin_substitution() {
+        let endpoints = loopback_channel_endpoints("http://127.0.0.1:4321".into());
+        assert_eq!(
+            endpoints.qq_token_url.as_deref(),
+            Some("http://127.0.0.1:4321/app/getAppAccessToken")
+        );
+        assert_eq!(
+            endpoints.dingtalk_stream_endpoint.as_deref(),
+            Some("http://127.0.0.1:4321/v1.0/gateway/connections/open")
+        );
+        let route = endpoints.dingtalk_webhook_route.unwrap();
+        assert_eq!(
+            route("https://api.dingtalk.com/lifecycle?key=a%2Fb"),
+            "http://127.0.0.1:4321/lifecycle?key=a%2Fb"
+        );
+        assert_eq!(
+            route("https://api.dingtalk.com/another/webhook?key=second#not-sent"),
+            "http://127.0.0.1:4321/another/webhook?key=second"
+        );
+        assert_eq!(route("not a URL"), "not a URL");
+    }
     #[test]
     fn only_plain_ipv4_loopback_origins_with_explicit_port_are_allowed() {
         assert_eq!(

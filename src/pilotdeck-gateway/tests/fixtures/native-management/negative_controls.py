@@ -29,6 +29,7 @@ ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 ASSEMBLY_MEMORY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/memory.rs'
 ASSEMBLY_SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/snapshot.rs'
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+OPTIONS = ROOT / 'src/pilotdeck-gateway/src/native_process/options.rs'
 METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
 SDK = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/sdk.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
@@ -241,14 +242,14 @@ mutations.append(('capability-resolve_settings', CAPABILITIES, 'name: "resolve_s
 # its file and every mutant must be killed by the bound assertion.
 mutations.append(('submit-workspace-id-unwired', SERVICES, 'if self.snapshot_recorder.is_some() {', 'if false {', WIRING, '#1431 submit snapshots enabled'))
 mutations.append(('submit-snapshots-unwired', SERVICES, 'self.snapshot_recorder.as_ref().map(|recorder| {', 'self.snapshot_recorder.as_ref().filter(|_| false).map(|recorder| {', WIRING, '#1431 snapshots() exposes the recorder'))
-mutations.append(('environment-keeps-snapshot-roots', ENTRY, '                inherited.remove("PILOTDECK_STORAGE_ROOT");\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', '                let _ = ();', ENVIRONMENT, '#1071 inherited authority removed'))
-mutations.append(('environment-storage-not-injected', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'let _ = root;', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
+mutations.append(('environment-keeps-snapshot-roots', OPTIONS, '                inherited.remove("PILOTDECK_STORAGE_ROOT");\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', '                let _ = ();', ENVIRONMENT, '#1071 inherited authority removed'))
+mutations.append(('environment-storage-not-injected', OPTIONS, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'let _ = root;', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
 # #1431 review: the id source itself and the two remaining environment
 # semantics (ambient storage must lose to --storage-root; the separate
 # snapshot root override must survive) had assertions but no mutants.
 mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'super::management::bounded_snapshot_workspace_id(&metadata, &project)\n                    .map_err(failure)?', 'crate::metadata::project_id(std::path::Path::new(&*project))', WIRING, '#1431 marker spelling selects the registered workspace id'))
-mutations.append(('environment-storage-ambient-wins', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert(root.clone());', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
-mutations.append(('environment-snapshot-root-dropped', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', ENVIRONMENT, '#1431 snapshot root override preserved'))
+mutations.append(('environment-storage-ambient-wins', OPTIONS, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert(root.clone());', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
+mutations.append(('environment-snapshot-root-dropped', OPTIONS, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', ENVIRONMENT, '#1431 snapshot root override preserved'))
 # #1431 review: the recorder extraction in `assembly::snapshot` is the last
 # production step the WIRING test calls; without this row it could return
 # `None` with every assertion still green.
@@ -282,9 +283,9 @@ mutations.append(('empty-storage-advertised', CAPABILITIES,
 # fix-r3: provider-derived advertisement, explicit filter and production boundary.
 mutations.append(('snapshot-state-disabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() && false)', HOST, '#1231 exact wired capability set'))
 mutations.append(('snapshot-state-enabled', ASSEMBLY_SNAPSHOT, 'Ok(persistence.snapshots.is_some())', 'Ok(persistence.snapshots.is_some() || true)', PRODUCTION, '#1231 production entry starts without snapshots'))
-mutations.append(('production-storage-authority-accepted', ENTRY, '        "PILOTDECK_STORAGE_ROOT",', '        "UNWIRED_PILOTDECK_STORAGE_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
-mutations.append(('production-snapshot-authority-accepted', ENTRY, '        "PILOTDECK_SNAPSHOT_ROOT",', '        "UNWIRED_PILOTDECK_SNAPSHOT_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
-mutations.append(('production-blank-authority-accepted', ENTRY, 'env.get(key).is_some_and(|v| !v.is_empty())', 'env.get(key).is_some_and(|v| !v.trim().is_empty())', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
+mutations.append(('production-storage-authority-accepted', OPTIONS, '        "PILOTDECK_STORAGE_ROOT",', '        "UNWIRED_PILOTDECK_STORAGE_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
+mutations.append(('production-snapshot-authority-accepted', OPTIONS, '        "PILOTDECK_SNAPSHOT_ROOT",', '        "UNWIRED_PILOTDECK_SNAPSHOT_ROOT",', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
+mutations.append(('production-blank-authority-accepted', OPTIONS, 'env.get(key).is_some_and(|v| !v.is_empty())', 'env.get(key).is_some_and(|v| !v.trim().is_empty())', PRODUCTION, '#1231 production entry rejects inherited snapshot authority'))
 mutations.append(('snapshot-list-provider-ignored', CAPABILITIES,
                   'Capability { name: "snapshot_list", methods: &[], wired: snapshots }',
                   'Capability { name: "snapshot_list", methods: &[], wired: compiled_in }', PRODUCTION, '#1231 production entry exact capability set'))
@@ -339,7 +340,7 @@ mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(mov
 # #2036 moved the `--project` rejection into the shared `utf8_argument` helper,
 # so the anchor follows the call site; dropping the call reopens the
 # unreachable-workspace path exactly as before.
-mutations.append(('non-utf8-project-accepted', ENTRY,
+mutations.append(('non-utf8-project-accepted', OPTIONS,
                   '        utf8_argument(project.as_os_str(), "project")?;',
                   '        let _ = project.as_os_str();',
                   'native_process::tests::non_utf8_project_path_is_refused',
@@ -367,7 +368,7 @@ mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
 # makes the UTF-8 check fall back instead of failing, so `Options::parse`
 # returns Ok and the test dies on its own `expect_err` message. (#2036 moved the
 # check into `utf8_argument`, so the anchor follows the call.)
-mutations.append(('storage-root-nonutf8-accepted', ENTRY,
+mutations.append(('storage-root-nonutf8-accepted', OPTIONS,
                   '                .map(|v| utf8_argument(v, "storage root"))',
                   '                .map(|v| utf8_argument(v, "storage root").or(Ok::<&str, ProxyError>("lost")))',
                   'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
@@ -379,17 +380,17 @@ mutations.append(('storage-root-nonutf8-accepted', ENTRY,
 # of a different directory), plus one mutant that bypasses the helper at a call
 # site entirely — the lossy fallback compiles and is exactly the old bug, so it
 # proves the helper is what does the work there.
-mutations.append(('home-non-utf8-accepted', ENTRY,
+mutations.append(('home-non-utf8-accepted', OPTIONS,
                   '        utf8_argument(home.as_os_str(), "home")?;',
                   '        let _ = home.as_os_str();',
                   'native_process::tests::non_utf8_home_and_sidecar_are_refused',
                   '#2036 non-UTF-8 --home must be rejected'))
-mutations.append(('sidecar-non-utf8-accepted', ENTRY,
+mutations.append(('sidecar-non-utf8-accepted', OPTIONS,
                   '        utf8_argument(sidecar.as_os_str(), "sidecar")?;',
                   '        let _ = sidecar.as_os_str();',
                   'native_process::tests::non_utf8_home_and_sidecar_are_refused',
                   '#2036 non-UTF-8 --sidecar must be rejected'))
-mutations.append(('argv-utf8-helper-bypassed', ENTRY,
+mutations.append(('argv-utf8-helper-bypassed', OPTIONS,
                   '                .map(|v| utf8_argument(v, "storage root"))\n                .transpose()?\n                .map(str::to_owned),',
                   '                .map(|v| v.to_string_lossy().into_owned()),',
                   'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
@@ -736,7 +737,7 @@ def main():
         }.get(case.mutation)
         try:
             # Protect the executable fixture and judge, as well as product bytes.
-            with mutating_sources(ROOT, [case.path, Path(__file__).resolve(), ORACLE,
+            with mutating_sources(ROOT, [case.path, ENTRY, OPTIONS, Path(__file__).resolve(), ORACLE,
                     ORACLE.with_name('generate.mts'), ORACLE.with_name('session.jsonl'),
                     METADATA,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs',

@@ -21,7 +21,7 @@ recorder.seq 从 1 起逐行连续，用于完整性；语义投影按 connectio
 | 容器形状 | 允许归一化的字段 |
 |---|---|
 | transcript 同时含 entryId/sequence/turnId/type；cron 同时含 taskId/schedule/message/status；pending 同时含 requestId/ownerId/kind/toolCallId | createdAt |
-| 项目摘要同时含 projectKey/name 及（path 或 fullPath），无论是否含 lastActivity | createdAt |
+| 完整项目摘要：projectKey/name 及 path 或 fullPath 为字符串；sessionCount 为非负整数；createdAt 及可选 lastActivity 为有限数值（不含布尔）；只允许这些字段 | createdAt |
 | 上述 cron；session metadata 同时含 firstPrompt/lastPrompt 或含 isSnapshot；下述 run registry | updatedAt |
 | agent turn result 同时含 type/sessionId/turnId/stopReason/usage/turns/startedAt/completedAt，type 为 success/error/aborted/max_turns；或 tool result 同时含 type/toolCallId/toolName/content/startedAt/completedAt，type 为 success/error | startedAt、completedAt |
 | run registry 同时含 runId/ownerPid/acceptedAt | ownerPid、acceptedAt、updatedAt |
@@ -35,7 +35,9 @@ recorder.seq 从 1 起逐行连续，用于完整性；语义投影按 connectio
 
 ## HTTP 与落盘
 
-HTTP 精确比 path、status、完整 body 和其余全部头，JSON body 解析后按上述 ID/元数据规则比较。仅 date（响应时钟）、connection/keep-alive/transfer-encoding（逐跳传输头）不比。**content-length 保留**。SSE/NDJSON body 保留全字节顺序；chunk 切分与毫秒值不比较，独立 oracle 验证增量到达和首末时差，防缓冲到末尾才返回。
+HTTP 精确比 path、status、原始状态行（含协议版本与说明）、完整 body 和其余全部头；重复头保留多值与顺序，JSON body 解析后按上述 ID/元数据规则比较。仅 date（响应时钟）、connection/keep-alive/transfer-encoding（逐跳传输头）不比。**content-length 保留**。SSE/NDJSON body 保留全字节顺序；chunk 切分与毫秒值不比较，独立 oracle 验证增量到达和首末时差，防缓冲到末尾才返回。
+
+公共 HTTP 行必须与实际请求 ID、对应响应和同一自有 socket 的原始字节绑定；逻辑正文与 hex 不一致、缺失或歧义配对、未登记的额外业务调用均拒绝。飞书 mock 比较保留所有收发内容、调用次数及同一 socket 内顺序；不同 socket 的调度先后与观察器 socket 编号不作为业务差异。上述实现调整仍须在当前源码版本重新校准、回归与登记冻结，不能沿用旧版成绩。
 
 扫描真实 home/project 的目录与文件，不用缓存快照冒充原件；JSON/JSONL 保留所有内容并归一化；普通 UTF-8 文本保持全文，二进制以 base64 精确比较；SQLite 用只读 iterdump 比 schema/行内容。拒绝符号链接、坏 JSON/截断 JSONL。只排除 home/logs/、home/telemetry/ 下运行诊断，原始目录仍保存。不排除 transcript、projections、runs/registry、cron、skills、config、token、工具产物。
 

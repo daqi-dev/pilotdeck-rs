@@ -39,6 +39,7 @@ from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
 NATIVE_PROCESS = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+OPTIONS = ROOT / 'src/pilotdeck-gateway/src/native_process/options.rs'
 MAIN = ROOT / 'src/pilotdeck-gateway/src/main.rs'
 UNIT_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs'
 INTEGRATION = ROOT / 'src/pilotdeck-gateway/tests/mode_routing.rs'
@@ -56,7 +57,7 @@ mutations = [
     # #1303 option A is the pinned default: an unset config item must keep
     # the proxy routing. Flipping the None arm routes the default entry to
     # native, so the unit matrix's first assertion dies.
-    ('mode-default-native', NATIVE_PROCESS,
+    ('mode-default-native', OPTIONS,
      '    match mode {\n'
      '        None => Ok(false),\n'
      '        Some(value) => match value.to_str() {\n'
@@ -71,13 +72,13 @@ mutations = [
     # `native` must route to the native composition; ignoring it turns every
     # config-driven native start into a proxy start (the rollback target
     # only, with no way forward).
-    ('mode-env-ignored', NATIVE_PROCESS,
+    ('mode-env-ignored', OPTIONS,
      '            Some("native") => Ok(true),',
      '            Some("native") => Ok(false),',
      UNIT_TEST, '#1354 explicit native mode'),
     # Fail closed: any other value is rejected at startup. Accepting the
     # invalid arm silently falls through to the proxy default.
-    ('mode-invalid-accepted', NATIVE_PROCESS,
+    ('mode-invalid-accepted', OPTIONS,
      '            _ => {\n'
      '                Err("gateway mode (PILOTDECK_GATEWAY_MODE) must be exactly proxy or native.".into())\n'
      '            }',
@@ -85,7 +86,7 @@ mutations = [
      UNIT_TEST, '#1354 invalid gateway mode'),
     # The empty string is a value, not an unset key: it must stay rejected
     # (#1369 shape), not degrade into the default.
-    ('mode-empty-accepted', NATIVE_PROCESS,
+    ('mode-empty-accepted', OPTIONS,
      '        Some(value) => match value.to_str() {\n'
      '            Some("proxy") => Ok(false),',
      '        Some(value) if value.is_empty() => Ok(false),\n'
@@ -131,7 +132,7 @@ mutations = [
     # (#1354): renaming the removal to a dead key keeps
     # PILOTDECK_GATEWAY_MODE in the child environment, so the environment
     # pin's entry-scope marker dies.
-    ('mode-env-sinks', NATIVE_PROCESS,
+    ('mode-env-sinks', OPTIONS,
      '    inherited.remove("PILOTDECK_GATEWAY_MODE");',
      '    inherited.remove("PILOTDECK_MODE_SINK_UNUSED");',
      ENV_TEST, '#1354 entry-scope mode item not inherited'),
@@ -316,7 +317,7 @@ def main():
     # `native-process`): the tree lock is taken once around every case, so a
     # sibling suite serializes against this run instead of interleaving
     # between its cases.
-    guarded = [NATIVE_PROCESS, MAIN, UNIT_TESTS, INTEGRATION, COMMON,
+    guarded = [NATIVE_PROCESS, OPTIONS, MAIN, UNIT_TESTS, INTEGRATION, COMMON,
                Path(__file__).resolve(),
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py',

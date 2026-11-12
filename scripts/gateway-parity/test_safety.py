@@ -533,7 +533,7 @@ class Safety(unittest.TestCase):
                 with self.subTest(parent=parent, field=field):
                     self.assertNotEqual(Normalizer().value(dict(parent, **{field: 1})),
                                         Normalizer().value(dict(parent, **{field: 2})))
-        containers = [({'projectKey': 'p', 'fullPath': 'p', 'name': 'n', 'lastActivity': 1}, 'createdAt'),
+        containers = [({'projectKey': 'p', 'fullPath': 'p', 'name': 'n', 'sessionCount': 0, 'lastActivity': 1}, 'createdAt'),
                       ({'projectKey': 'p', 'path': 'p', 'name': 'n'}, 'lastActivity'),
                       ({'ownerId': 's', 'kind': 'question', 'toolCallId': 't', 'requestId': 'r'}, 'createdAt'),
                       ({'runId': 'r', 'ownerPid': 1, 'acceptedAt': 1}, 'updatedAt')]
@@ -974,7 +974,8 @@ class ImportIsolation(unittest.TestCase):
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
                                     'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py',
                                     'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py',
-                                    'retirement_standard_http.py', 'retirement_public_http.py', 'test_retirement_standard_http.py')}
+                                    'retirement_standard_http.py', 'retirement_public_http.py', 'test_retirement_standard_http.py',
+                                    'test_retirement_public_http.py', 'test_project_clock_scope.py')}
         self.assertEqual(set(contract['errors']),
                          {'ordinary', 'interrupt', 'timeout', 'permission', 'subprocess_timeout',
                           'apparatus', 'rule_only', 'system_exit'}, message + ': required exception classes')
@@ -1941,7 +1942,8 @@ class ApparatusInputs(unittest.TestCase):
             'controls/run_all.py', 'controls/prerequisites.py',
             'controls/session_domain.py', 'host_suite.py', 'retirement_native.py',
             'retirement_cold.py', 'retirement_entries.py', 'retirement_standard_http.py',
-            'retirement_public_http.py', 'test_retirement_standard_http.py']), '#1140 complete standard bootstrap entry set')
+            'retirement_public_http.py', 'test_retirement_standard_http.py', 'test_retirement_public_http.py',
+            'test_project_clock_scope.py']), '#1140 complete standard bootstrap entry set')
         self.assertEqual(len(set(blocks.values())), 1,
                          '#1140 apparatus bootstrap differs between entries')
         block = next(iter(blocks.values()))
@@ -1980,7 +1982,8 @@ class ApparatusInputs(unittest.TestCase):
                    and name not in ('common.py', '_guard.py', 'test_safety.py',
                                     'controls/prerequisites.py', 'linux_group_cleanup.py', 'host_suite.py',
                                     'retirement_native.py', 'retirement_cold.py', 'retirement_entries.py',
-                                    'retirement_standard_http.py', 'retirement_public_http.py', 'test_retirement_standard_http.py')]
+                                    'retirement_standard_http.py', 'retirement_public_http.py', 'test_retirement_standard_http.py',
+                                    'test_retirement_public_http.py', 'test_project_clock_scope.py')]
         for name in entries:
             with self.subTest(entry=name):
                 text = (folder / name).read_text(encoding='utf-8')

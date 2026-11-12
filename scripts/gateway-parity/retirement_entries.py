@@ -395,6 +395,7 @@ def verify_owned_process(d, native, receipt_ref, raw_ref, channel, *,
     deployment = None
     if deployment_ref is not None:
         public = d._load('retirement_public_http', d.SCRIPT / 'retirement_public_http.py')
+        _verify_cli_imports(_apparatus)
         deployment = public.verify_deployment(d, native, deployment_ref)
         mapped = deployment['executables'][executable_role]
         expected_path = mapped['path']
@@ -676,7 +677,9 @@ def report_entries(d, native, baseline, methods, rounds, coverage, outcome, *, p
     inventory, manifest_sha = expected_rows(d, baseline, methods)
     observed = production_results(d, native, baseline, product_capture.resolve(strict=True)) if product_capture else {}
     channels = channel_results(d, native, product_capture, baseline)
-    public_http = _load('retirement_public_http', _apparatus / 'retirement_public_http.py').report(
+    public = _load('retirement_public_http', _apparatus / 'retirement_public_http.py')
+    _verify_cli_imports(_apparatus)
+    public_http = public.report(
         d, native, baseline, product_capture, rounds)
     result = []
     for expected in inventory:

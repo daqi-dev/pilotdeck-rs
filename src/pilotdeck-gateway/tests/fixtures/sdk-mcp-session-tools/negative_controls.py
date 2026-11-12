@@ -243,6 +243,7 @@ def main():
     guarded = [TOOLS, PROCESS_TEST,
                ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs',
                ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
+               ROOT / 'src/pilotdeck-gateway/src/native_process/options.rs',
                ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs',
                ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs',
                ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs',

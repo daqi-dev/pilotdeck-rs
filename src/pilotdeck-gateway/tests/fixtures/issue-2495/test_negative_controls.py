@@ -573,7 +573,7 @@ class TreeLockBusy(unittest.TestCase):
         def fake_mutating_sources(root, paths, **kwargs):
             yield {path: b'fixture bytes' for path in paths}
             raise negative_process.SourceBaselineError(
-                root, 'src/pilotdeck-gateway/src/native_process/services.rs',
+                root, 'src/pilotdeck-gateway/src/native_process/services/attachments.rs',
                 'simulated git failure on the restore re-verify')
 
         with patch.object(negative_process, 'mutating_sources',
@@ -611,7 +611,7 @@ class TreeLockBusy(unittest.TestCase):
         @contextlib.contextmanager
         def fake_mutating_sources(root, paths, **kwargs):
             raise negative_process.SourceBaselineError(
-                root, 'src/pilotdeck-gateway/src/native_process/services.rs',
+                root, 'src/pilotdeck-gateway/src/native_process/services/attachments.rs',
                 'simulated sibling residue on disk')
             yield {path: b'fixture bytes' for path in paths}
 

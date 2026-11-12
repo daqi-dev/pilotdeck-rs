@@ -25,6 +25,7 @@ from native_entry_binding import (
 
 ROOT = Path(__file__).resolve().parents[5]
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+OPTIONS = ROOT / 'src/pilotdeck-gateway/src/native_process/options.rs'
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
 # Only the three key assertions kill (the marked check after the rejection
 # gate; a child that advertises listening reaches it too). Launch, pipe,
@@ -121,7 +122,7 @@ def main():
         args = [case.test, '--', '--exact']
         try:
             # Protect the product call site, the judge and the bound test.
-            with mutating_sources(ROOT, [case.path, Path(__file__).resolve(), TEST_FILE]) as originals:
+            with mutating_sources(ROOT, [case.path, OPTIONS, Path(__file__).resolve(), TEST_FILE]) as originals:
                 original = originals[case.path].decode()
                 changed = mutate(case, original)
                 if not passed(run(case.mutation + '-positive', args), case.test):

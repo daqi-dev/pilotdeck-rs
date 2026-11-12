@@ -14,6 +14,8 @@ from _shared import mutant_switch
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_http.rs'
+SOURCE_RESPONSE = ROOT / 'src/pilotdeck-gateway/src/native_http/response.rs'
+SOURCE_STATIC_ASSETS = ROOT / 'src/pilotdeck-gateway/src/native_http/static_assets.rs'
 SOURCE_PROXY = ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs'
 SOURCE_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs'
 PREFIX = 'native_http::tests::'
@@ -23,8 +25,8 @@ switches = [
     ('native-http-target-bytes-off', SOURCE, 'non_ascii_path', '#1209 cell non-ascii-path normalized response'),
     ('native-http-normalization-off', SOURCE, 'traversal_collapses_before_the_static_root', '#1209 traversal normalizes to the target file'),
     ('native-http-token-loopback-skip', SOURCE, 'local_token_requires_loopback_binding', '#1209 non-loopback local-token is a 404'),
-    ('native-http-404-message', SOURCE, 'not_found_body_matches_ts', '#1209 404 body bytes'),
-    ('native-http-containment-off', SOURCE, 'static_guard_rejects_escape', '#1209 containment guard rejects escape'),
+    ('native-http-404-message', SOURCE_RESPONSE, 'not_found_body_matches_ts', '#1209 404 body bytes'),
+    ('native-http-containment-off', SOURCE_STATIC_ASSETS, 'static_guard_rejects_escape', '#1209 containment guard rejects escape'),
     # fix-r1: keep-alive/close; the mutant disables close detection so every
     # response closes, which diverges on a keep-alive cell, not on the close
     # cell whose bytes it reproduces.
@@ -205,7 +207,7 @@ switches = [
     # so the case-insensitive upper.txt lookup keeps the golden's
     # octet-stream content type; the mutant adds a .txt mapping to
     # content_type_for, so the pinned premise fails at its own assertion.
-    ('native-http-content-type-txt', SOURCE, 'static_upper_borrow_premise_holds',
+    ('native-http-content-type-txt', SOURCE_STATIC_ASSETS, 'static_upper_borrow_premise_holds',
      "#1383 borrow premise: CONTENT_TYPES has no .txt, so upper.txt keeps the golden's application/octet-stream content type"),
     # #1383: static-upper-lower is the only routed cell whose path
     # case-collides with a fixture file; the mutant routes one more
@@ -232,12 +234,13 @@ switches = [
      "#2153 the exemption predicate admits exactly the oracle's bare-400 cells"),
     ('native-http-cl0-mask-always', SOURCE_TESTS, 'only_the_registered_cells_mask_a_content_length_zero',
      '#2153 an injected content-length: 0 on the unregistered health cell must not normalize away'),
-    ('native-http-parser-400-cl0-off', SOURCE, 'content_length_zero_stays_scoped_to_the_registered_rejections',
+    ('native-http-parser-400-cl0-off', SOURCE_RESPONSE, 'content_length_zero_stays_scoped_to_the_registered_rejections',
      '#2153 pin bad-method-foo: the registered bare 400 carries content-length: 0'),
     ('native-http-served-head-cl0', SOURCE, 'health_head',
      '#1209 cell health-head normalized response'),
 ]
-GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
+GUARDED = [SOURCE, SOURCE_RESPONSE, SOURCE_STATIC_ASSETS,
+    ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',
     ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs',
     ROOT / 'src/pilotdeck-gateway/src/http_proxy_tests.rs',

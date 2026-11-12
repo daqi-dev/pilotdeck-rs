@@ -17,6 +17,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+OPTIONS = ROOT / 'src/pilotdeck-gateway/src/native_process/options.rs'
 SERVER_HOST = ROOT / 'src/pilotdeck-gateway/src/native_process/server_host.rs'
 SKILLS = ROOT / 'src/pilotdeck-gateway/src/native_process/skills.rs'
 FAMILIES = ROOT / 'src/pilotdeck-gateway/src/native_process/families.rs'
@@ -150,22 +151,22 @@ impl Clone for ReplacementCoordinator {
      'register_project_at(options, std::path::Path::new(""))',
      'register_project_at(options, &std::env::current_dir()?)',
      'native_process::tests::review::absolute_marker_deleted_cwd_worker', '#1137 absolute marker ignores deleted cwd'),
-    ('absolute-project-eager-cwd', SOURCE,
+    ('absolute-project-eager-cwd', OPTIONS,
      'Self::parse_at(args, Path::new(""))', 'Self::parse_at(args, &std::env::current_dir()?)',
      'native_process::tests::review::absolute_marker_deleted_cwd_worker', '#1137 absolute project parse ignores deleted cwd'),
-    ('project-relative-rejected', SOURCE,
+    ('project-relative-rejected', OPTIONS,
      'let project = crate::metadata::resolve_process_path(cwd, Path::new(take("--project")?))?;',
      'let project = directory(Path::new(take("--project")?), "project")?;',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 project options accept lexical paths'),
-    ('project-canonical-identity', SOURCE,
+    ('project-canonical-identity', OPTIONS,
      'let physical_project = directory(&project, "project")?;',
      'let physical_project = directory(&project, "project")?; let project = physical_project.clone();',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 project identity matches TS lexical resolve'),
-    ('project-dotdot-not-normalized', SOURCE,
+    ('project-dotdot-not-normalized', OPTIONS,
      'let project = crate::metadata::resolve_process_path(cwd, Path::new(take("--project")?))?;',
      'let project = cwd.join(Path::new(take("--project")?));',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 project identity matches TS lexical resolve'),
-    ('project-physical-separation-lost', SOURCE,
+    ('project-physical-separation-lost', OPTIONS,
      'if home.starts_with(&physical_project) || physical_project.starts_with(&home) {',
      'if home.starts_with(&project) || project.starts_with(&home) {',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 lexical project retains physical home separation'),
@@ -255,7 +256,7 @@ impl Clone for ReplacementCoordinator {
     # machine's match (a clean signal exit that reports failure is exactly
     # the #1071 regression this control kills).
     ('signal-exit-status', SERVER_HOST, '        Ok(()) => Ok(if restart {\n            HostExit::Restart\n        } else {\n            HostExit::Stopped\n        }),', '        Ok(()) => { let _ = restart; Err("#1071 incorrect clean signal status".into()) },', 'executable_native_and_a4', '#1071 executable clean signal exit'),
-    ('non-utf8-environment', SOURCE,
+    ('non-utf8-environment', OPTIONS,
      'value.to_string_lossy().into_owned()',
      'value.to_str().expect("#1071 invalid environment mutation").to_owned()',
      'native_process::tests::explicit_options_and_environment', '#1071 non UTF-8 environment does not panic'),
@@ -272,27 +273,27 @@ impl Clone for ReplacementCoordinator {
      '    let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());',
      '    let explicit_native = false\n        && pilotdeck_gateway::native_process::native_requested(first.as_deref());',
      'explicit_entry_selects_parser', '#1071 native first argument selects native parser'),
-    ('opt-in', SOURCE,
+    ('opt-in', OPTIONS,
      'first == Some(std::ffi::OsStr::new("--native"))',
      'first == Some(std::ffi::OsStr::new("--other"))',
      'native_process::tests::explicit_options_and_environment', '#1071 explicit native switch'),
-    ('isolated-config', SOURCE,
+    ('isolated-config', OPTIONS,
      'inherited.remove("PILOTDECK_CONFIG_PATH");',
      'inherited.remove("UNUSED_CONFIG_PATH");',
      'native_process::tests::explicit_options_and_environment', '#1071 inherited authority removed'),
-    ('separate-roots', SOURCE,
+    ('separate-roots', OPTIONS,
      'if home.starts_with(&physical_project) || physical_project.starts_with(&home) {',
      'if false && (home.starts_with(&physical_project) || physical_project.starts_with(&home)) {',
      'native_process::tests::explicit_options_and_environment', '#1071 separated roots'),
-    ('bounded-drain', SOURCE,
+    ('bounded-drain', OPTIONS,
      'if drain_ms == 0 || drain_ms > 300_000 {',
      'if false && (drain_ms == 0 || drain_ms > 300_000) {',
      'native_process::tests::explicit_options_and_environment', '#1071 invalid configuration rejected'),
-    ('loopback', SOURCE,
+    ('loopback', OPTIONS,
      'listen.ip() != Ipv4Addr::LOCALHOST',
      'false && listen.ip() != Ipv4Addr::LOCALHOST',
      'native_process::tests::explicit_options_and_environment', '#1071 invalid configuration rejected'),
-    ('ambient-state', SOURCE,
+    ('ambient-state', OPTIONS,
      'if env.get(key).is_some_and(|v| !v.is_empty()) {',
      'if false && env.get(key).is_some_and(|v| !v.is_empty()) {',
      'native_process::tests::explicit_options_and_environment', '#1071 ambient state refused'),
@@ -392,7 +393,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [SOURCE, SERVER_HOST, SKILLS, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, PROJECT_SCOPE, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
+    guarded = [SOURCE, OPTIONS, SERVER_HOST, SKILLS, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, PROJECT_SCOPE, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
                ROOT / 'src/pilotdeck-gateway/src/lib.rs',

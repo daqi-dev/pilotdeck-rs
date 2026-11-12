@@ -166,6 +166,7 @@ def main():
         MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS, NATIVE_WS, CRON, CRON_TESTS,
         ROOT / 'src/pilotdeck-gateway/src/lib.rs',
         ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
+        ROOT / 'src/pilotdeck-gateway/src/native_process/options.rs',
         ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
         ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
         FIXTURE.parent / 'negative_process.py', FIXTURE.parent / 'negative_suite.py',

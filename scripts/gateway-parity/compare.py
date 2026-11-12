@@ -71,6 +71,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -169,7 +170,28 @@ class Normalizer:
         pending = 'requestId' in parent and {'ownerId', 'kind', 'toolCallId'} <= parent.keys()
         registry = {'runId', 'ownerPid', 'acceptedAt'} <= parent.keys()
         if key == 'createdAt':
-            return transcript or cron or pending or project
+            # Fixed TS WebProjectSummary / summarizeProject uses fullPath;
+            # path is the approved compatibility spelling. A business object
+            # with project-like identifiers is not a summary. Keep this strict
+            # predicate local to createdAt: lastActivity retains its own scope.
+            project_summary = (
+                {'projectKey', 'name', 'sessionCount', 'createdAt'} <= parent.keys()
+                and ('path' in parent or 'fullPath' in parent)
+                and parent.keys() <= {'projectKey', 'name', 'path', 'fullPath',
+                                     'sessionCount', 'createdAt', 'lastActivity'}
+                and all(isinstance(parent[field], str)
+                        for field in ('projectKey', 'name', 'path', 'fullPath')
+                        if field in parent)
+                # summarizeProject derives this count from sessions.length.
+                and type(parent['sessionCount']) is int and parent['sessionCount'] >= 0
+                # bool is an int subclass in Python, but not a JSON number.
+                # Integers are finite; test floats without coercing large ints.
+                and all(type(parent[field]) is int
+                        or (type(parent[field]) is float and math.isfinite(parent[field]))
+                        for field in ('createdAt', 'lastActivity')
+                        if field in parent)
+            )
+            return transcript or cron or pending or project_summary
         if key == 'updatedAt':
             return cron or {'firstPrompt', 'lastPrompt'} <= parent.keys() or 'isSnapshot' in parent or registry
         if key in ('startedAt', 'completedAt'):

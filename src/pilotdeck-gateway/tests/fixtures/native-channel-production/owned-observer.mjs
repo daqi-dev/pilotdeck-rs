@@ -37,7 +37,7 @@ const originalEmit=http.Server.prototype.emit;
 http.Server.prototype.emit=function(event,...args){if(event==='request'){
  const [request,response]=args,id=sequence++;const incoming=[];const outgoing=[];let inBytes=0,outBytes=0;
  request.on('data',chunk=>{const b=bytes(chunk);inBytes+=b.length;if(inBytes<=maxBytes)incoming.push(b);});
- request.on('end',()=>append('mock-http-request',{id,method:request.method,url:request.url,headers:request.headers,rawHeaders:request.rawHeaders,local:{host:request.socket.localAddress,port:request.socket.localPort},remote:{host:request.socket.remoteAddress,port:request.socket.remotePort},body:{bytes:inBytes,rawBytesHex:Buffer.concat(incoming).toString('hex'),truncated:inBytes>maxBytes}}));
+ request.on('end',()=>append('mock-http-request',{id,socket:tcpSocket(request.socket),method:request.method,url:request.url,headers:request.headers,rawHeaders:request.rawHeaders,local:{host:request.socket.localAddress,port:request.socket.localPort},remote:{host:request.socket.remoteAddress,port:request.socket.remotePort},body:{bytes:inBytes,rawBytesHex:Buffer.concat(incoming).toString('hex'),truncated:inBytes>maxBytes}}));
  const write=response.write,end=response.end;
  const capture=(chunk,encoding)=>{const b=bytes(chunk,encoding);outBytes+=b.length;if(outBytes<=maxBytes)outgoing.push(b);};
  response.write=function(chunk,encoding,...rest){capture(chunk,encoding);return write.call(this,chunk,encoding,...rest);};

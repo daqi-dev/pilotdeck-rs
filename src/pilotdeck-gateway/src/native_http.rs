@@ -10,18 +10,32 @@
 //! OWS-padding reach of hyper's read buffer) are registered in the
 //! gateway-parity diff ledger; Node's 16384-byte URL+header span budget
 //! is replicated here rather than registered.
-use crate::{Body, ProxyError, http_proxy};
-use bytes::Bytes;
+use crate::Body;
+use http_body_util::BodyExt;
+use std::{io, path::PathBuf};
+
 pub(crate) mod control;
-use http_body_util::{BodyExt, Full};
+mod response;
+mod static_assets;
+
+pub(crate) use response::{
+    handler_response, handler_response_with_length, node_plain_response,
+    request_header_fields_too_large, streamed,
+};
+use response::{Unsized, finish, headless_bad_request, json_string, not_found, parser_bad_request};
+use static_assets::{normalize_root, serve_static};
+
+#[cfg(test)]
+use crate::ProxyError;
+#[cfg(test)]
+use bytes::Bytes;
+#[cfg(test)]
+use static_assets::{contained, content_type_for, node_join};
+#[cfg(test)]
 use std::{
-    io,
-    path::{Path, PathBuf},
     pin::Pin,
     task::{Context, Poll},
-    time::SystemTime,
 };
-use tokio::io::{AsyncRead, ReadBuf};
 
 /// Node v22.22.0 `http.METHODS`, the exact llhttp method table recorded in
 /// the golden oracle: llhttp rejects any other method token with a bare 400
@@ -63,17 +77,6 @@ const LLHTTP_METHODS: [&str; 35] = [
     "UNLINK",
     "UNLOCK",
     "UNSUBSCRIBE",
-];
-
-/// The static extension map, exactly `staticAssets.ts`'s `CONTENT_TYPES`:
-/// the lookup is case-sensitive (`.TXT` misses) and keyed on the final
-/// served file's extension (the index fallback serves `.html`).
-const CONTENT_TYPES: [(&str, &str); 5] = [
-    (".html", "text/html; charset=utf-8"),
-    (".js", "text/javascript; charset=utf-8"),
-    (".css", "text/css; charset=utf-8"),
-    (".json", "application/json; charset=utf-8"),
-    (".svg", "image/svg+xml"),
 ];
 
 /// What one `/feishu/webhook` request body produced: the status and the JSON
@@ -216,24 +219,6 @@ pub(crate) async fn serve_with_body(
     let text = String::from_utf8_lossy(&bytes).into_owned();
     let head = hyper::Request::from_parts(parts, ());
     finish(version, route(&head, config, Some(&text)).await?)
-}
-
-/// The HTTP/1.0 close framing every native response lane shares.
-fn finish(
-    version: hyper::Version,
-    mut response: hyper::Response<Body>,
-) -> Result<hyper::Response<Body>, io::Error> {
-    if version == hyper::Version::HTTP_10 {
-        // Node v22.22.0 answers every HTTP/1.0 request with `Connection:
-        // close` and a closed socket, even one asking to keep alive (probe
-        // `probe-fixr1.out` A). An explicit 1.0 response version keeps hyper's
-        // `fix_keep_alive` (proto/h1/conn.rs) in its HTTP/1.0 branch, which
-        // disables the connection's keep-alive instead of replacing that
-        // `Connection: close` with `keep-alive` because the request asked to
-        // keep alive.
-        *response.version_mut() = hyper::Version::HTTP_10;
-    }
-    Ok(response)
 }
 
 /// Node http.Server's parser-level admission, used by the native listeners that
@@ -490,26 +475,6 @@ pub(crate) fn whatwg_path(target: &str) -> String {
         .map_or_else(|_| "/".to_owned(), |parsed| parsed.path().to_owned())
 }
 
-/// llhttp's bare parser-level rejection: 400, `Connection: close`, no Date,
-/// no body bytes. hyper adds `content-length: 0` for the empty sized body
-/// (registered transport diff); the connection still closes.
-fn parser_bad_request() -> hyper::Response<Body> {
-    let mut response =
-        hyper::Response::new(if crate::mutants::on("native-http-parser-400-cl0-off") {
-            // #2153 negative control: the streamed empty body drops hyper's
-            // implicit `content-length: 0`, the registered-direction drift the
-            // api-web gate pin holds.
-            streamed(None)
-        } else {
-            http_proxy::empty()
-        });
-    *response.status_mut() = hyper::StatusCode::BAD_REQUEST;
-    response
-        .headers_mut()
-        .insert(hyper::header::CONNECTION, "close".parse().expect("header"));
-    response
-}
-
 /// The byte budget Node v22.22.0 actually enforces (node_http_parser.cc
 /// `TrackHeader`, probes `probe-fixr2.out` A/B and `probe-fixr3-c.out` C1):
 /// the current message's URL span plus every header-name and header-value
@@ -567,390 +532,6 @@ pub(crate) fn over_header_budget<B>(request: &hyper::Request<B>) -> bool {
         tracked >= 16_384
     };
     !crate::mutants::on("native-http-header-budget-off") && over_budget
-}
-
-/// Node's canned 431 (`_http_server.js` `requestHeaderFieldsTooLargeResponse`):
-/// `HTTP/1.1 431 Request Header Fields Too Large`, `Connection: close`, no
-/// Date, no body bytes — the same shape as the bare 400 (hyper's
-/// `content-length: 0` transport diff included).
-pub(crate) fn request_header_fields_too_large() -> hyper::Response<Body> {
-    let mut response = hyper::Response::new(if crate::mutants::on("native-http-431-cl0-off") {
-        // #2153 negative control: the streamed empty body drops hyper's
-        // implicit `content-length: 0`, the registered-direction drift the
-        // budget replay's raw pin holds.
-        streamed(None)
-    } else {
-        http_proxy::empty()
-    });
-    *response.status_mut() = hyper::StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE;
-    response
-        .headers_mut()
-        .insert(hyper::header::CONNECTION, "close".parse().expect("header"));
-    response
-}
-
-/// Node's missing-Host rejection on HTTP/1.1: 400 with `Connection: close`,
-/// a Date, and a chunked empty body.
-fn headless_bad_request() -> hyper::Response<Body> {
-    let mut response = hyper::Response::new(streamed(None));
-    *response.status_mut() = hyper::StatusCode::BAD_REQUEST;
-    let headers = response.headers_mut();
-    headers.insert(hyper::header::CONNECTION, "close".parse().expect("header"));
-    headers.insert(
-        hyper::header::DATE,
-        httpdate::fmt_http_date(SystemTime::now())
-            .parse()
-            .expect("header"),
-    );
-    response
-}
-
-/// The final 404: `text/plain; charset=utf-8`, body `not found`.
-fn not_found(keep_alive: bool) -> hyper::Response<Body> {
-    let message = if crate::mutants::on("native-http-404-message") {
-        "Not Found"
-    } else {
-        "not found"
-    };
-    handler_response(
-        hyper::StatusCode::NOT_FOUND,
-        "text/plain; charset=utf-8",
-        message.to_owned(),
-        keep_alive,
-    )
-}
-
-/// A TS `writeHead` + `end` response: unknown-length body (chunked), the
-/// literal `content-type`, Node's `Date`, and either Node's default keep-alive
-/// pair or `Connection: close` for close/HTTP/1.0 requests, in Node's exact
-/// header order.
-pub(crate) fn handler_response(
-    status: hyper::StatusCode,
-    content_type: &str,
-    body: String,
-    keep_alive: bool,
-) -> hyper::Response<Body> {
-    let mut builder = hyper::Response::builder()
-        .status(status)
-        .header(hyper::header::CONTENT_TYPE, content_type)
-        .header(
-            hyper::header::DATE,
-            httpdate::fmt_http_date(SystemTime::now()),
-        );
-    if keep_alive {
-        builder = builder
-            .header(hyper::header::CONNECTION, "keep-alive")
-            .header("keep-alive", "timeout=5");
-    } else {
-        builder = builder.header(hyper::header::CONNECTION, "close");
-    }
-    builder
-        .body(streamed(Some(Bytes::from(body))))
-        .expect("valid response")
-}
-
-/// A whole-reply body Node sizes up front (`end(string)`): hyper frames it
-/// with `content-length`, never chunked.
-fn sized_body(body: Option<String>) -> Body {
-    Full::new(body.map(Bytes::from).unwrap_or_default())
-        .map_err(|never: std::convert::Infallible| match never {})
-        .boxed()
-}
-
-/// A body whose size hyper cannot know (#1947): everything else delegates, so
-/// the frames and the end-of-stream flag are unchanged. Sibling of the
-/// webhook channel's `Unsized` (#1684), wrapping the one sized body this
-/// router builds for an HTTP/1.0 reply (the webhook branch's
-/// `handler_response_with_length`).
-struct Unsized(Body);
-
-impl hyper::body::Body for Unsized {
-    type Data = Bytes;
-    type Error = crate::ProxyError;
-
-    fn poll_frame(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
-        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.0.is_end_stream()
-    }
-
-    fn size_hint(&self) -> hyper::body::SizeHint {
-        hyper::body::SizeHint::default()
-    }
-}
-
-/// A TS `writeHead(status, headers)` followed by `end(body)` with the whole
-/// body in one call: Node sizes the reply, so unlike the streaming
-/// [`handler_response`] this is `content-length` framed. The webhook
-/// channel's `sendJson` reply (`Content-Type: application/json`).
-pub(crate) fn handler_response_with_length(
-    status: hyper::StatusCode,
-    content_type: &str,
-    body: String,
-    keep_alive: bool,
-) -> hyper::Response<Body> {
-    let mut builder = hyper::Response::builder()
-        .status(status)
-        .header(hyper::header::CONTENT_TYPE, content_type)
-        .header(
-            hyper::header::DATE,
-            httpdate::fmt_http_date(SystemTime::now()),
-        );
-    if keep_alive {
-        builder = builder
-            .header(hyper::header::CONNECTION, "keep-alive")
-            .header("keep-alive", "timeout=5");
-    } else {
-        builder = builder.header(hyper::header::CONNECTION, "close");
-    }
-    builder
-        .body(sized_body(Some(body)))
-        .expect("valid response")
-}
-
-/// A TS `statusCode = <status>; end(body)` response with no explicit header:
-/// like [`handler_response_with_length`] minus the `content-type` line, so
-/// Node's implicit `Date` comes first. Used by the webhook channel's plain
-/// 404 (`res.statusCode = 404; res.end("Not Found")`).
-pub(crate) fn node_plain_response(
-    status: hyper::StatusCode,
-    body: Option<String>,
-    keep_alive: bool,
-) -> hyper::Response<Body> {
-    let mut builder = hyper::Response::builder().status(status).header(
-        hyper::header::DATE,
-        httpdate::fmt_http_date(SystemTime::now()),
-    );
-    if keep_alive {
-        builder = builder
-            .header(hyper::header::CONNECTION, "keep-alive")
-            .header("keep-alive", "timeout=5");
-    } else {
-        builder = builder.header(hyper::header::CONNECTION, "close");
-    }
-    builder.body(sized_body(body)).expect("valid response")
-}
-
-/// A streaming file response with the same framing as
-/// `createReadStream().pipe(response)`.
-fn file_response(
-    content_type: &str,
-    file: tokio::fs::File,
-    keep_alive: bool,
-) -> hyper::Response<Body> {
-    let mut builder = hyper::Response::builder()
-        .status(hyper::StatusCode::OK)
-        .header(hyper::header::CONTENT_TYPE, content_type)
-        .header(
-            hyper::header::DATE,
-            httpdate::fmt_http_date(SystemTime::now()),
-        );
-    if keep_alive {
-        builder = builder
-            .header(hyper::header::CONNECTION, "keep-alive")
-            .header("keep-alive", "timeout=5");
-    } else {
-        builder = builder.header(hyper::header::CONNECTION, "close");
-    }
-    builder
-        .body(FileBody { file, done: false }.boxed())
-        .expect("valid response")
-}
-
-/// Unknown-length single-frame body: hyper cannot know the size, so it frames
-/// the response chunked like Node's `writeHead` + `end`.
-struct StreamedBody(Option<Bytes>);
-impl hyper::body::Body for StreamedBody {
-    type Data = Bytes;
-    type Error = ProxyError;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        _context: &mut Context<'_>,
-    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, ProxyError>>> {
-        Poll::Ready(
-            self.0
-                .take()
-                .map(|bytes| Ok(hyper::body::Frame::data(bytes))),
-        )
-    }
-}
-
-pub(crate) fn streamed(body: Option<Bytes>) -> Body {
-    StreamedBody(body)
-        .map_err(|error: ProxyError| error)
-        .boxed()
-}
-
-/// Streams one frame per 64 KiB read, the cadence of Node's createReadStream
-/// `highWaterMark`. Chunk boundaries of files larger than one buffer are
-/// outside the golden matrix.
-struct FileBody {
-    file: tokio::fs::File,
-    done: bool,
-}
-impl hyper::body::Body for FileBody {
-    type Data = Bytes;
-    type Error = ProxyError;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, ProxyError>>> {
-        if self.done {
-            return Poll::Ready(None);
-        }
-        let mut buffer = vec![0u8; 64 * 1024];
-        let mut read = ReadBuf::new(&mut buffer);
-        match Pin::new(&mut self.file).poll_read(context, &mut read) {
-            Poll::Ready(Ok(())) => {
-                let read = read.filled().len();
-                if read == 0 {
-                    self.done = true;
-                    Poll::Ready(None)
-                } else {
-                    buffer.truncate(read);
-                    Poll::Ready(Some(Ok(hyper::body::Frame::data(Bytes::from(buffer)))))
-                }
-            }
-            Poll::Ready(Err(error)) => Poll::Ready(Some(Err(Box::new(error) as ProxyError))),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-/// `serveStaticAsset` semantics for one already-normalized path: `/` maps to
-/// `index.html`, a missing path or directory falls back to the root
-/// `index.html`, and the containment guard rejects anything that would
-/// escape the root (defense in depth behind the URL layer).
-async fn serve_static(root: &Path, path: &str, keep_alive: bool) -> Option<hyper::Response<Body>> {
-    let pathname = if path == "/" { "/index.html" } else { path };
-    let candidate = node_join(root, pathname);
-    if !crate::mutants::on("native-http-containment-off") && !contained(root, &candidate) {
-        return None;
-    }
-    let file_path = if is_file(&candidate).await {
-        candidate
-    } else {
-        let fallback = node_join(root, "/index.html");
-        if !is_file(&fallback).await {
-            return None;
-        }
-        fallback
-    };
-    let file = tokio::fs::File::open(&file_path).await.ok()?;
-    Some(file_response(
-        content_type_for(&file_path),
-        file,
-        keep_alive,
-    ))
-}
-
-/// `resolve(staticRoot)` (staticAssets.ts:14): lexical fold of `.`/`..` and
-/// trailing separators, made absolute against the process directory for a
-/// relative root. No `canonicalize`, so symlinks stay the caller's choice.
-/// A root of `/` is kept: TS's guard then 404s everything (the required
-/// prefix would be `//`), and a failed cwd lookup maps to `/` so nothing
-/// escapes through an empty prefix.
-fn normalize_root(root: &Path) -> PathBuf {
-    let absolute = if root.is_absolute() {
-        root.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("/"))
-            .join(root)
-    };
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
-}
-
-/// Node's `resolve(join(root, pathname))`: lexical join where `.` keeps the
-/// position and `..` pops, exactly what `path.resolve` folds so the
-/// containment guard sees the final path a traversal would name.
-fn node_join(root: &Path, pathname: &str) -> PathBuf {
-    let mut joined = root.to_path_buf();
-    for segment in pathname.split('/').filter(|segment| !segment.is_empty()) {
-        match segment {
-            "." => {}
-            ".." => {
-                joined.pop();
-            }
-            _ => joined.push(segment),
-        }
-    }
-    joined
-}
-
-/// `candidate !== root && !candidate.startsWith(root + sep)`, TS's own guard.
-fn contained(root: &Path, candidate: &Path) -> bool {
-    match (root.to_str(), candidate.to_str()) {
-        (Some(root), Some(candidate)) => {
-            candidate == root || candidate.starts_with(&format!("{root}/"))
-        }
-        // Non-UTF-8 paths never reach this point in practice; reject them.
-        _ => false,
-    }
-}
-
-async fn is_file(path: &Path) -> bool {
-    tokio::fs::metadata(path)
-        .await
-        .is_ok_and(|metadata| metadata.is_file())
-}
-
-/// `CONTENT_TYPES[filePath.slice(filePath.lastIndexOf("."))]` including the
-/// JavaScript quirk that a path without a dot slices the final character,
-/// which never matches an extension key.
-fn content_type_for(file_path: &Path) -> &'static str {
-    let name = file_path.to_string_lossy();
-    let extension = name.rfind('.').map_or("", |at| &name[at..]);
-    if crate::mutants::on("native-http-content-type-txt") && extension == ".txt" {
-        // #1383: simulates the mapping gaining a `.txt` entry, which would
-        // break the premise `expected_response` borrows the `static-upper`
-        // golden under — the pinned test fails at its own assertion.
-        "text/plain; charset=utf-8"
-    } else {
-        CONTENT_TYPES
-            .iter()
-            .find(|(known, _)| *known == extension)
-            .map_or("application/octet-stream", |(_, kind)| kind)
-    }
-}
-
-/// `JSON.stringify` for one string value: quote, backslash, and the C0
-/// escapes JSON.stringify emits, other characters passed through.
-fn json_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            character if (character as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", character as u32));
-            }
-            character => out.push(character),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

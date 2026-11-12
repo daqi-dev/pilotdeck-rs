@@ -29,7 +29,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
-SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
+SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services/attachments.rs'
+SERVICES_PARENT = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 # #1887: the shared "home" guard now lives beside the store it serves, so the
 # two rows that mutate it directly point here.
@@ -403,7 +404,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [SERVICES, TESTS, STORE, Path(__file__).resolve(),
+    guarded = [SERVICES, SERVICES_PARENT, TESTS, STORE, Path(__file__).resolve(),
                FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/src/lib.rs']

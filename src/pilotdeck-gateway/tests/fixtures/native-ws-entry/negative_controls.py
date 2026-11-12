@@ -147,7 +147,7 @@ switches = [
     # can catch it — the mutant appends one unrecorded id to that leg.
     ('native-ws-budget-cl0-stale', TESTS, PREFIX + 'parser_admission_cells_cover_exactly_the_oracle_431s',
      "#2153 the exemption list itself is exactly the oracle's 431 cells, so a stale entry points at the cell to re-check"),
-    ('native-http-431-cl0-off', ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+    ('native-http-431-cl0-off', ROOT / 'src/pilotdeck-gateway/src/native_http/response.rs',
      PREFIX + 'budget_content_length_zero_stays_scoped_to_the_registered_431s',
      '#2153 pin: the registered 431 carries content-length: 0'),
     ('native-ws-101-cl0', ROOT / 'src/pilotdeck-gateway/src/acceptor.rs',
@@ -208,6 +208,8 @@ def main():
                # include_str!, so a mid-run edit must be caught (native-http-basic
                # lists its own fixture files the same way).
                ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+               ROOT / 'src/pilotdeck-gateway/src/native_http/response.rs',
+               ROOT / 'src/pilotdeck-gateway/src/native_http/static_assets.rs',
                FIXTURE.parent / 'native-ws-upgrade-budget' / 'oracle.json',
                FIXTURE.parent / 'native-ws-upgrade-budget' / 'generate.mts',
                FIXTURE.parent / 'native-ws-upgrade-budget' / 'README.md',

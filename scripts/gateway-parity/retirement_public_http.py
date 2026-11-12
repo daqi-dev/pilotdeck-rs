@@ -67,6 +67,7 @@ run_entry = _guard.run_entry
 common = _load('common', _apparatus / 'common.py')
 # <<< apparatus bootstrap
 import atexit,hashlib,json,re,shutil,subprocess
+from http.client import HTTPException
 from pathlib import Path
 atexit.register(shutil.rmtree,sys.pycache_prefix,ignore_errors=True)
 IDS=('gateway.http:ANY /feishu/webhook',*(f'gateway.http:POST /api/module-host/{name}' for name in ('describe','call','approvals/status','approvals/resume')))
@@ -78,8 +79,22 @@ def artifact(d,value):
  if not p.is_file():raise FileNotFoundError(str(p))
  d.require(p.is_absolute() and p.is_file() and not p.is_symlink() and p.resolve()==p and p.is_relative_to(d.ROOT/'_tmp'),'PUBLIC_HTTP_RAW','missing or aliased public HTTP original');contracts=d._load('retirement_public_http_contracts',d.ROOT/'src/pilotdeck-gateway/tests/fixtures/retirement-public-http/contracts.py');contracts.pinned_bytes(p,value['sha256']);return p
 
+def authenticated_contracts(d,native):
+ """Authenticate the bytes actually executed, including cached fixture code."""
+ path=d.ROOT/'src/pilotdeck-gateway/tests/fixtures/retirement-public-http/contracts.py'
+ contracts=d._load('retirement_public_http_contracts',path)
+ expected=[row['sha256'] for row in native.source['files'] if row['path']==str(path.relative_to(d.ROOT))]
+ executed=getattr(contracts,'_apparatus_source',None)
+ d.require(len(expected)==1 and isinstance(executed,bytes)
+           and Path(contracts.__file__).resolve()==path.resolve()
+           and hashlib.sha256(executed).hexdigest()==expected[0]
+           and sha(path)==expected[0],
+           'PUBLIC_HTTP_CONTRACT_SOURCE','executed contract source differs from candidate manifest')
+ return contracts
+
 def verify_package(d,native,deployment_ref):
  """Permit only this source's byte-identical new install-shaped deployment."""
+ authenticated_contracts(d,native)
  file=artifact(d,deployment_ref);value=d.read(file);root=Path(value['root']);tracked={str(d.ROOT/x['path']):x['sha256'] for x in native.source['files']}
  d.require(root.is_absolute() and root.resolve()==root and root.is_relative_to(d.ROOT/'_tmp') and root.is_dir(),'PUBLIC_HTTP_DEPLOYMENT','invalid package root')
  d.require(value['sourceHead']==native.source['head'] and value['sourceManifest']=={'path':str(native.source_manifest),'sha256':native.source_sha} and value['originalCandidate']==str(native.manifest.parent),'PUBLIC_HTTP_DEPLOYMENT_SOURCE','deployment source mismatch')
@@ -106,6 +121,7 @@ def verify_package(d,native,deployment_ref):
 
 def verify_deployment(d,native,deployment_ref):
  """Certify logical container paths only from the actual retained Docker mounts."""
+ authenticated_contracts(d,native)
  file=artifact(d,deployment_ref);value=d.read(file);package=verify_package(d,native,value['packaging'])
  tracked={str(d.ROOT/x['path']):x['sha256'] for x in native.source['files']}
  producer=value['producer'];d.require(tracked.get(producer['path'])==producer['sha256'] and sha(producer['path'])==producer['sha256'],'PUBLIC_HTTP_LAYOUT_SOURCE','untracked layout producer')
@@ -126,7 +142,7 @@ def verify_deployment(d,native,deployment_ref):
  for row in value['runs']:
   proof=row['proof'];command_file=artifact(d,proof['command']);run=command_file.parent;command=d.read(command_file);inspections=d.read(artifact(d,proof['inspect']));cleanup=d.read(artifact(d,proof['cleanup']))
   d.require(len(inspections)==1,'PUBLIC_HTTP_LAYOUT_INSPECT','one owned container required');inspection=inspections[0];config=inspection['Config'];host=inspection['HostConfig']
-  d.require(inspection['Name']=='/'+command['name'] and cleanup['name']==command['name'] and cleanup['ownedContainerStillRunning']=='' and cleanup['clientExitCode']==0,'PUBLIC_HTTP_LAYOUT_CLEANUP','owned container did not reap cleanly')
+  d.require(inspection['Name']=='/'+command['name'] and cleanup['name']==command['name'] and cleanup['ownedContainerStillRunning']=='' and type(cleanup['clientExitCode']) is int and cleanup['clientExitCode']==0,'PUBLIC_HTTP_LAYOUT_CLEANUP','owned container did not reap cleanly')
   d.require(host['NetworkMode']=='none' and host['ReadonlyRootfs'] is True and config['WorkingDir']=='/app/project' and config['Image']=='sha256:eb58eb269804b8a9b2bb9ceeb9a175cac9b79612d4c8dafe0a987b277bd55683','PUBLIC_HTTP_LAYOUT_ISOLATION','container profile changed')
   actual={x['Destination']:(x['Source'],not x['RW']) for x in inspection['Mounts'] if x['Type']=='bind'}
   expected={str(x):(str(x),True) for x in [Path('/usr'),Path('/lib'),Path('/etc/ld.so.cache'),d.ROOT,baseline,node.parent.parent,Path('/home/clawbox-08/opt/libuv-1.52.1')]}
@@ -144,16 +160,23 @@ def verify_deployment(d,native,deployment_ref):
  return {**package,'executables':executables,'originals':originals,'runs':runs,'baseline':{'path':'/app/source','hostPath':str(baseline)},'preloads':[{'path':str(preload),'hostPath':str(preload),'sha256':sha(preload)}],'node':value['node'],'baselineDependencies':value['baselineDependencies']}
 
 
-def http_projection(contracts,rows,records,normalizer,*,feishu=False):
- """Retain every response header except the four frozen hop/date fields."""
+def http_projection(contracts,rows,records,normalizer,*,feishu=False,pairs=None):
+ """Project the exact request-bound wire exchange, never a body-only match."""
+ origins={'http://127.0.0.1:28610'}
+ if pairs is None:pairs=contracts.driver_wire(rows,records,origins,feishu=feishu)
+ wires=contracts.bind_raw_http(pairs,records,origins)
+ contracts.need(len(rows)==len(wires),'HTTP_RAW_ROW_COUNT')
  result=[];excluded={'date','connection','keep-alive','transfer-encoding'}
- for row in rows:
-  matches=[r for r in records if r.get('kind')=='fixture-http-inbound-response' and r['status']==row['status'] and r['body']['rawBytesHex']==row['responseBodyHex']]
-  contracts.need(bool(matches),'HTTP_HEADERS_NOT_IN_TRACE');headers=matches[0]['headers']
-  if not feishu:contracts.need(headers==row['headers'],'HTTP_ROW_HEADERS_DIFFER_FROM_TRACE')
-  response=bytes.fromhex(row['responseBodyHex']).decode('utf-8')
-  content=response if headers.get('content-type','').split(';')[0]=='application/x-ndjson' else normalizer.value(json.loads(response))
-  result.append({'method':row.get('method','POST'),'path':row.get('path','/feishu/webhook'),'requestBodyHex':row['requestBodyHex'],'status':row['status'],'headers':{k:v for k,v in sorted(headers.items()) if k.lower() not in excluded},'response':content})
+ for row,wire in zip(rows,wires):
+  request_,response=wire['request'],wire['response'];headers=response['headers'];text=response['body'].decode('utf-8')
+  types=headers.get('content-type',[]);contracts.need(len(types)==1,'HTTP_CONTENT_TYPE')
+  content=text if types[0].split(';')[0] in ('application/x-ndjson','text/event-stream') else normalizer.value(json.loads(text))
+  result.append({'method':request_['method'],'path':request_['target'],'requestLine':request_['line'],
+      'requestHeaders':request_['headers'],'requestBodyHex':request_['body'].hex(),'requestTrailers':request_['trailers'],
+      'status':response['status'],'statusLine':response['statusLine'],
+      'headers':{k:v for k,v in sorted(headers.items()) if k not in excluded},
+      'trailers':response['trailers'],'informational':[{**item,'headers':{k:v for k,v in item['headers'].items() if k not in excluded}} for item in response['informational']],
+      'response':content})
  return result
 
 
@@ -164,7 +187,7 @@ def report(d,native,baseline,capture,rounds):
  if not path.is_file():return results
  originals=[];missing=[]
  try:
-  contracts=d._load('retirement_public_http_contracts',d.ROOT/'src/pilotdeck-gateway/tests/fixtures/retirement-public-http/contracts.py');compare=d._load('compare',d.SCRIPT/'compare.py');value=d.read(path)
+  contracts=authenticated_contracts(d,native);compare=d._load('compare',d.SCRIPT/'compare.py');_verify_cli_imports(_apparatus);value=d.read(path)
   d.require(value['schemaVersion']==1,'PUBLIC_HTTP_SCHEMA','unsupported capture');artifact(d,value['sourceManifest']);artifact(d,value['candidateManifest'])
   if value['sourceManifest']!={'path':str(native.source_manifest),'sha256':native.source_sha} or value['candidateManifest']!={'path':str(native.manifest),'sha256':native.manifest_sha}:return results
   d.require(value['runtimeLibraries']==native.source['runtimeLibraries'],'PUBLIC_HTTP_SOURCE','runtime inventory differs')
@@ -174,7 +197,7 @@ def report(d,native,baseline,capture,rounds):
   d.require(len(value['profiles'])==8 and {(x['profile'],x['engine']) for x in value['profiles']}=={(p,e) for p in PROFILES for e in ('ts','native')},'PUBLIC_HTTP_PROFILES','exact eight profiles required')
   cases=d.read(d.ROOT/'src/pilotdeck-gateway/tests/fixtures/retirement-public-http/feishu-cases.json')['cases'];seed=d.read(d.ROOT/'src/pilotdeck-gateway/tests/fixtures/retirement-public-http/approval-seed.json')
   for item in value['profiles']:
-   key=(item['profile'],item['engine']);run=Path(deployment['runs'][key]);d.require(item['home']==str(run/'home') and item['projectFiles']==str(run/'project') and item['collectorExit']==0,'PUBLIC_HTTP_RUN','run paths or exit differ')
+   key=(item['profile'],item['engine']);run=Path(deployment['runs'][key]);d.require(item['home']==str(run/'home') and item['projectFiles']==str(run/'project') and type(item['collectorExit']) is int and item['collectorExit']==0,'PUBLIC_HTTP_RUN','run paths or exit differ')
    raw_file=artifact(d,item['raw']);d.require(raw_file.is_relative_to(run),'PUBLIC_HTTP_RAW','raw belongs to a different run');raw=d.read(raw_file);prov=d.read(artifact(d,item['provenance']));originals.extend([item['raw'],item['provenance']])
    d.require(prov['sourceManifestSha256']==native.source_sha and prov['engine']==item['engine'] and prov['baseline']=='/app/source' and prov['nativeHead']==native.source['head'] and prov['candidateManifestSha256']==native.manifest_sha,'PUBLIC_HTTP_PROFILE_SOURCE','profile source differs')
    for producer in item['sources']:d.require(tracked.get(producer['path'])==producer['sha256'] and sha(producer['path'])==producer['sha256'],'PUBLIC_HTTP_PRODUCER','source producer changed')
@@ -183,24 +206,26 @@ def report(d,native,baseline,capture,rounds):
    process=entries.verify_owned_process(d,native,item['processReceipt'],item['raw'],'public-http:'+item['profile']+':'+item['engine'],**kwargs);missing.extend(process['missing']);originals.extend(process['originals']);records=process['transportRecords']
    expected_argv=(['/app/source/bin/pilotdeck-gateway','--native','--home','/app/home','--project','/app/project','--listen','127.0.0.1:28610','--token-file','/app/home/token','--sidecar','/app/source/bin/pilotdeck-agent-loop-sidecar','--drain-ms','2000'] if item['engine']=='native' else [value['node']['path'],*(['--import',str(d.ROOT/'src/pilotdeck-gateway/tests/fixtures/retirement-public-http/feishu-preload.mjs')] if item['profile']=='feishu' else []),'--import','/app/source/node_modules/tsx/dist/loader.mjs','/app/source/src/cli/pilotdeck.ts','server'])
    d.require(process['receipt']['process']['argv']==expected_argv and process['receipt']['process']['cwd']=='/app/project' and {x['port'] for x in process['receipt']['process']['readyListeners']}=={28610},'PUBLIC_HTTP_PROCESS_ARGV','full owned Server argv/cwd/listener differs')
-   normalizer=compare.entity_normalizer(run,{});normalizer.index(raw)
+   normalizer=compare.entity_normalizer(run,{});normalizer.index(raw);outbound=None
    if item['profile']=='feishu':
-    checked=contracts.feishu_contract(raw,cases);rows=[r for r in raw['steps'] if r.get('event')=='configured-http-webhook'];contracts.driver_wire(rows,records,{'http://127.0.0.1:28610'},feishu=True);contracts.feishu_outbound_wire(raw,records)
+    checked=contracts.feishu_contract(raw,cases);rows=[r for r in raw['steps'] if r.get('event')=='configured-http-webhook'];pairs=contracts.driver_wire(rows,records,{'http://127.0.0.1:28610'},feishu=True);outbound=contracts.feishu_outbound_wire(raw,records)
    else:
-    models=d.read(artifact(d,item['models']));formal=d.read(artifact(d,item['formalRequests']));wire=[json.loads(x) for x in artifact(d,item['providerWire']).read_text().splitlines()];contracts.provider_wire(models,formal,wire,expected_public=1 if item['profile']=='configured' else 0)
+    models=d.read(artifact(d,item['models']));formal=d.read(artifact(d,item['formalRequests']));wire=[json.loads(x) for x in artifact(d,item['providerWire']).read_text().splitlines()];outbound=contracts.provider_wire(models,formal,wire,expected_public=1 if item['profile']=='configured' else 0)
     config=run/'home/pilotdeck.yaml';files={x['path']:x for x in process['afterReapFiles']};d.require(str(config) in files and artifact(d,files[str(config)])==config,'PUBLIC_HTTP_CONFIG','missing post-reap config')
     origins=set(re.findall(r'http://127\.0\.0\.1:\d+',config.read_text()));d.require(origins=={'http://127.0.0.1:28690'},'PUBLIC_HTTP_CONFIG','mock origin differs')
     skills=deployment['skills'] if item['engine']=='native' else str(baseline/'skills');context={'project':'/app/project','mockOrigin':'http://127.0.0.1:28690','skills':skills,'skillsDisplay':'/app/source/skills','skillHashes':deployment['skillHashes'],'seedCreatedAt':seed['wait']['createdAt']}
     if item['profile']=='configured':
      durable=run/'home/staffdeck/binding/state/sessions/d2ViOnNvcC1maXh0dXJl.json';d.require(str(durable) in files,'PUBLIC_HTTP_DURABLE','missing post-reap SOP');context['durable']=d.read(artifact(d,files[str(durable)]))
-    checked=contracts.module_contract(raw,item['profile'],context,models);rows=raw['hostRows']+raw['approvalRows'] if item['profile']=='configured' else raw['rows'];contracts.driver_wire(rows,records,{'http://127.0.0.1:28610'})
-   business[key]={'contract':normalizer.value(checked),'http':http_projection(contracts,rows,records,normalizer,feishu=item['profile']=='feishu'),'disk':compare.disk(run,normalizer)};profiles[key]=item
+    checked=contracts.module_contract(raw,item['profile'],context,models);rows=raw['hostRows']+raw['approvalRows'] if item['profile']=='configured' else raw['rows'];pairs=contracts.driver_wire(rows,records,{'http://127.0.0.1:28610'})
+   business[key]={'contract':normalizer.value(checked),'http':http_projection(contracts,rows,records,normalizer,feishu=item['profile']=='feishu',pairs=pairs),'disk':compare.disk(run,normalizer)}
+   if outbound is not None:business[key]['outbound']=normalizer.value(outbound)
+   profiles[key]=item
   unequal=[p for p in PROFILES if contracts.canonical(business[(p,'ts')])!=contracts.canonical(business[(p,'native')])]
   d.require(not unequal,'PUBLIC_HTTP_BEHAVIOR','TS/native raw headers/body/home/project differ: '+str(unequal))
   if not rounds or not all(x.get('nativeWitness',{}).get('status')=='PASS' for x in rounds):missing.append('same-head-all-rounds-nativeWitness-PASS')
   for row in results.values():row.update(status='BLOCKED' if missing else 'PASS',detail={'profiles':sorted(p+'-'+e for p,e in profiles),'missing':sorted(set(missing)),'scope':'five retained entries; frozen metadata only; full HTTP headers and home/project'},originals=originals)
  except (FileNotFoundError,KeyError) as error:
   for row in results.values():row.update(status='BLOCKED',detail={'missing':['complete-public-http-originals-and-required-fields'],'error':str(error)},originals=originals)
- except (ValueError,TypeError,OSError,AssertionError) as error:
+ except (ValueError,TypeError,OSError,AssertionError,RuntimeError,IndexError,AttributeError,OverflowError,HTTPException,subprocess.SubprocessError) as error:
   for row in results.values():row.update(status='FAIL',detail={'rule':getattr(error,'rule','PUBLIC_HTTP_INVALID_EVIDENCE'),'error':str(error)},originals=originals)
  return results

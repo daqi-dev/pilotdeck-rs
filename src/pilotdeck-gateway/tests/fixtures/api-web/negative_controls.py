@@ -18,6 +18,8 @@ FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 ROUTER = ROOT / 'src/pilotdeck-gateway/src/api_web.rs'
 FILES = ROOT / 'src/pilotdeck-gateway/src/api_web/files.rs'
 NATIVE_HTTP = ROOT / 'src/pilotdeck-gateway/src/native_http.rs'
+NATIVE_HTTP_RESPONSE = ROOT / 'src/pilotdeck-gateway/src/native_http/response.rs'
+NATIVE_HTTP_STATIC_ASSETS = ROOT / 'src/pilotdeck-gateway/src/native_http/static_assets.rs'
 PREFIX = 'api_web::tests::'
 switches = [
     # bearer gate off: the missing-authorization cell is served the project
@@ -94,14 +96,15 @@ switches = [
     ('api-web-replay-cl0-off', ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
      'gate_bad_method_is_parser_bare_400',
      '#1765 the bad-method gate answers the parser bare 400 before the route group'),
-    ('native-http-parser-400-cl0-off', NATIVE_HTTP,
+    ('native-http-parser-400-cl0-off', NATIVE_HTTP_RESPONSE,
      'content_length_zero_stays_scoped_to_the_registered_gates',
      '#2153 pin gate-bad-method: the registered bare 400 carries content-length: 0'),
     ('api-web-head-404-cl0', ROUTER,
      'content_length_zero_stays_scoped_to_the_registered_gates',
      '#2153 pin projects-head: the HEAD 404 carries no content-length at all'),
 ]
-GUARDED = [ROUTER, FILES, NATIVE_HTTP, ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
+GUARDED = [ROUTER, FILES, NATIVE_HTTP, NATIVE_HTTP_RESPONSE, NATIVE_HTTP_STATIC_ASSETS,
+    ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
