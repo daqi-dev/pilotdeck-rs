@@ -1160,7 +1160,6 @@ fn session_writer_audit_is_linux_only() {
 #[cfg(target_os = "linux")]
 #[test]
 fn transient_audit_before_set_opens_with_the_window() {
-    let scratch = crate::test_scratch::Scratch::new("1632-audit");
     // Kill-on-drop: a panic between the spawn and the explicit kill must not
     // leave a `sleep` holding this process's stdout/stderr — that is exactly
     // the failure mode #1632 removes, and it would hang `cargo test`'s pipe.
@@ -1177,7 +1176,12 @@ fn transient_audit_before_set_opens_with_the_window() {
             .expect("#1632 the pre-window child starts"),
     );
     let pid = child.0.id() as i32;
-    let (audit, children_before) = TransientAudit::start(scratch.path().to_path_buf());
+    // #1723: this audit judges nothing on foreign fd holders, so the window
+    // opens children-only like the module_host #1349 one — the whole-host
+    // descriptor scan `start` arms on every sweep is the #1316 audit's cost,
+    // and its holder half's fail-closed reads would red-flag a test that
+    // never looks at them.
+    let (audit, children_before) = TransientAudit::start_children_only();
     negative_assert!(
         children_before.contains_key(&pid),
         "#1632 the window's before-set carries the child alive when it opened"

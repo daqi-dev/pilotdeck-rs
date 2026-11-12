@@ -1,7 +1,7 @@
 # audit-rerun-boundary 负控（#1723）
 
 本目录的 `negative_controls.py` 验证 #1723 加在 `test_process.rs` 审计/重跑装置上的
-五条边界守卫必须在被破坏时让绑定的父测试变红（各自在 `#1723` 消息断言处）：
+六条边界守卫必须在被破坏时让绑定的父测试变红（各自在 `#1723` 消息断言处）：
 
 - `kernel-cap-removed`：wrapper 去掉 `ulimit -f` → 内核顶消失，捕获文件能在一个
   轮询间隔的写入里越过上限；绑定 `owned_rerun_hits_the_kernel_output_cap` 的
@@ -16,10 +16,18 @@
   `owned_rerun_kills_the_whole_group_at_the_deadline` 的 stopped 断言。
 - `children-only-sweeps-nothing`：子进程 sweep 观测为空 → 窗口以空前集开窗、
   判决空转（正是该装置要抓的假绿）；绑定同一复用装置用例的 before-set 断言。
+- `finished-on-its-own-merged`：`finished_on_its_own` 退回拆分前的合并判决（时钟
+  事实 `timed_out` 而非结局）→ 在 deadline 轮询窗内自行跑完的 leader 又被读作
+  stopped；绑定谓词自身的契约测试（直接构造 `RerunOutput`：该竞态窗窄到无法经
+  `rerun_exact` 确定性驱动，被删的字面改写在一切确定性路径上都是死代码，契约靠
+  构造锁定）。
 
 每行先跑未变异的正控，再编译变异（不编译即 INVALID，不是 kill）、跑负控、恢复后
-复跑正控；逐行记录 KILLED/SURVIVED/INVALID 与原因，末尾汇总，任一行非 KILLED
-即非零退出，零 KILLED 也非零。
+复跑正控；逐行记录 KILLED/SURVIVED/INVALID/SKIPPED 与原因，末尾汇总。绑定
+`#[cfg(target_os = "linux")]` 父测试的行（`reuse-not-flagged`、
+`stopped-not-recorded`、`children-only-sweeps-nothing`）在非 Linux 宿主上记
+SKIPPED、不判 INVALID——exact 过滤器在该宿主选不出父测试，变异是无法触达而非
+未击发；任一行非 KILLED 亦非 SKIPPED 即非零退出，零 KILLED 也非零。
 
 运行（提交后，宿主；工作树守卫 `mutating_sources` 会拒绝脏树）：
 

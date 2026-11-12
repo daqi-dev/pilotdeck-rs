@@ -26,7 +26,7 @@ const RERUN_POLL: Duration = Duration::from_millis(10);
 /// Per-file cap for the rerun's captured streams. A descendant that keeps
 /// writing is exactly the regression the audit hunts, so the capture must not
 /// be able to fill the host: the leader runs under a kernel `RLIMIT_FSIZE`
-/// ([`RERUN_FSIZE_BLOCKS`]), so a write past the cap fails with `EFBIG` and
+/// ([`rerun_fsize_blocks`]), so a write past the cap fails with `EFBIG` and
 /// the writer dies of `SIGXFSZ` instead of growing the file, the wait below
 /// stops the group as the backstop for a writer that survives the signal, and
 /// the read truncates.
@@ -41,18 +41,70 @@ const RERUN_POLL: Duration = Duration::from_millis(10);
 #[cfg(unix)]
 const RERUN_OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 
-/// #1723: the `ulimit -f` argument that reproduces [`RERUN_OUTPUT_LIMIT`] in
-/// the wrapping shell's own blocks — 512 B per block in Linux `/bin/sh`
-/// (dash, the POSIX unit) and 1 KiB in macOS's (bash); both measured, see the
-/// dump xfsz case for the earlier measurement and RESULT for this one. 64 MiB
-/// is a whole number of blocks under either unit, so the byte cap is exact.
-/// A shell with the other unit would only loosen the kernel ceiling to 2×
-/// the cap — never tighten it below an audit's legitimate output — and the
-/// sampler stays the bound either way.
+/// #1723: the `ulimit -f` block unit this host's wrapping shell is *expected*
+/// to count in — 512 B per block in Linux `/bin/sh` (dash, the POSIX unit)
+/// and 1 KiB in macOS's (bash); both measured, see the dump xfsz case for the
+/// earlier measurement and RESULT for this one. The unit is a property of the
+/// wrapping *shell*, not of the OS, so this is an expectation the wrapper
+/// verifies — not a fact it trusts: a shell that counts the other way moves
+/// the kernel ceiling off [`RERUN_OUTPUT_LIMIT`], to 2× the cap in one
+/// direction (the `<=` ceiling assertions then fail falsely on every rerun
+/// audit on that host) or to half of it in the other (a legitimate rerun dies
+/// of `SIGXFSZ` at 32 MiB, and the writer the sampler's backstop exists to
+/// stop never even reaches the cap). [`rerun_fsize_blocks`] probes the
+/// actual unit once per process and fails closed when it disagrees.
 #[cfg(all(unix, target_os = "macos"))]
-const RERUN_FSIZE_BLOCKS: u64 = RERUN_OUTPUT_LIMIT / 1024;
+const RERUN_FSIZE_BLOCK_BYTES: u64 = 1024;
 #[cfg(all(unix, not(target_os = "macos")))]
-const RERUN_FSIZE_BLOCKS: u64 = RERUN_OUTPUT_LIMIT / 512;
+const RERUN_FSIZE_BLOCK_BYTES: u64 = 512;
+
+/// #1723: the `ulimit -f` argument that reproduces [`RERUN_OUTPUT_LIMIT`] in
+/// the wrapping shell's own blocks — probed once per process through the
+/// same `/bin/sh -c` the rerun wrapper itself uses (the unit belongs to the
+/// shell this host actually execs, so the probe must ask that shell, not the
+/// compile-time OS table above), and fail-closed when the probed unit is not
+/// the assumed [`RERUN_FSIZE_BLOCK_BYTES`]: a silently shifted kernel
+/// ceiling would turn the ceiling assertions into false failures, never a
+/// false pass. 64 MiB is a whole number of blocks under either known unit,
+/// so the byte cap is exact.
+#[cfg(unix)]
+fn rerun_fsize_blocks() -> u64 {
+    static BLOCKS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BLOCKS.get_or_init(|| {
+        let scratch = crate::test_scratch::Scratch::new("rerun-fsize");
+        let probe = scratch.path().join("block");
+        // `ulimit -f 1` caps the file at one block, so the bytes that land
+        // are the unit itself. `;` (not `&&`): a host whose shell refuses the
+        // limit still writes the full 4096 B, which lands on the mismatch
+        // below instead of silently running an unbounded rerun. The write is
+        // clamped to the limit and the next one fails `EFBIG`, so a healthy
+        // shell leaves exactly its block unit on disk.
+        let probe_run = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("ulimit -f 1; head -c 4096 /dev/zero > \"$1\"")
+            .arg("sh")
+            .arg(&probe)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("#1723 run the wrapper shell's ulimit -f unit probe");
+        let landed = match stream_len(&probe) {
+            Ok(len) => len,
+            Err(error) => panic!("#1723 the ulimit -f unit probe's file is unreadable: {error}"),
+        };
+        assert_eq!(
+            landed,
+            RERUN_FSIZE_BLOCK_BYTES,
+            "#1723 the wrapping shell's ulimit -f unit is {landed} B per block, not the assumed \
+             {RERUN_FSIZE_BLOCK_BYTES} B — the kernel ceiling would not sit at the \
+             {RERUN_OUTPUT_LIMIT} B capture cap, so every rerun audit on this host would report \
+             the shifted ceiling as its own failure. Probe stderr: {}",
+            String::from_utf8_lossy(&probe_run.stderr)
+        );
+        RERUN_OUTPUT_LIMIT / landed
+    })
+}
 
 /// Size of a captured stream, or 0 while it does not exist yet.
 ///
@@ -154,6 +206,54 @@ impl RerunOutput {
     }
 }
 
+/// #1723: the contract split's branch, pinned without the race that usually
+/// hides it. `timed_out` is the clock fact and `stopped` the signal fact, and
+/// a leader that provably finished on its own inside the deadline's poll
+/// window is judged by its outcome, not by the stop reason that fired too
+/// late — the pre-split code rewrote `timed_out` on success instead, so the
+/// same window used to fail a clean rerun. That window is microseconds wide
+/// and cannot be driven deterministically through `rerun_exact`, so the rows
+/// below construct `RerunOutput` directly, one per way the predicate can go;
+/// the literal removed rewrite itself is dead code on every deterministic
+/// path (a stop-path reap is a `SIGKILL` status, never `success()`), which is
+/// exactly why removing it needed no behavior change — this test is what
+/// keeps the judgment it used to paper over from regressing.
+#[cfg(unix)]
+#[test]
+fn finished_on_its_own_branches_on_the_outcome_not_the_clock() {
+    use std::os::unix::process::ExitStatusExt;
+    fn rerun(status: i32, timed_out: bool, stopped: bool, overflow: bool) -> RerunOutput {
+        RerunOutput {
+            status: ExitStatus::from_raw(status),
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            timed_out,
+            stopped,
+            overflow,
+        }
+    }
+    // The deadline fired in the same poll window the leader exited cleanly:
+    // both the clock fact and the signal fact are set, and the judgment is
+    // still "finished on its own" — the pre-split merged judgment read this
+    // row as stopped.
+    assert!(
+        rerun(0, true, true, false).finished_on_its_own(),
+        "#1723 a rerun that finished on its own inside the deadline's window is not a stop"
+    );
+    // A rerun that failed on its own is not a finish, and a success whose
+    // capture overflowed is not one either.
+    assert!(
+        !rerun(0x0100, false, false, false).finished_on_its_own(),
+        "#1723 a rerun that failed on its own did not finish on its own"
+    );
+    assert!(
+        !rerun(0, false, true, true).finished_on_its_own(),
+        "#1723 a rerun whose capture hit the cap did not finish on its own"
+    );
+}
+
 /// Run an audit's owned rerun and fail the caller unless the rerun finished on
 /// its own and matched exactly one passing test.
 ///
@@ -225,7 +325,7 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
-        .arg(format!("ulimit -f {RERUN_FSIZE_BLOCKS} && exec \"$@\""))
+        .arg(format!("ulimit -f {} && exec \"$@\"", rerun_fsize_blocks()))
         // `sh`'s `$0`, so `"$@"` is the program and its arguments.
         .arg("sh")
         .arg(std::env::current_exe().expect("rerun test binary path"))

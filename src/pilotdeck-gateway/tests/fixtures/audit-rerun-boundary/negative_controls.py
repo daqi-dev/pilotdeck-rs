@@ -23,13 +23,22 @@ its bound libtest parent must fail at the matching "#1723 ..." assertion:
 * children-only-sweeps-nothing — the children sweep observes nothing, so
   the window opens empty and every child audit is vacuous. Bound to the
   same reuse test's before-set assertion.
+* finished-on-its-own-merged — `finished_on_its_own` regresses to the
+  pre-split merged judgment (the clock fact `timed_out` instead of the
+  outcome), so a leader that finished on its own inside the deadline's
+  poll window reads as stopped again. Bound to the predicate's own
+  contract test, which constructs RerunOutput directly: the race window
+  is too narrow to drive deterministically through rerun_exact.
 
 Every row runs its positive control, compiles the mutant (a mutant that
 does not compile is INVALID, never a kill), runs the bound parent, then
 restores and re-runs the positive control; rows are recorded
 KILLED/SURVIVED/INVALID with their reason and summarized at the end — no
-first-failure abort. A run with zero KILLED rows still exits nonzero:
-nothing was verified.
+first-failure abort. Rows bound to a Linux-only parent
+(#[cfg(target_os = "linux")]) are recorded SKIPPED on other hosts instead
+of INVALID — the exact filter cannot select the parent there, so the
+mutation is unreachable, not unfired. A run with zero KILLED rows still
+exits nonzero: nothing was verified.
 """
 import argparse
 import difflib
@@ -61,13 +70,26 @@ CARGO_TARGETS = {
         ['-p', 'pilotdeck-gateway', '--lib'],
     'test_process::the_sampler_reports_a_pid_that_leaves_and_returns':
         ['-p', 'pilotdeck-gateway', '--lib'],
+    'test_process::finished_on_its_own_branches_on_the_outcome_not_the_clock':
+        ['-p', 'pilotdeck-gateway', '--lib'],
 }
+
+# Parents that exist only behind #[cfg(target_os = "linux")] in
+# test_process.rs: on any other host the exact filter selects zero tests, so
+# a row bound to one of them cannot fire there. SKIPPED, not INVALID — the
+# mutation is unreachable on this host, not unfired (the exact-rerun-receipt
+# table's platform gate for the same situation).
+LINUX_ONLY_TESTS = {
+    'test_process::owned_rerun_kills_the_whole_group_at_the_deadline',
+    'test_process::the_sampler_reports_a_pid_that_leaves_and_returns',
+}
+IS_LINUX = sys.platform.startswith('linux')
 
 MUTATIONS = [
     # The kernel cap leaves the wrapper: the capture can run one poll
     # interval of writes past the cap before the sampler's backstop looks.
     ('kernel-cap-removed', SOURCE,
-     r'.arg(format!("ulimit -f {RERUN_FSIZE_BLOCKS} && exec \"$@\""))',
+     r'.arg(format!("ulimit -f {} && exec \"$@\"", rerun_fsize_blocks()))',
      r'.arg(format!("exec \"$@\""))',
      'test_process::owned_rerun_hits_the_kernel_output_cap',
      '#1723 the capture stops at the cap, not past it'),
@@ -99,6 +121,17 @@ MUTATIONS = [
      'Ok((Vec::new(), foreign))',
      'test_process::the_sampler_reports_a_pid_that_leaves_and_returns',
      "#1723 the window's before-set carries the fixture child"),
+    # The judgment regresses to the pre-split merged shape: the clock fact
+    # decides again, so a leader that finished on its own inside the
+    # deadline's poll window reads as stopped. Bound to the predicate's own
+    # contract test — that race window cannot be driven deterministically
+    # through rerun_exact, and the literal removed rewrite is dead code on
+    # every deterministic path, so the contract is pinned by construction.
+    ('finished-on-its-own-merged', SOURCE,
+     'self.status.success() && !self.overflow',
+     '!self.timed_out && !self.overflow',
+     'test_process::finished_on_its_own_branches_on_the_outcome_not_the_clock',
+     "#1723 a rerun that finished on its own inside the deadline's window is not a stop"),
 ]
 
 
@@ -167,6 +200,12 @@ def main():
 
     summary = []
     for name, source, old, new, test, assertion in selected:
+        if not IS_LINUX and test in LINUX_ONLY_TESTS:
+            reason = (f'bound parent {test} is #[cfg(target_os = "linux")]; '
+                      f'unreachable on {sys.platform}')
+            summary.append({'name': name, 'status': 'SKIPPED', 'reason': reason})
+            print(f'{name}: SKIPPED: {reason}', flush=True)
+            continue
         with mutating_sources(ROOT, [source], baseline=args.baseline) as snapshots:
             original = snapshots[source]
             content = original.decode()
@@ -209,11 +248,14 @@ def main():
               for state in ('KILLED', 'SURVIVED', 'INVALID', 'SKIPPED')}
     save('summary.json', json.dumps({'controls': summary, 'counts': counts}, indent=2) + '\n')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
-    # Every selected case must be accounted for and killed; never stop at the
-    # first failure, and never exit 0 while any case survived or was invalid.
+    # Every selected case must be accounted for and killed or honestly
+    # skipped for a platform the bound parent cannot exist on; never stop at
+    # the first failure, and never exit 0 while any case survived, was
+    # invalid, or left nothing verified.
     return int(not summary
                or counts['KILLED'] == 0
-               or any(row['status'] != 'KILLED' for row in summary))
+               or any(row['status'] not in ('KILLED', 'SKIPPED')
+                      for row in summary))
 
 
 if __name__ == '__main__':
