@@ -1620,7 +1620,25 @@ ROW_PINS = (
 
 
 def _assertions(case):
-    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+    # closure-r4 (DS boundary#1, P2-a): after closure-r3 made every consumer
+    # iterate per element, an EMPTY list row stopped crashing (the pre-r3
+    # TypeError) and instead produced no anchors -- the row joined no count,
+    # no reverse pin and no literal-anchor loop, so --check counted it in and
+    # stayed green (the injected-twin false green recorded in closure-r4's
+    # RESULT) while the kill round could only ever read it INVALID. Refuse
+    # the empty-list shape cleanly, and the shapes that would TypeError on
+    # the next line anyway (a non-str element, a non-str scalar assertion).
+    assertion = case.assertion
+    if isinstance(assertion, list):
+        if not assertion:
+            raise SystemExit(f'#2692 empty assertion list: {case.mutation}')
+        for element in assertion:
+            if not isinstance(element, str):
+                raise SystemExit(f'#2692 non-str assertion element: {case.mutation}')
+        return assertion
+    if not isinstance(assertion, str):
+        raise SystemExit(f'#2692 non-str assertion: {case.mutation}')
+    return [assertion]
 
 
 def check_row_pins(rows):

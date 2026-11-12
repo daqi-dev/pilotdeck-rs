@@ -2130,7 +2130,16 @@ async fn submit_turn_keeps_fffd_and_paired_surrogate_keys() {
             .lock()
             .expect("#1623 submit fixture prerequisite")[0]
             .clone();
-        let _ = consumer.await;
+        // #1623 closure-r4 (DS concurrency#1): the raw `let _ =` discarded the
+        // JoinError (a panicking collector kept this green) and had no wall
+        // clock bound (a stream that never ends hung until the job limit) --
+        // bounded like `await_panic_closure` above and expected like the
+        // #748 drain below, so a hang or a collector panic is this assertion,
+        // never a silent skip.
+        tokio::time::timeout(Duration::from_secs(30), consumer)
+            .await
+            .expect("#1623 the accepted-key turn ends within the 30 s bound")
+            .expect("#1623 the collector for the accepted-key turn must not panic");
         negative_assert_eq!(
             captured.units(),
             key.units(),

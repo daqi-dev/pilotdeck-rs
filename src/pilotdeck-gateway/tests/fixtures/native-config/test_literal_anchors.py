@@ -189,18 +189,25 @@ class LiteralAnchorGuard(unittest.TestCase):
         # nonzero, and no traceback reaches the operator. The roster stays
         # aligned (the twin joins EXPECTED_NAMES), so the refusal can only
         # come from check_row_pins, after the roster guard.
+        # closure-r4 (DS simplify#2): the twin is built with
+        # dataclasses.replace + astuple, never positional tuple indices --
+        # the driver used to write twin[5] blind, so a field inserted before
+        # `assertion` (Case fields are mutation,path,old,new,test,assertion,
+        # scope; scope already carries a default) would mutate the wrong
+        # column and this leg would stay green.
         driver = (
-            "import importlib.util, sys\n"
+            "import dataclasses, importlib.util, sys\n"
             "spec = importlib.util.spec_from_file_location('nc', sys.argv[1])\n"
             "nc = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(nc)\n"
             "source = next(row for row in nc.mutations\n"
             "              if row[0] == 'permission-stub-revert')\n"
-            "twin = list(source)\n"
-            "twin[0] = 'permission-stub-revert-list-twin'\n"
-            "twin[5] = [twin[5], '#1872 an unshared list rider']\n"
-            "nc.mutations = list(nc.mutations) + [tuple(twin)]\n"
-            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin[0],)\n"
+            "case = nc.Case(*source)\n"
+            "twin = dataclasses.replace(\n"
+            "    case, mutation='permission-stub-revert-list-twin',\n"
+            "    assertion=[case.assertion, '#1872 an unshared list rider'])\n"
+            "nc.mutations = list(nc.mutations) + [dataclasses.astuple(twin)]\n"
+            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin.mutation,)\n"
             "sys.argv = ['negative_controls.py', '--check']\n"
             "nc.main()\n")
         done = subprocess.run(
@@ -222,6 +229,48 @@ class LiteralAnchorGuard(unittest.TestCase):
         self.assertIn('shared-assertion rows missing from ROW_PINS',
                       done.stderr,
                       '#2692 closure-r3: the refusal is the pin-table one')
+
+    def test_main_check_refuses_an_empty_assertion_list_row(self):
+        # closure-r4 (DS boundary#1, P2-a): after closure-r3 made every
+        # consumer iterate per element, an `assertion=[]` row produced no
+        # anchors -- it joined no count, no reverse pin and no literal-anchor
+        # loop, so the real --check stayed green (rc 0, the row counted in;
+        # the pre-fix false green is recorded in closure-r4's RESULT) while
+        # the kill round could only ever read it INVALID. The accessor now
+        # refuses the empty-list shape (and the non-str shapes that would
+        # TypeError one line later) before any count prints. Same envelope
+        # and family exit code as the list twin above.
+        driver = (
+            "import dataclasses, importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('nc', sys.argv[1])\n"
+            "nc = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(nc)\n"
+            "source = next(row for row in nc.mutations\n"
+            "              if row[0] == 'permission-stub-revert')\n"
+            "twin = dataclasses.replace(nc.Case(*source),\n"
+            "                           mutation='permission-stub-revert-empty-twin',\n"
+            "                           assertion=[])\n"
+            "nc.mutations = list(nc.mutations) + [dataclasses.astuple(twin)]\n"
+            "nc.EXPECTED_NAMES = tuple(nc.EXPECTED_NAMES) + (twin.mutation,)\n"
+            "sys.argv = ['negative_controls.py', '--check']\n"
+            "nc.main()\n")
+        done = subprocess.run(
+            [sys.executable, '-I', '-c', driver,
+             str(HERE.with_name('negative_controls.py'))],
+            cwd=nc.ROOT, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1,
+                         f'#2692 closure-r4: the empty-list twin must refuse '
+                         f'--check: rc={done.returncode} out={done.stdout!r}')
+        self.assertNotIn('Traceback', done.stderr,
+                         '#2692 closure-r4: the refusal must be clean, '
+                         'not a traceback')
+        self.assertIn('#2692 empty assertion list: '
+                      'permission-stub-revert-empty-twin',
+                      done.stderr,
+                      '#2692 closure-r4: the refusal names the empty-list twin')
+        self.assertNotIn('mutation anchors OK', done.stdout,
+                         '#2692 closure-r4: no count may print for a refused '
+                         'row (the pre-fix false green printed 132)')
 
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose

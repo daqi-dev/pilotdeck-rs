@@ -125,6 +125,57 @@ EXPECTED_NAMES = (
     'external-emitter-skipped',
     'file-adapter-skips-durable',
 )
+# #2692 closure-r4 (MM closure sibling#1, P1, two-lineages-raised): the roster
+# above only catches one-sided drift. This family's rows carry no separate
+# assertion column, so the shared identity is the bound test name -- nine
+# rows ride a test name another row also carries (seven on
+# ordered_durable_terminal_after_session_end, two on the FIFO worker pair),
+# and deleting one of them from `mutants` *and* `EXPECTED_NAMES` together
+# kept `registered()` aligned and the surviving sibling bound to the same
+# test -- `--check` stayed green (its count printed `len(mutants)`, CI
+# ci.yml) while one control silently stopped being audited. ROW_PINS is a
+# third denominator outside both tables, keyed on the bound test name (the
+# turn-submit shape, whose rows key on the effective assertion string;
+# check_row_pins stays the fifth same-shaped copy -- the three-way
+# convergence is the simplify#1 P2 follow-up, not this round).
+ROW_PINS = (
+    'drop-event',
+    'duplicate-event',
+    'visible-before-durable',
+    'early-terminal-before-session-end',
+    'ws-seq-confused-with-module',
+    'ws-final-too-early',
+    'external-emitter-skipped',
+    'reverse-visible-order',
+    'file-adapter-skips-durable',
+)
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-test rows lost one to a both-tables edit.
+
+    The forward loop catches a pinned row that disappeared; the reverse
+    direction is computed from this runtime table: every row whose bound test
+    name another row also carries must be pinned, so the next row reusing a
+    sibling's test name without a ROW_PINS entry refuses here instead of
+    silently widening the pool a both-tables drop can shrink unnoticed (the
+    closure-r2 turn-submit shape; this family keys on the test name because
+    its rows have no assertion column).
+    """
+    names = {row[0] for row in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            refuse(f'#2692 row pin names a row that is gone: {name}')
+    counts = {}
+    for _name, _path, _before, _after, test in rows:
+        counts[test] = counts.get(test, 0) + 1
+    shared = {test for test, total in counts.items() if total >= 2}
+    unpinned = sorted({row[0] for row in rows if row[4] in shared}
+                      - set(ROW_PINS))
+    if unpinned:
+        refuse('#2692 turn-publish shared-test rows missing from '
+               f'ROW_PINS: {", ".join(unpinned)}')
+
 
 args = sys.argv[1:]
 # fix-r5 (review sibling#3): read-only --check — anchor uniqueness per
@@ -141,6 +192,23 @@ if args and args[0] == '--check':
     # gate live inside the refusal envelope — a missing or renamed tests file
     # is a clean rc 2 "never started" (#2391 contract), not a traceback rc 1.
     try:
+        names = [name for name, *_ in mutants]
+        if len(set(names)) != len(names):
+            refuse('turn-publish roster has duplicate mutation names')
+        # fix-r10 (review boundary#1): the static roster. A dropped, renamed
+        # or reordered row used to shrink the printed anchor count and the
+        # twin's expectation together, so --check stayed green while one
+        # control silently stopped being audited (the #1666 shape).
+        # closure-r4 (MM sibling#1): the three denominator guards now run
+        # before the per-row audits below -- a twin reusing a sibling's
+        # anchor text trips the stale-anchor count first, so the pin-table
+        # refusal would never be the one a red side sees (each fix-r10 leg
+        # still hits its own refusal: its splice drifts one table only).
+        try:
+            registered(mutants, EXPECTED_NAMES)
+        except ValueError as error:
+            refuse(f'turn-publish mutation roster drifted: {error}')
+        check_row_pins(mutants)
         texts = {path: path.read_text() for path in (source, connection)}
         tests_text = tests_source.read_text()
         # fix-r9 (review boundary#2, same fix as native-config): the second
@@ -157,18 +225,6 @@ if args and args[0] == '--check':
                     or declares_test(tests_text, test, macro='scenario!')):
                 refuse(f'turn-publish {name}: bound test not declared in publish_tests.rs: {test}')
             declared += 1
-        names = [name for name, *_ in mutants]
-        if len(set(names)) != len(names):
-            refuse('turn-publish roster has duplicate mutation names')
-        # fix-r10 (review boundary#1): the static roster named above -- after
-        # the per-row legs so each refusal keeps its own message. A dropped,
-        # renamed or reordered row used to shrink the printed anchor count and
-        # the twin's expectation together, so --check stayed green while one
-        # control silently stopped being audited (the #1666 shape).
-        try:
-            registered(mutants, EXPECTED_NAMES)
-        except ValueError as error:
-            refuse(f'turn-publish mutation roster drifted: {error}')
     except (ValueError, OSError) as error:
         refuse(f'turn-publish --check could not audit the tree: {error}')
     print(f'turn-publish: {len(mutants)} mutation anchors OK; '
@@ -184,6 +240,10 @@ try:
     registered(mutants, EXPECTED_NAMES)
 except ValueError as error:
     refuse(f'turn-publish mutation roster drifted: {error}')
+# closure-r4 (MM sibling#1): the mutating run carries the same third
+# denominator -- a both-tables drop must refuse before any evidence
+# directory is claimed.
+check_row_pins(mutants)
 output = Path(args[0]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 

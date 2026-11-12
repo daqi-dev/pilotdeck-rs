@@ -153,6 +153,67 @@ class BoundTestGate(unittest.TestCase):
         self.assertIn("extra=['final-error-text-renamed']", err,
                       '#2692 fix-r10: the refusal names the drifted row')
 
+    def _run_surgered(self, surgery):
+        """Exec the script with table surgery spliced in after the argv read.
+
+        closure-r4 (MM sibling#1): the both-tables legs drift `mutants` AND
+        `EXPECTED_NAMES` together, which a single-fragment splice cannot
+        express; the surgery lines run at module level, right before the
+        `--check` branch reads the tables.
+        """
+        text = SCRIPT.read_text()
+        anchor = 'args = sys.argv[1:]'
+        self.assertTrue(text.count(anchor) == 1,
+                        '#2692 closure-r4: the surgery anchor must appear '
+                        'exactly once')
+        return run_check(source_text=text.replace(
+            anchor, anchor + '\n' + surgery))
+
+    def test_check_refuses_a_new_shared_test_row_left_unpinned(self):
+        # closure-r4 (MM closure sibling#1, P1): the twin reuses
+        # `attempts-3-to-2`'s bound test name on both tables (the roster
+        # stays aligned, so `registered()` passes), and the reverse check
+        # must refuse and name exactly the twin. It runs before the per-row
+        # audits, so the anchor text the twin also shares does not answer
+        # first with a stale-anchor count.
+        twin = 'attempts-3-to-2-unpinned-twin'
+        surgery = (
+            "_row = next(row for row in mutants if row[0] == 'attempts-3-to-2')\n"
+            f"mutants = list(mutants) + [({twin!r},) + _row[1:]]\n"
+            f"EXPECTED_NAMES = tuple(EXPECTED_NAMES) + ({twin!r},)\n")
+        code, out, err, _module = self._run_surgered(surgery)
+        self.assertTrue(code == 2,
+                        f'#2692 closure-r4: an unpinned row reusing a shared '
+                        f'bound test must refuse --check: rc={code} out={out!r}')
+        self.assertIn('#2692 turn-read shared-test rows missing from '
+                      f'ROW_PINS: {twin}', err,
+                      '#2692 closure-r4: the refusal names the family and '
+                      'the unpinned twin')
+
+    def test_check_refuses_a_row_dropped_from_both_tables(self):
+        # closure-r4 (MM closure sibling#1, P1): a row whose bound test
+        # another row also carries used to survive a both-tables drop --
+        # `registered()` stayed aligned and the surviving sibling kept the
+        # test bound, so --check stayed green while one control silently
+        # stopped being audited. ROW_PINS is a third denominator outside
+        # both tables; every pin in turn must refuse the drop (the
+        # turn-submit / native-blankkey fix-r13 red-side shape).
+        _code, _out, _err, module = run_check()
+        for dropped in module.ROW_PINS:
+            surgery = (
+                f"mutants = [row for row in mutants if row[0] != {dropped!r}]\n"
+                f"EXPECTED_NAMES = tuple(name for name in EXPECTED_NAMES "
+                f"if name != {dropped!r})\n")
+            code, out, err, _m = self._run_surgered(surgery)
+            self.assertTrue(code == 2,
+                            f'#2692 closure-r4: a both-tables drop of '
+                            f'{dropped} must refuse --check: rc={code} '
+                            f'out={out!r}')
+            self.assertIn(f'#2692 row pin names a row that is gone: {dropped}',
+                          err,
+                          f'#2692 closure-r4: the refusal names the dropped '
+                          f'row {dropped}')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -6,7 +6,10 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 ## 类别
 
 更正件（R 链，承接 `A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R16`；frontmatter
-`original` 按账本机器规则指基础 ID，与 R9-R16 同法，承接关系由文件名与正文表达）。
+`original` 按账本机器规则指基础 ID，与 R9-R16 同法，承接关系由文件名与正文表达。
+编号沿革：本件在分支内原编 R17，rebase 时 main 侧同 base-ID 链已占 R17/R18，顺位
+改取 R19（closure-r4 评审 sibling#1 顺带修正：正文尾句「出 `-R18` 更正」的下一更正
+号同步改为 `-R20`——R18 已被 main 侧占用，正是本件改名要消灭的撞号类））。
 三件事，均不放宽既有登记的判分：其一，更正 R15 差异④折叠带的**判据口径**——原实现按
 `container_depth`（最深叶子节点深度）计带，而 V8 `Array.prototype.join` 的递归阈值按
 **被 join 的数组个数**（与 `to_string_units` 的 frames 同口径）计；最内层为空数组时
@@ -170,4 +173,4 @@ withFileLock → refreshFromDisk → key 模板）实测从 2621 改 2560（浅�
 实测不成立——key 模板在 `refreshFromDisk` 的 await 后恢复帧运行，栈与词法调用方
 无关）；「带内每次读都在 clone 上抛」措辞按实测改准（折叠拼法 get 至 2557 层成、
 2558 起抛）；两家漏跟的 `--check` 门禁与 turn-read / turn-publish 的拒跑信封随读面
-钉一并登记。人复核否决则循账本规则出 `-R18` 更正。
+钉一并登记。人复核否决则循账本规则出 `-R20` 更正。
