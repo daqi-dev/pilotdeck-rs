@@ -1,16 +1,18 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-14 03:35（01:25 段后两窗口；#2967 已 MERGED 并关账、#3015 在队、#3042/#3102/#2912 在队）：**主线 = 三路修复链收口 + 队列消化**
+updated: 2026-11-14 04:07（03:35 段后一窗口；3015 MERGED+#2043 关账、2931 gate PASS 等 CI、3088/2912/3129 rerun 在飞、3042/2959 CONFLICTING 合并轮串行）：**主线 = 冲突解合并链 + 三路评审收口**
 
-- #3042 | impl | queued | 1087 收口 PR 在合并队列；合入后 #3001 条1/#3100 条2/3 生效可关、1087-p2-batch 批件开单
-- #3074 | impl | doing | 3056 收口 PR fix-r3 已收货，DS 增量评审出 P0×2（`worktree 60 fix-rN` 真标题被吞=假 PASS、enum_title O(C²)）+ P1×2，协调者实测实锤（_tmp/20261114-3074-fixr4-arb/）→ **fix-r4 已派本机**（_tmp/20261114-3074-fixr4/）；超 r3 上限依据 = P0 当轮修 + 尺子域 P1 不放行
-- #3088 | impl | doing | 1723 收口 PR：终块 gate PASS（head deb9ed7e，DS 四角色全 PASS），P2 处置入 #3130 条5/6；等 CI 绿入队 → MERGED 后 #1723 收尾自查关单
-- #2931 | impl | doing | 1642 收口 PR：fix-r5（ci.yml 注释移出 run 块+expected 同步）+ 与 main 真合并（README 跟进清单按 sweep 数字两谱系合并，anchors 205+EnvironmentControls 108 双绿）已推 d5bd22326；README 合并解析 DS 复核在飞 → body 手术（存档旧块贴 DS 增量块）→ gate → CI → 入队；boundary P2×1 待三分
-- #2969 | impl | doing | 2558 收口 PR：fix-r9 已收货（0e7dff76），DS 四角色 PASS（p0=0 p1=0），P2×6 c 档开 **#3137** + PR 评论登记；MM 块待额度恢复（cron 探测）→ body 手术 → gate → CI → 入队
-- #3058 | impl | doing | 3043 收口 PR：fix-r6 已收货（b2a9cc2a6，ROSTER_GUARDED 设计依据见 RESULT §3），DS 增量评审在飞（_tmp/20261114-3058-fixr6-ds/）→ 判读 → MM 块 → body → 入队
-- mirror-confluence | impl | doing | A2 余量：#3102/#2912/#3042/#3015 在队；#2967 MERGED 关账完（#2775/#2776/#2777/#2789/#2153 全 CLOSED，新跟进 #3135/#3136 前置 #1357）；A1 #2800 Draft 待核转正；B 19 张真合并工作单（#2911 先例）排期派车道；C 7 张 blocked 待判
-- mm-quota | coord | blocked | MM 429 等 5h 重置（cron 2c675767 探测）；恢复后补四块：2944 MM 三角色（_tmp/20261114-2944-fixr6-mm2）/3058 fix-r6 MM/2969 fix-r9 MM/3074 fix-r4 MM，补齐后 CronDelete
+- #3042 | impl | doing | 1087 收口 PR **CONFLICTING**（撞 main：fixtures/README、discovery_anchors）——合并轮已派本机 agent（_tmp/20261114-3042-merge/，merge origin/main 真解冲突+测试+推送）；收货后 DS 增量块 → body → 入队；合入后 #3001 条1/#3100 条2/3 生效可关、1087-p2-batch 批件开单
+- #2959 | impl | blocked | 2499 收口 PR CONFLICTING（sms/tests.rs+fixtures README/anchors）——与 #3042 共享冲突文件，**串行排 3042 后**再派合并轮（sibling-fix-shared-file）
+- #3074 | impl | doing | 3056 收口 PR fix-r4 本机 agent 在跑（P0×2/P1×2 超上限依据 = P0 当轮修 + 尺子域 P1 不放行；_tmp/20261114-3074-fixr4/）；收货后语料 A/B 复算 + DS+MM 双谱系 → body → 入队
+- #3088 | impl | doing | 1723 收口 PR：body 手术后旧 run 红，pr-gate 已 rerun（job 132135471163）；等待器 v2 监听绿即入队 → MERGED 后 #1723 收尾自查关单
+- #2931 | impl | doing | 1642 收口 PR：fix-r6 箭头链修（64ed9d4cd）DS 四角色 PASS（P2×1 并入 #3139）；body 手术完（存档 3a5a04f12 系两块 + 贴现头块）gate PASS，CI 在跑；等待器 v2 绿即入队
+- #2969 | impl | doing | 2558 收口 PR：DS 四角色 PASS（p0=0 p1=0），P2×6 c 档开 **#3137**；MM 块待额度（cron 2c675767）→ body 手术（块 head 0e7dff76）→ gate → CI → 入队
+- #3058 | impl | doing | 3043 收口 PR：fix-r7（bfd9fffa9）DS 增量块 PASS（P2×2 并入 #3138）；MM 块待额度 → body 手术 → gate → 入队
+- #2912 | impl | doing | 1528/1402 收口 PR：body 现头双谱系块（MM+DS 全 PASS）俱在、gate PASS，pr-gate 已 rerun（43424647530）；绿即入队（2912 等待器 v2 并入队列监视）
+- mirror-confluence | impl | doing | A2：#3102/#2967/#3015 均 MERGED（3015 邮箱核净，#2043 已关账）；#3042/#2959 转冲突解；A1 #2800 Draft 待核转正；B 19 张真合并工作单（#2911 先例）排期派车道；C 7 张 blocked 待判
+- mm-quota | coord | blocked | MM 429（02:24 实测，5h 重置约 07:24；cron 2c675767 探测）；恢复后补四块：2944 MM 三角色（_tmp/20261114-2944-fixr6-mm2）/3058 fix-r7 MM/2969 fix-r9 MM/3074 fix-r4 MM，补齐后 CronDelete
 - premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605。#2448/#2459 修法已拍板（decisions-20261113 两张卡，AI 代批待人复核），任务书素材齐；其余六张派单前按同模式先探针；前置 = mirror-confluence A2/B 批次
 - 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序；前置 = #3042 合入（同域串行）
 - legacy-batches | coord | blocked | 红灯 3 六十四张老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
@@ -6735,3 +6737,30 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 6 | 3129 MERGED → 合入后把本地 03:35 段开新 state PR（快路径）；队列终态核邮箱（2912/3102/3042/3015） | coord2/e7 | 等待器触发即收 |
 | 7 | MM 重置补四块（2944/3058/2969/3074）→ 补齐后 CronDelete 2c675767 | coord2/e7 | MM 恢复后当轮 |
 | 8 | 盘：卷余 31 GiB 仍紧，下轮择机清闲置树 cargo-target（删前核 pgrep）；每轮 df/du -sk | coord2/e7 | 每轮 |
+
+## 04:07 交接段（e7，两小时轮，覆盖 03:35–04:07；巡场卡 patrol-0400.md）
+
+**做了什么**：
+- **等待器缺陷修复（新坑沉淀）**：`until s=$(gh pr checks $N) && ! grep pending` 在有 fail 时 gh rc=1 永不退出——3088 入队等待器卡死 7 分钟才发现，六个等待器全部 TaskStop 重挂 v2（`|| true` + state 终态判据）。
+- **#3015（#2043）收官**：MERGED（a08bbfa20）+ 邮箱核净（noreply）→ #2043 收尾自查关单（五态直测 + anchor 负控在 main 核实、无占位，评论 6863387432）。
+- **#2931（#1642）评审收口**：fix-r6 DS 四角色 PASS（p0=0 p1=0）；P2×1（close-order-reader `--check` 未入 commands 钉子）c 档并入 **#3139** 条 3（评论 6863339236）；body 手术（存档 3a5a04f12 系两旧块 + 贴 64ed9d4cd 现头块）gate PASS，CI 在跑，等待器 v2 绿即入队。
+- **#3058（#3043）fix-r7**：DS 增量块 PASS（p0=0 p1=0）；P2×2（README:37 rc 契约范围句 + None 证伪子串窄）c 档并入 **#3138** 条 3/4（评论 6863340865）；MM 块等额度（bfd9fffa9 现头）。
+- **#3074（#3056）fix-r4 收货 + 派评审**：agent 交付（新头 507602f31，5 文件 +242/-60 已推）——协调者复验：树净、ls-remote 断言过、两测试套件本机复跑全绿（`test-review-roles: 全部通过`/`SUMMARY cases=361 failed=0`）、gitleaks 1 commit 无泄漏；复算方向 21 修复 2 回退 0 数值变化、旧非空→新空 0；DS 增量四角色已派（_tmp/20261114-3074-fixr4-ds/），MM 等额度补第二家。
+- **#3088（#1723）**：pr-gate 红根因 = 旧 run 未重跑（body 手术后 85a19467 块早已存档、本地 gate PASS）——rerun 生效（job 132135471163），等待器 v2 监听入队。
+- **#3129（state PR）**：pr-gate 缺豁免——body 补 `<!-- pr-gate:waiver 纯 state/board.md 更新 -->`（#2542 先例）+ rerun，本地 PASS。
+- **#2912（#1528）**：CI 红根因同 3088（22:29 旧 run；body 现头双谱系块 MM+DS 全 PASS、gate PASS）——rerun（43424647530）。
+- **#3042/#2959（#1087/#2499）CONFLICTING 合并链开动**：两 PR 撞 main（fixtures/README、discovery_anchors，2959 另有 sms/tests.rs）；红灯 9 的 11-11 exit=97 为陈年（车道已演进至 fix-r15，PR 分支为真相源，对账消红）；**3042 合并轮已派本机 agent**（_tmp/20261114-3042-merge/，真解冲突+测试+推送），**2959 因共享文件串行排后**（sibling-fix-shared-file）。
+- 巡场（patrol-0400.md）：mbp2 ssh 不通（项目已停用不处置）；MM 02:24 实测 429（重置约 07:24，cron 探测）；盘 _build+_tmp 63.7 GiB 正常、卷余 31 GiB；ready-pending-2100.md 判全陈旧不并入（#2208 已 MERGED）；human-comments 空。
+
+**下一步**：3042 合并轮收货 → DS 增量块 → body → 入队 → 1087-p2-batch 开单；2959 合并轮接续；3074 DS 块出后判读（MM 等额度）；2931/3088/2912/3129 等待器触发即收；MM 恢复补四块；3058/2969 等谱系块。
+
+未结义务表：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3042 合并轮（agent）收货：核树净/ls-remote/测试复跑 → DS 增量块（合并 delta）→ body 手术 → gate → CI → 入队 → 合入后 #3001 条1/#3100 条2/3 关账 + 1087-p2-batch 开单 | coord2/e7 | 05:30 |
+| 2 | 2959 合并轮派发（3042 收货后即派，同共享文件串行） | coord2/e7 | 3042 收货后当轮 |
+| 3 | 3074 fix-r4 DS 块（bj3evyraz 监听）出块判读 → P0/P1 再修（超上限口径同前）/全 PASS 则等 MM 块 → body → 入队 | coord2/e7 | 05:30 |
+| 4 | 2931/3088/2912/3129 等待器 v2 触发即收：入队/合入核邮箱/3129 MERGED 后开 04:07 段 state PR（快路径） | coord2/e7 | 等待器触发即收 |
+| 5 | MM 额度（约 07:24）补四块：2944 MM 三角色/3058 fix-r7 MM/2969 fix-r9 MM/3074 fix-r4 MM → 补齐后 CronDelete 2c675767 | coord2/e7 | MM 恢复后当轮 |
+| 6 | 2969 MM 块后 body 手术（块 head 0e7dff76）→ gate → CI → 入队 → #2558 链收口核对 | coord2/e7 | MM 恢复后当轮 |
+| 7 | 盘：卷余 31 GiB，下轮择机清闲置树 cargo-target（删前核 pgrep）；每轮 df/du -sk | coord2/e7 | 每轮 |
