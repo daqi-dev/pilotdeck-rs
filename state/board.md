@@ -1,19 +1,16 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-13 14:45（13:30 增记见文末；14:45 巡场：#3078 此前 12 小时未真正入队（autoMerge=NONE，rc=0 假象）已于 14:4x 重入队、merge-group CI 在跑 ~15:15 窗；#3071 已 MERGED 邮箱已核）：三条修复车道 gate PASS 等 #3078 合入后合流入队；_build+_tmp 49 GiB · human-comments 空
+updated: 2026-11-13 16:59（14:45 交接段见文末；#3078 已 MERGED 15:46、邮箱已核；四分支已合流推送并重钉 gate，重跑等待器在挂）：**主线 = 合流收口与积压清偿**
 
-- #3078 | impl | doing | 镜像守卫修复 14:4x 重入队成功（此前 12:55 入队为 rc=0 假象从未入队，上轮 merge-group 12:29 失败在聚合 check——竞态先例，同因复发再深挖）；merge-group run 43380354551 在跑；MERGED 后核邮箱并触发四分支合流（#3071 已 MERGED 08:09，邮箱 noreply 形态无暴露）
-- #3042 | impl | doing | 1087 r15+MM r14 判读闭环：DS r15 块（head b20f9ad34）已贴、MM r14 六条 P2 已逐条处置登记（_tmp/20261113-sweep-verdicts/verdicts.md A 节）、gate PASS；等 3078 合入 merge main → CI 绿入队；合入后 #3001 条1/#3100 条2/3 生效可关、批件见 1087-p2-batch
-- #3074 | impl | doing | 3056 r17 收货+DS 增量四角色全 PASS（head c8bd2d5e3，P2=7 判定不修备案进 decisions-20261113）；gate PASS；等 3078 合流入队
-- #3088 | impl | doing | 1723 r6 整类收口（head 2c75de686，DS6 四角色 P0/P1/P2 全 0）body 补齐、gate PASS；等 3078 合流入队；收尾自查未做（Refs #1723 不 Closes）
-- #3105 | impl | doing | state PR（decisions+board，两提交待合）；等 3078 合入 merge main 转绿入队
-
-- sweep-1247 | coord | blocked | 13:47 轮 rc=0 失联 0 台（_tmp/20261107-coord/sweep-1247.md）；红灯 8 十二张已重判并登记：8 开车道重开（premise-lanes-8）、2 误灯（#2461/#2463 由 #3102 承载）、2 可关维持（#2476/#2693）
-- premise-lanes-8 | impl | blocked | 红灯 8 重判八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605（证据 _tmp/20261107-coord/premise-rejudge-1302.md，判定 verdicts.md B 节；#2448 修法须先 Node 实测、#2459 修法决策卡随后）；前置 = mirror-prs 积压清偿
-- 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序（独立 issue、两家评审、真实数据复算、--write 重登记）；前置 = #3042 合入（同域串行）
-- mirror-prs | impl | blocked | 镜像漂移期积压 PR（#3057/#2987/#2974/#2969/#2967/#2944/#2931/#2912/#2911/#2769 等）：#3078 合入后逐张 Re-run/换块入队，前置 = #3078
-- legacy-batches | coord | blocked | 旧 p2batch-j/l/m、t-harvest、hop-car-L/M/N、recover-*、销账三批：3078 合入解锁后按 sweep 实况重判重写，重判前不派
+- #3042 | impl | doing | 1087 收口 PR：merge main 后换 head f4a95e795 重钉 gate（DS simplify PASS P0=0 P1=0 P2=2 已开 #3111 跟进）；等 gate 重跑绿即入队；合入后 #3001 条1/#3100 条2/3 生效可关
+- #3074 | impl | doing | 3056 r17 收口 PR：merge main 后换 head 4d4fc1ab5 重钉 gate（DS simplify PASS P0=0 P1=0 P2=1 判定不修同 r17 口径备案 body）；等 gate 重跑绿即入队
+- #3088 | impl | doing | 1723 收口 PR：merge main 后换 head 7ca71b522 重钉 gate（DS simplify PASS P0=0 P1=0 P2=1 已开 #3112 跟进）；等 gate 重跑绿即入队；收尾自查已做（Refs #1723 不 Closes）
+- #3105 | state | doing | state PR：merge main 后本段 board 增记再重钉 gate 入队（P2=1 = board/decisions 状态不同步，本段已修）
+- mirror-confluence | impl | doing | 积压 35 张分诊完毕（_tmp/20261113-mirror-confluence/triage.md，A 机械 9 / B 真冲突 19 / C blocked 7；注意 REST dirty=真冲突非落后）：A2 六张非 Draft unstable（#3102/#2969/#2967/#2944/#2931/#2912）逐张机械合流+重钉 gate；A1 三张 clean Draft（#3058/#3015/#2800）先核是否转正；B 19 张真合并工作单（#2911 先例：夹具族并集+计数重导+名册核对）排期派车道；C 7 张 blocked 分支保护缺评审待判
+- premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605。#2448/#2459 修法已拍板（探针实测 + decisions-20261113 两张卡，AI 代批待人复核），任务书素材齐；其余六张派单前按同模式先探针；前置 = mirror-confluence A2/B 批次
+- 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序；前置 = #3042 合入（同域串行）
+- legacy-batches | coord | blocked | 红灯 3 六十四张老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
 
 ### 段末增记（18:4x–20:3x，coord2/e7）
@@ -6628,5 +6625,26 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ### 下一步
 按未结义务表序推进，不空等；下一个交接点 ~16:45。
+
+## 16:59 交接段（coord2/e7，两小时交接 + 巡场）
+
+1. **#3078 MERGED（15:46）**：邮箱全为队列 squash noreply 形态（无暴露）；04:45 链「ci.yml 字节比对（main :271/:640 已含 20261111.370.1）+ 关 #3086 作废」已执行。
+2. **四分支合流**：#3042/#3074/#3088/#3105 各自 merge origin/main 推送（合流后 head 见 READY 各行）；**合流换 head 致 pr-gate 四张全红（旧块过期）**——逐张重钉：DS simplify 全 PASS（P0=0 P1=0），P2 处置：#3074 判定不修（协作工具同构，r17 口径）备案 body；#3042 P2×2 与 #3088 P2×1 开跟进单 **#3111/#3112**；#3105 P2×1（board 与 decisions 状态不同步）本段 READY 改写时已修。gate 重跑等待器在挂（brqi6ipca 覆盖三张），绿后逐张入队（入队前核在队同路径）。
+3. **积压分诊（冒烟改分诊）**：#2911 冒烟实证「merge main 后直接绿」口径不成立（native-config 夹具族真冲突 3 文件 9 hunk，74↔131 变异计数与名册双向演进，机械覆盖即假红/漏检，abort 保留现场 _build/smoke-2911）→ 改全量 API 分诊：**A 机械 9（clean 3 全 Draft + unstable 6 全非 Draft）/ B 真冲突 19 / C blocked 7**，报告 `_tmp/20261113-mirror-confluence/triage.md`（**口径更正：REST mergeable_state=dirty 即真冲突**，与「落后 main」无关，35 张逐一核验 mergeable 布尔无一例外）。
+4. **巡场（sweep-1631 + PATROL 归并本段）**：十灯全绿或已知误报——红灯 5 两 CLOSED 陈旧行（#3078/#3086，本段 READY 改写销账）；红灯 9 两张维持陈旧误报；红灯 3 六十四张归 legacy-batches；fleet 全空载、盘三台绿、无死车道、human-comments 空（rc=0 len=0 三次复核）；graphql/REST 全天间歇 EOF（TLS 超时），所有 gh 操作已带重试。
+5. **#2448/#2459 探针收块并拍板**（decisions-20261113 两张卡，AI 代批备案）：#2448 链感知修法 + cfg 层方案 1（同批修 snapshot 五读取位）；#2459 五分叉 F1-F5。14:45 段「探针在飞」表述已按此更新（即 #3105 gate P2 指出的状态不同步）。
+
+### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查）
+| # | 下一步动作 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | 三 gate 重跑绿 → 逐张入队（#3042→#3074→#3088 顺序；入队前核在队同路径）→ MERGED 后核邮箱 | coord2/e7 | 17:30 |
+| 2 | #3105 重钉 gate（本段提交后新 head）→ 入队 → MERGED 后核邮箱 | coord2/e7 | 17:45 |
+| 3 | mirror-confluence A2 六张（#3102/#2969/#2967/#2944/#2931/#2912）逐张机械合流+重钉 gate 入队；A1 三张 Draft 核转正 | coord2/e7 | 18:45 |
+| 4 | B 19 张真合并工作单：按 CI 曾全绿优先（#2920/#2883 等）开车道派单（macmini/本机，注意与在飞 PR 同域串行） | coord2/e7 | 19:00 |
+| 5 | #3042 合入后：#3001 条1/#3100 条2/3 关账；1087-p2-batch 批件开单；#1723 收尾关单 | coord2/e7 | #3042 合入后当轮 |
+| 6 | 每轮 df 核验（49/200 GiB、worktree 57/60）；EOF 网络抖动持续带重试 | coord2/e7 | 每轮 |
+
+### 下一步
+按未结义务表序推进，不空等；下一个交接点 ~18:59。
 
 
