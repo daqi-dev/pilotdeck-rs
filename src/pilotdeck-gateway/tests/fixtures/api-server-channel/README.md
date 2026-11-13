@@ -249,4 +249,11 @@ oracle guard's upper-bound assertion must reject as a stale entry. A third,
 cell — the selection point `compare_response` reads — which the guard's
 through-the-predicate leg must reject, the same shape as native-http's
 `native-http-cl0-wide`, native-ws's `native-ws-budget-cl0-wide` and webhook's
-`webhook-replay-cl0-wide`.
+`webhook-replay-cl0-wide`. A fourth, `api-server-headless-400-cl0` (fix-r4,
+review P1-1), swaps the missing-Host 400's streamed empty body for the sized
+one — the drift shape whose `content-length: 0` the mask would hide, because
+the mask applies to that cell — which the raw pin's missing-host leg in
+`parser_rejections_keep_the_registered_transport_shape` must reject by name:
+the inert premise ("never carries a length line") is pinned on the product
+side, the direction native-http pins for its unregistered cells and the
+mirror of its registered-direction `native-http-parser-400-cl0-off`.

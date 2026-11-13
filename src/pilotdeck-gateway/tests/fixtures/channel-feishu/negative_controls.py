@@ -219,15 +219,35 @@ MUTATIONS = [
      'gated_submit_superseded_by_new_sends_nothing_and_deletes_reaction',
      "#2055 the superseded turn's stale events send nothing"),
     # The elicitation occupancy's lookup: dropping the swallow lets a racing
-    # second delivery start a second answer task while the first is in flight.
+    # second delivery start a second answer task while the first is in flight
+    # (#2775 fix-r4 moved the seat to the token map — the mutation keeps the
+    # token logic and only drops the check).
     ('elicitation-occupancy-check-dropped', source / 'mod.rs',
-     '                if state.elicitation_answering.contains(&chat_id) {\n'
+     '                if state.elicitation_answering.contains_key(&chat_id) {\n'
      '                    return true;\n'
      '                }\n'
-     '                state.elicitation_answering.insert(chat_id.clone());\n',
-     '                state.elicitation_answering.insert(chat_id.clone());\n',
+     '                let token = state.next_answering_token;\n'
+     '                state.next_answering_token += 1;\n'
+     '                state.elicitation_answering.insert(chat_id.clone(), token);\n',
+     '                let token = state.next_answering_token;\n'
+     '                state.next_answering_token += 1;\n'
+     '                state.elicitation_answering.insert(chat_id.clone(), token);\n',
      'concurrent_elicitation_events_answer_once',
      '#2055 the racing second event does not start a second answer'),
+    # #2775 fix-r4 (review P1-2, DS concurrency#1): the elicitation release
+    # guards the stale window with its token — reverting to the unconditional
+    # remove lets an old answer (whose seat a `/new` already cleared and a
+    # newer answer re-took) delete the new seat, so a third event starts a
+    # second answer task for the same pending entry. The permission branch
+    # guards the identical window with `get == Some(&token)`.
+    ('elicitation-stale-release-unconditional', source / 'mod.rs',
+     '                let mut state = runtime.lock_state();\n'
+     '                if state.elicitation_answering.get(&chat_id) == Some(&token) {\n'
+     '                    state.elicitation_answering.remove(&chat_id);\n'
+     '                }\n',
+     '                runtime.lock_state().elicitation_answering.remove(&chat_id);\n',
+     'stale_elicitation_release_keeps_the_new_answers_seat',
+     "#2775 the stale old-answer release must not delete the new answer's seat"),
     # TS chains the permission release onto the answer with `.finally`; the
     # catch_unwind is what keeps a Rust panic on that path. A plain await
     # unwinds the task before the release, stranding the answering token.

@@ -1460,6 +1460,112 @@ impl InteractionPort for ElicitationScript {
     fn permission_clear_after_turn(&self, _: &str) {}
 }
 
+/// #2775 fix-r4 (review P1-2): per-answer one-shot gates — the stale-release
+/// pin below needs the old answer to finish while the new one stays parked,
+/// which the shared release watch of [`ElicitationScript`] cannot express.
+/// `finish(0)` ends the first answer only; `completed` records each answer
+/// that came back, in order — the release that follows it runs in the same
+/// task poll (no await between the gate and the token check), so observing
+/// a completion means its release has run too.
+struct StaleSeatScript {
+    answers: Mutex<Vec<String>>,
+    completed: Arc<Mutex<Vec<String>>>,
+    pending: std::sync::atomic::AtomicBool,
+    gates: Mutex<Vec<Option<tokio::sync::oneshot::Sender<()>>>>,
+}
+
+impl StaleSeatScript {
+    fn armed() -> Arc<Self> {
+        Arc::new(Self {
+            answers: Mutex::new(Vec::new()),
+            completed: Arc::new(Mutex::new(Vec::new())),
+            pending: std::sync::atomic::AtomicBool::new(true),
+            gates: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// End the parked answer `index` (0 = the first one that started).
+    fn finish(&self, index: usize) {
+        self.gates
+            .lock()
+            .expect("#2775 gates lock")
+            .get_mut(index)
+            .expect("#2775 gate exists")
+            .take()
+            .expect("#2775 gate not reused")
+            .send(())
+            .expect("#2775 gate receiver retained");
+    }
+}
+
+impl InteractionPort for StaleSeatScript {
+    fn elicitation_pending(&self, _chat_id: &str) -> bool {
+        self.pending.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn elicitation_capture(&self, _: &str, _: &str, event: &JsValue) -> String {
+        event
+            .get("question")
+            .and_then(JsValue::as_string)
+            .map(|question| String::from_utf16_lossy(question.units()))
+            .unwrap_or_else(|| "STALE ELICITATION QUESTION".to_owned())
+    }
+    fn elicitation_answer<'a>(
+        &'a self,
+        _chat_id: &'a str,
+        text: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<String>, ChannelError>> {
+        // TS-faithful shape: the take happens before the first await, so a
+        // second call while an answer is in flight finds nothing.
+        let taken = self
+            .pending
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        self.answers
+            .lock()
+            .expect("#2775 answers lock")
+            .push(format!("{taken}:{text}"));
+        if !taken {
+            return Box::pin(async { Ok(None) });
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.gates
+            .lock()
+            .expect("#2775 gates lock")
+            .push(Some(sender));
+        let text = text.to_owned();
+        let completed = self.completed.clone();
+        Box::pin(async move {
+            let _ = receiver.await;
+            completed.lock().expect("#2775 completed lock").push(text);
+            Ok(None)
+        })
+    }
+    fn elicitation_clear(&self, _chat_id: &str) {}
+
+    fn permission_pending(&self, _: &str) -> bool {
+        false
+    }
+    fn permission_capture(&self, _: &str, _: &str, _: &JsValue) -> Option<String> {
+        None
+    }
+    fn permission_confirm_initial(&self, _: &str, _: bool, _: Option<&str>) {}
+    fn permission_answer<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<PortPermissionAnswer>, ChannelError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn permission_release_answer(&self, _: &str, _: Option<u64>) {}
+    fn permission_take_next_prompt(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_prompt_request_id(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_confirm_next(&self, _: &str, _: bool, _: Option<&str>, _: Option<u64>) {}
+    fn permission_clear_after_turn(&self, _: &str) {}
+}
+
 /// #2055-3: the permission answer panics (standing in for any panic inside
 /// the answer task); the token release must still run (TS `.finally`).
 struct PanickingPermissionPort {
@@ -1783,6 +1889,120 @@ async fn concurrent_elicitation_events_answer_once() {
         "#2055 the next event after the answer is not swallowed",
         "f2 third answer",
         || script.answers.lock().expect("#2055 answers lock").len() >= 2,
+    )
+    .await;
+}
+
+/// #2775 fix-r4 (review P1-2, DS concurrency#1): a `/new` landing between two
+/// elicitation answers must not let the old answer's release delete the new
+/// answer's seat. TS cannot hit the window — `answer` consumes the pending
+/// entry synchronously before its first await, so no second answer task for
+/// one pending entry ever exists — but the Rust seat survives the reset, so
+/// an unconditional release would strand the occupancy the wrong way round
+/// and let a third event start a second answer task for the same pending
+/// entry. The permission branch guards the same window with its token
+/// (`permission_answering.get(&chat_id) == Some(&token)`); this pin is the
+/// elicitation mirror.
+#[tokio::test]
+async fn stale_elicitation_release_keeps_the_new_answers_seat() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gateway = MockInbound::new(Vec::new(), record.clone(), Gates::default());
+    let script = StaleSeatScript::armed();
+    let (channel, _slot) = case_channel_with_interaction(0, script.clone());
+    let deps = case_deps(&record, gateway);
+    let _handle = bounded("stale-seat start", channel.start(deps))
+        .await
+        .expect("#2055 start");
+
+    // The old answer takes the seat and parks on its own gate.
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-stale", "old"));
+    until(
+        "#2775 the old elicitation answer is in flight",
+        "stale-seat old answer in flight",
+        || *script.answers.lock().expect("#2775 answers lock") == vec!["true:old".to_owned()],
+    )
+    .await;
+
+    // The `/new`: clears the seat and bumps the generation while the old
+    // answer is still parked (the interleave under review).
+    channel.runtime.reset_chat_interaction_state("c-stale");
+
+    // A fresh pending entry and a new event: the new answer re-takes the seat.
+    script
+        .pending
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-stale", "new"));
+    until(
+        "#2775 the new elicitation answer is in flight",
+        "stale-seat new answer in flight",
+        || {
+            *script.answers.lock().expect("#2775 answers lock")
+                == vec!["true:old".to_owned(), "true:new".to_owned()]
+        },
+    )
+    .await;
+
+    // Finish only the old answer: its release must leave the new seat alone.
+    script.finish(0);
+    until(
+        "#2775 the stale old answer finishes before the new one",
+        "stale-seat old answer finished",
+        || *script.completed.lock().expect("#2775 completed lock") == vec!["old".to_owned()],
+    )
+    .await;
+    crate::negative_assert!(
+        channel
+            .runtime
+            .lock_state()
+            .elicitation_answering
+            .contains_key("c-stale"),
+        "#2775 the stale old-answer release must not delete the new answer's seat"
+    );
+
+    // The seat is what swallows a third event while the new answer waits:
+    // without the guard that event would start a second answer task for the
+    // same pending entry — the TS-impossible double answer.
+    script
+        .pending
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-stale", "third"));
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    crate::negative_assert_eq!(
+        script.answers.lock().expect("#2775 answers lock").clone(),
+        vec!["true:old".to_owned(), "true:new".to_owned()],
+        "#2775 a third event while the new answer waits starts no second answer"
+    );
+
+    // Releasing the new answer re-arms the chat: the next event is admitted.
+    script.finish(1);
+    until(
+        "#2775 the new answer's release re-arms the chat",
+        "stale-seat seat released",
+        || {
+            channel
+                .runtime
+                .lock_state()
+                .elicitation_answering
+                .is_empty()
+        },
+    )
+    .await;
+    script
+        .pending
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    channel
+        .runtime
+        .enqueue_inbound(plain_message("c-stale", "fourth"));
+    until(
+        "#2775 the chat recovers after the guarded release",
+        "stale-seat fourth answer",
+        || script.answers.lock().expect("#2775 answers lock").len() == 3,
     )
     .await;
 }
