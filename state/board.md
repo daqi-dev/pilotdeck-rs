@@ -1,22 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-13 02:45（01:5x–02:45 两小时交接段见文末；本轮 READY 全量重写，旧快照在本 PR 父提交 git 历史可溯；巡场卡 `_tmp/20261107-coord/patrol-card-20261113-0243.md`，sweep `_tmp/20261107-coord/sweep-0222.md`）：**四条合并链推进**——#3071 已入队；#3078 闸门 PASS 等 negative-controls；#2968 闸门 PASS 等 3078 解锁；#2499 评审重跑中——外加 2692/3056/1087 三条修复车道在飞 · 盘 155.0/200（160 WARN 线下 5 GiB，合并潮后回收 ~55 GiB）· 本机负载 6.97/10（另会话 cc2c 合法 cargo）· human-comments 空
+updated: 2026-11-13 13:01（12:55 交接段见文末；READY 全量重写反映三代码 PR 收口与 3078 在队；sweep-1247 rc=0 失联 0 台；旧快照 git 历史可溯）：**三条修复车道 gate PASS 等镜像守卫解锁**——#3042/#3074/#3088 均待 #3078 合入后 merge main 转绿入队；盘 125 GiB avail、_build+_tmp 49 GiB · fleet 全空载 · human-comments 空
 
-## 活跃车道（本轮实核）
-- #3078 | impl | doing | ci 镜像守卫 PR：DS final2 四角色全 PASS（P0=P1=0，head c8bb9ba42，块已贴、`check-pr-gate` PASS），等 negative-controls（~1h）转绿 → 入队 → MERGED 后 Re-run #3057 等假红 PR → 回收镜像漂移期积压 PR
-- #3071 | impl | doing | 2692 r13 停轮决策卡存档 PR 已入合并队列（02:4x，"already queued" 实证）；出队 MERGED 后核邮箱
-- #2968（#2795 p2batch-i 八单批）| impl | doing | fix-r15 双谱系 4/4 PASS（P0=P1=0）：MM `_tmp/20261113-2968-fixr15-review-mm/` + DS2 `_tmp/20261113-2968-fixr15-review-ds2/`；五条 P2 残差已开 **#3083**；闸门 PASS；**等 #3078 合入后 Re-run rust/pr-gate 再入队**；与 #2855 冻结链序：后合侧须在合并树重跑 `--write` 补 Change 边
-- #2959（#2499）| impl | doing | r9 干净（459c4586b）；DS 两跑超时+DSML 乱码 → **DS3+MM2（900 s）在飞**（`_tmp/20261113-2499-r9-final-{ds3,mm2}/`）；收块贴 PR → gate → 入队
-- #2960（#2692）| impl | doing | closure-r4 收货完成（c5d0f79dc，r4 任务书两修点实为陈旧前提已核未返工）；DS r4 评审出 **P1**（native-blankkey-submit `_assertions` 孪生未同步，评审件 `_tmp/20261113-2692-r4-final-ds/sibling.md`）→ **closure-r5 修复代理在飞**（任务书 `_tmp/20261113-2692-closure-r5/task.md`，修 P1+同族 P2×2+P3×2）；收货 → 双谱系增量评审（base c5d0f79dc）→ gate → 入队
-- #3074（#3056）| impl | doing | **fix-r4 结构性轮代理在飞**（TITLE_ECHO 仓内词表派生修 DS/MM 双撞 P0 + superseded P1 + 六条 a 档 P2；基点 23861ddec；任务书 `_tmp/20261113-3056-fixr4/task.md`）；收货 → 双谱系增量评审；裁定卡 `state/decisions-20261113.md`（判据 4 vs 判据 1 冲突 AI 裁定走结构性轮，待决策 PR 入库）
-- #3042（#1087）| impl | doing | r6 已在分支（6e47f2562，wt-1087 树干净）；CI 经 close+reopen 重触发（推送落在镜像漂移窗口无 run）；DS r6 增量评出 **P1×4**（`_tmp/20261113-1087-r6-review-ds/`，sibling 3 + concurrency 1），MM 在飞双撞确认后派 r7；r5 双谱系块在案（head 2c707588d，P1=3 已由 r6 修）
+- #3078 | impl | doing | 镜像守卫修复已入合并队列第 1 位（AWAITING_CHECKS，merge-group CI ~31 min）；MERGED 后核邮箱并触发四分支合流
+- #3042 | impl | doing | 1087 r15+MM r14 判读闭环：DS r15 块（head b20f9ad34）已贴、MM r14 六条 P2 逐条处置（#3108/#3109/#3110）、gate PASS；等 3078 合入 merge main → CI 绿入队；入队后关单收口须处置 #3001/#3094/#3100/#3108/#3109/#3110
+- #3074 | impl | doing | 3056 r17 收货+DS 增量四角色全 PASS（head c8bd2d5e3，P2=7 判定不修备案进 decisions-20261113）；gate PASS；等 3078 合流入队
+- #3088 | impl | doing | 1723 r6 整类收口（head 2c75de686，DS6 四角色 P0/P1/P2 全 0）body 补齐、gate PASS；等 3078 合流入队；收尾自查未做（Refs #1723 不 Closes）
+- #3105 | impl | doing | state PR（decisions+board，两提交待合）；等 3078 合入 merge main 转绿入队
 
-## 待重判区（派单前先 premise-check，旧 READY 明细见 git 历史）
-- sweep 红灯 3 无车道老单：#2893/#2892/#2891（#1953 家族 P1-跟进）、#2851（#2136 MM r35 评审）、#2850（#2780 守卫 env）；CI 随机红单预计随 #3078 合入可结
-- #3062 A8 channel-v2：修复/补审中（DS DSML 无 VERDICT 未记通过），续跑不灭失
-- 镜像漂移期积压 PR（#3042 外）：sweep open PR 全表 38 张逐张 Re-run/收块（#3057/#2987/#2974/#2969/#2967/#2944/#2931/#2912/#2911/#2769 等 pr-gate fail 旧块，3078 合入后逐张换块入队）
-- 旧 READY 的 p2batch-j/l/m、t-harvest、hop-car-L/M/N、recover-*、销账三批等行：**随 #3078 合入解锁后按 sweep 实况重判重写**，重判前不派
+- sweep-1247 | coord | blocked | 13:47 轮已完成 rc=0 失联 0 台（_tmp/20261107-coord/sweep-1247.md），红灯归因并入下一段交接
+- mirror-prs | impl | blocked | 镜像漂移期积压 PR（#3057/#2987/#2974/#2969/#2967/#2944/#2931/#2912/#2911/#2769 等）：#3078 合入后逐张 Re-run/换块入队，前置 = #3078
+- legacy-batches | coord | blocked | 旧 p2batch-j/l/m、t-harvest、hop-car-L/M/N、recover-*、销账三批：3078 合入解锁后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
 
 ### 段末增记（18:4x–20:3x，coord2/e7）
