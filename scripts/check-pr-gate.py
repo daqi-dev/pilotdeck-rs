@@ -324,10 +324,15 @@ def _bare_num_before(text: str, start: int, chain_end: int | None = None) -> boo
     _tmp/20261114-3074-fixr4/red-timing-before.txt），提交标题/正文行作者可控＝闸门挂起面。
     chain_end（fix-r6 sibling#1，DS r5 评审）：前向配对臂的**链成员豁免**单源参数——命中
     裸数字起点 < chain_end（最近前方 hash 的结束位）时视为 `#A+#B` 链自身成员而非引用，
-    返回 False（fix-r5 语义逐字等价；实测为保守死代码——前导符类排除 `#`，hash 自身
-    数字串不匹配，见 _scan_pairs 前向臂注释）。四臂（无 #N 全计入 / SELF / 前向 / 后向
-    配对）统一走本函数，不再另写 inline 窗口表达式——docstring「单源」声明由此成立；
-    将来改窗口/`\\Z` 口径只动这里。"""
+    返回 False（fix-r5 语义逐字等价）。fix-r7 simplify#1 按实测真相改写（替代 fix-r6 的
+    「保守死代码」措辞；原始输出见 _tmp/20261114-3074-fixr7/RESULT.md）：链首成员被前导
+    符类的 `#` 排除（`#3056 fix-r5` 实测 bm=None）；链尾成员带 `#` 时 `+` 后非数字、
+    bm=None（`#3056+#3074 fix-r5：x` 实测——计 5 与 foreign 正控由此达成，不经豁免分支）；
+    链尾成员不带 `#` 时 `+3074` 会命中（bm 非 None，实测），但数字起点＝最近前方 hash
+    结束位+1，不满足「起点 < chain_end」，豁免不触发、按裸号引用不计。chain_end 的
+    保留/删除不由此背书（A/B：前向臂去掉该参全语料 0 判定差异）。四臂（无 #N 全计入 /
+    SELF / 前向 / 后向配对）统一走本函数，不再另写 inline 窗口表达式——docstring
+    「单源」声明由此成立；将来改窗口/`\\Z` 口径只动这里。"""
     bm = BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)
     if bm is None:
         return False
@@ -358,7 +363,9 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
     形（`… fix-r5 修评审（复用 #1321 机制）`）下 zone_end=len(text)，同一旁路复开（仲裁
     四形三假 PASS）。调用方参与判据再收两道界（都在 `_scan_pairs` 内计算，见其 zone_end 后
     注释）：**enum_end**（首个锚点——#N 或 fix-rN token——之后的 ASCII ':'，前缀/时间冒号在
-    锚点前不作界）与**括号深度 0**（全/半角括号内的链是注记/board 括注，不是枚举项）。
+    锚点前不作界）与**括号深度 0**（全/半角括号内的链是注记/board 括注，不是枚举项；
+    fix-r7 sibling#1 起深度按宽度分类两条——全角（）与半角 () 各自 +1/钳 0 减，两类都 0
+    才参与：混宽镜像序 `（a)` 不再把深度抵回 0，见 _scan_pairs pdepth 注释）。
     已知窄窗（登记不改标准）：无冒号且无括号的裸尾注 `fix(x) #9999 fix-r5 复盘 #1321 机制`
     与前缀冒号形 `fix(x): #9999 fix-r5 修 #1321`（锚点在冒号后）仍被枚举抑制——前者与
     真实 board 并记（`#1305 fix-r3 …；#1318 …`）在词法上不可分，后者收紧会误伤
@@ -369,7 +376,11 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
     _tmp/20261114-3074-fixr6/RESULT.md boundary#1 节）；② 锚点后条目内的时间戳（`HH:MM`）
     冒号会切 enum_end，其后枚举链退出枚举 → 合法 board/交接段标题 foreign 误报（假 FAIL
     向；A/B 复算语料 0 实例）；③ 游离闭括号后**不接开括号**的链（`a) #1321`）自 boundary#2
-    钳 0 起回到深度 0 参与枚举——与「无冒号且无括号的裸尾注」窄窗同族（词法不可分）。"""
+    钳 0 起回到深度 0 参与枚举——与「无冒号且无括号的裸尾注」窄窗同族（词法不可分）。
+    fix-r7 sibling#1（DS r6 评审）封堵说明：③ 之外，「先闭后开」的序（`a)（…）`，fix-r6
+    boundary#2 钳 0）与**混宽镜像序**（先开后闭 `（a) …`——全角开 +1 被半角闭 −1 抵回深度
+    0，协调者实测复现：异单 foreign 丢失＝fix-r2 P0 旁路复开）都按宽度分类深度封在 ≥1，
+    不构成窄窗。"""
     uniq = set(chains)
     if len(uniq) < 2 or len(uniq) > _ENUM_CHAIN_CAP:
         return False
@@ -446,8 +457,8 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     #   不变）；②链首落在全/半角括号深度 ≥1 处的链不参与（`修评审（复用 #1321 机制）`
     #   尾部注记形；含类型词 scope 括号族 `fix(scope,#N,#M)`——已知窄窗登记见 _enum_title
     #   docstring，fix-r6 boundary#1）。两道界只让 enum 变 False（fail-closed：foreign 只会
-    #   新增命中；括号深度自 fix-r6 boundary#2 起钳 0——游离闭括号不再以负深度排除链，见
-    #   pdepth 注释），且
+    #   新增命中；括号深度自 fix-r6 boundary#2 起钳 0——游离闭括号不再以负深度排除链；
+    #   fix-r7 sibling#1 起按全/半角宽度分类两条——混宽镜像序不抵回 0，见 pdepth 注释），且
     #   rounds 计入分支不经过 enum——封堵面零回退；链 gap 字符（PAIR_SEP ∪ 非换行空白）
     #   不含 `:`/`（）()` ⇒ 链不跨界，「链首在界内 ⇒ 整链在界内」与 r4 P1-C 同构。
     anchor = min([h.start() for h in hashes]
@@ -481,21 +492,32 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     # ——O(C²) 挂起面见该函数注释）。括号深度用单调指针单遍累计（pscan 只前进，O(n) 总量）。
     enum_chains: list[frozenset[str]] = []
     pscan = 0    # 括号深度已扫描到的位置（token 间不回退）
-    pdepth = 0  # text[pscan] 处的括号深度（全/半角开括号 +1，闭括号钳 0 减——fix-r6
-                # boundary#2，DS r5 评审：旧「不钳 0」声称游离闭括号让后续链停在负深度＝
-                # 不参与＝fail-closed，实则一个后续开括号就把负深度抵回 0（`a)（复用 #N
-                # 机制）` 形的 P0 旁路复开）；钳 0 后游离闭括号+开括号的链停在深度 1＝不参与
-                # 枚举，尾部注记形的 foreign 封堵不可被加一个 `)` 复开。游离闭括号后**不接
-                # 开括号**的链回到深度 0 参与枚举——与 _enum_title docstring 已登记的「无
-                # 冒号且无括号的裸尾注」窄窗同族的既知代价（该形词法上与窄窗形不可分））
+    # fix-r7 sibling#1（DS r6 评审 P1，协调者实测复现）：括号深度按宽度分类两条——全角
+    # （）与半角 () 各自 +1/闭括号钳 0 减（钳 0 自 fix-r6 boundary#2，DS r5 评审：旧「不
+    # 钳 0」声称游离闭括号让后续链停在负深度＝不参与＝fail-closed，实则一个后续开括号就把
+    # 负深度抵回 0——`a)（复用 #N 机制）` 形的 P0 旁路复开），**链参与枚举须两类都为 0**。
+    # 旧单深度下混宽镜像序（先开后闭：`（a) 复用 #N 机制）`——全角开 +1 被半角闭 −1 抵回
+    # 0）让尾部注记链回到深度 0 参与枚举 ⇒ enum 抑制 foreign ＝ fix-r2 P0 旁路复开；
+    # 分类后该形全角深度停在 1，链不参与（fail-closed 向：foreign 只会新增命中）。尾部
+    # 注记形的 foreign 封堵对「先闭后开的序」（`a)（…）`）与混宽镜像序（先开后闭）都
+    # 成立——各自宽度的开括号把链挡在深度 ≥1；仍开的只有「游离闭括号后**不接开括号**」
+    # 的链（`a) 复盘 #N`）——与 _enum_title docstring 已登记的「无冒号且无括号的裸尾注」
+    # 窄窗同族的既知代价（该形词法上与窄窗形不可分）。单调指针不变（pscan 只前进，
+    # O(n) 总量）。
+    fw_pdepth = 0  # text[pscan] 处的全角（）括号深度
+    hw_pdepth = 0  # text[pscan] 处的半角 () 括号深度
     for c, p in enumerate(chain_first):
         while pscan < p:
-            if text[pscan] in "（(":
-                pdepth += 1
-            elif text[pscan] in "）)":
-                pdepth = max(0, pdepth - 1)
+            if text[pscan] == "（":
+                fw_pdepth += 1
+            elif text[pscan] == "(":
+                hw_pdepth += 1
+            elif text[pscan] == "）":
+                fw_pdepth = max(0, fw_pdepth - 1)
+            elif text[pscan] == ")":
+                hw_pdepth = max(0, hw_pdepth - 1)
             pscan += 1
-        if p < enum_end and pdepth == 0:
+        if p < enum_end and fw_pdepth == 0 and hw_pdepth == 0:
             enum_chains.append(chain_sets[c])
     enum_title = _enum_title(enum_chains)
     ends = [h.end() for h in hashes]
@@ -539,9 +561,14 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             # 化，DS r5 评审）：守卫统一改走 `_bare_num_before(text, start, ends[i])`，四臂
             # 不再各写一份窗口表达式。chain_end＝fix-r5 链成员豁免语义的逐字等价承载
             # （`#3056+#3074 fix-r5：x` 计 5 / :1416 foreign 正控依赖该形判 None）。
-            # 事实核（fix-r6，DS r5 boundary#4 P3 实测）：BARE_NUM_BEFORE 的前导符类排除
-            # `#`，hash 自身数字串根本不匹配（上形实测 bm=None）——豁免分支是保守死代码，
-            # 留着无害且保持 fix-r5 语义逐字不变。
+            # 事实核（fix-r6 DS r5 boundary#4 实测 + fix-r7 simplify#1 复测，原始输出见
+            # _tmp/20261114-3074-fixr7/RESULT.md 与 probe-simplify1-out.txt）：带 `#` 的
+            # 链成员形（`#3056+#3074 fix-r5：x`）bm=None——本臂的计 5 与 foreign 正控由
+            # 此达成，不经豁免分支；不带 `#` 的链尾形（`…+3074 fix-r5`）`+`/`,` 前置会
+            # 命中（bm 非 None），但数字起点＝最近前方 hash 结束位+1，不满足豁免判据
+            # （起点 < chain_end），按裸号引用不计。链首成员被前导符类的 `#` 排除。
+            # 不以「死代码」结论背书 chain_end 的保留或删除（A/B 见 _bare_num_before
+            # docstring）。
             if not _bare_num_before(text, start, ends[i]):
                 if not chain_sets[heads[i]].isdisjoint(issues):
                     rounds.append(int(num))
