@@ -6787,3 +6787,26 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 5 | MM 额度（约 07:24）补四块：2944 MM 三角色/3058 fix-r7 MM/2969 fix-r9 MM/3074 fix-r5 MM → 补齐后 CronDelete 2c675767 | coord2/e7 | MM 恢复后当轮 |
 | 6 | 2969 MM 块后 body 手术（块 head 0e7dff76）→ gate → CI → 入队 → #2558 链收口核对（#2978/#2980/#3122/#3131/#3137 前置在案） | coord2/e7 | MM 恢复后当轮 |
 | 7 | 盘：卷余 31 GiB，下轮择机清闲置树 cargo-target（删前核 pgrep）；每轮 df/du -sk | coord2/e7 | 每轮 |
+
+## 2026-11-14 06:10 交接段（coord2/e7，04:40 接续）
+
+**做了什么**：
+- **队列 REBASE 九连踢出根因定案 + 3042/2931 重锚**：`mergeStateStatus CLEAN` 只反映净合并，队列 REBASE 逐提交重放另算（3042 撞 #1528 家族同文件）——修法 `merge-tree --write-tree` 干净树 → `commit-tree -p origin/main` 单父重锚，`diff(旧头,新头)` 与 `diff(merge-base,main)` 逐文件镜像＝零内容漂移机械证明。3042 新头 68d6763c9 **净补丁指纹不变（5181922d）gate 自判沿用 PASS 无需重评审**；2931 新头 2b4744439 指纹变（480e63462→01e695b6）走全量重评审。memory「sandbox-merge-commit」第 3 次段 + MEMORY.md 压缩 168→96 行。
+- **#3042**：重锚 DS 全量四 PASS，P1×1（concurrency#1，与 #3118 同缺陷 void 路径 print 先于 publish）→ **#3118 升 P1-跟进**（两家取高：11-13 MM 判 P2 / 本轮 DS 判 P1，行号漂移同一缺陷）；P2×8 开 **#3142**（前置于 #1087 关单收口）；PR 评论 issuecomment-6865906501。CI 大半绿（rust/scope/pr-gate/a51/schema/retirement 已过），negative-controls/metadata-observer 在跑（~45min）→ 绿即 GraphQL enqueuePullRequest 入队（本机 gh pr merge 在此仓静默无效，实锤）。
+- **#3074（#3056）fix-r7 全链**：GLM 交付 142ce6e17（括号深度全/半角分类两条）协调者独立复验全绿 + DS 增量四 PASS（P1=0，P2×4 按 r17 工具类口径判定不修留复查触发条件）→ body 手术（存档两旧块 + r7 活块 + 处置段）。CI 两红已解：pr-gate=**自家新规 fixtype 缺失**（r7 块补 `fixtype=结构性`，PR 树本地 gate PASS，等 edited run b0g9cb0ft）；rust=**已知假红**（cron_request_dispatches_off_the_async_worker，flaky 三处之一，PR 只改 scripts/*.py 不碰 Rust），body 编辑已触发全新 ci run 覆盖无需 rerun。MM 第二家（base 46d03516b 全量盖，head 已改 142ce6e17）等额度。
+- **#2931（#1642）重锚重评审收口至等 CI**：DS 四角色全 PASS（boundary 首跑 DSML 泄漏 PARTIAL → 单角色重跑 PASS，P1=1）；**sibling P1**（四张新迁移名册无独立分母 + native-management 删唯一 `EXPECTED_TOTAL=97`——恰是 #2572 所引先例自身被删）**已并入 #2572**（正文清单增补 + 评论 issuecomment-6866048233，前置 #1357 不变）；**boundary P1**（空参 usage rc1 违自声明 rc 2 契约）与 **concurrency#1**（漂移探针 mkstemp 写进 src/ 面：并发全量轮 rc 2 假拒跑 + SIGKILL 残留锁死 worktree）开 **#3143**；**boundary#2**（`_template_covers` 尾向假接受）协调者最小实测实锤（`'head apply tail extra'`→True）按 b 档升 P1 同入 #3143（前置于 #1642 收口）。P2×5 + P3 不修明细在 #3143。body 手术（新活块 head=2b4744439 patch=01e695b6 diff_lines=3485）本地 gate PASS，PR 评论 issuecomment-6866142556 + project-mark 评审轮=2。放行依据：修复轮 6+ 轮超上限、非冻结尺子本体。
+- **#2929（#1528 租约预算）fix-r1 收货**：GLM 交付 b898ab253（8 runner 显式 LEASE_ACQUIRE_BUDGET_SECONDS 推导式常量 + pin 测试 test_lease_acquire_budgets.py + CI 接线，RESULT `_tmp/20261114-2929-fixr1/RESULT.md`）→ DS 四角色评审已派（pid 15834，out `_tmp/20261114-2929-fixr1-ds/`，concurrency 已出块中）。入队前需解 ci.yml 锚点与 2931 同文件冲突（rebase）。
+- **MM 额度**：05:5x 探测仍 429（choices=null，http 200 假象已识破）；cron 2c675767 继续探测，恢复后照 `_tmp/20261114-mm-recovery-plan.md` 补四块。
+- **事故如实记录**：wordlist-ab-recompute.py 的 OLD 默认值未改直接跑，两次覆写 `_tmp/20261114-3074-fixr5/wordlist-ab-recompute.txt` 证据文件（agent 的 r7 副本 `_tmp/20261114-3074-fixr7/` 未损；已用 sed 改 OLD_REF 的副本独立复现 0/0/0 证实 agent 数字）——教训：跑带默认值的复算脚本先核默认参指向当前轮头。
+
+**下一步**：3042 CI 全绿 → GraphQL 入队 → MERGED 后核邮箱 + #3001 条1/#3100 条2/3 关账 + 1087-p2-batch 开单（#3108 冻结程序）+ 2959 合并轮即派（任务书 `_tmp/20261114-2959-merge/`、树 wt-2499）；2931 edited run 绿 → 入队（入队前如 main 动过先核 merge-tree）；3074 两 run 绿 → 入队；2929 评审收齐 → 开 PR（body 手术→gate→CI→rebase 解 ci.yml 冲突→入队→合并后 #1528 关单 + #2929 处置登记已修）；MM 恢复补四块后 CronDelete 2c675767。
+
+未结义务表：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3042 CI 终态（negative-controls ~06:50 完）→ GraphQL 入队 → MERGED 核邮箱 → #3001 条1/#3100 条2/3 关账 + 1087-p2-batch 开单 + 2959 合并轮即派 | coord2/e7 | b560e9iq4 触发即收 |
+| 2 | 2931 edited run（pr-gate bexp7jnsl + ci）绿 → 入队；MERGED 后 #1642 链收口（#3143 前置登记核对） | coord2/e7 | 等待器触发即收 |
+| 3 | 3074 edited run（b0g9cb0ft pr-gate + 新 ci run 覆盖假红 rust）全绿 → 入队；MM 恢复后 base 46d03516b 第二家全量盖 | coord2/e7 | 07:30 |
+| 4 | 2929 DS 评审收齐 → 判读处置 → 开 PR → gate → CI → ci.yml 冲突 rebase → 入队；合并后 #1528 关单 + #2929 登记已修 | coord2/e7 | 07:00 |
+| 5 | MM 额度恢复（约 07:24 窗）补四块（2944/3058/2969/3074，计划文件 head 已更新）→ 四块全出后 CronDelete 2c675767 | coord2/e7 | MM 恢复后当轮 |
+| 6 | 盘：仓内 _build+_tmp 60.9 GiB（阈值内）、卷余 38 GiB；每轮 df/du -sk | coord2/e7 | 每轮 |
