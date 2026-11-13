@@ -1006,6 +1006,40 @@ def _run(gate, rrr, out_base: Path) -> int:
                                 " _is_issue_gap_char 不一致（正文端与配对端词表分裂）")
         if single_src_bad > 3:
             fails.append(f"fix-r13 单源锁：共 {single_src_bad} 个码位不一致（正文端与配对端词表分裂）")
+        # fix-r14（DS r13 concurrency#1 + boundary#1、MM concurrency#1 三谱系同撞 P0，仲裁实测
+        # `_tmp/20261113-3056-fixr14/redos-arbitration.txt`）：标点分支嵌套量词 `(P+)+`
+        # 的指数回溯——长标点串（其后再无 #N）须在时限内返回，r13 形态实测 n=22 已 0.32s、
+        # 每 +2 标点 ×4.3（n=40 外推 20+ 分钟＝闸门挂起，正文作者可控）。线性形态
+        # `(?:[^\S\r\n]*[P])+`（每轮恰一个标点）下 n=200 须有界。
+        import time as _time
+        for attack in ("Closes #3056" + "," * 200 + "x",
+                       "Refs #3056 " + "+ ," * 100 + "、"*100 + "x",
+                       "Closes #3056" + ",\n"*100 + "x"):
+            t0 = _time.monotonic()
+            got = gate.pr_issues(attack + "\n")
+            dt = _time.monotonic() - t0
+            if got != frozenset({"3056"}):
+                fails.append(f"fix-r14 P0 回归护栏：长标点串只取首号且并组语义不变，得 {sorted(got)}")
+            if dt > 2.0:
+                fails.append(f"fix-r14 P0 回归护栏：长标点串（{len(attack)} 字符）耗时 {dt:.3f}s > 2s"
+                             "——嵌套量词回退（`(P+)+` 形）会指数化，改每轮恰一个标点的线性形态")
+        # fix-r14（DS r13 sibling#1 P2）：类型词表单源——ECHO_HEAD 与 TITLE_HEAD 只准引
+        # `_TYPE_WORDS`，一处加词另一处漏改会让 CI 路径与本地回显路径的修复轮判定分裂
+        # （r12 ISSUE_LINK/ISSUE_NUM 同款手抄漂移反模式）。
+        if gate._TYPE_WORDS not in gate.ECHO_HEAD.pattern or gate._TYPE_WORDS not in gate.TITLE_HEAD.pattern:
+            fails.append("fix-r14 P2（DS r13 sibling#1）：ECHO_HEAD/TITLE_HEAD 须单源引 _TYPE_WORDS"
+                         "（两份手抄词表漂移 → 双路径修复轮判定分裂）")
+        # fix-r14（MM sibling#4 P2）：标题侧并组口径双向钉死——正控（PAIR_SEP 成员并组）+
+        # 负控（非 gap 分隔符不并组、链只取最近 #N）。
+        if gate.fix_round_from_titles(["fix(scripts) #3056;#3074 fix-r12：x"],
+                                      frozenset({"3056"})) is not None:
+            fails.append("fix-r14 P2 负控（MM sibling#4）：`;` 非 gap 字符不得并组——"
+                         "断链后最近 #N=#3074 ∉ issues ⇒ 不计入（fix_round=None）；"
+                         "若被放宽成链 {3056,3074} ∩ issues≠∅ 会把引用单的轮号误计入（假 PASS 向）")
+        if gate.fix_round_from_titles(["fix(scripts) #3056，#3074 fix-r12：x"],
+                                      frozenset({"3056"})) != 12:
+            fails.append("fix-r14 P2 正控（MM sibling#4）：PAIR_SEP 成员（，）在标题侧仍并组"
+                         "——负控收紧不得收掉既有并组口径")
         # fix-r9 P2a 接线：base==head 的空标题集合＝无主信号，正文兜底开结构化回显扫描
         # （旧 echo_scan=titles is None 把空集误当 CI 形态只看首行 → 非首行回显漏判＝假 PASS）
         empty_body = ("![ci](https://example.com/b.svg)\n\n概述。\n\n"

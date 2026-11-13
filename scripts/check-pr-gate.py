@@ -35,13 +35,16 @@
      设 ≤20 有界间隔会把 17 条真实形态判漏）。正文回显不是任何路径的主信号（行内词表判据
      r2→r3→r4 三轮不收敛，全量词表证明「结构化标题」与「类型词开头的散文」两群在行内无判别量，
      见 state/decisions-20261113.md「#3056 fix-r4 修 1 停点裁定」），**别再往正文正则里加词**；
-     正文只作**兜底**：--base/--head/--repo 任一缺失（本地 `--body-file` 不传 head 的路径——
-     缺件先打 stderr 显式告警说明主信号缺失原因，不静默降级，fix-r7）时，首行宽松（fix-r1
+     正文只作**兜底**：主信号**缺失**的两形态同走「首行宽松 + 全正文结构化回显扫描」
+     （fix-r14，MM r13 sibling#2）——①缺件：--base/--head/--repo 任一缺失（本地
+     `--body-file` 不传 head 的路径——缺件先打 stderr 显式告警说明主信号缺失原因，不静默
+     降级，fix-r7，返回 None）；②空集合：base==head 合法空集（无提交可判）**或**范围内提交
+     subject 全为空（过滤后空列表，返回 []）。首行宽松（fix-r1
      P0 的 CJK 连写首行「修复fix-r5：」靠它）不命中再扫**全正文结构化回显**（`fix(...) #N
      fix-rM` 形态：类型词 + (scope) + 冒号（可无）+ #N + 就近 fix-r，#N 配对到本 PR 关联单才
      计入——scope 括号 + #N + 配对三重结构与散文分开，fix-r5 修 4，boundary#4：本地过闸是
-     硬步骤，「## 概述」开头的正文不再判非修复轮）；集合全不命中（CI 形态）保持只看正文
-     第一个非空行（宽松口径，fix-r4 修 3.5 的已知窄代价钉死，fix-r6 起有负控）。
+     硬步骤，「## 概述」开头的正文不再判非修复轮）；只有「集合在但全不命中」（CI 形态）保持
+     只看正文第一个非空行（宽松口径，fix-r4 修 3.5 的已知窄代价钉死，fix-r6 起有负控）。
      git log 失败（git 起不来 / 非零退出）fail-closed 拒收，**不得当「非修复轮」放行**；
      空输出两分（fix-r7，DS r6 boundary#3）：base==head 是合法空集（无提交可判），head 是
      base 的祖先（--base/--head 传反 / base 是 head 的后代，`git merge-base --is-ancestor` 判）
@@ -155,13 +158,24 @@ def _is_issue_gap_char(c: str) -> bool:
 
 
 ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])" + _ISSUE_KEYWORDS + r"\s+"
-                       rf"#(?P<nums>\d+(?:(?:{_GAP_EDGE}(?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}]+)+{_GAP_EDGE}"
+                       rf"#(?P<nums>\d+(?:(?:{_GAP_EDGE}(?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}])+{_GAP_EDGE}"
                        rf"|[^\S\r\n]+|)#\d+)*)(?![A-Za-z0-9_])", re.I)
+# fix-r14（DS r13 concurrency#1 + boundary#1、MM concurrency#1 三谱系同撞 P0，仲裁实测
+# `_tmp/20261113-3056-fixr14/redos-arbitration.txt`）：标点分支外层 `+` 内层「空白* + 标点+」
+# 的嵌套量词是 `(P+)+` 形——M 个连续标点可被切成 2^(M-1) 种轮组合，gap 后无 #N 时全枚举
+# （实测 n=22 已 0.32s、每 +2 标点 ×4.3，n=40 外推 20+ 分钟＝闸门挂起，PR 正文作者可控）。
+# 改为每轮恰吃**一个**标点 `(?:[^\S\r\n]*[P])+`：标点串的轮划分唯一（第 i 轮＝第 i 个标点），
+# 语言等价、回溯线性；空白重分配也不可能爆炸——轮首空白星缩短后 `[P]` 立即在空白位失败，
+# 无成功路径。别再写回嵌套 `[P]+`（或任何「内外层都能吃同一字符类」的重复单元）。
+# 类型词表单源（fix-r14，DS r13 sibling#1 P2）：ECHO_HEAD 与 TITLE_HEAD 两处手抄是 r12
+# ISSUE_LINK/ISSUE_NUM 同款反模式——一处加词（如 deps）另一处漏改 → CI 路径与本地回显
+# 路径的修复轮判定分裂。两正则只准引 `_TYPE_WORDS`；测试侧有同源断言。
+_TYPE_WORDS = r"(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)"
 # 修 4（fix-r5，boundary#4 P2）本地回显扫描的判据：只认「结构化回显」——类型词 + (scope) +
 # 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
 # 报告证明「类型词开头的散文」与真实标题在行内没有判别量（「test 覆盖了 fix-r5 的场景」
 # 也以类型词开头），靠 scope 括号 + #N 引用 + 配到本 PR 单号三重结构才与散文分开。
-ECHO_HEAD = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)"
+ECHO_HEAD = re.compile(r"^" + _TYPE_WORDS +
                        r"\([^)\n]{1,80}\)\s*[:：]?\s*(?:PR\s+)?#\d+")
 # #3056 fix-r5 修 1 换结构化信号源（state/decisions-20261113.md「#3056 fix-r4 修 1 停点裁定」）
 # → fix-r6 扩为集合（DS boundary#1 P0 + concurrency#1 P1 双撞同根因）：修复轮判定的**主信号 =
@@ -190,7 +204,7 @@ ECHO_HEAD = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|
 # 来自结构而非词表，散文（`test 覆盖了 fix-r5 的场景`）仍不可入；集合在但全不命中（CI 形态）
 # 保持只看首行。标题里散文形与真实标题在行内不可分——判修复轮只多一道 fixtype/residual
 # 要求（假 FAIL 向窄代价）。
-TITLE_HEAD = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)"
+TITLE_HEAD = re.compile(r"^" + _TYPE_WORDS +
                         r"(\([^)\n]{0,80}\))?!?(?:[:：]|\s)")
 RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
 # 值域 = 字面三值的字符集：紧贴的中文标点/后续文字不并进值（DS boundary#3）——
@@ -277,11 +291,12 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
     - (None, "") = 缺 --base/--head/--repo 任一（不是错误：本地 --body-file 不传 head 的
       路径走正文首行兜底——非首行正文回显不再识别，**有意收窄**，fix-r6 起有负控钉死；
       调用方 main 打 stderr 显式告警说明缺哪件，不静默降级，fix-r7）；
-    - ([], "") = 空集：**只有 base==head**（无提交可判）是合法空集，不是 git 失败，按「无主
+    - ([], "") = 空集：**无标题证据**的两形态——base==head（无提交可判）**或**范围内提交
+      subject 全为空（过滤后空列表）——都不是 git 失败，按「无主
       信号」与本地形态同款走正文首行 + 结构化回显兜底（fix-r9 P2a：空集与 None 一样没有任何
       标题证据，回显扫描该开；「只看首行」的收紧只给「集合在但全不命中」的 CI 形态；DS r9
-      sibling#4：空 subject 提交过滤后同样得空列表，check() 的 `not titles` 与 base==head
-      空集同走回显兜底，方向 fail-safe）。git log
+      sibling#4 + fix-r14 MM sibling#1：空 subject 提交过滤后同样得空列表，check() 的
+      `not titles` 与 base==head 空集同走回显兜底，方向 fail-safe）。git log
       **空输出且 base≠head** 是坏范围（head 是 base 的
       祖先：--base/--head 传反 / base 是 head 的后代，`git rev-parse` 比对 + `git
       merge-base --is-ancestor` 判）——fail-closed 拒收写明原因，不得当合法空集静默丢主信号
