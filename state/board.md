@@ -1,14 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-13 16:59（14:45 交接段见文末；#3078 已 MERGED 15:46、邮箱已核；四分支已合流推送并重钉 gate，重跑等待器在挂）：**主线 = 合流收口与积压清偿**
+updated: 2026-11-13 22:51（20:50 与 22:5x 两段补落见文末；#3105 已 MERGED、#3042/#3102/#2912 已入队在跑）：**主线 = 合流收口与积压清偿**
 
-- #3042 | impl | doing | 1087 收口 PR：merge main 后换 head f4a95e795 重钉 gate（DS simplify PASS P0=0 P1=0 P2=2 已开 #3111 跟进）；等 gate 重跑绿即入队；合入后 #3001 条1/#3100 条2/3 生效可关
-- #3074 | impl | doing | 3056 r17 收口 PR：merge main 后换 head 4d4fc1ab5 重钉 gate（DS simplify PASS P0=0 P1=0 P2=1 判定不修同 r17 口径备案 body）；等 gate 重跑绿即入队
-- #3088 | impl | doing | 1723 收口 PR：merge main 后换 head 7ca71b522 重钉 gate（DS simplify PASS P0=0 P1=0 P2=1 已开 #3112 跟进）；等 gate 重跑绿即入队；收尾自查已做（Refs #1723 不 Closes）
-- #3105 | docs | doing | state PR：merge main 后本段 board 增记再重钉 gate 入队（P2=1 = board/decisions 状态不同步，本段已修）
-- mirror-confluence | impl | doing | 积压 35 张分诊完毕（_tmp/20261113-mirror-confluence/triage.md，A 机械 9 / B 真冲突 19 / C blocked 7；注意 REST dirty=真冲突非落后）：A2 六张非 Draft unstable（#3102/#2969/#2967/#2944/#2931/#2912）逐张机械合流+重钉 gate；A1 三张 clean Draft（#3058/#3015/#2800）先核是否转正；B 19 张真合并工作单（#2911 先例：夹具族并集+计数重导+名册核对）排期派车道；C 7 张 blocked 分支保护缺评审待判
-- premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605。#2448/#2459 修法已拍板（探针实测 + decisions-20261113 两张卡，AI 代批待人复核），任务书素材齐；其余六张派单前按同模式先探针；前置 = mirror-confluence A2/B 批次
+- #3042 | impl | doing | 1087 收口 PR 22:48 入队（checks 7/7 全 pass）；合入后 #3001 条1/#3100 条2/3 生效可关、1087-p2-batch 批件开单
+- #3074 | impl | doing | 3056 收口 PR gate 红：body 块停在旧 head（c8bd2d5e3/4d4fc1ab5），当前 head ed3e48c58；3056 车道仍在飞，待链终后按当前 head 重钉补块再入队
+- #3088 | impl | doing | 1723 收口 PR：body 已删旧 head 块只留 7ca71b522 块（simplify PASS），缺 sibling/concurrency/boundary 三角色 → DS 补跑在飞（_tmp/20261113-3088-regate2，wt-1723 已刷 head）；出块后补 body+rerun 入队
+- mirror-confluence | impl | doing | A2 六张：#3102/#2912 已入队、#3042 已入队、#2931 整 run 重跑在跑（43425343173）、#2969/#2967 等 2775/2558 链收口补块；A1 三张 clean Draft（#3058/#3015/#2800）先核是否转正；B 19 张真合并工作单（#2911 先例）排期派车道；C 7 张 blocked 待判
+- premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605。#2448/#2459 修法已拍板（decisions-20261113 两张卡，AI 代批待人复核），任务书素材齐；其余六张派单前按同模式先探针；前置 = mirror-confluence A2/B 批次
 - 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序；前置 = #3042 合入（同域串行）
 - legacy-batches | coord | blocked | 红灯 3 六十四张老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
@@ -6646,5 +6645,38 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ### 下一步
 按未结义务表序推进，不空等；下一个交接点 ~18:59。
+## 20:50 交接段（e7，两小时轮）
+
+**做了什么**：
+- 收口推进：#3102（2461 fix-r7）DS 增量块出（P0/P1=0、P2=9），时钟打平族读码核证成立（fail-closed 方向），9 条 P2 全处置并入 #3121，body 贴 r7 块+pr-gate rerun；#2912（fix-r3）双谱系块出（P0/P1=0、P2=7，MM/DS 两家独立撞 README 数字自检），处置并入 #2995/#3116/#1398，body 补双块+rerun。两单等 CI 绿自动入队。#2931（1642 fix-r3）双谱系块出 9 P1 归 5 族（2 族两家撞线、3 族 b 类假 PASS 落 CI 尺子），fix-r4 材料已写、排队循环等空位。#3043 fix-r4 派上 macmini。#3120（EOF 挂起 8 连败）重试发出；#3121/#2995/#3116 处置评论全部发出。
+- 3105 状态：第二次入队后合并组真红——rust 为 timing.rs:215 性能断言边缘假红（3.05x vs 允许 2.95x），metadata-observer 为 main 侧 KNOWN_BLIND 汇总行过期（281/203/1486 实际 vs 280/202/1480 登记，=2558 fix-r4 P1-2 修的范围）。3105 为 docs PR 被夹，链式等待 2558 合入后重入队。state PR（本段+READY）等 3105 终态后新分支开（同文件避免 add/add 撞队）。
+- 巡场（patrol-1925.md 20:4x–20:55 段）：积压 2 单均为已知对账链（#1087 等 3105、#2499 等 2959）；无失联、无 P0、human-comments 干净。**机器级 WARN：本机数据卷 99% 满剩 18G**——主仓 _build+_tmp 104.6G 在闸内（<160），大头为用户数据，只报不动；已回收 2 棵可回收树，本机停开新树。提示人关注本机磁盘。
+
+**下一步**：2558/2775 fix-r4 落地收货 → 修 P1 轮双家重钉 → body → 入队（2558 合入后连带解锁 3105 重入队与 #2980 条目级处置）；1642 fix-r4 空位派出 → 同链；3043 fix-r4 macmini 在跑（3056 1h12 同机）；2959/2800 终态后各自关账链；2043 boundary 重试出块后与 r1c 三角色合并判读派 fix-r2。
+
+**READY 变更**：2931/3102/2912 三行推进至评审收口段；新增等待器（barvsj1fm 入队器、bjll4v0au 1642 排队循环）。
 
 
+## 22:51 交接段（e7，两小时轮，补 20:50 段一起落库）
+
+**做了什么**：
+- #2775 fix-r4 收尾：代收货（E0507 机械修+全验证绿+代提交 b655bc712）后重钉六角色撞 3×P1 同源——R2/R8 登记句停在「KILLED=1」，与证据不符（worker 记的复跑实为 INVALID：cargo-slot 磁盘闸拒跑）。协调者当轮修：api-server 两行 + feishu 两行复杀，KILLED=4 SURVIVED=0 INVALID=0 全绿（feishu 4 次重跑穿越 pycache 挡 SourceBaseline、占位目录、盘满三坑）；R2/R8 登记句如实修正（提交 8249642f0 已推，证据 _tmp/20261026-issue-2775/fix-r4/negative/）；MM/DS r5 重钉在飞。
+- **盘满事故 22:33**：本机数据卷剩 2.9 GiB，负控 ENOSPC——删 wt-3056/2461/1087 闲置 cargo-target（删前核 pgrep 无进程）释放至 43.3 GiB，PushNotification 已发人；每轮 df/du -sk 核验照旧。
+- #2558 fix-r4 收货：fmt 机械修+代提交 74fb3fe30、8 变异全 KILLED、pytest 205 全绿；重钉出 eprint! P1（MM/DS 两家四角色撞线：守卫匹配集漏第四个 std console 宏 eprint!，与 #2558 原始崩溃同族）+ README「280→281」P2；fix-r5 任务书组装后派 macmini（22:40 预热中，树校验一致）。
+- 入队三张：#3102 全绿入队；#2912 body 竞速修复（edit 落在 rerun 后致假红，本地 check-pr-gate PASS 后二次 rerun）绿后入队；#3042 checks 7/7 全 pass 于 22:48 入队。merge_group 均在跑。
+- #3088 gate 红=body 留旧 head 块（多块须同 head 同指纹）：删旧块只留当前 head 7ca71b522 块（simplify PASS），本地校验发现缺 sibling/concurrency/boundary 三角色 → DS 补跑在飞（_tmp/20261113-3088-regate2；wt-1723 已刷到 PR head）。#3074 同病（块停在旧 head，当前 head ed3e48c58）且 3056 车道仍在飞，待链终重钉。
+- #1642 fix-r4 worker ECONNRESET 死亡未动工 → 清旧 glm.exit 重派成功（本机 P1 1/2）。#3043 fix-r4 macmini ConnectionRefused 死亡（run.log 假 rc=0）→ 半成品已由 remote-wait4 收回本机树，dispatch-resume 本机接续。#2931 整 run 重跑（43425343173，Require same runner image 基建抖动，run 整红但 job 全绿家族）。
+- human-comments 空。
+
+**下一步**：2775 r5 重钉出块 → body（#2967）→ 入队；2558 fix-r5 macmini 收货 → 验证 → 重钉 → body（#2969）→ 入队（合入解锁 3105 类似链与 #2980 条目级处置）；3088 三角色出块 → 补 body → rerun → 入队；1642/3043 等待器收货；2931 run 终态绿入队；#3042 合入后关账链+1087-p2-batch 开单；3074 待 3056 链终。
+
+未结义务表：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 2775 r5 重钉（MM/DS，pids 14728/14729）出块后 body+入队 | coord2/e7 | 23:30 |
+| 2 | 2558 fix-r5 macmini 收货链（等待器无，需挂）→ 验证 → 重钉 → 入队 | coord2/e7 | 00:45 |
+| 3 | 3088 regate2 三角色出块 → body 补块 → rerun → 入队 | coord2/e7 | 23:30 |
+| 4 | 1642 fix-r4（bljdkmffx）/3043 resume（bjwao943i）交付收货 → 同链 | coord2/e7 | 等待器触发即收 |
+| 5 | 2931 run 43425343173 终态（bj0pr12gn）绿入队；2912/3102/3042 队列终态核邮箱关账 | coord2/e7 | 等待器触发即收 |
+| 6 | #3042 合入后：#3001 条1/#3100 条2/3 关账；1087-p2-batch 批件开单 | coord2/e7 | 合入当轮 |
+| 7 | 每轮 df 核验（43.3 GiB 起点）；EOF 网络抖动持续带重试 | coord2/e7 | 每轮 |
