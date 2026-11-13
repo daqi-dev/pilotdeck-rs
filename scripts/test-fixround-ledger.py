@@ -68,25 +68,28 @@ def main() -> int:
         if cp.returncode != 0 or "#2692/ds: 1" not in cp.stdout:
             fails.append(f"count：真重复登记不推计数（rc={cp.returncode}、{cp.stdout}）")
 
-        # PASS（available）不是失败，不推阈值；第二次计入类失败 → rc 1（判据 5 停手信号）
+        # PASS（available）不是失败，不推阈值；第二次计入类失败 → rc 1（判据 5 停手信号）。
+        # fix-r5 修 5（sibling#1）：非争抢**首登**失败是悬置（suspended，不计入亦不排除）——
+        # 这里 r13 是补跑后仍失败（--rerun → unavailable_other，计入），悬置形态另在下方专测
         cp = run("register", str(led), "#2692/ds/r12", "--status", "PASS")
         if cp.returncode != 0:
             fails.append(f"register：新轮号应正常登记（rc={cp.returncode}）")
         cp = run("count", str(led))
         if cp.returncode != 0 or "#2692/ds: 1" not in cp.stdout:
             fails.append(f"count：PASS（available）不计入停手计数（rc={cp.returncode}、{cp.stdout}）")
-        run("register", str(led), "#2692/ds/r13", "--status", "ERROR")
+        run("register", str(led), "#2692/ds/r13", "--status", "ERROR", "--rerun")
         cp = run("count", str(led))
         if cp.returncode != 1 or "#2692/ds: 2" not in cp.stdout or "停手" not in cp.stdout:
             fails.append(f"count：同链×谱系计入类失败累计 2 应 rc=1 并给停手信号（rc={cp.returncode}、{cp.stdout}）")
         # 不同链 / 不同谱系分开计（各 1 条计入类失败，互不触发）
-        run("register", str(led), "#2692/mm/r11", "--status", "ERROR")
-        run("register", str(led), "#1953/ds/r40", "--status", "ERROR")
+        run("register", str(led), "#2692/mm/r11", "--status", "ERROR", "--rerun")
+        run("register", str(led), "#1953/ds/r40", "--status", "ERROR", "--rerun")
         cp = run("count", str(led))
         if cp.returncode != 1 or "#1953/ds: 1" not in cp.stdout or "#2692/mm: 1" not in cp.stdout:
             fails.append(f"count：链×谱系应各自累计（{cp.stdout}）")
 
-        # judge（义务 10）：resource_contention × rerun 两字段区分「首次争抢（排除）」与「补跑后仍争抢（计入）」
+        # judge（义务 10）：resource_contention × rerun 两字段区分「首次争抢（排除）」与「补跑后仍争抢（计入）」；
+        # fix-r5 修 5：非争抢首登失败判 suspended（悬置）——glm/r14 即该形态
         run("register", str(led), "#2692/glm/r11", "--status", "ERROR", "--contention")
         run("register", str(led), "#2692/glm/r12", "--status", "ERROR", "--contention", "--rerun")
         run("register", str(led), "#2692/glm/r13", "--status", "PASS")
@@ -104,7 +107,7 @@ def main() -> int:
                           ("#2692/ds/r13", "unavailable_other"), ("#2692/mm/r11", "unavailable_other"),
                           ("#1953/ds/r40", "unavailable_other"),
                           ("#2692/glm/r11", "contention_first"), ("#2692/glm/r12", "contention_counted"),
-                          ("#2692/glm/r13", "available"), ("#2692/glm/r14", "unavailable_other")):
+                          ("#2692/glm/r13", "available"), ("#2692/glm/r14", "suspended")):
             if not any(ln.startswith(key + ":") and want in ln for ln in jlines):
                 fails.append(f"judge：{key} 应有分类 {want} 的行（输出：{cp.stdout}）")
         # 归并行标注补跑 / 首登（钉「·键归并取最严」标记本身，不与分类文案里的「补跑」词混淆）
@@ -169,32 +172,35 @@ def main() -> int:
             fails.append(f"race：并发同键均首次争抢，count 不计入（{cp.stdout}）")
 
         # 修 1（MM concurrency#1 P1）负控：count 按键归并——同键「首次失败 + 补跑失败」只计 1、
-        # 不触发停手；同链×谱系两个不同键各一次失败才计 2、rc=1
+        # 不触发停手；同链×谱系两个不同键各一次失败才计 2、rc=1（fix-r5 修 5 后首登失败是悬置，
+        # 「首登+补跑失败」归并取计入类最严 = 补跑失败 unavailable_other）
         led3 = tmp / "merge" / "ledger.jsonl"
-        run("register", str(led3), "#7/ds/r1", "--status", "ERROR", "--note", "首登失败")
+        run("register", str(led3), "#7/ds/r1", "--status", "ERROR", "--note", "首登失败（悬置）")
         run("register", str(led3), "#7/ds/r1", "--status", "ERROR", "--rerun", "--note", "补跑仍失败")
         cp = run("count", str(led3))
         if cp.returncode != 0 or "#7/ds: 1" not in cp.stdout or "停手" in cp.stdout:
             fails.append(f"count：同键首登+补跑失败应按键归并只计 1、rc=0（rc={cp.returncode}、{cp.stdout}）")
-        run("register", str(led3), "#7/ds/r2", "--status", "ERROR", "--note", "另一轮失败")
+        run("register", str(led3), "#7/ds/r2", "--status", "ERROR", "--rerun", "--note", "另一轮补跑仍失败")
         cp = run("count", str(led3))
         if cp.returncode != 1 or "#7/ds: 2" not in cp.stdout or "停手" not in cp.stdout:
-            fails.append(f"count：不同键各一次失败应计 2 触发停手 rc=1（rc={cp.returncode}、{cp.stdout}）")
+            fails.append(f"count：不同键各一次计入类失败应计 2 触发停手 rc=1（rc={cp.returncode}、{cp.stdout}）")
 
         # 修 2（MM concurrency#1 P1 = DS boundary#3 + MM sibling#2 三撞）交错序列：同键
-        # 「首登 unavailable_other（计入类失败）+ 补跑 PASS」→ 归并按计入类取最严，仍计 1——
+        # 「补跑后仍失败（unavailable_other，计入类）+ 后到补跑 PASS」→ 归并按计入类取最严，仍计 1——
         # 补跑翻绿不得抹掉已计入的失败（判据 5 停手信号漏报）。负控口径：归并若改回
         # 「补跑无条件优先」，本断言即红（count 变 0 行、#8/ds 无输出）。
+        # fix-r5 修 5 形态适配：首登失败现在是悬置（不计入），翻绿不抹失败的不变量改钉在
+        # 计入类（补跑后仍失败）形态上——不变量本身不变。
         led5 = tmp / "interleave" / "ledger.jsonl"
-        run("register", str(led5), "#8/ds/r1", "--status", "ERROR", "--note", "首登失败")
-        run("register", str(led5), "#8/ds/r1", "--status", "PASS", "--rerun", "--note", "补跑 PASS")
+        run("register", str(led5), "#8/ds/r1", "--status", "ERROR", "--rerun", "--note", "补跑仍失败")
+        run("register", str(led5), "#8/ds/r1", "--status", "PASS", "--rerun", "--note", "再补跑 PASS")
         cp = run("count", str(led5))
         if cp.returncode != 0 or "#8/ds: 1" not in cp.stdout:
-            fails.append(f"count：同键首登计入类失败 + 补跑 PASS 归并后仍计 1（rc={cp.returncode}、{cp.stdout}）")
+            fails.append(f"count：同键补跑计入类失败 + 后到 PASS 归并后仍计 1（rc={cp.returncode}、{cp.stdout}）")
         cp = run("judge", str(led5))
-        if not any(ln.startswith("#8/ds/r1:") and "unavailable_other" in ln and "首登·键归并" in ln
+        if not any(ln.startswith("#8/ds/r1:") and "unavailable_other" in ln and "补跑·键归并" in ln
                    for ln in cp.stdout.splitlines()):
-            fails.append(f"judge：同键首登失败 + 补跑 PASS 应归并到 unavailable_other（首登形态）：{cp.stdout}")
+            fails.append(f"judge：同键补跑失败 + 后到 PASS 应归并到 unavailable_other（补跑形态）：{cp.stdout}")
         # 对照组：首登是排除段（contention_first）+ 补跑 PASS → 同档内补跑优先，不计入
         led6 = tmp / "interleave2" / "ledger.jsonl"
         run("register", str(led6), "#8/mm/r1", "--status", "ERROR", "--contention", "--note", "首登争抢")
@@ -209,10 +215,11 @@ def main() -> int:
 
         # 修 2 写入侧（#3056 fix-r4，MM sibling#1 P1）：判重含类别与形态——同键同形态的后到记录，
         # 只有已有记录不轻于它（_merge_rank 同一序）才标 superseded。两向都要：
-        # 向一：先 PASS 后同形态计入类失败 → 失败**不得**被 superseded 抹掉（停手信号不漏报）
+        # 向一：先 PASS 后同形态计入类失败 → 失败**不得**被 superseded 抹掉（停手信号不漏报）。
+        # fix-r5 修 5 形态适配：计入类失败须带 --rerun（首登失败是悬置，本就计不进——不变量钉在计入类上）
         led10 = tmp / "wside1" / "ledger.jsonl"
         run("register", str(led10), "#11/ds/r1", "--status", "PASS", "--note", "先 PASS")
-        cp = run("register", str(led10), "#11/ds/r1", "--status", "ERROR", "--note", "后到失败")
+        cp = run("register", str(led10), "#11/ds/r1", "--status", "ERROR", "--rerun", "--note", "后到补跑失败")
         if cp.returncode != 0 or "superseded" in cp.stdout:
             fails.append(f"register：同形态先 PASS 后计入类失败，失败不应标 superseded（rc={cp.returncode}、{cp.stdout}）")
         wrecs = [json.loads(x) for x in led10.read_text().splitlines()]
@@ -221,16 +228,67 @@ def main() -> int:
         cp = run("count", str(led10))
         if cp.returncode != 0 or "#11/ds: 1" not in cp.stdout:
             fails.append(f"count：先 PASS 后计入类失败，停手计数应见该失败（rc={cp.returncode}、{cp.stdout}）")
-        # 向二：先计入类失败后同形态 PASS → 后到 PASS 被更严的已有失败压回 superseded
-        #（补跑翻绿不抹失败，r3 修 2 的归并口径落到写入侧）
+        # 向二：先计入类失败（补跑仍失败）后同形态 PASS → 后到 PASS 被更严的已有失败压回 superseded
+        #（补跑翻绿不抹失败，r3 修 2 的归并口径落到写入侧；fix-r5 修 5 形态适配同向一）
         led11 = tmp / "wside2" / "ledger.jsonl"
-        run("register", str(led11), "#11/mm/r1", "--status", "ERROR", "--note", "先失败")
-        cp = run("register", str(led11), "#11/mm/r1", "--status", "PASS", "--note", "后到 PASS")
+        run("register", str(led11), "#11/mm/r1", "--status", "ERROR", "--rerun", "--note", "先补跑失败")
+        cp = run("register", str(led11), "#11/mm/r1", "--status", "PASS", "--rerun", "--note", "后到 PASS")
         if cp.returncode != 0 or "superseded" not in cp.stdout:
             fails.append(f"register：同形态先失败后 PASS，PASS 应标 superseded（rc={cp.returncode}、{cp.stdout}）")
         cp = run("count", str(led11))
         if cp.returncode != 0 or "#11/mm: 1" not in cp.stdout:
             fails.append(f"count：先失败后同形态 PASS，计数仍为 1 不因翻绿清零（rc={cp.returncode}、{cp.stdout}）")
+
+        # 修 5（fix-r5，sibling#1 P2）悬置态：非争抢首登失败 = suspended（不计入亦不排除）。
+        # 负控口径：若 classify 不加悬置（旧码把首登非争抢失败判 unavailable_other 直接计入），
+        # 下面「2 个悬置键 → rc 0」即红（旧码 rc=1 假触发停手）——卡面「最迟须在下一次
+        # 派轮前补跑，逾期未补才计 1 次」的机器可读落地
+        led13 = tmp / "susp" / "ledger.jsonl"
+        run("register", str(led13), "#21/ds/r1", "--status", "ERROR", "--note", "首登失败未补跑")
+        run("register", str(led13), "#21/ds/r2", "--status", "ERROR", "--note", "另一轮首登失败")
+        cp = run("count", str(led13))
+        if cp.returncode != 0 or "#21/ds" in cp.stdout or "悬置 2 键" not in cp.stdout or "停手" in cp.stdout:
+            fails.append(f"count：2 个悬置键不得计入停手计数（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("judge", str(led13))
+        if not any(ln.startswith("#21/ds/r1:") and "suspended" in ln for ln in cp.stdout.splitlines()):
+            fails.append(f"judge：首登非争抢失败应判 suspended（{cp.stdout}）")
+        # 悬置轮补跑 PASS → available（有效块）：round 结束即不悬置
+        led14 = tmp / "susp2" / "ledger.jsonl"
+        run("register", str(led14), "#22/mm/r1", "--status", "ERROR", "--note", "首登失败悬置")
+        run("register", str(led14), "#22/mm/r1", "--status", "PASS", "--rerun", "--note", "补跑 PASS")
+        cp = run("count", str(led14))
+        if cp.returncode != 0 or "#22/mm" in cp.stdout:
+            fails.append(f"count：悬置轮补跑 PASS 应判 available 不计入（rc={cp.returncode}、{cp.stdout}）")
+        # 悬置轮补跑仍失败 → unavailable_other（计入）；同键两形态只计 1
+        run("register", str(led14), "#22/mm/r2", "--status", "ERROR")
+        run("register", str(led14), "#22/mm/r2", "--status", "ERROR", "--rerun")
+        cp = run("count", str(led14))
+        if cp.returncode != 0 or "#22/mm: 1" not in cp.stdout:
+            fails.append(f"count：悬置轮补跑仍失败应计 1（rc={cp.returncode}、{cp.stdout}）")
+        # 悬置轮逾期未补（--overdue）→ overdue_counted 计入；与另一计入类失败 → rc 1 停手
+        run("register", str(led14), "#22/mm/r3", "--status", "ERROR", "--rerun", "--note", "补跑仍失败")
+        cp = run("count", str(led14))
+        if cp.returncode != 1 or "#22/mm: 2" not in cp.stdout or "停手" not in cp.stdout:
+            fails.append(f"count：悬置+补跑失败+再一计入类 = 2 应 rc=1（rc={cp.returncode}、{cp.stdout}）")
+        # 悬置 → 逾期升级：后到 --overdue 不得被判 dup 压回（升级必须落得下来），归并取计入类
+        led15 = tmp / "overdue" / "ledger.jsonl"
+        run("register", str(led15), "#23/glm/r1", "--status", "ERROR", "--note", "首登失败悬置")
+        cp = run("register", str(led15), "#23/glm/r1", "--status", "ERROR", "--overdue", "--note", "逾期未补")
+        if cp.returncode != 0 or "superseded" in cp.stdout:
+            fails.append(f"register：悬置→逾期升级不应标 superseded（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("count", str(led15))
+        if cp.returncode != 0 or "#23/glm: 1" not in cp.stdout:
+            fails.append(f"count：逾期未补应计 1（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("judge", str(led15))
+        if not any(ln.startswith("#23/glm/r1:") and "overdue_counted" in ln for ln in cp.stdout.splitlines()):
+            fails.append(f"judge：逾期未补应判 overdue_counted（{cp.stdout}）")
+        # 反向：已 overdue 的键被后到的悬置形态登记 → 判 dup 标 superseded（计入类不因后到被抹）
+        cp = run("register", str(led15), "#23/glm/r1", "--status", "ERROR", "--note", "后到的悬置形态")
+        if cp.returncode != 0 or "superseded" not in cp.stdout:
+            fails.append(f"register：已 overdue 不得被悬置形态降级（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("count", str(led15))
+        if cp.returncode != 0 or "#23/glm: 1" not in cp.stdout:
+            fails.append(f"count：逾期计入不因后到悬置登记清零（rc={cp.returncode}、{cp.stdout}）")
 
         # 修 3.2（DS boundary#2 P2）：空 / 纯空白 / 不存在的台账路径 fail-closed rc 2——
         # 静默当空台账计会把「路径写错」混进「真的没有失败」，rc 1/0/2 三态就失真
@@ -245,17 +303,20 @@ def main() -> int:
         if cp.returncode != 2 or "不存在" not in cp.stderr:
             fails.append(f"judge：不存在的台账应 rc=2 且文案含「不存在」（rc={cp.returncode}、{cp.stderr.strip()[:60]}）")
 
-        # 修 3.1（MM sibling#2 P2）：print 路径的 OSError 收成干净 rc 2——stdout 管道早关
-        # （BrokenPipeError，旧码会 traceback + 退出码 120）不得冒充 / 掩盖停手信号。
-        # 大台账（20000 键，count 输出 ~290 KiB，远超 64 KiB 管道缓冲）：读者读 3 行即关管道，
-        # 写端剩余输出必然撞 EPIPE，须收成 rc 2 而非 traceback
+        # 修 1（fix-r5，boundary#1 P1）四腿退出码契约：输出通道失败**不改写语义退出码**——
+        # count 阈值已成立（计入类 ≥ 2 → 语义 rc 1）时，无论 stdout 管道运行期死（大输出 EPIPE）
+        # 还是读端在写者起跑前就关（小输出首条 print 即 EPIPE，旧码收尾 flush 撞死管 → rc 120，
+        # 实测留档 fix-r5 RESULT），rc 1 停手信号都必须原样送达。腿 1（正常）由上方全部用例覆盖。
+        # 腿 2：大输出 + 运行期 EPIPE——20000 条链各 2 个计入键（count 输出 = 每链一行 ≈290 KiB，
+        # 远超 64 KiB 管道缓冲，且阈值已成立 → 语义 rc 1）；读者读 3 行即关，写端必撞 EPIPE
         big = tmp / "bigpipe" / "ledger.jsonl"
         big.parent.mkdir(parents=True, exist_ok=True)
         with big.open("w", encoding="utf-8") as bf:
-            for i in range(20000):
-                bf.write(json.dumps({"key": f"#{i}/ds/r1", "ts": "t", "status": "ERROR",
-                                     "resource_contention": False, "rerun": False,
-                                     "superseded": False, "note": ""}) + "\n")
+            for i in range(1, 20001):
+                for r in ("r1", "r2"):
+                    bf.write(json.dumps({"key": f"#{i}/ds/{r}", "ts": "t", "status": "ERROR",
+                                         "resource_contention": False, "rerun": True, "overdue": False,
+                                         "superseded": False, "note": ""}) + "\n")
         pp = subprocess.Popen([sys.executable, "-I", str(LEDGER), "count", str(big)],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                               env=dict(os.environ))
@@ -264,18 +325,72 @@ def main() -> int:
         pp.stdout.close()
         pipe_rc = pp.wait()
         pipe_err = pp.stderr.read()
-        if pipe_rc != 2 or "Traceback" in pipe_err:
-            fails.append(f"修3.1：管道早关应收成 rc=2 无 traceback（rc={pipe_rc}、{pipe_err.strip()[:80]}）")
-        # 同款：stderr 关闭（fd 2 关 → EBADF / sys.stderr 为 None）时告警 print 也不得崩栈——
-        # bash 显式 2>&- 起子进程跑坏路径 register（父路径是普通文件，makedirs 即拒），仍应干净 rc 2
+        if pipe_rc != 1 or "Traceback" in pipe_err or "stdout 已断" not in pipe_err:
+            fails.append(f"修1-腿2：大输出管道早关应保住语义 rc=1 并告警一次（rc={pipe_rc}、{pipe_err.strip()[:80]}）")
+        # 腿 3：小输出 + 读端在写者起跑前即关（Popen 后立刻关我们这一端；写者解释器启动需数十
+        # 毫秒，首条 print(flush=True) 必撞 EPIPE）——旧码 rc 120 的原始复现形态
+        small = tmp / "smallpipe" / "ledger.jsonl"
+        small.parent.mkdir(parents=True, exist_ok=True)
+        with small.open("w", encoding="utf-8") as sf:
+            for k in ("#19/ds/r1", "#19/ds/r2"):
+                sf.write(json.dumps({"key": k, "ts": "t", "status": "ERROR",
+                                     "resource_contention": False, "rerun": True, "overdue": False,
+                                     "superseded": False, "note": ""}) + "\n")
+        ps = subprocess.Popen([sys.executable, "-I", str(LEDGER), "count", str(small)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              env=dict(os.environ))
+        ps.stdout.close()
+        small_rc = ps.wait()
+        small_err = ps.stderr.read()
+        if small_rc != 1 or "Traceback" in small_err or "Exception ignored" in small_err:
+            fails.append(f"修1-腿3：小输出读端早关应保住语义 rc=1（旧码 rc=120）（rc={small_rc}、"
+                         f"{small_err.strip()[:80]}）")
+        # 腿 4：stderr 启动即关（2>&-）——count 成功路径的 stdout 必须纯净（boundary#3 实测：
+        # sys.stderr 为 None 时 print(file=None) 会落 stdout 污染机器可读通道），rc 语义原样
+        cp = subprocess.run(["bash", "-c", 'exec "$0" -I "$1" count "$2" 2>&-',
+                             sys.executable, str(LEDGER), str(small)],
+                            capture_output=True, text=True, env=dict(os.environ))
+        want_lines = ["#19/ds: 2  <-- 停手信号",
+                      "fixround-ledger: 触发停手阈值（判据 5 通道兜底）：同链×谱系键归并后计入类失败累计 ≥ 2，停手转人拍板"]
+        if cp.returncode != 1 or cp.stdout.splitlines() != want_lines or "Traceback" in cp.stderr:
+            fails.append(f"修1-腿4：stderr 启动即关时 stdout 应纯净且 rc=1（rc={cp.returncode}、"
+                         f"{cp.stdout!r}、{cp.stderr[:60]!r}）")
+        # 修 3（fix-r5，boundary#3 P2）真实路径负控：stderr 启动即关 + **失败路径** register——
+        # 旧负控用 makedirs 失败路径，rc 2 由错误路径给出、与 print 失败无关，没走到它声称的路径；
+        # 本负控断言「本应进 stderr 的 fail-closed 文案在 stderr 死时被显式跳过、不落 stdout」
         blocker2 = tmp / "blocker2"
         blocker2.write_text("x", encoding="utf-8")
         cp = subprocess.run(["bash", "-c", 'exec "$0" -I "$1" register "$2" "$3" --status PASS 2>&-',
                              sys.executable, str(LEDGER), str(blocker2 / "l.jsonl"), "#1/ds/r1"],
                             capture_output=True, text=True, env=dict(os.environ))
-        if cp.returncode != 2 or "Traceback" in cp.stdout or "Traceback" in cp.stderr:
-            fails.append(f"修3.1：stderr 关闭应干净 rc=2 不崩栈（rc={cp.returncode}、"
-                         f"{cp.stdout[:60]}、{cp.stderr[:60]}）")
+        if cp.returncode != 2 or cp.stdout != "" or "Traceback" in cp.stderr:
+            fails.append(f"修3：stderr 死时 fail-closed 文案应显式跳过、stdout 保持空（rc={cp.returncode}、"
+                         f"stdout={cp.stdout[:60]!r}、stderr={cp.stderr[:60]!r}）")
+        # 修 3 行为负控（进程内）：stderr 运行期死（write 即抛 OSError）——emit 捕获后接 devnull，
+        # read_lines 的坏路径文案丢给死流、不崩栈、SystemExit(2) 照常（monkeypatch 后还原：
+        # fd 2 会被 emit 接去 devnull，先 os.dup 备份原 stderr，测毕 dup2 还原——不能吃掉测试自己的 stderr）
+        real_se = sys.stderr
+        saved_fd2 = os.dup(2)
+
+        class _DeadSE:
+            def write(self, *a, **k):
+                raise OSError("EBADF（模拟）")
+
+            def flush(self):
+                raise OSError("EBADF（模拟）")
+
+        try:
+            sys.stderr = _DeadSE()
+            try:
+                flg.read_lines(str(tmp / "nope3.jsonl"))
+                fails.append("修3：stderr 运行期死时 read_lines 坏路径不应成功")
+            except SystemExit as e:
+                if e.code != 2:
+                    fails.append(f"修3：stderr 运行期死时坏路径应 SystemExit(2)（code={e.code}）")
+        finally:
+            sys.stderr = real_se
+            os.dup2(saved_fd2, 2)
+            os.close(saved_fd2)
 
         # 修 5 负控：落盘失败 fail-closed（rc 2、干净文案不崩栈），短写/异常回滚不留半行
         blocker = tmp / "blocker"
@@ -300,16 +415,17 @@ def main() -> int:
 
         try:
             flg.os.write = _boom
-            rc = flg.register(str(led4), "#1/ds/r1", "ERROR", False, False, "")
+            rc = flg.register(str(led4), "#1/ds/r1", "ERROR", False, False, False, "")
         finally:
             flg.os.write = real_write
         if rc != 2 or led4.read_bytes() != b"":
             fails.append(f"register：写入中途 OSError 应 rc=2 且回滚半行（rc={rc}、剩 {led4.read_bytes()!r}）")
 
         # 短写不抛异常（每次只写 3 字节）：循环补写整行，count 仍能正常解析
+        #（fix-r5 修 5：带 --rerun 使其计入，与断言「#2/ds: 1」对齐）
         try:
             flg.os.write = lambda fd, data: real_write(fd, data[:3])
-            rc = flg.register(str(led4), "#2/ds/r1", "ERROR", False, False, "")
+            rc = flg.register(str(led4), "#2/ds/r1", "ERROR", False, True, False, "")
         finally:
             flg.os.write = real_write
         if rc != 0:
@@ -329,7 +445,7 @@ def main() -> int:
 
         try:
             flg.fcntl.flock = _flock_boom
-            rc = flg.register(str(led7), "#3/ds/r1", "ERROR", False, False, "")
+            rc = flg.register(str(led7), "#3/ds/r1", "ERROR", False, False, False, "")
         finally:
             flg.fcntl.flock = real_flock
         if rc != 2 or led7.exists() and led7.read_bytes():
@@ -348,7 +464,7 @@ def main() -> int:
 
         try:
             flg.os.fstat = _fstat_nth_boom
-            rc = flg.register(str(led8), "#3/ds/r2", "ERROR", False, False, "")
+            rc = flg.register(str(led8), "#3/ds/r2", "ERROR", False, False, False, "")
         finally:
             flg.os.fstat = real_fstat
         if rc != 2 or led8.read_bytes():
@@ -367,7 +483,7 @@ def main() -> int:
             "import fcntl, os, sys, time\n"
             "fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)\n"
             "fcntl.flock(fd, fcntl.LOCK_EX)\n"
-            "os.write(fd, b'{\"key\": \"#9/ds/r1\", \"sta')\n"
+            "os.write(fd, b'{\"key\": \"#9/ds/r1\", \"rerun\": true, \"sta')\n"
             "open(sys.argv[2], 'w').close()\n"
             "time.sleep(3)\n"
             "os.write(fd, b'tus\": \"ERROR\"}\\n')\n"
