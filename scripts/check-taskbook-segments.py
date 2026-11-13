@@ -1215,6 +1215,18 @@ FIXTYPE_VALUES = _gate_module().FIXTYPE_VALUES
 # 轮号词表不复制：PR 侧 check-pr-gate.py 的 FIXROUND_RE 是源（fix-r3 P1-3，见上方段落注释；
 # fix_round_from_path 用 fullmatch，环视在串首/尾恒真，等价词边界匹配）。
 FIX_ROUND_PART = _gate_module().FIXROUND_RE
+# fix-r8 boundary P1（MM r7 评审，协调者实测复现 _tmp/20261114-3074-mm-p1-probe/）：
+# 位界 {1,18} 经单源派生到任务书侧后，超长 fix-r 段（≥19 位）fullmatch 失败 → 旧
+# fix_round_from_path 静默返回 None（判非修复轮，fixtype/residual 义务整段跳过＝假 PASS），
+# 而同一 token 在 PR 侧 check() 被 _overflow_err fail-closed 拒收——两闸门同输入结论相反。
+# 镜像 fail-closed：超长段派生 PR 侧 FIXROUND_OVER（单源，配对测试断言 is 同一），
+# fix_round_from_path 命中即抛 FixRoundOverflow（「读不了」），调用方按 rc 2 拒收。
+FIX_ROUND_OVER = _gate_module().FIXROUND_OVER
+
+
+class FixRoundOverflow(Exception):
+    """路径段 fix-r 后 ≥19 位数字（位界 {1,18} 外）——fail-closed，报「读不了」而非
+    静默判非修复轮（与 PR 侧 _overflow_err 同一 token 同一结论，MM r8 boundary P1）。"""
 # 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明
 FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
 # residual 标记正则不复制：PR 侧 check-pr-gate.py 的 RESIDUAL_MARKER 是源（#3056 fix-r2 修 7，
@@ -1229,8 +1241,15 @@ RESIDUAL_NONE = "无上一轮"   # 字面值：没有上一轮时允许（空答
 
 
 def fix_round_from_path(path):
-    """路径里第一个全匹配 fix-r<N> 的段 → N；不是修复轮返回 None。"""
+    """路径里第一个全匹配 fix-r<N> 的段 → N；不是修复轮返回 None。
+
+    fix-r8 boundary P1（MM r7 评审）：命中超长 fix-r 段（≥19 位数字）时抛
+    FixRoundOverflow（fail-closed「读不了」），不静默返回 None——位界外的段
+    FIX_ROUND_PART 本就 fullmatch 不上，旧口径会让同一 token 在 PR 侧被拒收、
+    任务书侧静默跳过整段修复轮义务。"""
     for part in Path(path).parts:
+        if FIX_ROUND_OVER.fullmatch(part):
+            raise FixRoundOverflow(part)
         m = FIX_ROUND_PART.fullmatch(part)
         if m:
             return int(m.group(1))
@@ -1447,8 +1466,17 @@ def check_file(path, ignore_missing=False):
     cls = classify(body, text)
     if cls["big"] is None:
         return {"file": str(path), "rc": 2, "problems": [cls["reason"]], "class": cls}
-    # 修复轮字段检查置于 big/small 分支之前：小包（不分段的修复轮）同受检（#3056 义务 2）
-    fix_problems = check_fix_fields(body, fix_round_from_path(p))
+    # 修复轮字段检查置于 big/small 分支之前：小包（不分段的修复轮）同受检（#3056 义务 2）。
+    # fix-r8 boundary P1：超长 fix-r 路径段（≥19 位）按「读不了」fail-closed（rc 2），
+    # 不静默判非修复轮跳过字段义务——与 PR 侧 check-pr-gate._overflow_err 同一 token
+    # 同一结论（两闸门对同一输入不得相反）。
+    try:
+        fix_round = fix_round_from_path(p)
+    except FixRoundOverflow as e:
+        return _err(p, f"读不了：路径段「{e}」是 fix-r 后 ≥19 位数字——超出轮号位界 "
+                       "{1,18}，与 PR 侧 check-pr-gate 同一结论 fail-closed 拒收；"
+                       "请核对路径（正常修复轮号远小于 19 位）")
+    fix_problems = check_fix_fields(body, fix_round)
     if not cls["big"]:
         if fix_problems:
             return {"file": str(path), "rc": 1, "problems": fix_problems, "class": cls}

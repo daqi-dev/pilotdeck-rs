@@ -171,6 +171,11 @@ RSHORT = re.compile(r"(?<![A-Za-z0-9_-])r(\d{1,18})b?(?![A-Za-z0-9_-])")
 # `fix-r`+19位+`b` 既不匹配主词表也不触发 OVER＝静默漏判（假 PASS 方向）——`b?` 同步进
 # OVER 形；过宽命中也只是 fail-closed 拒收（宁拒不漏）。
 FIXROUND_OVER = re.compile(r"(?<![A-Za-z0-9_-])fix-r\d{19,}b?(?![A-Za-z0-9_-])")
+# fix-r8 boundary#4（MM r7 评审，登记路线——收窄须先实测语料）：HASH_OVER 无左边界、
+# 无 issue 关键词约束，**已知窄窗**＝正文任意位置的「`#` + ≥19 位数字」都触发整单
+# fail-closed 拒收（`see #1234567890123456789` 形的长 id/片段串）——真实 issue 号不可能
+# 19 位，过宽命中只多拒不放行（宁拒不漏方向）；_overflow_err 的文案按 name 区分
+# 「#N 引用」与「轮号 token」，误伤时可从报错定位到是哪个 `#` 串。
 HASH_OVER = re.compile(r"#\d{19,}")
 RSHORT_OVER = re.compile(r"(?<![A-Za-z0-9_-])r\d{19,}b?(?![A-Za-z0-9_-])")
 # fix-r3 P1-1 面 B 引入、fix-r4 P0-A（DS r3 boundary#1）收窄口径：无 #N 全计入兜底、题头区
@@ -297,12 +302,15 @@ ECHO_HEAD = re.compile(r"^" + _TYPE_WORDS +
 #     可选普通文本，不设间隔上限（词表里 #N→fix-r 间隔最长 208 字符）。
 #   - 行内出现 fix-r<N>（FIXROUND_RE，ASCII 词边界）。
 # 标题判据与正文判据的关系：正文回显不再是主信号（旧 TITLE_ECHO 词表回显扫描已删）；标题判不出
-# 修复轮（未给 --head/--repo、或标题非类型词开头形，如 `Revert "…"` / `fix-r2 #2516 …`）时才走
-# 正文兜底。fix-r5 修 4（boundary#4）：主信号**缺失**（本地 --body-file 形态）时兜底扩为
-# 首行宽松 + 全正文**结构化**回显扫描（ECHO_HEAD：scope 括号 + #N + 配对三重结构）——判别量
-# 来自结构而非词表，散文（`test 覆盖了 fix-r5 的场景`）仍不可入；集合在但全不命中（CI 形态）
-# 保持只看首行。标题里散文形与真实标题在行内不可分——判修复轮只多一道 fixtype/residual
-# 要求（假 FAIL 向窄代价）。
+# 修复轮时才走正文兜底。fix-r5 修 4（boundary#4）：主信号**缺失**（本地 --body-file 形态）时
+# 兜底扩为 首行宽松 + 全正文**结构化**回显扫描（ECHO_HEAD：scope 括号 + #N + 配对三重结构）
+# ——判别量来自结构而非词表，散文（`test 覆盖了 fix-r5 的场景`）仍不可入。fix-r8（MM r7
+# sibling#2，DS r3 P0③ 同源副本漂移）：「集合在但全不命中（CI 形态）保持只看首行」自
+# fix-r3 P0③ 起作废——本地 / 空集 / CI 三形态**同走**「首行宽松 + 全正文结构化回显扫描」
+# （代码同一点：check() 一律 fix_round_from_body(echo_scan=True)，与模块 docstring :50-53
+# 单一口径，不再留第三份手抄）；「非类型词开头形只走兜底」句同删——fix-r3 P0② 起带本单
+# #N 配对的 `#3056 fix-r3：` 走配对分支判得出。标题里散文形与真实标题在行内不可分——
+# 判修复轮只多一道 fixtype/residual 要求（假 FAIL 向窄代价）。
 TITLE_HEAD = re.compile(r"^" + _TYPE_WORDS +
                         r"(\([^)\n]{0,80}\))?!?(?:[:：]|\s)")
 RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
@@ -329,14 +337,34 @@ def _bare_num_before(text: str, start: int, chain_end: int | None = None) -> boo
     符类的 `#` 排除（`#3056 fix-r5` 实测 bm=None）；链尾成员带 `#` 时 `+` 后非数字、
     bm=None（`#3056+#3074 fix-r5：x` 实测——计 5 与 foreign 正控由此达成，不经豁免分支）；
     链尾成员不带 `#` 时 `+3074` 会命中（bm 非 None，实测），但数字起点＝最近前方 hash
-    结束位+1，不满足「起点 < chain_end」，豁免不触发、按裸号引用不计。chain_end 的
-    保留/删除不由此背书（A/B：前向臂去掉该参全语料 0 判定差异）。四臂（无 #N 全计入 /
-    SELF / 前向 / 后向配对）统一走本函数，不再另写 inline 窗口表达式——docstring
+    结束位+1，不满足「起点 < chain_end」。fix-r8 concurrency P1（MM r7 评审）据此补第二道
+    豁免：起点 ≥ chain_end 的命中裸号若**与最近前方 hash 只隔链分隔符**（gap 全为
+    _is_issue_gap_char）也是链成员（`#A+B`/`#A、B` 的 B），返回 False——旧口径该形
+    「既不计入也不进 foreign」（rounds=[] foreign=[]）＝义务整段跳过的假 PASS。chain_end
+    两道豁免的保留/删除不由此背书（A/B：前向臂去掉该参全语料 0 判定差异）。四臂（无 #N
+    全计入 / SELF / 前向 / 后向配对）统一走本函数，不再另写 inline 窗口表达式——docstring
     「单源」声明由此成立；将来改窗口/`\\Z` 口径只动这里。"""
     bm = BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)
     if bm is None:
         return False
-    return not (chain_end is not None and bm.start(2) < chain_end)
+    if chain_end is not None and bm.start(2) < chain_end:
+        # fix-r5 链成员豁免（生产不可达，见 docstring 事实核）
+        return False
+    # fix-r8 concurrency P1（MM r7 评审，协调者实测复现）：裸号判据与链成员判据分家——
+    # `#A+B` / `#A、B` 的 B（链尾不带 # 的成员）**紧跟本链最后一个 hash 且中间只隔链
+    # 分隔符**（gap 全为 _is_issue_gap_char ⇒ PAIR_SEP ∪ 非换行空白）时是链自身成员，
+    # 不是 board/交接段枚举引用——`fix(scripts) #3056+3074 fix-r5：修闸门`（issues=
+    # {3056}）旧口径下 bm 命中 +3074 且起点 ≥ chain_end → 豁免不触发 → 前向臂整 token
+    # 丢弃（rounds=[]、foreign=[]）＝轮号既不计入也不拒收，fixtype/residual/多块一致
+    # 整段跳过（假 PASS）；对照 `#3056+#3074`（B 带 #）正常计 5。修复后链尾裸号成员
+    # 不再触发守卫，照常走配对判定（∩ issues ≠ ∅ 计入；全不相交进 foreign 拒收）。
+    # 已知窄窗（登记）：裸号成员**不并进配对集**——`#3056+3074 fix-r5` 的链集仍是
+    # {3056}（HASH_REF 只收带 # 的号），issues={3074} 时该形进 foreign（5,{3056}）
+    # 拒收而 `#3056+#3074` 计 5——裸号拼写更严（fail-closed 向），A/B 复算 0 实例。
+    if chain_end is not None and bm.start(2) > chain_end \
+            and all(_is_issue_gap_char(c) for c in text[chain_end:bm.start(2)]):
+        return False
+    return True
 
 
 # fix-r4 P0-B（DS concurrency#1 + boundary#2 双撞）：枚举判定的挂起面——旧实现两两 isdisjoint
@@ -362,8 +390,8 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
     wordlist-ab-recompute.txt:561 `fix(gateway-parity) #1355/#1652 fix-r25: …`）与无冒号
     形（`… fix-r5 修评审（复用 #1321 机制）`）下 zone_end=len(text)，同一旁路复开（仲裁
     四形三假 PASS）。调用方参与判据再收两道界（都在 `_scan_pairs` 内计算，见其 zone_end 后
-    注释）：**enum_end**（首个锚点——#N 或 fix-rN token——之后的 ASCII ':'，前缀/时间冒号在
-    锚点前不作界）与**括号深度 0**（全/半角括号内的链是注记/board 括注，不是枚举项；
+    注释）：**enum_end**（首个锚点——#N / fix-rN token / 紧跟 ASCII 冒号的 rN token
+    （fix-r8 sibling P1）——之后的 ASCII ':'，前缀/时间冒号在锚点前不作界）与**括号深度 0**（全/半角括号内的链是注记/board 括注，不是枚举项；
     fix-r7 sibling#1 起深度按宽度分类两条——全角（）与半角 () 各自 +1/钳 0 减，两类都 0
     才参与：混宽镜像序 `（a)` 不再把深度抵回 0，见 _scan_pairs pdepth 注释）。
     已知窄窗（登记不改标准）：无冒号且无括号的裸尾注 `fix(x) #9999 fix-r5 复盘 #1321 机制`
@@ -380,7 +408,9 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
     fix-r7 sibling#1（DS r6 评审）封堵说明：③ 之外，「先闭后开」的序（`a)（…）`，fix-r6
     boundary#2 钳 0）与**混宽镜像序**（先开后闭 `（a) …`——全角开 +1 被半角闭 −1 抵回深度
     0，协调者实测复现：异单 foreign 丢失＝fix-r2 P0 旁路复开）都按宽度分类深度封在 ≥1，
-    不构成窄窗。"""
+    不构成窄窗。fix-r8 sibling P1（MM r7 评审）封堵说明：r<N>+ASCII 冒号拼写（`fix(scripts)
+    r5: #9999 …`，rN 在首个 #N 之前）此前不受锚点覆盖＝第四种未登记拼写的旁路，现由锚点
+    第三族（紧跟冒号的 rN token，见 _scan_pairs anchor 行）切 enum_end 封堵，不构成窄窗。"""
     uniq = set(chains)
     if len(uniq) < 2 or len(uniq) > _ENUM_CHAIN_CAP:
         return False
@@ -451,10 +481,12 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     # 封堵**只收窄枚举链的参与判据**（enum 门），不动 zone_end 本体——zone_end 还门着
     # SELF/RSHORT/foreign 的 token 资格，按评审建议整体取 min(：,:) 前移会把 `fix(x) #N
     # 13:42 fix-r5`（锚点后 ASCII 时间冒号）的 SELF 计入判没（假 FAIL 向）。两道附加界：
-    # ①enum_cut＝首个**锚点之后**的 ASCII ':'（锚点＝首个 #N 或 fix-r<N> token 的位置；
+    # ①enum_cut＝首个**锚点之后**的 ASCII ':'（锚点＝首个 #N / fix-r<N> / 紧跟 ASCII
+    #   冒号的 r<N> token（fix-r8）的位置；
     #   `fix(scripts):` / `chore(board):` 前缀冒号与 `01:45` 时间冒号都在锚点之前，不作界
     #   ——r4 P0-A 的 `01:45 fix-r5 同步` 计 5、`chore(board): 01:10 …` 的题头区链分布
-    #   不变）；②链首落在全/半角括号深度 ≥1 处的链不参与（`修评审（复用 #1321 机制）`
+    #   不变；锚点含 fix-r8 sibling P1 补的第三族——紧跟 ASCII 冒号的 r<N> token
+    #   （`fix(scripts) r5: #9999 …` 形，见下方 anchor 行注释）；②链首落在全/半角括号深度 ≥1 处的链不参与（`修评审（复用 #1321 机制）`
     #   尾部注记形；含类型词 scope 括号族 `fix(scope,#N,#M)`——已知窄窗登记见 _enum_title
     #   docstring，fix-r6 boundary#1）。两道界只让 enum 变 False（fail-closed：foreign 只会
     #   新增命中；括号深度自 fix-r6 boundary#2 起钳 0——游离闭括号不再以负深度排除链；
@@ -462,7 +494,20 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     #   rounds 计入分支不经过 enum——封堵面零回退；链 gap 字符（PAIR_SEP ∪ 非换行空白）
     #   不含 `:`/`（）()` ⇒ 链不跨界，「链首在界内 ⇒ 整链在界内」与 r4 P1-C 同构。
     anchor = min([h.start() for h in hashes]
-                 + [m.start() for m in FIXROUND_RE.finditer(text)], default=len(text))
+                 + [m.start() for m in FIXROUND_RE.finditer(text)]
+                 # fix-r8 sibling P1（MM r7 评审，协调者实测复现 _tmp/20261114-3074-mm-p1-probe/）：
+                 # r<N> 简写族锚点——「轮号 token 后紧跟 ASCII 冒号」单列一道切。
+                 # `fix(scripts) r5: #9999 fix-r7 修评审 #1321 机制`（正文 Closes #3056）的
+                 # r5 在首个 #N 之前，其冒号落在旧锚点（#9999）之前 → 不切 enum_end →
+                 # 题头区两条不相交链 {9999}/{1321} ⇒ enum 抑制 foreign ＝ fix-r2 P0
+                 # 异单旁路在 r<N>+冒号拼写复开（同族 fix-r<N> 拼写被 fix-r5 P0 正确切掉，
+                 # 行为分裂）。锚点**只认紧跟 ASCII 冒号的 RSHORT 形（rN:）**，不用未过滤
+                 # 的裸 RSHORT——散文 `r4` 后不接冒号不锚（`chore(board) … r4 … 01:10 …`
+                 # 不会把时间冒号误当代号 → 合法 board 形 foreign 误报＝假 FAIL）；
+                 # 题头区外的 rN（评审轮引用 `fix-r3：r2 评审`）不接冒号，即使接了其冒号
+                 # 也在 zone_end 之后，enum_end = min(zone_end, acolon) 不受影响。
+                 + [m.start() for m in RSHORT.finditer(text) if text.startswith(":", m.end())],
+                 default=len(text))
     acolon = text.find(":", anchor)
     enum_end = min(zone_end, acolon) if acolon >= 0 else zone_end
     # fix-r15（DS r14 sibling#1 P0，仲裁实测 `_tmp/20261113-3056-fixr14/arbitrate-r14-ds.txt`）：
@@ -658,13 +703,14 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
       P0 的假 PASS 面；
     - (None, "") = 缺 --base/--head/--repo 任一（不是错误：本地 --body-file 不传 head 的
       路径＝无标题证据，与空集同口径走「首行宽松 + 全正文结构化回显扫描」兜底——fix-r14
-      MM sibling#1：模块 docstring rule 4 已按此改，此处同步；fix-r6 的「有意收窄、非首行
-      回显不再识别」只保留给「集合在但全不命中」的 CI 形态；调用方 main 打 stderr 显式
-      告警说明缺哪件，不静默降级，fix-r7）；
+      MM sibling#1：模块 docstring rule 4 已按此改，此处同步；fix-r8（MM r7 boundary#2）：
+      fix-r6 的「有意收窄、非首行回显不再识别只保留给 CI 形态」自 fix-r3 P0③ 起作废——
+      本地 / 空集 / CI 三形态同走回显扫描（check() 一律 echo_scan=True，与 :1050 一致，
+      不再留互斥描述）；调用方 main 打 stderr 显式告警说明缺哪件，不静默降级，fix-r7）；
     - ([], "") = 空集：**无标题证据**的两形态——base==head（无提交可判）**或**范围内提交
       subject 全为空（过滤后空列表）——都不是 git 失败，按「无主
       信号」与本地形态同款走正文首行 + 结构化回显兜底（fix-r9 P2a：空集与 None 一样没有任何
-      标题证据，回显扫描该开；「只看首行」的收紧只给「集合在但全不命中」的 CI 形态；DS r9
+      标题证据，回显扫描该开；DS r9
       sibling#4 + fix-r14 MM sibling#1：空 subject 提交过滤后同样得空列表，check() 的
       `not titles` 与 base==head 空集同走回显兜底，方向 fail-safe）。git log
       **空输出且 base≠head** 是坏范围（head 是 base 的
@@ -969,9 +1015,13 @@ def _overflow_err(text: str, src: str) -> str | None:
         m = pat.search(text)
         if m:
             tok = m.group(0)[:28] + "…" if len(m.group(0)) > 28 else m.group(0)
+            # fix-r8 boundary#4：文案区分「#N 引用」（HASH_OVER，误伤面＝正文长数字串被
+            # 误加 # 的形，登记见 HASH_OVER 注释）与「轮号 token」（fix-r / rN）
+            hint = ("正文里的 #N 引用请核对该号（正常 issue/PR 号远小于 19 位；若本意是"
+                    "长数字串/片段 id，去掉 # 或加分隔）" if name == "#" else
+                    "轮号请核对该 token（正常修复轮号远小于 19 位）")
             return (f"{src}含超长数字串「{tok}」（{name} 后 ≥19 位，含 b 后缀）——超出轮号/单号"
-                    "位界 {1,18}，fail-closed 拒收；如为真实引用请核对该号（正常 issue/PR 号"
-                    "远小于 19 位）")
+                    f"位界 {{1,18}}，fail-closed 拒收；{hint}")
     return None
 
 

@@ -907,6 +907,12 @@ fixcase("fix-r11b 接续轮仍要求 fixtype", 1, FIX_TASKBOOK, must=["pdrs-fixt
 fixcase("fix-r11b（N≥4）缺 residual", 1, FIX_TASKBOOK + FIXTYPE_ENUM, must=["pdrs-residual"], rnd="fix-r11b")
 fixcase("fix-r5x 不是修复轮：字段不检查（正控）", 0,
         FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK, rnd="fix-r5x")
+# fix-r8 boundary P1（MM r7 评审）：超长 fix-r 段（≥19 位）不得静默判非修复轮——
+# 同一 token 在 PR 侧 check() 被 _overflow_err fail-closed 拒收，任务书侧旧口径
+# fullmatch 失败 → None → fixtype/residual 义务整段跳过＝两闸门同输入结论相反。
+# 修复＝镜像 fail-closed：check_file 报「读不了」rc=2（与 非UTF-8/FIFO 同款拒收通道）。
+fixcase("超长 fix-r 段（≥19 位）：fail-closed 读不了，不静默跳过字段义务", 2,
+        FIX_TASKBOOK, must=["读不了", "位界"], rnd="fix-r" + "1" * 19)
 fixcase("围栏里的 fixtype 不算声明", 1, FIX_TASKBOOK + "```\n" + FIXTYPE_ENUM + "```\n" + RESIDUAL_OK,
         must=["pdrs-fixtype"])
 fixcase("大包修复轮：分段 + 字段齐（正控）", 0, BIG_SCOPE + SEGMENTS_OK + FIXTYPE_STRUCT + RESIDUAL_OK)
@@ -1406,6 +1412,29 @@ def run():
               and ctbs.FIX_ROUND_PART.flags == _gate.FIXROUND_RE.flags and len(_f_assign) == 1
               and "_gate_module()" in _f_assign[0] and "re.compile" not in _f_assign[0])
         print(f"{'PASS' if ok else 'FAIL'}  FIX_ROUND_PART 派生自 check-pr-gate 的 FIXROUND_RE（pattern+flags 同一，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 16) 超长 fix-r 段两侧同结论（#3074 fix-r8 boundary P1，MM r7 评审）：任务书侧
+        # FIX_ROUND_OVER 派生自 check-pr-gate 的 FIXROUND_OVER（单源）；同一 token
+        # （fix-r+19 位）在 PR 侧 _overflow_err 报错、任务书侧 fix_round_from_path 抛
+        # FixRoundOverflow（调用方转 rc 2「读不了」）——两闸门对同一输入不得一个拒收
+        # 一个静默放行（字段族漂移＝假 PASS）。正常段照常返回轮号（5）。
+        _o_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("FIX_ROUND_OVER = ")]
+        _tok = "fix-r" + "1" * 19
+        try:
+            ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/{_tok}/task.md")
+            raised = False
+        except ctbs.FixRoundOverflow:
+            raised = True
+        ok = (ctbs.FIX_ROUND_OVER.pattern == _gate.FIXROUND_OVER.pattern
+              and ctbs.FIX_ROUND_OVER.flags == _gate.FIXROUND_OVER.flags
+              and len(_o_assign) == 1 and "_gate_module()" in _o_assign[0]
+              and raised
+              and ctbs.fix_round_from_path("_tmp/20261114-issue-3056/fix-r5/task.md") == 5
+              and _gate._overflow_err(f"fix(scripts) #1 {_tok}: x", "提交标题") is not None)
+        print(f"{'PASS' if ok else 'FAIL'}  超长 fix-r 段两侧同结论：PR 侧 _overflow_err 拒收、"
+              f"任务书侧抛 FixRoundOverflow（rc 2 读不了），FIX_ROUND_OVER 单源派生")
         fails += 0 if ok else 1
 
 
