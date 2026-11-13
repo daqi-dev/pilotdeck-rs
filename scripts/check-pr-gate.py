@@ -80,12 +80,14 @@ REQUIRED_ROLES = ("sibling", "concurrency", "boundary", "simplify")
 # （check-taskbook-segments.py:96 的先例注释）。
 MARKER = re.compile(r"<!--\s*pr-gate:v1(?![A-Za-z0-9_])([^>]*)-->")
 WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S)
-# fix-r12（DS r11 concurrency#1 P2，P2-b 口径）：关键词词表单源——ISSUE_LINK 与 ISSUE_NUM
-# 共用 `_ISSUE_KEYWORDS`，并配同源断言测试（test-review-roles.py r12 块）。两份手抄同漂移
-# 是 r9-r11 分隔符同款反模式：增关键词只改一处时另一处漏改 → pr_issues 得空集/首段缺号
-# → 配对全不计 → 假 PASS。定义先于两个使用者。
+# fix-r13（DS r12 simplify#1 P2）：删除 ISSUE_LINK——规则 2 原用它判「有没有 issue 关联」，
+# 但它与 ISSUE_NUM 是「关键词 + #N」的同前缀正则，check() 里 issues = pr_issues(masked)
+# 已算过同一信息；两份词表/边界正是 r9-r12 反复漂移的形态（ISSUE_LINK 比 ISSUE_NUM 松时
+# 规则 2 放行而 pr_issues 空集 → fix_round=None → fixtype/residual 跳过＝假 PASS）。删除前
+# 等价性实测：`_tmp/20261113-3056-fixr13/issuelink-equivalence-probe.txt`（标题 11126 +
+# board 行 6556 + 构造形态 268 条，bool(ISSUE_LINK.search) == bool(pr_issues) 差 0）。
+# 关键词词表保留 `_ISSUE_KEYWORDS`（ISSUE_NUM 唯一使用者，单正则无漂移对象）。
 _ISSUE_KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)"
-ISSUE_LINK = re.compile(r"(?<![A-Za-z0-9_])" + _ISSUE_KEYWORDS + r"\s+#\d+(?![A-Za-z0-9_])", re.I)
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 补丁指纹的 diff 参数全部写死：不受本机 / CI 的 diff.renames、diff.algorithm、前缀、颜色、外部 diff 配置影响
 FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
@@ -134,11 +136,26 @@ HASH_REF = re.compile(r"(?<![A-Za-z_#])#(\d+)(?![A-Za-z0-9_])")
 # 也能并组）；③标点两侧 `\s*` 收紧为 `[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?`——**至多一个换行**
 # （`closes #3056,\n#3057` 单换行容忍保留，`Closes #3056,\n\n#3074` 段落空行不再并入，
 # 消除「同一条正文边界两套口径」）；④关键词词表收敛为 `_ISSUE_KEYWORDS` 单源（定义
-# 在 ISSUE_LINK 处，本处只是引用）。
+# 在上方关键词块，ISSUE_NUM 唯一使用者）。
 PAIR_SEP = frozenset("+,、，/ \t")
 _ISSUE_GAP_PUNCT = "".join(re.escape(c) for c in sorted(PAIR_SEP - {" ", "\t"}))
+# fix-r13（DS r12 boundary#1 + sibling#1 双谱系同撞 P1，同根因）：标题侧 `_paired_rounds`
+# 的链 gap 判据与 ISSUE_NUM 空白类**单源**——r12 只放宽了正文端（`[^\S\r\n]+` 收非 ASCII
+# 空白），标题端仍只认 PAIR_SEP，`fix(scripts) #3056　#3074 fix-r12`（U+3000）在配对端
+# 断链 → fix_round=None → fixtype/residual 跳过＝同一假 PASS 机制留在另一端。两个修复：
+# ①`_is_issue_gap_char` 谓词（PAIR_SEP ∪ 非换行空白）供 `_paired_rounds` 用；②ISSUE_NUM
+# 标点分支补**左侧**至多一个换行 + 标点串允许空白穿插（`Closes #3056\n,#3057`、
+# `Closes #3056, + #3057` 并组——base `\s*[P]\s*` 本收、r12 收紧时未登记的欠收）。
+# `_GAP_EDGE`＝标点任一侧的「非换行空白 ×（单换行 + 非换行空白）？」。
+_GAP_EDGE = r"[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?"
+
+
+def _is_issue_gap_char(c: str) -> bool:
+    return c in PAIR_SEP or (c.isspace() and c not in "\r\n")
+
+
 ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])" + _ISSUE_KEYWORDS + r"\s+"
-                       rf"#(?P<nums>\d+(?:(?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}]+[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?"
+                       rf"#(?P<nums>\d+(?:(?:{_GAP_EDGE}(?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}]+)+{_GAP_EDGE}"
                        rf"|[^\S\r\n]+|)#\d+)*)(?![A-Za-z0-9_])", re.I)
 # 修 4（fix-r5，boundary#4 P2）本地回显扫描的判据：只认「结构化回显」——类型词 + (scope) +
 # 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
@@ -189,7 +206,9 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
       - 整条无任何 #N → 计入（宁高勿低，fail-closed：漏计轮号会跳过 N≥4 的 residual 必填）；
       - 有就近配对集（token 前方最近的 #N、由 +/,/、/空白链成的 #N 串）→ 配对集 ∩ 本 PR
         单号 ≠ ∅ 才计入——board 尾 `…#2691 fix-r2…#2692 fix-r8 在跑` 里 8 归 #2692、
-        2 归 #2691，各归各的单；
+        2 归 #2691，各归各的单；链 gap 判据 = `_is_issue_gap_char`（PAIR_SEP ∪ 非换行
+        Unicode 空白，fix-r13 与 ISSUE_NUM 单源——标题侧 U+3000/NBSP 同样并组，不再
+        「正文端收、配对端丢」）；
       - 前方无 #N 且在题头区 → 计入（SELF：`fix(scope) 名 fix-rN：…（#refs 在后）` 的
         实修形态，refs 在题头之后的括注里）。
     题头区外的无配对 token（板尾裸号 `交接段：…1623 fix-r6`）不计。issues 为空集时
@@ -201,7 +220,7 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
     for i, h in enumerate(hashes):
         grp = {h.group(1)}
         j = i
-        while j > 0 and all(c in PAIR_SEP for c in text[hashes[j - 1].end():hashes[j].start()]):
+        while j > 0 and all(_is_issue_gap_char(c) for c in text[hashes[j - 1].end():hashes[j].start()]):
             grp.add(hashes[j - 1].group(1))
             j -= 1
         chains.append(frozenset(grp))
@@ -222,10 +241,10 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
 def pr_issues(masked: str) -> frozenset[str]:
     """PR 关联单号集合（修 2 配对判定的「本单」）：去围栏正文里所有 Closes/Fixes/Resolves/
     Refs #N 的 N，含续写列表的全部号（fix-r9，DS r5 boundary P0：`Closes #3056、#3057` 的
-    3057 也进集合——首个之外的号丢掉会让引用它们的标题判不进本 PR 修复轮；fix-r10，DS r9
-    boundary#1/sibling#1 双撞 P0：续写分隔符含空白与 `+`（与 PAIR_SEP 对齐），`Closes
-    #382 #387 #452`、`Refs #1985+#2053` 的后续号同样进集合）；与规则 2 的
-    ISSUE_LINK 同款关键词口径。规则 2 要求 PR 必有关联，正常过闸 PR 非空；空集时配对
+    3057 也进集合——首个之外的号丢掉会让引用它们的标题判不进本 PR 修复轮）。续写 gap
+    = 非换行空白（含 U+3000/NBSP，fix-r12）或 PAIR_SEP 标点串（两侧各至多一个换行，
+    fix-r13），见 ISSUE_NUM 注释；空档＝粘写。规则 2 的「有没有 issue 关联」也用本函数
+    的布尔值（fix-r13 删 ISSUE_LINK 后唯一口径）；正常过闸 PR 非空；空集时配对
     token 全不计——配对判据不放大「正文没写关联」的违规。"""
     return frozenset(n for m in ISSUE_NUM.finditer(masked)
                      for n in re.findall(r"\d+", m.group("nums")))
@@ -562,8 +581,8 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
         errs.append(f"修复轮判定 fail-closed：读不到 PR 范围（{base[:12]}..{head[:12]}）提交标题"
                     f"（{terr}）——不得当非修复轮放行；补 --base/--head/--repo（指向含这两个提交的仓库）后重跑")
     # 修 2（fix-r5，boundary#2 P1）：配对判定先取「本 PR 单号」——去围栏正文所有 Closes/
-    # Fixes/Resolves/Refs #N（规则 2 的 ISSUE_LINK 同款口径）；标题里引用别的单的轮号按
-    # issue 号各归各的单，不再被当成本轮（既不「首个」低估、也不「行内 max」高估）
+    # Fixes/Resolves/Refs #N（pr_issues 单一口径，fix-r13 起规则 2 也复用）；标题里引用别的
+    # 单的轮号按 issue 号各归各的单，不再被当成本轮（既不「首个」低估、也不「行内 max」高估）
     issues = pr_issues(masked)
     if titles is not None:
         fix_round = fix_round_from_titles(titles, issues)
@@ -629,7 +648,7 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
             errs.extend(check_na_path(base, repo, head))
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not ISSUE_LINK.search(masked) and not NO_ISSUE.search(masked):
+    if not issues and not NO_ISSUE.search(masked):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     return errs
 
