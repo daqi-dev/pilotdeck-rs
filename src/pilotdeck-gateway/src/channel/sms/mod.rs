@@ -2034,6 +2034,32 @@ pub(crate) enum RawRequestError {
     Failed(String),
 }
 
+/// #2461 fix-r6 (review P2#5 / structural #3): the connect half's judgment,
+/// extracted as a pure function so the unknown arm has an observable
+/// injection point (#1589 issue #6 shape). The classifier is the shared
+/// tests-only one (`crate::test_fixed_port_probe`); this is `#[cfg(test)]`,
+/// so the product build never sees the test module. The switch
+/// `sms-raw-request-connect-unknown-as-refused` restores the pre-#2462 fold
+/// where every transport failure masqueraded as a refused port — a false
+/// `{"refused": true}` passes the oracle comparison even though the listener
+/// is still up.
+#[cfg(test)]
+fn raw_request_connect_outcome<T>(probe: Result<T, std::io::Error>) -> Result<T, RawRequestError> {
+    match crate::test_fixed_port_probe::classify_fixed_port_probe(probe) {
+        crate::test_fixed_port_probe::FixedPortProbe::Accepted(stream) => Ok(stream),
+        crate::test_fixed_port_probe::FixedPortProbe::Refused => {
+            Err(RawRequestError::ConnectRefused)
+        }
+        crate::test_fixed_port_probe::FixedPortProbe::Unknown(error) => {
+            if crate::mutants::on("sms-raw-request-connect-unknown-as-refused") {
+                Err(RawRequestError::ConnectRefused)
+            } else {
+                Err(RawRequestError::Failed(error.to_string()))
+            }
+        }
+    }
+}
+
 /// Raw-socket HTTP probe client used by the replay tests (`Connection: close`,
 /// full response bytes, minimal status/content-type/body parse). `half_close`
 /// mirrors the generator's `socket.end()`: the write side finishes after the
@@ -2045,18 +2071,8 @@ pub(crate) async fn raw_request(
     half_close: bool,
 ) -> Result<serde_json::Value, RawRequestError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .map_err(|error| {
-            // #2462: the replay must tell a refused port (the generator's
-            // `{"refused": true}`) from any other transport failure, so the
-            // connect kind survives instead of being stringified away.
-            if error.kind() == std::io::ErrorKind::ConnectionRefused {
-                RawRequestError::ConnectRefused
-            } else {
-                RawRequestError::Failed(error.to_string())
-            }
-        })?;
+    let mut stream =
+        raw_request_connect_outcome(tokio::net::TcpStream::connect(("127.0.0.1", port)).await)?;
     // A destroyed connection (oversized payload) surfaces as a write or read
     // error with zero response bytes, same as the probe client's `closed`.
     let _ = stream.write_all(raw).await;
