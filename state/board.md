@@ -6577,3 +6577,27 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ### 下一步
 按未结义务表序推进，不空等；下一个交接点 ~13:45。
+
+## 2026-11-13 12:55 交接段（coord2/e7；上一段 11:46）
+
+### 做了什么
+1. **本机磁盘清理（人令，已完成并汇报）**：wt-2476 回收 30.8 GB（证据先归档）+ 各树 cargo-target ~33 GB + 11 月前旧 _tmp 776 项 ~2.3 GB + 仓外 `~/.codex/worktrees` 23 处 Rust target 46.8 GiB（codex 通道已停用、无进程占用；pd-kernel-complete 整树保留只清 target）——**合计 ~113 GiB，整机 avail 12.8 GB → 132 GiB**。红线仓只报不动；wt-2245/wt-2136-revival/wt-2513 未碰；`_build`+`_tmp` 49 GiB。
+2. **1723 fix-r6 全收敛**（#3088，分支头 2c75de686）：r6 双谱系（DS+MM+DS2 补跑）P0/P1=0；DS simplify P2（docstring 未述第二窗口换名规则）a 类修后，DS4/DS5 连续两轮又出同族 P2（快照名字面量未归 `SNAPSHOT_NAMES` 单源）→ 第 3 次按「不修单点」**整类收口**（:329/:479/:634/:858 四处一并改引常量，测试文件字面量属测试独立钉桩保留），**DS6 四角色 P0/P1/P2 全 0**。发现 #3088 body 为 0 字节（r1/r2 块只在评论、闸门只读 body）→ 补齐全量 body（8 commits 概述+自证+DS6 块+r6 处置），**gate PASS**。
+3. **3056 fix-r17 收货闭环**（#3074，分支头 c8bd2d5e3）：四簇当轮修（GAP_EDGE 组合正控 10 格+CRLF / `_ISSUE_KEYWORDS` 包含锁+四变体行为正控 / check-pr-gate docstring 第三份手抄改引正本 / 探针孤儿 RLIMIT_CPU 硬限，真孤儿实测 3.9 s SIGXCPU）；三套件 rc=0+变异负控 6 格红+收货复跑 rc=0；r16 双谱系块回填 body（旧 head 标记行改纯文本不挡闸）；DS 增量四角色全 PASS P2=7 → **判定不修备案**（①r12→r17 同词汇位六轮补洞实证 lexical 不收敛 ②四簇全在协作工具自身覆盖完备性，按「只做产品代码」人定不新开工具跟进单，不挡产品开发），**gate PASS**。
+4. **1087 MM r14 收块与双谱系判读**（#3042，分支头 b20f9ad34）：MM r14 重派（sibling/boundary PASS P2=2+2）+ 原跑（concurrency P2=2/simplify 0）六条 P2 逐条处置：emit 孪生 r15 已修；两处同族清理点 #3109；手抄哈希 `--write` 三装置 verify PASS 已覆盖；.FROZEN-* 残留 #3108；**变异体截断式原地写 → 新开 #3110**（查重过）。body 回填 MM r14 数值与处置，**gate PASS**。
+5. **3078（镜像守卫滚动修复）在合并队列第 1 位 AWAITING_CHECKS**（merge-group CI ~31 min 在跑，非卡死）；#3042/#3074/#3088/#3105 四分支 CI 红均为分支内旧钉值预期，等 3078 合入后逐分支 merge origin/main 转绿入队。三张代码 PR gate 均 PASS。
+6. 巡场：fleet 全空载（四机 OK，本机盘余 125 GiB）；human-comments 无待办；CPU 前列无遗留 spin/python；sweep-lanes 在飞（远端探查慢，结果回填下一段）。#3091（决策卡 state PR）OPEN 引用 1723 属正文引用非车道。
+
+### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查）
+| # | 下一步动作 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3078 MERGED → `git fetch` + `git log origin/main --format='%h %ae %ce' -3` 核邮箱 → 逐分支 merge origin/main 推送（wt-1087→#3042、wt-1723→#3088、wt-3056→#3074、主仓 claude/decisions-20261113→#3105）→ CI 绿后逐张入队（入队前核 READY「待人批」+在队同路径；监视器 b29qycgjf/bohgf5njw 在飞） | coord2/e7 | 13:45 |
+| 2 | 决策备案落卡：①3056 r17 P2 七条判定不修（本段 3，写进 decisions-20261113.md）②#3110 开立依据。`decisions-20261113.md` 全量 PR（11:46 段义务 8 五项仍欠） | coord2/e7 | 14:45 |
+| 3 | P2-跟进集中清 wave（开着 ~30+ 张；本窗口新增 #3110；#3098-3100/3103-3109 逐条处置） | coord2/e7 | 3078 合入后当轮 |
+| 4 | sweep-lanes 结果判读（bf4r268q8 后台）+ 红灯归因回填 | coord2/e7 | 完成即收 |
+| 5 | 等待器群收：3088 CI（bk4b1nbb1）、3078/3071 终态（bohgf5njw）、3105 CI（bndebuaqd） | coord2/e7 | 完成即收 |
+| 6 | 1087/1723/3056 入队后：合入即派收尾（memory「merge-then-dispatch-closure」）——#1087 关单收口前须逐条处置 #3001/#3094/#3100/#3108/#3109/#3110；#1723 收尾自查未做（body 用 Refs 不用 Closes） | coord2/e7 | 入队后当轮 |
+| 7 | 每轮 df 核验（现 132 GiB 充裕）；worktree 56/60 | coord2/e7 | 每轮 |
+
+### 下一步
+按未结义务表序推进，不空等；下一个交接点 ~14:45。
