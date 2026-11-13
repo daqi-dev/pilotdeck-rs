@@ -21,7 +21,9 @@ Paths/constants are interpreted by a small AST allowlist. ANCHOR_COUNTS is an
 optional nonempty {name: positive integer} declaration of *source occurrences*, distinct
 from replace(..., 1)'s replacement limit. Unknown formats fail closed.
 
-Snapshot names have one Assign or one official mutating_sources with-as binding.
+Snapshot names have one Assign or one official mutating_sources with-as binding;
+a second mutating_sources window in the same file binds the other snapshot name
+(e.g. ``originals`` after ``snapshots``), one binding per name per file.
 An unread module-level empty dictionary before its sole official capture counts
 as one binding. The exact exiting --check-anchors preflight below is a separate
 path from its later capture. Assigns may also belong to a top-level function, without a file
