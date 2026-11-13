@@ -897,6 +897,16 @@ fixcase("residual 内容是占位符", 1, FIX_TASKBOOK + FIXTYPE_ENUM + "<!-- pd
         must=["占位符"])
 fixcase("fix-r3（N<4）不要求 residual（正控）", 0, FIX_TASKBOOK + FIXTYPE_ENUM, rnd="fix-r3")
 fixcase("fix-r3 仍要求 fixtype", 1, FIX_TASKBOOK, must=["pdrs-fixtype"], rnd="fix-r3")
+# fix-r3 P1-3（MM boundary#2）：接续轮 b 后缀——`fix-r11b` 算第 11 轮（真实目录
+# _tmp/20261108-archive-wt-1809/20261026-issue-1809/fix-r11b/task.md 即此形），字段义务
+# （fixtype 必填 / N≥4 residual）不得整段跳过；`fix-r5x`（非 b 后缀）仍不是修复轮
+# （与 PR 侧 test-review-roles.py 的 fix-r5x 负控同词表，单源 FIXROUND_RE）。
+fixcase("fix-r11b 接续轮算第 11 轮：字段齐（正控）", 0,
+        FIX_TASKBOOK + FIXTYPE_STRUCT + RESIDUAL_OK, rnd="fix-r11b")
+fixcase("fix-r11b 接续轮仍要求 fixtype", 1, FIX_TASKBOOK, must=["pdrs-fixtype"], rnd="fix-r11b")
+fixcase("fix-r11b（N≥4）缺 residual", 1, FIX_TASKBOOK + FIXTYPE_ENUM, must=["pdrs-residual"], rnd="fix-r11b")
+fixcase("fix-r5x 不是修复轮：字段不检查（正控）", 0,
+        FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK, rnd="fix-r5x")
 fixcase("围栏里的 fixtype 不算声明", 1, FIX_TASKBOOK + "```\n" + FIXTYPE_ENUM + "```\n" + RESIDUAL_OK,
         must=["pdrs-fixtype"])
 fixcase("大包修复轮：分段 + 字段齐（正控）", 0, BIG_SCOPE + SEGMENTS_OK + FIXTYPE_STRUCT + RESIDUAL_OK)
@@ -1382,6 +1392,17 @@ def run():
         ok = (ctbs.RESIDUAL_MIN_ROUND == _gate.RESIDUAL_MIN_ROUND and len(_m_assign) == 1
               and "_gate_module()" in _m_assign[0])
         print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_MIN_ROUND 派生自 check-pr-gate（同一门槛，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 15) 轮号词表单源（#3056 fix-r3 P1-3，MM boundary#2）：任务书侧 FIX_ROUND_PART 必须
+        # 派生自 check-pr-gate.py 的 FIXROUND_RE（同一对象），且赋值行不得再写 re.compile 拷贝
+        # ——两份定义会在 b 后缀 / 位界改动时一侧认接续轮另一侧不认（该轮族的 fixtype/residual/
+        # 多块一致整段跳过＝假 PASS）；`is` 断言钉死「同一对象」而非「同字面」（同字面拷贝照样漂移）
+        _f_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("FIX_ROUND_PART = ")]
+        ok = (ctbs.FIX_ROUND_PART is _gate.FIXROUND_RE and len(_f_assign) == 1
+              and "_gate_module()" in _f_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  FIX_ROUND_PART 派生自 check-pr-gate 的 FIXROUND_RE（同一对象，不复制第二份）")
         fails += 0 if ok else 1
 
 
