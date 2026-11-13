@@ -742,8 +742,10 @@ def main():
         return 'INVALID', 'no attributable runtime failure (build error, wrong panic, or missing test)'
 
     for name, source, old, new, test, assertion in mutations:
-        with mutating_sources(root, [source], baseline=args.baseline) as snapshots:
-            original = snapshots[source]
+        # anchor_selfcheck：每个快照名（snapshots/originals）单文件只许一次
+        # with 声明；第二处绑定用 originals，负控语义不变（#1723 fix-r6）。
+        with mutating_sources(root, [source], baseline=args.baseline) as originals:
+            original = originals[source]
             content = original.decode()
             if content.count(old) != 1:
                 save(f'{name}.json', json.dumps(

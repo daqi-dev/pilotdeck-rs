@@ -372,8 +372,10 @@ def main():
             summary.append({'name': name, 'status': status, 'reason': reason})
             print(f'{name}: {status}: {reason}', flush=True)
             continue
-        with mutating_sources(ROOT, [source], baseline=args.baseline) as snapshots:
-            original = snapshots[source]
+        with mutating_sources(ROOT, [source], baseline=args.baseline) as originals:
+            # anchor_selfcheck：每个快照名（snapshots/originals）单文件只许一次
+            # with 声明；第二处绑定用 originals，负控语义不变（#1723 fix-r6）。
+            original = originals[source]
             content = original.decode()
             if content.count(old) != 1:
                 save(f'{name}.json', json.dumps(
