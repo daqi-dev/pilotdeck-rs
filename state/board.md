@@ -6,7 +6,7 @@ updated: 2026-11-13 16:59（14:45 交接段见文末；#3078 已 MERGED 15:46、
 - #3042 | impl | doing | 1087 收口 PR：merge main 后换 head f4a95e795 重钉 gate（DS simplify PASS P0=0 P1=0 P2=2 已开 #3111 跟进）；等 gate 重跑绿即入队；合入后 #3001 条1/#3100 条2/3 生效可关
 - #3074 | impl | doing | 3056 r17 收口 PR：merge main 后换 head 4d4fc1ab5 重钉 gate（DS simplify PASS P0=0 P1=0 P2=1 判定不修同 r17 口径备案 body）；等 gate 重跑绿即入队
 - #3088 | impl | doing | 1723 收口 PR：merge main 后换 head 7ca71b522 重钉 gate（DS simplify PASS P0=0 P1=0 P2=1 已开 #3112 跟进）；等 gate 重跑绿即入队；收尾自查已做（Refs #1723 不 Closes）
-- #3105 | state | doing | state PR：merge main 后本段 board 增记再重钉 gate 入队（P2=1 = board/decisions 状态不同步，本段已修）
+- #3105 | docs | doing | state PR：merge main 后本段 board 增记再重钉 gate 入队（P2=1 = board/decisions 状态不同步，本段已修）
 - mirror-confluence | impl | doing | 积压 35 张分诊完毕（_tmp/20261113-mirror-confluence/triage.md，A 机械 9 / B 真冲突 19 / C blocked 7；注意 REST dirty=真冲突非落后）：A2 六张非 Draft unstable（#3102/#2969/#2967/#2944/#2931/#2912）逐张机械合流+重钉 gate；A1 三张 clean Draft（#3058/#3015/#2800）先核是否转正；B 19 张真合并工作单（#2911 先例：夹具族并集+计数重导+名册核对）排期派车道；C 7 张 blocked 分支保护缺评审待判
 - premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605。#2448/#2459 修法已拍板（探针实测 + decisions-20261113 两张卡，AI 代批待人复核），任务书素材齐；其余六张派单前按同模式先探针；前置 = mirror-confluence A2/B 批次
 - 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序；前置 = #3042 合入（同域串行）
