@@ -6928,6 +6928,10 @@ fn replay_connect_probe_unknown_errors_stay_named() {
 /// `raw_request`'s connect mapping — a non-refused transport failure must
 /// stay a named `Failed` outcome, never a masqueraded `ConnectRefused`.
 /// `sms-raw-request-connect-unknown-as-refused` restores the pre-#2462 fold.
+/// #2461 fix-r7 (review MM boundary#1): the connect now travels through the
+/// shared bounded `probe_fixed_port`, so the injection point is the probe
+/// outcome itself (`FixedPortProbe::Unknown(error)`), the same shape the
+/// bound path classifies — the arms and the anchors are unchanged.
 #[test]
 fn raw_request_connect_mapping_keeps_unknown_errors_named() {
     for error in [
@@ -6941,7 +6945,7 @@ fn raw_request_connect_mapping_keeps_unknown_errors_named() {
         let described = format!("{error}");
         crate::negative_assert!(
             matches!(
-                super::raw_request_connect_outcome(Err::<(), std::io::Error>(error)),
+                super::raw_request_connect_outcome(FixedPortProbe::<()>::Unknown(error)),
                 Err(RawRequestError::Failed(_))
             ),
             "#2462 a non-refused connect stays a named raw-request failure: \
@@ -6950,15 +6954,16 @@ fn raw_request_connect_mapping_keeps_unknown_errors_named() {
     }
     crate::negative_assert!(
         matches!(
-            super::raw_request_connect_outcome(Err::<(), std::io::Error>(std::io::Error::from(
-                std::io::ErrorKind::ConnectionRefused
-            ))),
+            super::raw_request_connect_outcome(FixedPortProbe::<()>::Refused),
             Err(RawRequestError::ConnectRefused)
         ),
         "#2462 a refused connect maps to ConnectRefused"
     );
     crate::negative_assert!(
-        matches!(super::raw_request_connect_outcome(Ok(0)), Ok(0)),
+        matches!(
+            super::raw_request_connect_outcome(FixedPortProbe::Accepted(0)),
+            Ok(0)
+        ),
         "#2462 an accepted connect maps to the stream"
     );
 }

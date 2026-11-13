@@ -978,10 +978,26 @@ fn probe_fixed_port(port: u16) -> FixedPortProbe<()> {
     )
 }
 
-/// The cap the fixed-port watcher runs with in production (#2461): the
-/// ledger's 120-second bound, stated once here so the control can inject a
-/// short deadline for the cap arm.
-const FIXED_PORT_WATCHER_CAP: Duration = Duration::from_secs(120);
+/// #2461 fix-r7 (review MM concurrency#1): the claim-side wait for the
+/// region flock. The waiter's deadline starts when it *begins waiting*
+/// (before it can take the lock), while the watcher's cap starts when the
+/// region *drops* — the pre-r7 shape had both at the ledger's 120 seconds,
+/// so the two clocks raced: with probes reporting errors (EMFILE, the
+/// 250ms connect bound) instead of refusals, the watcher held the flock to
+/// its full cap while a sibling that had started waiting first expired and
+/// failed `#2301` by name, and the cap arm could never save it. The claim
+/// wait keeps its 120 seconds (the named `#2301` failure text keeps saying
+/// 120s); the cap below is derived from it so the alignment cannot drift.
+const FIXED_PORT_CLAIM_WAIT_SECS: u64 = 120;
+const FIXED_PORT_CLAIM_WAIT: Duration = Duration::from_secs(FIXED_PORT_CLAIM_WAIT_SECS);
+
+/// The cap the fixed-port watcher runs with in production (#2461): half the
+/// claim wait above, so a waiter that arrived before the region dropped
+/// still has its full deadline ahead of it when the cap arm releases the
+/// flock — stated once here so the control can inject a short deadline for
+/// the cap arm, and pinned by
+/// `fixed_port_claim_wait_strictly_outlives_the_watcher_cap`.
+const FIXED_PORT_WATCHER_CAP: Duration = Duration::from_secs(FIXED_PORT_CLAIM_WAIT_SECS / 2);
 
 /// The watcher body behind [`FixedPortRegion::drop`], factored out so the
 /// cap arm is observable (#2461): poll the claimed ports until every one of
@@ -989,7 +1005,7 @@ const FIXED_PORT_WATCHER_CAP: Duration = Duration::from_secs(120);
 /// with a port still not refusing connections used to release silently — the
 /// exact arm #2461 exists for — so it reports itself through `emit` first
 /// (the detached watcher writes stderr, best-effort; the control below
-/// records the line), keeping "all closed or the 120s cap" attributable on
+/// records the line), keeping "all closed or the watcher cap" attributable on
 /// both arms. Every wait states its termination condition: the loop ends at
 /// all-refused or at `cap`.
 fn release_fixed_port_files(
@@ -1020,7 +1036,8 @@ fn release_fixed_port_files(
 }
 
 /// The named diagnostic the cap arm emits before releasing (#2461): the cap
-/// itself (120s in production) and every claimed port that is not refusing
+/// itself (half the claim wait in production — see
+/// [`FIXED_PORT_WATCHER_CAP`]) and every claimed port that is not refusing
 /// connections at the expiry, each with its probe outcome.
 fn fixed_port_timeout_diagnostic(probes: &[(u16, FixedPortProbe<()>)], cap: Duration) -> String {
     let not_refused: Vec<String> = probes
@@ -1060,14 +1077,14 @@ fn fixed_port_timeout_diagnostic(probes: &[(u16, FixedPortProbe<()>)], cap: Dura
 /// closes the listeners and the lock in the same process teardown.
 ///
 /// #2461 (codex P1#3 + DS boundary#2): the two silent arms of that watcher
-/// are observable now. Reaching the 120-second cap with a port still not
-/// refusing connections emits the named diagnostic first — best-effort
-/// stderr, a failed write is dropped, never a panic — and only then
-/// releases; and the watcher thread is a `Builder::spawn` whose failure
-/// falls back to the synchronous release instead of panicking, because this
-/// [`Drop`] also runs inside panic unwinds, where the bare
-/// `std::thread::spawn`'s panic on failure would abort the whole test
-/// binary.
+/// are observable now. Reaching the cap (half the claim wait — see
+/// [`FIXED_PORT_WATCHER_CAP`]) with a port still not refusing connections
+/// emits the named diagnostic first — best-effort stderr, a failed write is
+/// dropped, never a panic — and only then releases; and the watcher thread
+/// is a `Builder::spawn` whose failure falls back to the synchronous release
+/// instead of panicking, because this [`Drop`] also runs inside panic
+/// unwinds, where the bare `std::thread::spawn`'s panic on failure would
+/// abort the whole test binary.
 struct FixedPortRegion {
     ports: Vec<u16>,
     files: Vec<std::fs::File>,
@@ -1086,12 +1103,13 @@ impl Drop for FixedPortRegion {
         // closure that a failed `spawn` never runs. The async channel's
         // `send` never blocks, so this adds no wait to an unwind.
         let (hand_off, take_over) = std::sync::mpsc::channel::<Vec<std::fs::File>>();
-        // Bounded (120s) and detached: on the normal path the after-stop
-        // assertions already proved the ports closed, so the first check
-        // releases immediately. A `Builder`, not the bare
-        // `std::thread::spawn` (#2461, DS concurrency P3#4): this Drop also
-        // runs inside panic unwinds, where the bare spawn's panic on failure
-        // would be a second panic and abort the whole test binary.
+        // Bounded (half the claim wait, #2461 fix-r7) and detached: on the
+        // normal path the after-stop assertions already proved the ports
+        // closed, so the first check releases immediately. A `Builder`, not
+        // the bare `std::thread::spawn` (#2461, DS concurrency P3#4): this
+        // Drop also runs inside panic unwinds, where the bare spawn's panic
+        // on failure would be a second panic and abort the whole test
+        // binary.
         let spawned = std::thread::Builder::new()
             .name("pdrs-2461-fixed-port-watch".to_owned())
             .spawn(move || {
@@ -1155,9 +1173,11 @@ async fn claim_fixed_ports(ports: &[u16]) -> FixedPortRegion {
             .write(true)
             .open(format!("/tmp/pdrs-2301-fixed-port-{port}.lock"))
             .unwrap_or_else(|error| panic!("#2301 port {port} lock file: {error}"));
-        // Every wait states its termination condition: 120 seconds on the
-        // region, polled non-blocking so the failure is a named one.
-        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        // Every wait states its termination condition: the claim wait (120
+        // seconds, strictly longer than the watcher's half-wait cap, so the
+        // cap arm can still release the flock in time) is polled
+        // non-blocking so the failure is a named one.
+        let deadline = std::time::Instant::now() + FIXED_PORT_CLAIM_WAIT;
         loop {
             // `File::try_lock` is `flock(LOCK_EX | LOCK_NB)` on Unix — the
             // stable std surface of the same kernel lock the workspace's
@@ -1216,6 +1236,21 @@ async fn assert_ports_closed_after_stop(ports: &[u16]) {
             crate::negative_assert!(false, "{failure}");
         }
     }
+}
+
+/// #2461 fix-r7 (review MM concurrency#1): the claim wait and the watcher
+/// cap must never tie. The waiter's deadline starts when it begins waiting
+/// (before the lock), the watcher's cap starts when the region drops — with
+/// both at 120s the waiter always expired first, so the cap arm could never
+/// save a sibling that arrived before the drop. Pinned here so a future
+/// "align the cap back to the ledger's 120 seconds" edit fails by name
+/// instead of silently reopening that race.
+#[test]
+fn fixed_port_claim_wait_strictly_outlives_the_watcher_cap() {
+    crate::negative_assert!(
+        FIXED_PORT_CLAIM_WAIT > FIXED_PORT_WATCHER_CAP,
+        "#2461 the claim wait strictly outlives the watcher cap, so the cap arm can still save a waiter that arrived first"
+    );
 }
 
 /// #2461 control: the cap arm must be observable. A live listener plus an
