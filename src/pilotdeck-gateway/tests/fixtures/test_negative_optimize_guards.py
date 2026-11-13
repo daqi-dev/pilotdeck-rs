@@ -104,6 +104,12 @@ SCRIPTS = (
     # refuse_unusable_target + verdict_exit); its startup refusals join the
     # machine-checked matrix here, and its --check is also wired into CI.
     ('issue-2495/negative_controls.py', (), ()),
+    # #1723 fix-r7 (MM sibling#1/#2/#3): the audit-rerun-boundary entry
+    # migrated onto the negative_selection contract (registered + refuse +
+    # claim_dir + missing_target/refuse_unusable_target), so its startup
+    # refusals join the machine-checked matrix here in the same change —
+    # the issue-2495 fix-r2 precedent.
+    ('audit-rerun-boundary/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

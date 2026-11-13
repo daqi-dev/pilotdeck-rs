@@ -1166,11 +1166,17 @@ async fn host_lease_release_without_the_guard_retains_on_the_lock_path() {
         &[],
         Duration::from_secs(30),
     );
+    // #2322 fix-r4 (#1723 sibling/simplify/boundary): the same "was not
+    // stopped by this harness" judgment the audits use — one predicate
+    // instead of a third literal spelling of the disjunction, so a new stop
+    // reason added to the predicate cannot leave this copy behind reading a
+    // stopped rerun as a pass.
     crate::negative_assert!(
-        !rerun.timed_out && !rerun.overflow,
-        "#2322 the retention worker rerun was stopped (timeout={} overflow={}):\n{}\n{}",
+        rerun.ended_its_own_or_unstopped(),
+        "#2322 the retention worker rerun was stopped (deadline={} output-cap={} group-kill={}):\n{}\n{}",
         rerun.timed_out,
         rerun.overflow,
+        rerun.stopped,
         rerun.stdout,
         rerun.stderr
     );

@@ -21,7 +21,9 @@ Paths/constants are interpreted by a small AST allowlist. ANCHOR_COUNTS is an
 optional nonempty {name: positive integer} declaration of *source occurrences*, distinct
 from replace(..., 1)'s replacement limit. Unknown formats fail closed.
 
-Snapshot names have one Assign or one official mutating_sources with-as binding.
+Snapshot names have one Assign or one official mutating_sources with-as binding;
+a second mutating_sources window in the same file binds the other snapshot name
+(e.g. ``originals`` after ``snapshots``), one binding per name per file.
 An unread module-level empty dictionary before its sole official capture counts
 as one binding. The exact exiting --check-anchors preflight below is a separate
 path from its later capture. Assigns may also belong to a top-level function, without a file
@@ -324,7 +326,7 @@ class Static:
                     continue  # This exact branch exits before the capture path.
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        if target.id in ('originals', 'snapshots') and not isinstance(node.value, (ast.Dict, ast.DictComp)):
+                        if target.id in SNAPSHOT_NAMES and not isinstance(node.value, (ast.Dict, ast.DictComp)):
                             raise Unsupported('unsupported snapshot mapping initializer')
                         self.defs.setdefault(target.id, []).append((node.lineno, node.value))
                     elif isinstance(target, ast.Tuple):
@@ -474,7 +476,7 @@ class Static:
 
     def check_snapshot_bindings(self):
         """Keep the original declaration; never resolve a read through a rebind."""
-        bindings = {name: [] for name in ('originals', 'snapshots')}
+        bindings = {name: [] for name in SNAPSHOT_NAMES}
         allowed = set()
         present = False
         for node in ast.walk(self.tree):
@@ -629,7 +631,7 @@ class Static:
             base = self.value(call.args[0], call.lineno, local)
             paths = self.value(call.args[1], call.lineno, local)
             return {path: self.confined(Path(base) / path).read_bytes() for path in paths}
-        choices = (self.snapshot_definitions(name, line) if name in ('originals', 'snapshots')
+        choices = (self.snapshot_definitions(name, line) if name in SNAPSHOT_NAMES
                    else [(n, value) for n, value in self.defs.get(name, []) if n < line])
         if not choices:
             raise Unsupported(f'unresolved name {name}')
@@ -853,7 +855,7 @@ class Static:
             if expression.func.attr in ('replace', 'strip', 'decode'):
                 return self.snapshot_target(expression.func.value, line, local)
         if (isinstance(expression, ast.Subscript) and isinstance(expression.value, ast.Name)
-                and expression.value.id in ('originals', 'snapshots')):
+                and expression.value.id in SNAPSHOT_NAMES):
             return self.target(expression.slice, line, local)
         raise Unsupported('unresolved source path: unsupported snapshot origin')
 
