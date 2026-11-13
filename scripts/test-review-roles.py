@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1364,6 +1365,9 @@ def _run(gate, rrr, out_base: Path) -> int:
                          "fix-r1 P0 硬要求，有意保留；非首行同款负控见上）")
         if gate.fix_round_from_body("## 概述\n\ntest 覆盖了 fix-r5 的场景\n") is not None:
             fails.append("fix-r4 修3.5 边界钉：同一散文行在非首行位置不应判修复轮")
+        # （fix-r9 P2-1：本孪生负控不带 echo_scan 参数＝走默认——默认自 fix-r9 起为
+        # True，与生产唯一调用点 check() 恒传 True 对齐，不再分家；散文行无 ECHO_HEAD
+        # 结构，回显扫描照判 None，断言语义不变）
 
         # —— #3056 fix-r3（MM concurrency P0 + 双撞 P1 + 两单家 P1）：修复轮识别盲与题头区
         # 结构性修——rN 简写形 / 非类型词开头 / CI 回显扫描 / 枚举型标题 / 板尾裸号 /
@@ -1764,6 +1768,75 @@ def _run(gate, rrr, out_base: Path) -> int:
                 ["fix(scripts)（复盘） #9999 修评审；#1321 收尾 fix-r5"], frozenset({"3056"})):
             fails.append("fix-r8 boundary#5：全角闭合括号在前的减法分支在案——配对（）后深度回 0，"
                          "枚举链照常参与并抑制 foreign（删减法支会假红）")
+
+        # —— #3074 fix-r9（MM+DS r8 增量复核双撞 P1-1 + DS 新 P1-2，协调者墙钟/行为实测
+        # 钉死 _tmp/20261114-3074-fixr9/task.md；尺子的 P1 不适用修复轮上限放行）——
+        # P1-1（第二道豁免无界切片 = O(T·n) 挂起面）：`all(gap) for text[chain_end:bm.start(2)]`
+        # 的切片长度不受 _BARE_WINDOW 约束、每 token 物化一次——协调者墙钟实测纯间隙对抗形
+        # 17 KB 0.18 s / 134 KB 1.4 s / 0.87 MB 57.8 s（二次方外推 ~1.2 MB 越过本仓 r14
+        # 先例 103.9 s），提交标题作者可控。修法＝_bare_member_connected 距链尾 ≤ 窗口上界
+        # 先行、再做 ≤ 窗口的 gap 切片。**成本钉**（防回归无人看守）：对抗形 146 KB /
+        # 1000 token 修后实测 ~10 ms（本机 2026-11-14，修前同形 3.6 s）；阈值取 1.0 s——
+        # 修前该形必红（3.6 s > 1.0 s），修后留 ~100 倍余量（CI 慢机也够）
+        _adv = '#1' + '+' * 134_000 + ''.join(f'+{i} fix-r{i % 9 + 1} ' for i in range(1000))
+        _t0 = time.perf_counter()
+        gate.fix_round_from_title(_adv)
+        _dt = time.perf_counter() - _t0
+        if _dt > 1.0:
+            fails.append(f"fix-r9 P1-1 成本钉：纯间隙对抗形（146 KB/1000 token）{_dt:.2f} s > 1.0 s"
+                         "——第二道豁免的无界切片回潮（应先比窗口再切片，修前同形 3.6 s）")
+        # P1-2（简写形链尾裸号仍整条丢弃）：`#3056+3074 r5：`（issues={3056}）修前
+        # rounds=[] foreign=[] fix_round=None（义务整段跳过＝假 PASS），而全拼形
+        # `#3056+3074 fix-r5` 计 5、`#3056+#3074 r5` 也计 5（B 带 # 时它自己就是最近
+        # 前方 hash）——同链三种拼写行为分裂。修法＝RSHORT 收集臂对链尾裸号成员应用
+        # 同一豁免口径（单源 helper _bare_member_connected，两臂共用）
+        for _t in ("fix(scripts) #3056+3074 r5：修闸门",
+                   "fix(scripts) #3056+#3074 r5：修闸门",
+                   "fix(scripts) #3056、3074 r5：修闸门"):
+            if gate.fix_round_from_title(_t, frozenset({"3056"})) != 5:
+                fails.append(f"fix-r9 P1-2：简写形链尾裸号成员不再整条丢弃——{_t!r} 应计 5"
+                             "（与全拼形 #3056+3074 fix-r5 同判，三种拼写不再分裂）")
+        if not gate._scan_pairs("fix(scripts) #3056+3074 r5：修闸门",
+                                frozenset({"9999"}))[1]:
+            fails.append("fix-r9 P1-2：简写形链尾裸号配不上本 PR 单号时照进 foreign 拒收"
+                         "（豁免只解除「整条丢弃」，不放宽配对）")
+        # P2-2（MM simplify#2）：窄窗「裸号成员不并进配对集」反向用例——issues={3074}
+        # 时 `#3056+3074 fix-r5` 的链集仍是 {3056}（HASH_REF 只收带 # 的号）→ 进
+        # foreign 拒收，而 `#3056+#3074` 计 5（裸号拼写更严＝fail-closed 向，登记在案）
+        if not gate._scan_pairs("fix(scripts) #3056+3074 fix-r5：修闸门",
+                                frozenset({"3074"}))[1]:
+            fails.append("fix-r9 P2-2：窄窗反向用例——issues={3074} 时裸号成员形进 foreign 拒收"
+                         "（链集不含 3074），与 #3056+#3074（计 5）行为差＝登记的 fail-closed 窄窗")
+        if gate._scan_pairs("fix(scripts) #3056+#3074 fix-r5：修闸门",
+                            frozenset({"3074"})) != ([5], []):
+            fails.append("fix-r9 P2-2 对照：#3056+#3074（B 带 #，链集 {3056,3074}）在 issues="
+                         "{3074} 时照常计 5（窄窗只属于裸号拼写）")
+        # P2-3（MM sibling#1）：半角 `)` 减法支孪生负控——fix-r8 已钉全角（）形，
+        # 这里补半角 () 形：配对括号后深度回 0，其后两条不相交链照常参与枚举 ⇒ 抑制
+        # foreign；把 `)→hw_pdepth-1` 减法整支删掉则 hw 停在 1、链退出枚举 ⇒ 误报
+        if gate.foreign_fixround_pairs(
+                ["fix(scripts)(复盘) #9999 修评审；#1321 收尾 fix-r5"], frozenset({"3056"})):
+            fails.append("fix-r9 P2-3：半角闭合括号在前的减法分支在案——配对()后深度回 0，"
+                         "枚举链照常参与并抑制 foreign（删半角减法支会假红）")
+        # P2-5（MM sibling#3 + boundary#4，登记路线 pinning）：锚点第三族（rN+冒号）的
+        # 过宽面——散文 `r4:` 早于首锚点（#N/fix-rN）时 enum_end 被切到 rN 的冒号处，
+        # 其后链退出枚举参与集 → 合法 board/交接段标题 foreign 误报（假 FAIL 向＝多拒
+        # 不漏）。**登记不改标准**（真实语料 board 段 rN: 早于 #N 的实例 0，见
+        # _enum_title docstring fix-r9 段）；此断言钉住当前行为——将来改动须带 A/B 复算
+        if not gate._scan_pairs("chore(state) r4: 01:10 #1305 fix-r3 交付；#1318 缺第二家",
+                                frozenset({"3056"}))[1]:
+            fails.append("fix-r9 P2-5 pinning：r4: 早于首锚点形当前进 foreign（登记的过宽面，"
+                         "fail-closed 向）——行为若变须过真实语料复算，不得静默翻转")
+        # P2-1（MM simplify#1 ≡ DS simplify#1 ≡ MM sibling#5）：fix_round_from_body 默认
+        # echo_scan 改 True——生产唯一调用点（check()）恒 True，默认 False 只让直调走
+        # 非生产路径（孪生负控 :1365 同步对齐）。显式 False 保留（首行语义单测用）
+        if gate.fix_round_from_body("## 概述\n\nfix(scripts): #3074 fix-r3：x\n\nRefs #3074\n",
+                                    issues=frozenset({"3074"})) != 3:
+            fails.append("fix-r9 P2-1：echo_scan 默认 True——不带参数的直调即走生产回显扫描路径"
+                         "（#3074 配对计入 3），默认回退 False 会复活「直调≠生产」分家")
+        if gate.fix_round_from_body("## 概述\n\nfix(scripts): #3074 fix-r3：x\n\nRefs #3074\n",
+                                    echo_scan=False, issues=frozenset({"3074"})) is not None:
+            fails.append("fix-r9 P2-1：显式 echo_scan=False 仍可关（首行语义单测的关闭阀）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"

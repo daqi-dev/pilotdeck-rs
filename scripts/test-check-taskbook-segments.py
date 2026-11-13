@@ -913,6 +913,13 @@ fixcase("fix-r5x 不是修复轮：字段不检查（正控）", 0,
 # 修复＝镜像 fail-closed：check_file 报「读不了」rc=2（与 非UTF-8/FIFO 同款拒收通道）。
 fixcase("超长 fix-r 段（≥19 位）：fail-closed 读不了，不静默跳过字段义务", 2,
         FIX_TASKBOOK, must=["读不了", "位界"], rnd="fix-r" + "1" * 19)
+# fix-r9 P2（MM boundary#2 + boundary#3，随轮修）：超长检查**先全路径扫完**再找合法段
+# ——旧口径逐段「先超长再合法、合法即 return」，合法段（fix-r5）排在超长段前面时后者
+# 永不检查＝短路放行；18 位是位界 {1,18} 的**上限内**合法值，照常解析轮号（对照正控）。
+fixcase("合法段在前不短路：路径含 fix-r5 与超长段 → 仍读不了", 2,
+        FIX_TASKBOOK, must=["读不了", "位界"], rnd="fix-r5/fix-r" + "1" * 19)
+fixcase("18 位位界上限内：fix-r 后 18 位照常解析（正控）", 0,
+        FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK, rnd="fix-r" + "1" * 18)
 fixcase("围栏里的 fixtype 不算声明", 1, FIX_TASKBOOK + "```\n" + FIXTYPE_ENUM + "```\n" + RESIDUAL_OK,
         must=["pdrs-fixtype"])
 fixcase("大包修复轮：分段 + 字段齐（正控）", 0, BIG_SCOPE + SEGMENTS_OK + FIXTYPE_STRUCT + RESIDUAL_OK)
@@ -1435,6 +1442,21 @@ def run():
               and _gate._overflow_err(f"fix(scripts) #1 {_tok}: x", "提交标题") is not None)
         print(f"{'PASS' if ok else 'FAIL'}  超长 fix-r 段两侧同结论：PR 侧 _overflow_err 拒收、"
               f"任务书侧抛 FixRoundOverflow（rc 2 读不了），FIX_ROUND_OVER 单源派生")
+        fails += 0 if ok else 1
+
+        # 17) fix-r9 P2（MM boundary#2 + boundary#3）：超长检查不因合法段短路（先全扫
+        # 超长、再找首个合法段）；18 位是位界 {1,18} 的上限内合法值，照常解析
+        try:
+            ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/fix-r5/{_tok}/task.md")
+            raised_first = False
+        except ctbs.FixRoundOverflow:
+            raised_first = True
+        _e18 = "fix-r" + "1" * 18
+        ok = (raised_first
+              and ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/{_e18}/task.md") == int("1" * 18)
+              and ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/{_e18}/fix-r5/task.md") == int("1" * 18))
+        print(f"{'PASS' if ok else 'FAIL'}  超长段不因合法段短路（fix-r5 在前仍抛）；"
+              f"18 位上限内照常解析（首个合法段定轮号）")
         fails += 0 if ok else 1
 
 

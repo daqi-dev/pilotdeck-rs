@@ -39,7 +39,8 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
 
 退出码：0 通过（含「小包，无需分段」，`--recent` 扫过但没扫到也算 0）· 1 命中大包但分段表缺失/不全，
 或修复轮任务书缺必填字段 ·
-2 任务书读不了、为空、读取期间被改写、scope 行写坏，或 `--recent` 的递归扫描中断（「扫不了」不许
+2 任务书读不了、为空、读取期间被改写、scope 行写坏、路径段 fix-r 后 ≥19 位数字（位界 {1,18} 外，
+与 PR 侧 check-pr-gate 同一结论 fail-closed，fix-r8），或 `--recent` 的递归扫描中断（「扫不了」不许
 冒充「没扫到」）· 3 用法错误（`--root` 只与 `--recent` 同用）
 （多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
 
@@ -1246,10 +1247,15 @@ def fix_round_from_path(path):
     fix-r8 boundary P1（MM r7 评审）：命中超长 fix-r 段（≥19 位数字）时抛
     FixRoundOverflow（fail-closed「读不了」），不静默返回 None——位界外的段
     FIX_ROUND_PART 本就 fullmatch 不上，旧口径会让同一 token 在 PR 侧被拒收、
-    任务书侧静默跳过整段修复轮义务。"""
-    for part in Path(path).parts:
+    任务书侧静默跳过整段修复轮义务。fix-r9 P2（MM boundary#2）：超长检查**先全
+    路径扫完**再找合法段——旧口径逐段「先查超长、再查合法、合法即 return」，
+    合法段（fix-r5）排在超长段前面时后者永不检查＝短路放行；两遍扫后任一超长
+    段都触发 rc 2。"""
+    parts = Path(path).parts
+    for part in parts:      # 第一遍：超长段全查（合法段在前不得短路）
         if FIX_ROUND_OVER.fullmatch(part):
             raise FixRoundOverflow(part)
+    for part in parts:      # 第二遍：首个合法段定轮号
         m = FIX_ROUND_PART.fullmatch(part)
         if m:
             return int(m.group(1))

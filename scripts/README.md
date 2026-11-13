@@ -93,7 +93,7 @@ scripts/delivery-orphan.py --claims                                             
 派单前拿不到真实改动量，所以任务书写 `<!-- pdrs-scope: files=N lines=M est_min=K -->` 声明（键只认 `files` / `lines` / `est_min` / `modules`，键名大小写与 `-`/`_` 不敏感；**写错键名等于把阈值吞掉，按「读不了」rc 2**——`files=2 estmins=300` 不会静默当成小包；**同一行把同一个键写两遍也 rc 2**（`files=16 est_min=180 files=2` 后写覆盖先写））；没写才退回人日估算（约 / 大约 / 估计 / 预计 / 预期 / 估算 / 工作量 / 共计 / 合计 / 总计 … 可带冒号逗号、可隔「需要 / 投入」（`预计需要 2 人日`）… N 人日，量词「个」也认：`约 2 个人日`）与点名 `*.rs` 路径数。
 
 ```bash
-python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过（含小包）/ 1 大包缺分段表或修复轮缺必填字段 / 2 读不了、为空、读取中被改写或 scope 写坏 / 3 用法错误
+python3 -I scripts/check-taskbook-segments.py <任务书>     # 0 通过（含小包）/ 1 大包缺分段表或修复轮缺必填字段 / 2 读不了、为空、读取中被改写、scope 写坏或路径段 fix-r 后 ≥19 位（位界外，与 PR 侧同结论 fail-closed）/ 3 用法错误
 python3 -I scripts/check-taskbook-segments.py --print-skeleton
 python3 -I scripts/check-taskbook-segments.py --recent 24 [--root .]   # 兜底递归扫 _build/wt-*/_tmp/**/task.md，没扫到也是 0
 python3 -I scripts/test-check-taskbook-segments.py        # 355 条正控 / 负控（负控钉死具体报错文案；含修复轮字段用例与三值单源配对）
