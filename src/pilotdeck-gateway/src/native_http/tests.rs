@@ -4768,6 +4768,157 @@ async fn released_body_unaccepted_head_grid_destroys_silently_like_ts() {
     .await;
 }
 
+/// #2499 fix-r9 (merge review concurrency#1 / sibling#1 / boundary#1, the
+/// three-role collision on one defect): a **complete** follow-up head
+/// parked behind a response whose body has ended but whose tail has not
+/// flushed. `IdleBody::release` stores `write_pending` and wakes the parked
+/// gate, but the woken poll re-parks — `withholding_mid_stream` still holds
+/// on the unflushed tail — and stores its waker back in the release slot;
+/// the flush's completion is the one transition that clears the flag, so it
+/// must also take the slot and wake, or the parked head strands until its
+/// own deadline while Node serves it at `finish` (which *is* the flush —
+/// probe-1517's `finish`-needs-the-flush finding). The parked transport
+/// pins the interleave deterministically: the tail's write pends while
+/// parked, and the unpark is the flush's completion. The four #1517 cells
+/// above all dodge this shape (half heads that never complete, or closes
+/// that land before the unpark); this cell closes it.
+#[tokio::test(start_paused = true)]
+async fn unflushed_tail_flush_completion_serves_the_parked_complete_head() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(64 * 1024);
+        let park = WritePark::default();
+        let transport = ParkedWriteTransport {
+            inner: server,
+            park: park.clone(),
+        };
+        let (stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let last = "x".repeat(8192);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            transport,
+            move |request, _lease| {
+                let release = release_rx.clone();
+                let last = last.clone();
+                async move {
+                    if request.uri().path() == "/held" {
+                        hyper::Response::builder()
+                            .status(hyper::StatusCode::OK)
+                            .header(hyper::header::CONTENT_TYPE, "text/plain")
+                            .body(held_body("part1-", &last, release))
+                            .map_err(std::io::Error::other)
+                    } else {
+                        Ok(http_proxy::plain(hyper::StatusCode::OK, "after-flush"))
+                    }
+                }
+            },
+            stop_rx,
+            None,
+            None,
+        ));
+        // Request 1: the head and the first chunk land and drain, then the
+        // write side parks — the tail the held body still owes can never
+        // reach the transport's wire.
+        client
+            .write_all(&latin1_bytes(
+                "GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#2499 fix-r9 write the held request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "fix-r9 the first chunk").await;
+        park.park();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The complete follow-up head, while response 1 is still in flight:
+        // the gate withholds it under the in-flight slot and parks its
+        // waker in the release slot.
+        client
+            .write_all(&latin1_bytes(
+                "GET /after HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ))
+            .await
+            .expect("#2499 fix-r9 write the complete follow-up head");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The release: the body ends — `IdleBody::release` stores
+        // `write_pending` and wakes the parked gate, which re-parks behind
+        // the unflushed tail and leaves its waker back in the slot. The
+        // parked transport keeps the tail (and the whole post-release write
+        // side) inside hyper's write buffer.
+        release_tx.send_replace(true);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The flush completes: the unpark lets hyper drain the tail, and
+        // the gate's `poll_flush` clears `write_pending` — the parked head
+        // must be served *here*, at the transition Node's `finish` happens
+        // at, not stranded until its own +60 s deadline (the probe window
+        // below is a fraction of that deadline).
+        park.unpark();
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        let status_lines = |output: &[u8]| {
+            output
+                .windows(b"HTTP/1.1 200 OK".len())
+                .filter(|window| *window == b"HTTP/1.1 200 OK")
+                .count()
+        };
+        let mut chunk = [0u8; 4096];
+        let verdict = {
+            let probe = timeout(Duration::from_secs(2), async {
+                loop {
+                    let read = client
+                        .read(&mut chunk)
+                        .await
+                        .expect("#2499 fix-r9 read the served responses");
+                    assert!(
+                        read > 0,
+                        "#2499 fix-r9 EOF before the parked head was served"
+                    );
+                    buffer.extend_from_slice(&chunk[..read]);
+                    if latin1_string(&buffer).contains("after-flush") {
+                        return;
+                    }
+                }
+            });
+            tokio::time::advance(Duration::from_secs(3)).await;
+            probe.await
+        };
+        if let Err(_elapsed) = verdict {
+            panic!(
+                "#2499 fix-r9: the parked complete head was not served after the \
+                 flush completed — {} responses arrived, the parked head stayed \
+                 withheld behind the cleared write_pending with no wake to \
+                 re-poll the gate",
+                status_lines(&buffer)
+            );
+        }
+        let text = latin1_string(&buffer);
+        assert_eq!(
+            status_lines(&buffer),
+            2,
+            "#2499 fix-r9: exactly the held response's and the parked head's — \
+             the after-flush body is the parked head's own: {text:?}"
+        );
+        assert!(
+            !text.contains("408"),
+            "#2499 fix-r9: no 408 ever — the parked head was served at the \
+             flush, not timed out: {text:?}"
+        );
+        // The client's EOF ends the standby connection promptly, so the
+        // serve task joins without waiting out the 6 s keep-alive idle.
+        drop(client);
+        drop(stop);
+        task.await
+            .expect("#2499 fix-r9 task join")
+            .expect("serve_connection must end cleanly");
+    })
+    .await;
+}
+
 /// #1292 fix-r1 (matrix M6): while a request is in flight — here a pipelined
 /// second request whose response body is held mid-stream — no
 /// headersTimeout exists: Node's `requestTimeout` (300 s, registered as not

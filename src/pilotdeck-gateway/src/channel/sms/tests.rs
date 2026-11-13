@@ -18,7 +18,7 @@ use super::super::loader::{
 use crate::channel::protocol::{ChannelLog, ChannelStartDeps};
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-sms/oracle.json");
-const EXPECTED_CASE_COUNT: usize = 59;
+const EXPECTED_CASE_COUNT: usize = 61;
 /// The fixed mapper uuid the generator injects, so `/new` session keys match.
 const MAPPER_UUID: &str = "aaaaaaaa-1111-2222-3333-444444444444";
 
@@ -3193,10 +3193,11 @@ fn expects_live_listener(case: &Value) -> bool {
 /// can silently switch the whole post-start guard off — the prefix
 /// `"sms: Twilio webhook http://"` is hardcoded against the product's own
 /// `format!` in `mod.rs`, so a log-text drift would turn every cell's verdict
-/// false and no other test would notice. The count over all 59 oracle cells
-/// is the tripwire: 52 of them record a live listener (the seven no-op
-/// shapes are the complete complement), and any drift in the prefix, the
-/// `[level, text]` log shape or the cell set turns this red instead of
+/// false and no other test would notice. The count over all 61 oracle cells
+/// is the tripwire: 54 of them record a live listener (the seven no-op
+/// shapes are the complete complement; #2499's two head-stall cells both
+/// record one), and any drift in the prefix, the `[level, text]` log shape
+/// or the cell set turns this red instead of
 /// disarming the guard quietly.
 #[test]
 fn expects_live_listener_anchors_the_product_webhook_log_line() {
@@ -3208,8 +3209,8 @@ fn expects_live_listener_anchors_the_product_webhook_log_line() {
     }
     crate::negative_assert_eq!(
         live,
-        52,
-        "#2691 the live-listener discriminator no longer sees 52 of the oracle \
+        54,
+        "#2691 the live-listener discriminator no longer sees 54 of the oracle \
          cells — the product log prefix or the recorded log shape drifted, and \
          every drifted cell silently skips its post-start bind guard"
     );
@@ -3511,6 +3512,153 @@ fn body_read_deadline_defaults_to_the_node_request_timeout() {
     );
 }
 
+/// #2499: the `head-stall` cells — a request head that never completes. The
+/// recorded TS shape is pinned first (the oracle can see only the semantic
+/// triple `{status, contentType, body}`, so the recording alone could not
+/// tell a 408 from a body answer), then the Rust port is driven with a
+/// shortened injected head deadline (`request_timeout` feeds both deadlines,
+/// the same `replay_body_read_timeout` injection) against the production
+/// 30 s connections-checker grid: the landing is the first grid point
+/// strictly after the deadline, so the read window covers the worst case
+/// (deadline + one full grid interval) with scheduler margin. The two
+/// anchors are the two cells — `headers-timeout-first-byte` writes its half
+/// head after the recorded delay (the deadline re-anchors at the head's
+/// first byte), `headers-timeout-connect-anchor` writes nothing (the
+/// deadline anchors at the connection's establishment).
+///
+/// The answer is compared byte-for-byte against
+/// [`crate::user_dialog::NODE_408_RESPONSE`]: unlike the body-read deadline's
+/// answer (#1901, hyper-framed through the response stack) the head deadline
+/// writes Node's raw 51 bytes straight onto the socket — no chunked framing,
+/// no lowercase header rewrite, no implicit date — which is the whole point
+/// of #2499 (#2026 decision B).
+async fn replay_head_stall(case: &Value, port: u16) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    const INJECTED_DEADLINE: Duration = Duration::from_millis(200);
+    const CLIENT_DEADLINE: Duration = Duration::from_secs(40);
+
+    // The recorded TS answer, pinned so this cell cannot go blind.
+    let expected = &case["expected"]["responses"][0];
+    crate::negative_assert_eq!(
+        expected["status"].as_u64(),
+        Some(408),
+        "#2499 head-stall: the baseline answers a stalled head with 408"
+    );
+    crate::negative_assert_eq!(
+        expected["body"].as_str(),
+        Some(""),
+        "#2499 head-stall: the headersTimeout body is empty"
+    );
+    crate::negative_assert!(
+        expected.get("closed").is_none() && expected.get("refused").is_none(),
+        "#2499 head-stall: the baseline must deliver the 408, not reset \
+         or refuse the connection, got {expected}"
+    );
+    // Node's `headersTimeout` 408 carries no `Content-Type`.
+    crate::negative_assert!(
+        expected.get("contentType").is_none_or(Value::is_null),
+        "#2499 head-stall: the headersTimeout answer has no content-type, \
+         got {expected}"
+    );
+    // The recorded step shape, read fail-closed like `replay_body_read_timeout`
+    // pins `stall`: the op, the (possibly empty) head bytes and the delay are
+    // the cell's whole definition, so a hand edit that drops or retypes any of
+    // them must fail here instead of degrading the replay.
+    let steps = recorded_steps(case).expect("#2499 steps");
+    let step = &steps[0];
+    crate::negative_assert_eq!(
+        step.get("op").and_then(Value::as_str),
+        Some("head-stall"),
+        "#2499 head-stall: the cell must be recorded with the head-stall op"
+    );
+    let head = step.get("head").and_then(Value::as_str).unwrap_or_else(|| {
+        panic!(
+            "#2499 head-stall: head must be a string, got {}",
+            step["head"]
+        )
+    });
+    crate::negative_assert!(
+        !head.contains("\r\n\r\n"),
+        "#2499 head-stall: the head stays incomplete (no header terminator), \
+         got {head:?}"
+    );
+    let delay_ms = step
+        .get("delayMs")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            panic!(
+                "#2499 head-stall: delayMs must be a u64, got {}",
+                step["delayMs"]
+            )
+        });
+
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(recorded_extra(case).unwrap_or(&Value::Null))),
+        mapper: None,
+        gateway: None,
+        env: Some(Arc::new(|_| None)),
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: Some(INJECTED_DEADLINE),
+    });
+    // #2691 fix-r2: same post-start bind proof as the replay driver — the
+    // recording expects a live 408 answer, so a start that lost the bind must
+    // not fall through to the refused-connect mismatch silently.
+    let shared = channel.shared.clone();
+    let handle = bounded(
+        "head-stall start",
+        channel.start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        }),
+    )
+    .await
+    .expect("#2499 start");
+    drop(channel);
+    assert_bound_listener(&shared, port, 0);
+    let mut stream = bounded(
+        "head-stall connect",
+        TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    .expect("#2499 connect to the sms listener");
+    // The recorded delay is part of the cell's shape: honoring it keeps the
+    // first-byte cell's anchor (the head's first byte after the silence)
+    // distinct from the connect cell's in the Rust replay too.
+    if delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+    }
+    if !head.is_empty() {
+        bounded("head-stall send", stream.write_all(head.as_bytes()))
+            .await
+            .expect("#2499 send the stalled head");
+    }
+    let mut response = Vec::new();
+    tokio::time::timeout(CLIENT_DEADLINE, stream.read_to_end(&mut response))
+        .await
+        .expect(
+            "#2499 a stalled head is answered at the head deadline's grid \
+                 landing (deadline + the 30 s checker grid, within 40 s)",
+        )
+        .expect("#2499 read the stalled-head response bytes");
+    bounded("head-stall stop", handle.stop("head-stall"))
+        .await
+        .expect("#2499 stop after the head deadline");
+    // Only the answer is compared here, like `replay_body_read_timeout`: the
+    // cell also records the stop logs, but this replay stops with its own
+    // reason string, so the log envelope cannot be compared without
+    // normalizing it; the shutdown log path is covered by the other cells'
+    // `stop()` steps.
+    crate::negative_assert_eq!(
+        response.as_slice(),
+        crate::user_dialog::NODE_408_RESPONSE,
+        "#2499 the head deadline answers Node's raw 51-byte 408 straight on \
+         the socket — no hyper framing, no header rewrite, no date"
+    );
+}
+
 async fn replay_named(name: &str) {
     let case = case_by_name(name);
     validate_mock_recording(&case);
@@ -3531,6 +3679,14 @@ async fn replay_named(name: &str) {
         // `requestTimeout`, so the cell is replayed through a shortened
         // injected deadline instead of being waited out.
         replay_body_read_timeout(&case, port).await;
+        return;
+    }
+    if name == "headers-timeout-first-byte" || name == "headers-timeout-connect-anchor" {
+        // #2499: both head-stall cells are replayed through the shortened
+        // injected head deadline (the recorded TS answer waits out the 60 s
+        // `headersTimeout` + its 30 s grid landing) — the first-byte cell
+        // after its recorded delay, the connect cell with nothing on the wire.
+        replay_head_stall(&case, port).await;
         return;
     }
     let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
@@ -3817,6 +3973,11 @@ replay_cases! {
     // route guard could answer its 404.
     "unknown-method" => unknown_method,
     "missing-host" => missing_host,
+    // #2499: the head-stall cells — a stalled head answered with Node's raw
+    // 51-byte 408 (first-byte and connect anchors), replayed through the
+    // shortened injected deadline like `body-read-timeout`.
+    "headers-timeout-first-byte" => headers_timeout_first_byte,
+    "headers-timeout-connect-anchor" => headers_timeout_connect_anchor,
 }
 
 /// #1913: an HTTP/1.0 request — even one asking for `Connection: keep-alive`

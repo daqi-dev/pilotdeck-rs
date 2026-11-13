@@ -320,6 +320,27 @@ struct UpgradeReadGate<S> {
     /// reported to hyper only when they are, the same way hyper parks a
     /// mid-stream EOF behind a non-empty read buffer.
     withheld_eof: bool,
+    /// #2499 fix-r5 (review sibling#1, mirroring the sms lane): the waker the
+    /// withholding park leaves behind for the response's completion, the same
+    /// slot pattern this struct's [`SharedReadState::waker`] uses for the
+    /// upgrade pause. A parked gate is the connection's only reader, but hyper
+    /// does not re-poll a parked read on its own (its end-of-response
+    /// `maybe_notify` short-circuits on the io layer's `read_blocked` flag,
+    /// which the park just set), and the socket cannot be relied on either: at
+    /// the cap the withholding loop stops polling it, and on a production
+    /// `TcpStream` a zero-length poll after a full scratch read registers
+    /// nothing (the fix-r5 tokio probe `probe-tcp-empty-poll/probe-run.out`
+    /// legs 1/2b: no waker stored, the successor byte fires 0). So the park
+    /// stores this poll's waker in the slot and [`IdleBody::release`] — the
+    /// completion Node's llhttp answers pipelined heads at, one-by-one as each
+    /// previous response finishes (the fix-r5 Node probe
+    /// `probe-node-pipeline-serve.out` legs A/B: 513 responses, none
+    /// header-timed-out) — takes and wakes it. fix-r9: a woken poll that
+    /// re-parks behind an unflushed tail leaves its waker back here, and
+    /// `poll_flush`'s confirming transition — the write side's `finish` for
+    /// that shape — takes and wakes it in turn
+    /// ([`take_and_wake_release_slot`]).
+    release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
 }
 impl<S> UpgradeReadGate<S> {
     #[allow(clippy::too_many_arguments)] // The per-request headersTimeout state machine's inputs.
@@ -336,6 +357,7 @@ impl<S> UpgradeReadGate<S> {
         in_flight: Arc<AtomicUsize>,
         write_pending: Arc<AtomicBool>,
         body_remaining: Arc<AtomicI64>,
+        release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
     ) -> Self {
         // A stop-less connection gets a never-true receiver: the gate only
         // consults its stop while the deadline is armed.
@@ -364,6 +386,7 @@ impl<S> UpgradeReadGate<S> {
             body_remaining,
             withheld_head: Vec::new(),
             withheld_eof: false,
+            release_waker,
         }
     }
 
@@ -688,15 +711,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for UpgradeReadGate<S> {
                         .send_replace(Some(tokio::time::Instant::now()));
                 }
             }
-            if self.withheld_head.len() >= WITHHELD_HEAD_CAP {
-                // #1292 fix-r3: at the cap the gate no longer polls the
-                // socket, so nothing else would register a waker for the
-                // parked headers deadline — poll the sleep here, the same
-                // way `arm_started_head` parks it under this poll's waker.
-                if let Some(sleep) = self.headers_sleep.as_mut() {
-                    let _ = sleep.as_mut().poll(cx);
-                }
-            }
+            // #2499 fix-r5 (review sibling#1, mirroring the sms lane — this
+            // replaces fix-r3's cap-branch sleep re-poll): the parked gate's
+            // re-feed cannot ride on the socket — hyper does not re-poll a
+            // parked read on its own (its end-of-response `maybe_notify`
+            // short-circuits on the io layer's `read_blocked` flag, which this
+            // Pending just set), and at the cap the withholding loop above
+            // stops polling the socket, so no socket waker exists to ride on
+            // at all. Instead the park stores this poll's waker in the release
+            // slot for `IdleBody::release` — the response's completion, exactly
+            // where Node's llhttp serves pipelined heads (the fix-r5 Node
+            // probe: 512 parked complete heads all answered right after the
+            // previous response, never a 408 of their own). The parked
+            // deadline needs no extra registration either: the three-way above
+            // parks its sleep under this same waker on every poll it stays
+            // armed.
+            *self.release_waker.lock().unwrap() = Some(cx.waker().clone());
             return Poll::Pending;
         }
         // The response finished: hand the withheld head bytes to hyper's
@@ -816,8 +846,41 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
                 // tears the connection down on either (the response future
                 // resolves and the socket drops), so no follow-up head can
                 // ever observe the stale window (review fix-r1 Grok #1).
+                // #2499 fix-r9 (merge review concurrency#1/sibling#1/
+                // boundary#1, the three-role collision): a gate parked behind
+                // this unflushed tail re-parked here — the release woke it
+                // into `withholding_mid_stream`, which held on the very flag
+                // this branch just cleared, and stored its waker back in the
+                // release slot. This flush completion is the write side's
+                // `finish` — the place Node serves a pipelined head whose
+                // previous response ended with an unflushed tail — so the
+                // same transition must take the slot and wake, or the parked
+                // head strands until its own deadline with no one left to
+                // re-poll the gate (hyper's `maybe_notify` short-circuits on
+                // the read the park blocked, and the parked deadline only
+                // fires the 408 lane much later). Empty slot: a no-op.
+                // fix-r10 (merge review concurrency#1/boundary#1, the double
+                // collision on r9's own wake): that take was unconditional —
+                // with a request in flight the parked read stores the
+                // dispatcher's waker in the slot, and the same dispatcher
+                // iteration's flush takes it right back, so park → flush →
+                // wake → re-park spins with nothing ever written, a
+                // self-sustaining busy spin pinning one core per pipelined
+                // connection (hyper 1.7.0's `poll_loop` runs read → write →
+                // flush every round). Narrowed to the one transition r9
+                // meant: only a flush that confirms an unflushed tail takes
+                // the slot — `was_pending`, the swap's old value
+                // (`IdleBody::release` stores the flag before its wake, so
+                // the woken gate's confirming flush sees it and still fires);
+                // an idle flush leaves the parked waker asleep. The mutant
+                // guard keeps clear and wake together:
+                // `native-http-flush-clear-off` is the confirmation never
+                // happening — neither half runs.
                 if !crate::mutants::on("native-http-flush-clear-off") {
-                    self.write_pending.store(false, Ordering::Relaxed);
+                    let was_pending = self.write_pending.swap(false, Ordering::Relaxed);
+                    if was_pending {
+                        take_and_wake_release_slot(&self.release_waker);
+                    }
                 }
                 Poll::Ready(Ok(()))
             }
@@ -1029,6 +1092,21 @@ impl Drop for InFlightRequest {
     }
 }
 
+/// #2499 fix-r9 (merge review concurrency#1's P3, applied to both release
+/// paths this diff touches): the one "take, then wake" shape the release
+/// slot's two wakers share — the value is taken out of the lock's critical
+/// section *before* `wake()` runs, so no `std::sync::Mutex` guard is ever
+/// held across the call (a re-entrant waker would deadlock on the
+/// non-reentrant mutex, a panicking one would poison it for the gate's next
+/// park). An empty slot is a no-op. The sms lane's same-shaped site
+/// (`channel/sms/mod.rs`) is pre-existing and stays untouched here.
+fn take_and_wake_release_slot(slot: &Arc<std::sync::Mutex<Option<std::task::Waker>>>) {
+    let waker = slot.lock().expect("release waker slot").take();
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
 /// #1250: a response body that keeps the request's in-flight slot held until
 /// the body has actually finished streaming, and arms the keep-alive idle
 /// deadline at that completion — Node's idle timer arms at the response
@@ -1042,6 +1120,14 @@ struct IdleBody {
     /// #1292 fix-r1: the connection's per-request re-arm signal, bumped at the
     /// same body completion that re-arms the idle deadline.
     rearm: Option<watch::Sender<usize>>,
+    /// #2499 fix-r5: the withholding park's wake — the slot the read gate
+    /// leaves its waker in while a next head's bytes are parked behind this
+    /// response, so the completion here re-enters the gate and the parked
+    /// bytes re-feed, the same place Node's llhttp serves pipelined heads.
+    /// fix-r9: a body that ends with an unflushed tail re-parks the woken
+    /// gate behind `write_pending`, so the gate's confirming `poll_flush`
+    /// takes the slot again — the flush is Node's `finish` for that shape.
+    release_waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
     /// #1517 fix-r1: the connection's shared write-side flag — the frame
     /// hand-off means hyper's write side now owns bytes it has not confirmed,
     /// whether or not the transport ever accepts them (a tail stuck entirely
@@ -1076,6 +1162,19 @@ impl IdleBody {
         if let Some((guard, activity)) = self.held.take() {
             drop(guard);
             activity.send_replace(Some(tokio::time::Instant::now()));
+        }
+        // #2499 fix-r5 (review sibling#1, mirroring the sms lane): wake the
+        // parked withholding gate. The held guard's drop above must land first
+        // — the woken poll re-enters `poll_read`, and a still-held in-flight
+        // slot would just park it again instead of taking the re-feed branch.
+        // The mutant switch kills exactly this wake: nothing else re-polls a
+        // parked read (hyper's `maybe_notify` short-circuits on
+        // `read_blocked`), so the parked heads strand until their own
+        // deadline's 408 — the fix-r3 behavior the negative control has to
+        // keep killing. fix-r9: the take-and-wake itself moved into
+        // [`take_and_wake_release_slot`], shared with the flush-side release.
+        if !crate::mutants::on("native-http-withheld-park-no-wake") {
+            take_and_wake_release_slot(&self.release_waker);
         }
     }
 }
@@ -1135,6 +1234,12 @@ where
     // the next request head is bounded by a fresh `headersTimeout` like
     // Node re-arms `last_message_start_` at every `on_message_begin`.
     let (rearm, rearm_rx) = watch::channel(0usize);
+    // #2499 fix-r5: the withholding park's wake slot — the gate parks the
+    // next head's bytes behind the streaming response with only this waker
+    // outstanding, and the response body's release takes it. Shared by both
+    // lanes' `IdleBody`s; the proxy lane never parks a withhold (no
+    // headers deadline), so its wake fires into an empty slot, harmless.
+    let release_waker = Arc::new(std::sync::Mutex::new(None::<std::task::Waker>));
     // #1292: the native lane bounds its still-unserved first head with
     // Node's `headersTimeout`; the proxy lane fronts a different TS
     // counterpart and keeps its previous behavior (no probe).
@@ -1155,6 +1260,7 @@ where
         in_flight.clone(),
         write_pending.clone(),
         body_remaining.clone(),
+        release_waker.clone(),
     );
     let served_heads_in_connection = served_heads.clone();
     let in_flight_in_connection = in_flight.clone();
@@ -1162,6 +1268,7 @@ where
     let activity_in_connection = activity.clone();
     let rearm_in_connection = rearm.clone();
     let body_remaining_in_connection = body_remaining.clone();
+    let release_waker_in_connection = release_waker.clone();
     let service = service_fn(move |request| {
         served_heads_in_connection.fetch_add(1, Ordering::Relaxed);
         // #1292 fix-r2: this request's body byte count. Node's parser sets
@@ -1198,6 +1305,7 @@ where
         let in_flight = InFlightRequest(in_flight_in_connection.clone());
         let activity = activity_in_connection.clone();
         let rearm = rearm_in_connection.clone();
+        let release_waker = release_waker_in_connection.clone();
         let write_pending = write_pending_in_connection.clone();
         let handler = handler(request, lease);
         async move {
@@ -1224,6 +1332,7 @@ where
                             body,
                             held,
                             rearm: Some(rearm.clone()),
+                            release_waker,
                             write_pending: Some(write_pending.clone()),
                         }
                         .boxed()
