@@ -19,8 +19,8 @@ use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_yaml::{Options, parse_document};
 use std::collections::HashMap;
+pub(crate) use value::builtin_property;
 use value::*;
-pub(crate) use value::{builtin_property, string_coercible};
 // Test-only: the constant is consumed by the webhook pin test, so a plain
 // re-export is an unused import in a non-test lib build (`-D warnings`).
 #[cfg(test)]
@@ -312,9 +312,7 @@ fn load_project_with_files_inner<F: Files>(
         }
     }
     let version = field(&raw, "schemaVersion");
-    if let Err(kind) = string_coercible(version) {
-        return Err(coercion_error(kind));
-    }
+    require_string_coercible(version)?;
     if version.is_undefined() {
         d.warn(
             "CONFIG_SCHEMA_VERSION_MISSING",
@@ -523,7 +521,17 @@ fn read_hint(e: &std::io::Error, path: &str) -> Result<String, Error> {
 }
 pub(crate) fn read_error(e: &std::io::Error, path: &str) -> Error {
     match crate::node_io::config_read_file(e, path) {
-        Some((code, message)) => Error::new(code, message),
+        // A failed `readFileSync` surfaces Node's own fs error — `Error` with
+        // the errno code (Node v22.22.0 probe:
+        // `_tmp/20261112-issue-1833/impl-r1/node-probe/a1-error-classes-probe.out`),
+        // not the loader's `PilotConfigError`; the sops read race in
+        // `binding::apply` must keep the class so a reload does not take it
+        // for a config diagnostic failure (#1833 A1).
+        Some((code, message)) => {
+            let mut error = Error::new(code, message);
+            error.name = "Error";
+            error
+        }
         None => host_io_error(),
     }
 }

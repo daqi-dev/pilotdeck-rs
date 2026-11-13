@@ -263,8 +263,11 @@ capture.py 自己，预持即 `Blocked`）；D0 Rust 家族——名单以
 目录租约再执行任何绑 28999 的命令块（以 grep 现跑加间接判定口径为准；取不到租约即
 退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件。取锁/释放的
 **形态与片段正本**（含失败路径的 trap 释放与「取不到即退出」）在
-`scripts/cli-parity/README.md`「锁被保留时怎么解」节，此处不复写；接管阈值与带接管
-装置名单同以该节为准。28999 车道特有的约束：矩阵全批兜底上界按
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节，此处不复写；本文件所有需要租约的
+宿主命令块（下方两段 `cargo test`）都以 `( set -eu; pdrs_parity_fence; … )` 守卫子壳形态
+给出，守卫函数 `pdrs_parity_fence` 随正本宿主片段定义（核 `owner.json` 的 token+pid，
+核不过非零退出、命令不执行）；`scripts/cargo-slots.sh` 走另一把车道锁，留在守卫外。
+接管阈值与带接管装置名单同以该节为准。28999 车道特有的约束：矩阵全批兜底上界按
 `选择格数 × (2×12 + 5×3) + 30` 秒保守推导（100 格为 3930 s，公式同 `capture.py:44`），
 远超 2400 s 接管阈值，且宿主块没有装置内的硬截止闹钟（cli-parity `run_round.py` 的
 2280 s `signal.alarm` 是调用方闹钟，不是租约属性）——宿主持锁**一律发布
@@ -279,9 +282,10 @@ stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh
-PDRS_SIGNAL_RESULTS=/absolute/new-evidence-directory \
-  cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
-  --test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_ --test-threads=1
+( set -eu; pdrs_parity_fence
+  PDRS_SIGNAL_RESULTS=/absolute/new-evidence-directory \
+    cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
+    --test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_ --test-threads=1 )
 ```
 
 `../sdk-signal-abort-state/` 增补 21 格（含四格 abort 固定期限及 hello/request 各三格期限）真实 SDK 状态探针：两类 turn_started 各三种
@@ -292,11 +296,12 @@ runId、两种流失败与待决 abort、三种 iterator/consumer 错误。仅 W
 
 ```sh
 scripts/cargo-slots.sh
-cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli --test sdk_signal_exit \
-  product::sdk::turn::tests::pending_abort_keeps_query_until_reply -- --exact --ignored
-python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py --check-anchors
-python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
-  python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
+( set -eu; pdrs_parity_fence
+  cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli --test sdk_signal_exit \
+    product::sdk::turn::tests::pending_abort_keeps_query_until_reply -- --exact --ignored
+  python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py --check-anchors
+  python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
+    python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR )
 ```
 
 产品及比较边界负控固定 79 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），#1260 新增 1 个产品关闭顺序变异 `initialization-query-close-before-control`（把初始化失败的关闭顺序改回 control 先关，绑定 `signal_cases::run_query_hello_hold_sigint`）、1 个 #1260 穷尽性变异 `stable-order-pin-broadened`（放宽 16 格形状谓词，绑定比较器用例的集合相等断言），新增 31 个精确名单项变异，#1178 新增 2 个：产品变异 `rst-abort-waits-for-reply`（把 turn.rs 流阶段 socket 错误带在途 abort 的映射改回 retain_query 等回复，12 秒观察内不退出，绑定 `signal_cases::run_abort_rst_sigint`）与 mock 保真变异 `rst-mock-never-resets`（signal_replay.rs 的 Action::Reset 改为 no-op，Rust 子进程不死亡、观察超时，同一绑定），以及

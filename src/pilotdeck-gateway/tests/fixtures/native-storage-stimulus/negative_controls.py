@@ -216,6 +216,81 @@ mutations = [
      'if !path.is_dir() {',
      'if false {',
      'executable_native_storage_stimulus', '#1370 executable invalid stimulus dir'),
+    # #1805 item 1: the release guard's budget may only be extended by a
+    # receipt that actually advanced. The fix-r5 shape refreshed the deadline
+    # unconditionally inside the release-writing branch, so a stalled barrier
+    # (block receipt on disk, release and complete forever absent — the worker
+    # died inside wait_for_release) spun `Drop` forever instead of ending.
+    # fix-r2: the deadline is the named GUARD_BUDGET constant — anchors follow
+    # the constant, the mutation semantics are unchanged (refresh in the
+    # release branch = infinite spin).
+    ('drop-budget-refreshed-in-release-branch', TESTS,
+     '''            if observed.0.is_none()
+                && let Some(seq) = observed.1
+            {
+                // Non-panicking release: a `.unwrap()` here could abort during unwind.
+                let temporary = self.control.join("release.json.guard.tmp");
+                if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
+                    let _ = fs::rename(&temporary, self.control.join("release.json"));
+                }
+            }
+            // Only a receipt that actually advanced earns the durable write behind
+            // it a fresh budget — the barrier the worker reaches late must not
+            // leave that write with whatever is left of the block-receipt wait.
+            // A stalled or failing barrier extends nothing, so `Drop` still ends:
+            // at most the `block` and `release` transitions can push it out.
+            let current = sample(observe("block", 0));
+            if current != observed {
+                observed = current;
+                deadline = Instant::now() + GUARD_BUDGET;
+            }''',
+     '''            if observed.0.is_none()
+                && let Some(seq) = observed.1
+            {
+                // Non-panicking release: a `.unwrap()` here could abort during unwind.
+                let temporary = self.control.join("release.json.guard.tmp");
+                if fs::write(&temporary, format!("{{\\"seq\\":{seq}}}")).is_ok() {
+                    let _ = fs::rename(&temporary, self.control.join("release.json"));
+                }
+                deadline = Instant::now() + GUARD_BUDGET;
+            }
+            // Only a receipt that actually advanced earns the durable write behind
+            // it a fresh budget — the barrier the worker reaches late must not
+            // leave that write with whatever is left of the block-receipt wait.
+            // A stalled or failing barrier extends nothing, so `Drop` still ends:
+            // at most the `block` and `release` transitions can push it out.
+            let current = sample(observe("block", 0));
+            if current != observed {
+                observed = current;
+            }''',
+     'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
+    # fix-r2: the completed-guard window is expressed against the named
+    # GUARD_BUDGET, not a fixed 5 s sample. Doubling the budget leaves the
+    # guard correct-but-slow — the old "sleep 5 s then check once" sampling
+    # passed that green; the bounded window (GUARD_BUDGET + allowance) kills
+    # it at the named assertion.
+    ('guard-budget-stretched', TESTS,
+     'let mut deadline = Instant::now() + GUARD_BUDGET;',
+     'let mut deadline = Instant::now() + GUARD_BUDGET + GUARD_BUDGET;',
+     'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
+    # fix-r3: the lower bound of the same window needs its own control. A
+    # shortened budget (one allowance under GUARD_BUDGET) leaves the guard
+    # correct-but-fast — the upper bound passes it, only the lower bound
+    # (GUARD_BUDGET <= elapsed) kills it at the named assertion. Shares the
+    # old anchor with guard-budget-stretched (still unique in the source;
+    # mutations apply one at a time).
+    ('guard-budget-shortened', TESTS,
+     'let mut deadline = Instant::now() + GUARD_BUDGET;',
+     'let mut deadline = Instant::now() + GUARD_BUDGET - GUARD_STALL_ALLOWANCE;',
+     'storage::stimulus_tests::stalled_barrier_guard_still_ends_within_its_budget', '#1805 the stalled release guard ends within its budget'),
+    # #1805 item 2: receipts pair with the current barrier by sequence. With
+    # the floor neutralized, a key that completed an earlier round reads as
+    # already released: the guard skips the release.json write the current
+    # barrier is waiting on and exits on the stale round's receipts.
+    ('release-guard-receipts-unpaired', TESTS,
+     '&& seq > after as f64',
+     '&& seq > after as f64 * 0.0',
+     'storage::stimulus_tests::release_guard_pairs_receipts_with_the_current_barrier', '#1805 the release guard releases the current barrier'),
 ]
 
 

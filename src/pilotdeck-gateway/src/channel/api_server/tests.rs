@@ -177,6 +177,69 @@ fn assert_parser_admission_cell_records_its_knob(id: &str, case: &Value) {
     );
 }
 
+/// #2775 (PR #2770 r2): hold `PARSER_ADMISSION_CELLS` against the oracle, the
+/// same shape native_http's
+/// `parser_admission_cells_cover_exactly_the_oracle_bare_400s` guard carries.
+/// The api-server set is not "exactly the bare 400s"
+/// — `missing-host` is registered but inert (its 400 is date+chunked, never a
+/// length line) — so the two directions are: every entry exists in the oracle
+/// and none of its recorded expectations carries a `content-length` the mask
+/// could hide (the exemption is needed-or-inert, never harmful), and every
+/// cell whose recorded rejection is the bare parser shape (a 400 whose only
+/// header is `connection`) is registered, so a future bare-400 cell replays
+/// red with hyper's line unmasked instead of silently needing the exemption.
+#[test]
+fn parser_admission_cells_stay_justified_by_the_oracle() {
+    let recorded = oracle();
+    let cases = recorded["cases"].as_array().expect("#1333 oracle cases");
+    for id in PARSER_ADMISSION_CELLS {
+        let case = cases
+            .iter()
+            .find(|case| case["id"].as_str() == Some(*id))
+            .unwrap_or_else(|| {
+                panic!("#2153 stale parser-admission cell {id:?} is missing from the oracle")
+            });
+        for expected in case["expect"].as_array().expect("#1333 expectations") {
+            let headers = expected["headers"]
+                .as_object()
+                .expect("#1333 oracle headers");
+            assert!(
+                !headers.contains_key("content-length"),
+                "#2153 {id}: a registered cell must not record a content-length the mask could hide: {headers:?}"
+            );
+        }
+    }
+    let mut bare: Vec<&str> = cases
+        .iter()
+        .filter(|case| {
+            case["expect"]
+                .as_array()
+                .expect("#1333 expectations")
+                .iter()
+                .all(|expected| {
+                    expected["status"].as_u64() == Some(400)
+                        && expected["body"].as_str() == Some("")
+                        && expected["headers"]
+                            .as_object()
+                            .expect("#1333 oracle headers")
+                            .keys()
+                            .all(|name| name == "connection")
+                })
+        })
+        .map(|case| case["id"].as_str().expect("#1333 case id"))
+        .collect();
+    bare.sort_unstable();
+    let mut unregistered = bare
+        .iter()
+        .filter(|id| !PARSER_ADMISSION_CELLS.contains(id))
+        .collect::<Vec<_>>();
+    unregistered.sort_unstable();
+    assert!(
+        unregistered.is_empty(),
+        "#2153 every bare parser-400 cell must be registered for the content-length exemption: {unregistered:?}"
+    );
+}
+
 #[test]
 fn recorded_body_expands_the_length_placeholder() {
     assert_eq!(recorded_body("<5 bytes>"), b"xxxxx");
@@ -788,6 +851,19 @@ fn mask_text(text: &str) -> String {
     created.replace(&format!("api-{FIXED_UUID}"), "api-FIXED")
 }
 
+/// #2775 (PR #2770 r2): the api-server cells whose replay masks hyper's added
+/// `content-length: 0` — the two parser rejections the #1683 scoping
+/// registered. `unknown-method` needs the mask (llhttp's bare 400, whose sized
+/// empty body hyper adds the line to); `missing-host` is inert (its 400 is
+/// date+chunked on both sides and never carries a length line, so the mask
+/// cannot fire — kept registered because #1683 scoped the pair together).
+/// `parser_admission_cells_stay_justified_by_the_oracle` holds the list
+/// against the oracle in both directions: every entry exists and none can
+/// mask a TS-recorded length line, and every cell whose recorded rejection
+/// is the bare parser shape is in the list, so a future bare-400 cell cannot
+/// replay green with the line unmasked.
+const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];
+
 /// #1683: `parser_admission` scopes the one registered transport difference to
 /// the two cells that actually exhibit it. hyper adds `content-length: 0` to
 /// the parser-level bare 400 where Node writes no length at all (the same
@@ -1100,7 +1176,7 @@ fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResp
         })
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
-        actual_headers(actual, matches!(case, "unknown-method" | "missing-host")),
+        actual_headers(actual, PARSER_ADMISSION_CELLS.contains(&case)),
         expected_headers,
         "#1333 {case} request {index}: headers differ"
     );
@@ -1519,7 +1595,7 @@ async fn replays_real_ts_api_server_cells() {
         assert_boundary_body_len(id, case);
         // #1683: the two parser-admission cells must keep the knobs that make
         // them rejections (FROB / `setHost: false`), not drift into controls.
-        if id == "unknown-method" || id == "missing-host" {
+        if PARSER_ADMISSION_CELLS.contains(&id) {
             assert_parser_admission_cell_records_its_knob(id, case);
         }
         // #1606 r3: `compare_response` walks `expect` by request index, so a
@@ -3318,4 +3394,84 @@ async fn loader_mount_builds_api_server_channel() {
         TcpStream::connect(("127.0.0.1", port)).await.is_err(),
         "#2301 the listener is gone after stop"
     );
+}
+
+/// #1833 C2: `parseCorsOrigins` maps array entries with `String`
+/// (ApiServerChannel.ts:458, Node v22.22.0 probe:
+/// `_tmp/20261112-issue-1833/impl-r1/node-probe/c2-parse-cors-probe.out`): a
+/// class-tagged object keeps its tag (`[object Set]` / `[object Map]`), a
+/// nested array joins (`["https://b", 2]` → `"https://b,2"`), an empty
+/// coercion drops. `String({toString: null})` throws `TypeError`
+/// (`Cannot convert object to primitive value`, fix-r2 probe:
+/// `_tmp/20261026-issue-1833/fix-r2/node-probe/tostring-null-entry.out`), which
+/// the TS constructor propagates; resolve is infallible, so the entry drops
+/// instead. The array branch used to hardcode `[object Object]` — a third
+/// `[object …]` implementation beside `js_value`'s joiner and the config
+/// diagnostics; `corsOrigins` is only constructed by tests today, so this pins
+/// the potential surface before the loader starts passing it.
+#[test]
+fn parse_cors_origins_stringifies_entries_through_the_shared_joiner() {
+    let mut set = JsObject::new();
+    set.set_native_tag("Set");
+    let mut map = JsObject::new();
+    map.set_native_tag("Map");
+    let entries = JsValue::Array(vec![
+        JsValue::String(JsString::from("https://a")),
+        JsValue::Number(5.0),
+        JsValue::Number(-0.0),
+        JsValue::Number(1e21),
+        JsValue::Bool(true),
+        JsValue::Bool(false),
+        JsValue::Null,
+        JsValue::Undefined,
+        JsValue::Array(vec![
+            JsValue::String(JsString::from("https://b")),
+            JsValue::Number(2.0),
+        ]),
+        JsValue::Array(vec![JsValue::Array(vec![])]),
+        JsValue::Object(Default::default()),
+        JsValue::Object(set),
+        JsValue::Object(map),
+        // An own non-callable `toString` shadows the inherited one, so
+        // `String(item)` throws (fix-r2): the entry must drop out, not stay
+        // as a literal `[object Object]` origin.
+        crate::metadata::object([("toString", JsValue::Null)]),
+        JsValue::String(JsString::from("")),
+    ]);
+    assert_eq!(
+        parse_cors_origins(&entries),
+        [
+            "https://a",
+            "5",
+            "0",
+            "1e+21",
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "https://b,2",
+            "[object Object]",
+            "[object Set]",
+            "[object Map]",
+        ],
+        "#1833 entries must stringify like TS's value.map(String)"
+    );
+    // The string split and the falsy shapes stay as they were.
+    assert_eq!(
+        parse_cors_origins(&JsValue::from(" https://x , ,y ")),
+        ["https://x", "y"],
+        "#1833 a string still splits, trims and drops empties"
+    );
+    for value in [
+        JsValue::Number(0.0),
+        JsValue::Bool(false),
+        JsValue::Null,
+        JsValue::Undefined,
+        JsValue::Number(5.0),
+    ] {
+        assert!(
+            parse_cors_origins(&value).is_empty(),
+            "#1833 {value:?} must force no CORS"
+        );
+    }
 }

@@ -83,9 +83,12 @@ only an interrupt during that accounting itself leaves none, and then rc 2
 says so. Exit codes follow `cli-parity-lock-bounded` (#1064 fix-r2 P1-1) on
 the verdict path: 2 means the device never produced a verdict — an INVALID
 row (stale anchor, unparsable mutant, unproven restore), an abort of any
-kind, or a summary that could not be published — and 1 is reserved for "the
-device ran and a control survived". The two must not share a code, or a
-coordinator reads "the device never ran" as "a control survived". This is
+kind, a summary that could not be published, or a final stdout line that
+could not be written (#1800: the reader's normal `... | head` exit is a pipe
+error and is swallowed; every other write failure names itself on stderr
+first) — and 1 is reserved for "the device ran and a control survived". The
+two must not share a code, or a coordinator reads "the device never ran" as
+"a control survived". This is
 this device's contract, not every sibling's: pre-run refusals (usage, an
 unknown or repeated selection, a missing `CARGO_TARGET_DIR`, a bad mutation
 table) still exit 1, as do the shared `negative_suite` runner's lock and
@@ -642,6 +645,22 @@ try:
             sys.stdout.close()
         except BaseException:
             pass
+    except OSError as error:
+        # #1800 fix-r3 (comment follow-up 1): any other write failure —
+        # ENOSPC on a full disk (/dev/full probe: OSError errno 28, not a
+        # pipe error), EIO — is not "the reader left" but "the verdict line
+        # never reached the reader". The tail's catch-all would still exit
+        # 2, but silently: the `#1382 run did not complete` diagnostic
+        # below this print is skipped too, and the reader gets a bare rc.
+        # Name the failure on stderr first, then fail closed on the shared
+        # "no verdict" code — the same refusal scripts/parity-attrib
+        # reserves rc 9 for (#2031 item 6: a disk that cannot be written
+        # must not read as a delivered verdict). BrokenPipeError is an
+        # OSError subclass, so the order above keeps the pipe case's
+        # close-stdout handling; only OSError is caught, so a
+        # KeyboardInterrupt still reaches the catch-all below.
+        _stderr(f"#1382 stdout summary write failed: {type(error).__name__}: {error}")
+        os._exit(2)
     if aborted is not None:
         # #1508 fix-r1: an aborted run is rc 2, not 1 — `cli-parity-lock-
         # bounded` reserves 1 for "a control ran and was not killed" (a red run

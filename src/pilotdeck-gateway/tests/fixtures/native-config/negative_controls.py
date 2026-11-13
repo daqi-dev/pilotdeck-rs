@@ -10,6 +10,11 @@ each have a mutant bound to the test that pins them. Each mutant compiles
 before its exact test runs. Every case is reported, then restoration and all
 statuses determine the exit code; never bypass HEAD.
 
+#2207/#2199: the session directory's five #2090 gate-order tests and the
+config family's six #2199 gate-order tests carry an admission-refusal and a
+trim-gate mutant each, so a test edited back to emptiness dies on its own
+row instead of silently passing.
+
 #1864 wires the three selectors to a store the next session reads. A
 stub-revert alone cannot see that, so each write site (permission, thinking,
 output style), each compose-step read (permission, thinking, style merge),
@@ -75,7 +80,32 @@ REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 # the mutated source, CRON_TESTS carries the bound assertion literal (#2065).
 CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
 CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron/cron_tests.rs'
+# #1623 fix-r2: the three entry gates the surrogate divergence now covers —
+# the connection-owned submit entry (submit.rs validate), the rewind_files
+# request gate (tools.rs, delegated to the shared guard), and the archive
+# family's session gate (native_archive.rs). SUBMIT_TESTS / ARCHIVE_TESTS
+# carry their bound tests' assertion literals (the #1864 mutate-writer /
+# read-test precedent); tools.rs carries its own tests module.
+SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
+SUBMIT_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs'
+ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
+ARCHIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_archive/tests.rs'
+# #1623 fix-r2: the methods/tools.rs of the rewind_files request gate — a
+# different file from the TOOLS path above (native_process/tools.rs, the
+# host session tools' admission source).
+METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
+# #1623 fix-r4: the local-routing read's sessionKey gate (session_model_get)
+# — its `sanitize_session` renders the same lossy `<id>.jsonl` name the
+# native_archive family refuses (#2992). SESSION_MODEL_TESTS carries the
+# bound test's assertion literal (the #1864 mutate-writer / read-test
+# precedent).
+SESSION_MODEL = ROOT / 'src/pilotdeck-gateway/src/session_model.rs'
+SESSION_MODEL_TESTS = ROOT / 'src/pilotdeck-gateway/src/session_model/tests.rs'
 CFG = 'native_process::methods::config::tests::'
+SUBMIT_T = 'runtime::turn::submit::tests::'
+TOOLS_T = 'native_process::methods::tools::tests::'
+ARCHIVE_T = 'native_archive::tests::'
+SESSION_MODEL_T = 'session_model::tests::'
 FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -122,9 +152,12 @@ mutations = [
      'if false {',
      CFG + 'session_model_set_gate_order_matches_the_ts_chain',
      '#1457 missing selection message'),
-    ('session-key-gate-code', CONFIG,
-     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )',
-     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )',
+    # #1623: config.rs now delegates its `require_session_key` to the shared
+    # guard (methods/mod.rs), so the gate-code mutant moved to the shared call
+    # — the effect on the bound config test is the same wrong-code answer.
+    ('session-key-gate-code', METHODS_MOD,
+     '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )?;',
+     '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )?;',
      CFG + 'set_permission_mode_applies_and_validates',
      '#1457 missing sessionKey code'),
     ('permission-mode-gate-removed', CONFIG,
@@ -577,11 +610,17 @@ mutations = [
      '                Ok(TrimGuard::Missing)',
      DIR + 'resume_session_rejects_blank_session_key',
      '#1455 resume_session rejects the blank key'),
+    # #1623 方案 B: the surrogate key is now refused by the shared
+    # `require_session_key` (methods/mod.rs), so this mutant re-adds the
+    # #1455-era `to_utf8` filter inside the family-shared `trim_guard` — the
+    # rejection then answers "sessionKey is required." instead of the #1623
+    # message, so the re-bound resume case must die at its message assertion
+    # (the filter would also fold a surrogate projectKey, #2083's cell).
     ('session-dir-surrogate-rejected', METHODS_MOD,
      '            if crate::metadata::js_trim(&text).is_empty() {',
      '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
-     DIR + 'resume_session_accepts_lone_surrogate_session_key',
-     '#1455 resume_session accepts the surrogate key'),
+     DIR + 'resume_session_rejects_lone_surrogate_session_key',
+     "#1623 the resume rejection is the shared guard's domain error"),
     # #1604: `close_project_sessions` keeps TS's plain `Error` shape on the
     # missing/blank branch; this mutant rewords the domain message so that
     # branch's test is the one that has to die.
@@ -606,6 +645,90 @@ mutations = [
      '            .map_err(|_| RequestError::new("projectKey is required."))?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
+    # ── #1623 方案 B: removing the lone-surrogate rejection from the shared
+    # `require_session_key` (methods/mod.rs) must be caught — one code point,
+    # four bound tests (#2564's one-mutation-many-rows shape): the resume
+    # identity path, the destructive delete, the issue's end-to-end alias
+    # acceptance, and the config write path. The delete/e2e anchors are the
+    # stable tails of `{method}`-templated assertion messages, so the runtime
+    # panic payload still carries them after format! expansion.
+    ('session-key-surrogate-guard-removed-resume', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'resume_session_rejects_lone_surrogate_session_key',
+     '#1623 resume_session rejects the surrogate key'),
+    ('session-key-surrogate-guard-removed-delete', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'delete_session_surrogate_key_gate',
+     'refuses the lone-surrogate session key'),
+    ('session-key-surrogate-guard-removed-e2e', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     DIR + 'surrogate_key_cannot_reach_the_fffd_transcripts_files',
+     '#1623 the surrogate-spelled tag is refused'),
+    ('session-key-surrogate-guard-removed-config', METHODS_MOD,
+     '    if has_unpaired_surrogate(key.units()) {',
+     '    if false {',
+     CFG + 'session_model_set_surrogate_key_answers_the_session_key_gate',
+     '#1623 the surrogate key answers the sessionKey gate'),
+    # #1623: the rejection keeps the guard family's error shape — rewording
+    # the message must be caught by the per-method message assertion. fix-r2
+    # re-bound: the wording now lives in the shared `SESSION_KEY_SURROGATE_MESSAGE`
+    # constant (methods/mod.rs) that every gate renders, so the mutant edits
+    # the constant instead of one call site's inline copy.
+    ('session-key-surrogate-message', METHODS_MOD,
+     'pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =\n'
+     '    "sessionKey must not contain an unpaired surrogate.";',
+     'pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =\n'
+     '    "sessionKey contains a surrogate.";',
+     DIR + 'tag_session_surrogate_key_gate',
+     "answers the guard family's surrogate message"),
+    # ── #1623 fix-r2: the three entry gates the divergence now covers. Each
+    # row removes one gate's surrogate rejection at its own site — not the
+    # shared guard, which the rows above already kill four ways — and binds
+    # the test that pins that gate's refusal.
+    ('submit-entry-surrogate-guard-removed', SUBMIT,
+     '        && crate::native_process::has_unpaired_surrogate(key.units())',
+     '        && false',
+     SUBMIT_T + 'submit_turn_rejects_lone_surrogate_session_key',
+     "#1623 the surrogate key answers the entry gate's error event"),
+    ('rewind-entry-surrogate-guard-removed', METHODS_TOOLS,
+     '            let session_key = super::require_session_key(&params)?;',
+     '            let session_key = required_trimmed(\n'
+     '                &params,\n'
+     '                "sessionKey",\n'
+     '                "INVALID_SESSION_KEY",\n'
+     '                "sessionKey is required.",\n'
+     '            )?;',
+     TOOLS_T + 'rewind_files_rejects_lone_surrogate_session_key',
+     '#1623 rewind_files rejects the lone-surrogate key'),
+    ('archive-entry-surrogate-guard-removed', ARCHIVE,
+     '        JsValue::String(s) if crate::native_process::has_unpaired_surrogate(s.units()) =>',
+     '        JsValue::String(s) if false =>',
+     ARCHIVE_T + 'archive_gate_rejects_lone_surrogate_session_key',
+     '#1623 the archive gate rejects the lone-surrogate key'),
+    # #1623 fix-r4: the local-routing read's own gate — `session_model_get`
+    # renders the key through `sanitize_session` (`from_utf16_lossy`) before
+    # the `<id>.jsonl` join (#2992), so removing this gate re-opens the same
+    # cross-session read the archive gate closes. Bound to the reject test's
+    # `expect_err` marker (the runner's panic-payload binding).
+    ('session-model-entry-surrogate-guard-removed', SESSION_MODEL,
+     '    if crate::native_process::has_unpaired_surrogate(session_string.units()) {',
+     '    if false {',
+     SESSION_MODEL_T + 'session_model_get_rejects_lone_surrogate_session_key',
+     '#1623 session_model_get rejects the lone-surrogate session key'),
+    # #1623 fix-r5: the status write's own gate (#2998) — the entry keeps its
+    # `must be a string.` read (no trim gate, A7.8) but every identity it
+    # hands the key to is the lossy `sanitize_session_id` render (fence path,
+    # cold append_metadata_with_lease, live_recorder), so removing this gate
+    # re-opens the cross-session status write the guard families refuse.
+    # Bound to the reject test's `expect_err` marker.
+    ('record-status-entry-surrogate-guard-removed', SESSION_DIR,
+     '        if crate::native_process::has_unpaired_surrogate(session_key.units()) {',
+     '        if false {',
+     DIR + 'record_agent_status_message_rejects_lone_surrogate_session_key',
+     '#1623 record_agent_status_message rejects the lone-surrogate session key'),
     # ── #2272: the admission filter skips `undefined` AND `null` (the TS
     # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
     # Dropping the null arm restores the pre-#2272 shape where an explicit
@@ -637,6 +760,41 @@ mutations = [
      '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
      'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
      '#2562 explicit null is not an error with the recorder on'),
+    # ── #2617: the submit path's string branch converts a lone-surrogate
+    # projectKey lossily — the #2083 close-path shape (`session_dir.rs`), same
+    # judge same fix (the TS resolver chain runs the key to completion without
+    # throwing — it lands on the process cwd's project, not necessarily the
+    # configured one; probes `_tmp/20261111-issue-2617-probe/
+    # probe-submit-surrogate.out` + `_tmp/20261111-2617-evidence/
+    # probe-submit-surrogate-resolver.out`, whose "resolves like the fallback"
+    # flag is tautological — the script pinned `fallbackProjectRoot =
+    # process.cwd()`). The first row re-adds the pre-#2617 `to_utf8`
+    # rejection, so the anchor's code assertion dies first; the second row
+    # disables the capability gate itself, so the anchor's reject-cell
+    # `.expect_err` dies on the served Ok; the third row serves another
+    # directory's id, so the admit cell's id-equality assertion is the kill
+    # point (it otherwise has no red side).
+    ('submit-surrogate-project-key-rejected', SERVICES,
+     '            let project = String::from_utf16_lossy(project.units());',
+     '            let project = project\n'
+     '                .to_utf8()\n'
+     '                .map_err(|_| failure("projectKey must be a valid path string."))?;',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey reaches the capability gate'),
+    ('submit-serve-gate-removed', SERVICES,
+     '            if !self.options.serves_project(&project) {',
+     '            if false && !self.options.serves_project(&project) {',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     '#2617 the surrogate projectKey is not the type error'),
+    # fix-r2 (MM sibling-2 / boundary-1): the admit cell's id-equality
+    # assertion had no red side — both rows above die in the reject cell.
+    # This row serves another directory's id (home instead of the configured
+    # project), so the admit cell's equality assertion is the only kill point.
+    ('submit-admit-cell-serves-wrong-id', SERVICES,
+     '            let project = self.options.project.to_string_lossy();',
+     '            let project = self.options.home.to_string_lossy();',
+     'native_process::management_tests::submit_workspace_id_surrogate_project_key_reaches_the_capability_gate',
+     "#2617 the admit cell answers the residual project's own workspace id"),
     # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
     # path — with the null arm dropped the admission refusal (isolated-project
     # message) answers before the method's own `?.trim()` gate, so the null
@@ -675,6 +833,363 @@ mutations = [
      '                .filter(|v| !v.is_undefined())',
      DIR + 'new_session_null_project_key_omits_the_project_prefix',
      '#2564 a null projectKey generates a session key'),
+    # ── #2207: the five #2090 gate-order tests get their own persisted
+    # negative controls — their discriminating power lived only in
+    # `_tmp/20261107-issue-2090/rust-negctl/`, which never enters the tree. Two
+    # code points answer a blank key before the method body runs: the
+    # request-level isolated-project admission (requests.rs) and the
+    # family-shared trim guard (methods/mod.rs `trim_guard`, the #1604 shape
+    # the `session-dir-blank-gate-removed` row already mutates). Removing
+    # either must turn the bound gate-order test red at its own cell, for all
+    # five methods — not just the resume row the pre-#2207 rows covered.
+    # Same mutant text as `admission-null-refused` above: one code point, five
+    # bound tests. The admission-refusal removal makes the unserved-project
+    # cell reach the method instead (INVALID_SESSION_KEY or the handler-side
+    # CAPABILITY_UNAVAILABLE, never the admission's gateway_request_failed),
+    # so the cell's code assertion is what dies.
+    ('admission-refusal-removed-resume', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-close', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     DIR + 'close_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-delete', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     DIR + 'delete_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-rename', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     DIR + 'rename_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-tag', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     DIR + 'tag_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    # Same mutant text as `session-dir-blank-gate-removed` above — bound to the
+    # gate-order tests here. With the trim arm gone a blank or the #2207
+    # zero-length key reaches the method body, so the blank cell dies at its
+    # own expect_err (resume/close answer Ok for a key that was never loaded)
+    # or at its code assertion (a method that errors first), hence the
+    # two-marker list.
+    ('blank-gate-removed-resume-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'resume_session_blank_key_gate_order',
+     ['#2090 a blank sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    ('blank-gate-removed-close-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'close_session_blank_key_gate_order',
+     ['#2090 a blank sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    ('blank-gate-removed-delete-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'delete_session_blank_key_gate_order',
+     ['#2090 a blank sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    ('blank-gate-removed-rename-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'rename_session_blank_key_gate_order',
+     ['#2090 a blank sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    ('blank-gate-removed-tag-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'tag_session_blank_key_gate_order',
+     ['#2090 a blank sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    # ── #2199: the config family's gate-order tests, same two code points
+    # as the #2090 rows above (request admission / the family-shared trim
+    # guard) and the same one-code-point-N-bound-tests form. The six
+    # require_session_key sharers each get an admission-refusal mutant and
+    # a trim-gate mutant; the admission removal makes the unserved-project
+    # cell reach the method instead, which answers with its own gate —
+    # INVALID_SESSION_KEY for the four methods whose key gate runs first
+    # (permission/thinking/style/seed), CAPABILITY_UNAVAILABLE from the
+    # handler-side project resolution for the two model methods (whose
+    # transcript-write reservation resolves the project first) — never the
+    # admission's gateway_request_failed, so the cell's code assertion is
+    # what dies. With the trim arm gone the blank cell of the
+    # missing/blank/empty loop reaches the method body (a missing key still
+    # fails at the nullish arm the mutant does not touch), and all six
+    # handlers answer Ok for a blank key with otherwise-valid params, so
+    # the blank cell dies at its own expect_err — the marker is the
+    # format-expanded per-method spelling, kept as the list's first entry,
+    # with the code-assertion marker as the second for any leg that errors
+    # first instead.
+    ('admission-refusal-removed-config-set', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-config-clear', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     CFG + 'session_model_clear_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-config-permission', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     CFG + 'set_permission_mode_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-config-thinking', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     CFG + 'set_session_thinking_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-config-style', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     CFG + 'set_output_style_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-refusal-removed-config-seed', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    true || self.options.serves_project(&lossy)',
+     CFG + 'seed_read_state_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('blank-gate-removed-config-set-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'session_model_set_blank_key_gate_order',
+     ['#2199 session_model_set rejects a blank sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
+    ('blank-gate-removed-config-clear-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'session_model_clear_blank_key_gate_order',
+     ['#2199 session_model_clear rejects a blank sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
+    ('blank-gate-removed-config-permission-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'set_permission_mode_blank_key_gate_order',
+     ['#2199 set_permission_mode rejects a blank sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
+    ('blank-gate-removed-config-thinking-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'set_session_thinking_blank_key_gate_order',
+     ['#2199 set_session_thinking rejects a blank sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
+    ('blank-gate-removed-config-style-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'set_output_style_blank_key_gate_order',
+     ['#2199 set_output_style rejects a blank sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
+    ('blank-gate-removed-config-seed-order', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'seed_read_state_blank_key_gate_order',
+     ['#2199 seed_read_state rejects a blank sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
+    # ── #2199 fix-r1 (DS sibling#1, same lineage as the #2564 fix-r1
+    # precedent above): the null `projectKey` cells of the six config
+    # gate-order tests were guarded only by their positive assertions. With
+    # the null arm dropped the admission refusal (isolated-project message)
+    # answers before the family's own `?.trim()` gate, so the (1b) cell's
+    # INVALID_SESSION_KEY code assertion must die. Same mutant text as
+    # `admission-null-refused` above: one code point, six bound tests.
+    ('admission-null-refused-config-set', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-clear', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'session_model_clear_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-permission', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'set_permission_mode_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-thinking', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'set_session_thinking_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-style', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'set_output_style_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-config-seed', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     CFG + 'seed_read_state_blank_key_gate_order',
+     '#2199 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    # ── #2207 fix-r2 (GLM r3 sibling#1): the same asymmetry the config rows
+    # above close for #2199 held for the session_dir family too — the
+    # admission-null-refused mutant was bound to the resume test alone, so
+    # the (1b) null cells of the other four gate-order tests were guarded
+    # only by their positive assertions. Same mutant text, one code point,
+    # four more bound tests; the marker is already pinned for SESSION_DIR.
+    ('admission-null-refused-close-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'close_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-delete-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'delete_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-rename-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'rename_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    ('admission-null-refused-tag-order', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'tag_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, '
+     'so the sessionKey gate answers the blank key'),
+    # ── #2207/#2199 fix-r3 (DS r6 sibling#1): the cells the two fix rounds
+    # added — the zero-length sessionKey spelling, the empty-string and
+    # relative projectKey spellings — were positive-only; the pre-existing
+    # mutants killed at the first cell of each loop, never at these. Each
+    # new spelling family gets a mutant whose first discriminating point is
+    # exactly that cell (the (2) loop order pins unserved / "." / "foo" /
+    # "" so each row below dies at its own cell):
+    #   - relative-served admits every relative key — first kill: "." cell;
+    #   - empty-served admits only the empty string — first kill: "" cell;
+    #   - nonempty-only trim keeps "   " but passes "" — first kill: the
+    #     (1) loop's empty sessionKey cell (the code assertion dies).
+    ('admission-relative-projectkey-served-resume', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy)\n'
+     '                        || std::path::Path::new(&lossy).is_relative()',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-relative-projectkey-served-config', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy)\n'
+     '                        || std::path::Path::new(&lossy).is_relative()',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('admission-empty-projectkey-served-resume', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy) || lossy.is_empty()',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2090 admission answers an unserved project before the sessionKey gate'),
+    ('admission-empty-projectkey-served-config', REQUESTS,
+     '                    self.options.serves_project(&lossy)',
+     '                    self.options.serves_project(&lossy) || lossy.is_empty()',
+     CFG + 'session_model_set_blank_key_gate_order',
+     '#2199 admission answers an unserved project before the sessionKey gate'),
+    ('blank-gate-nonempty-only-resume', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if crate::metadata::js_trim(&text).is_empty() && !text.is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     DIR + 'resume_session_blank_key_gate_order',
+     ['#2090 a empty sessionKey is rejected',
+      '#2090 the sessionKey gate answers a missing or blank key under '
+      'the configured project']),
+    ('blank-gate-nonempty-only-config', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if crate::metadata::js_trim(&text).is_empty() && !text.is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     CFG + 'session_model_set_blank_key_gate_order',
+     ['#2199 session_model_set rejects a empty sessionKey',
+      '#2199 the sessionKey gate answers a missing, blank, or empty key '
+      'under the configured project']),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -783,6 +1298,123 @@ mutations = [
      '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
+    # ── #2068: the projectKey read the session_dir and config families now
+    # share (`input.projectKey ?? fallback` whose TS chains start at Node
+    # `path.resolve`, probes `_tmp/20261110-issue-2068/probe/
+    # probe-2068.out` + `probe-2068-r2.out`). Re-adding the pre-#2068 shape
+    # where a non-string key silently folds onto the configured project turns
+    # the list_sessions TypeError cell's `.expect_err` red; re-adding the
+    # `to_utf8().ok()` fold (the lone surrogate falls back instead of staying
+    # a real unserved key) turns the real-keys test's surrogate cell red. The
+    # config rows re-bind the same code points to the config family's own
+    # test — the #2564 one-code-point-many-bound-tests shape.
+    # fix-r1 (review P1/P2): the shared read now walks `argument_received`, so
+    # the two folded rows mutate the whole non-string arm; the object-fold row
+    # re-adds only the object arm's silent fold (the review's Object-arm gap),
+    # and the code-reverted row restores the boundary code literal, which the
+    # ERR_INVALID_ARG_TYPE assertion must catch (the review's `code 回退` row).
+    ('project-key-nonstring-folded', METHODS_MOD,
+     '        Some(other) => match crate::metadata::argument_received(other) {\n'
+     '            crate::metadata::ArgumentReceived::Text(received) => Err(RequestError {\n'
+     '                code: "ERR_INVALID_ARG_TYPE".into(),\n'
+     '                message: crate::metadata::invalid_arg_type_message("paths[0]", &received),\n'
+     '                details: None,\n'
+     '                validation: None,\n'
+     '            }),\n'
+     '            crate::metadata::ArgumentReceived::Throws { message, .. } => {\n'
+     '                Err(RequestError::new(message))\n'
+     '            }\n'
+     '        },',
+     '        Some(_) => Ok(fallback.to_string_lossy().into_owned()),',
+     DIR + 'list_sessions_non_string_project_key_answers_the_path_resolve_type_error',
+     '#2068 a non-string projectKey is the path.resolve TypeError'),
+    ('project-key-utf8-folded', METHODS_MOD,
+     '        Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),',
+     '        Some(JsValue::String(key)) => Ok(key\n'
+     '            .to_utf8()\n'
+     '            .unwrap_or_else(|_| fallback.to_string_lossy().into_owned())),',
+     DIR + 'list_sessions_string_project_keys_are_real_keys_not_the_fallback',
+     '#2068 a string projectKey is a real key, never the fallback'),
+    # Same two code points, config side: with the number folded, the
+    # session_model_set call reaches the sessionKey gate and answers
+    # INVALID_SESSION_KEY, so the ERR_INVALID_ARG_TYPE code assertion dies
+    # first; with the surrogate folded, the served fallback makes the call
+    # succeed past the capability gate, so the isolation-code assertion dies
+    # first.
+    ('config-project-key-nonstring-folded', METHODS_MOD,
+     '        Some(other) => match crate::metadata::argument_received(other) {\n'
+     '            crate::metadata::ArgumentReceived::Text(received) => Err(RequestError {\n'
+     '                code: "ERR_INVALID_ARG_TYPE".into(),\n'
+     '                message: crate::metadata::invalid_arg_type_message("paths[0]", &received),\n'
+     '                details: None,\n'
+     '                validation: None,\n'
+     '            }),\n'
+     '            crate::metadata::ArgumentReceived::Throws { message, .. } => {\n'
+     '                Err(RequestError::new(message))\n'
+     '            }\n'
+     '        },',
+     '        Some(_) => Ok(fallback.to_string_lossy().into_owned()),',
+     CFG + 'session_model_set_project_key_read_follows_the_ts_chain',
+     '#2068 the non-string projectKey answers the Node TypeError code'),
+    ('project-key-object-folded', METHODS_MOD,
+     '        Some(other) => match crate::metadata::argument_received(other) {',
+     '        Some(JsValue::Object(_)) => Ok(fallback.to_string_lossy().into_owned()),\n'
+     '        Some(other) => match crate::metadata::argument_received(other) {',
+     DIR + 'list_sessions_non_string_project_key_answers_the_path_resolve_type_error',
+     '#2068 a non-string projectKey is the path.resolve TypeError'),
+    ('project-key-code-reverted', METHODS_MOD,
+     '                code: "ERR_INVALID_ARG_TYPE".into(),',
+     '                code: "gateway_request_failed".into(),',
+     DIR + 'list_sessions_non_string_project_key_answers_the_path_resolve_type_error',
+     '#2068 the number projectKey answers the Node TypeError code'),
+    ('config-project-key-utf8-folded', METHODS_MOD,
+     '        Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),',
+     '        Some(JsValue::String(key)) => Ok(key\n'
+     '            .to_utf8()\n'
+     '            .unwrap_or_else(|_| fallback.to_string_lossy().into_owned())),',
+     CFG + 'session_model_set_project_key_read_follows_the_ts_chain',
+     '#2068 the surrogate projectKey reaches the capability gate'),
+    # ── #2068: `newSession`'s prefix read is plain truthiness — the three
+    # mutants below restore the issue's suspected shapes: a trim gate (blank
+    # keys drop the prefix), the number arm always dropping it, and a lossy
+    # string rendering (the lone surrogate becomes U+FFFD instead of its
+    # raw unit). The lossy row's `collect::<Vec<u16>>` pin keeps the type
+    # identical to the original expression — an un-annotated `collect()` has
+    # no inferable target through `extend` and fails E0277 on `!` (cb8
+    # sandbox compile log, negctl-2068-samples/; the #2195 `Ok::<_, JoinError>`
+    # E0282 shape).
+    ('new-session-prefix-trim-gate', SESSION_DIR,
+     '        Some(JsValue::String(key)) if key.units().is_empty() => Ok(Vec::new()),',
+     '        Some(JsValue::String(key)) if crate::metadata::js_trim(\n'
+     '            &String::from_utf16_lossy(key.units()),\n'
+     '        )\n'
+     '        .is_empty() => Ok(Vec::new()),',
+     DIR + 'new_session_project_key_prefix_follows_ts_truthiness',
+     '#2068 the blank projectKey keeps its truthiness prefix'),
+    ('new-session-prefix-number-dropped', SESSION_DIR,
+     '        Some(JsValue::Number(n)) if *n == 0.0 || n.is_nan() => Ok(Vec::new()),',
+     '        Some(JsValue::Number(_)) => Ok(Vec::new()),',
+     DIR + 'new_session_project_key_prefix_follows_ts_truthiness',
+     '#2068 the number projectKey keeps its truthiness prefix'),
+    ('new-session-prefix-surrogate-stripped', SESSION_DIR,
+     '        Some(other) => {\n'
+     '            let rendered = crate::js_value::to_string_units_checked(other)\n'
+     '                .map_err(|error| RequestError::new(error.message()))?;',
+     '        Some(other) => {\n'
+     '            let rendered = crate::js_value::to_string_units_checked(other)\n'
+     '                .map(|units| String::from_utf16_lossy(&units).encode_utf16().collect::<Vec<u16>>())\n'
+     '                .map_err(|error| RequestError::new(error.message()))?;',
+     DIR + 'new_session_project_key_prefix_follows_ts_truthiness',
+     '#2068 the surrogate projectKey keeps its raw unit inside the prefix'),
+    # fix-r1 (review P2): the ToPrimitive failure must serialize the bare V8
+    # text — no `name:` prefix (GatewayWsConnection.ts:252 keeps only
+    # `error.message`; probe `probe-2068-r2.out`). Re-adding the prefixed
+    # shape turns the throwing-object test's bare-message assertion red.
+    ('new-session-prefix-throwing-prefixed', SESSION_DIR,
+     '                .map_err(|error| RequestError::new(error.message()))?;',
+     '                .map_err(|error| RequestError::new(format!("{}: {}", error.name(), error.message())))?;',
+     DIR + 'new_session_throwing_project_key_prefix_answers_the_boundary_typeerror',
+     '#2068 the ToPrimitive failure keeps the bare V8 text'),
 ]
 
 
@@ -822,6 +1454,29 @@ mutations = [
 # the derived counts in the paragraph above describe the #2065 table as it was.
 # #2195: CRON / CRON_TESTS joined the scanned files with the row above, so
 # the counts moved to 51 rows / 41 literal-anchor entries.
+# #2617 (rebase 改数，fix-r4 按 DS r6 双 P1 实测重算): the three #2617 rows
+# (two submit-surrogate + one admit-cell) joined the table with their three
+# MANAGEMENT_TESTS pins. The pre-rebase note derived counts from the stale
+# "108 rows / 65 entries" baseline; the rebase-time main table actually held
+# 118 rows / 72 literal-anchor entries, so with our +3 rows / +3 pins the
+# head 8ecbdee3b `--check` reads #1457 121 mutation anchors / #2065 75
+# literal anchors (2026-11-12 实跑).
+# #1623: the sessionKey surrogate-rejection rows joined the table (one
+# re-bind of the old #1455 row, five new rows, one row re-pointed from
+# config.rs to the shared guard in methods/mod.rs); the later fix-r2/r4/r5
+# commits add their own rows above. The pre-rebase figures (123 rows / 77
+# literal-anchor entries, then 126/80 after fix-r2, 127/81 after fix-r4,
+# 128/82 after fix-r5) rode the stale #2207/#2199 chain this rebase
+# replaced; against the post-rebase table the head reads #1457 131 mutation
+# anchors / #2065 85 literal anchors (2026-11-12 rebase-time `--check` run,
+# which also absorbed the three #2617 rows main added).
+# #1623 fix-r2: the three fix-r2 entry gates (submit_turn validate,
+# rewind_files request gate, native_archive session gate) joined with one
+# row and one literal anchor each.
+# #1623 fix-r4: the session_model_get entry gate joined with one row and one
+# literal anchor.
+# #1623 fix-r5: the record_agent_status_message entry gate (#2998) joined with
+# one row and one literal anchor.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -870,14 +1525,26 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1874 a closed session writer is an error, not a recorded status'),
     (SESSION_DIR, '#1873 a broken lock file is a storage error, not the retryable busy answer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
-    (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
     (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
                   'so the sessionKey gate answers the blank key'),
     (SESSION_DIR, '#2564 a null projectKey keeps the domain message'),
     (SESSION_DIR, '#2564 a null projectKey lists the configured project'),
     (SESSION_DIR, '#2564 a null projectKey generates a session key'),
+    (SESSION_DIR, '#2090 admission answers an unserved project before '
+                  'the sessionKey gate'),
+    (SESSION_DIR, '#2090 the sessionKey gate answers a missing or blank key '
+                  'under the configured project'),
+    (CONFIG, '#2199 admission answers an unserved project before '
+             'the sessionKey gate'),
+    (CONFIG, '#2199 the sessionKey gate answers a missing, blank, or empty '
+             'key under the configured project'),
+    (CONFIG, '#2199 a null projectKey falls back like a missing one, '
+             'so the sessionKey gate answers the blank key'),
     (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey reaches the capability gate'),
+    (MANAGEMENT_TESTS, '#2617 the surrogate projectKey is not the type error'),
+    (MANAGEMENT_TESTS, "#2617 the admit cell answers the residual project's own workspace id"),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
@@ -885,6 +1552,38 @@ LITERAL_ANCHORS = [
     (REVIEW_TESTS, '#1429 the acquire path restores the generated ask rule'),
     (REVIEW_TESTS, '#2146 the second acquire reports nothing: one miss report per assembly'),
     (CRON_TESTS, '#1509 cron dispatch must yield the async worker before answering'),
+    # #2068: both families' tests carry the shared TypeError anchor verbatim,
+    # so the string is registered once per file (the `#1457 transcript still
+    # loads` shape above).
+    (SESSION_DIR, '#2068 a non-string projectKey is the path.resolve TypeError'),
+    (CONFIG, '#2068 a non-string projectKey is the path.resolve TypeError'),
+    (SESSION_DIR, '#2068 a string projectKey is a real key, never the fallback'),
+    (CONFIG, '#2068 the non-string projectKey answers the Node TypeError code'),
+    (CONFIG, '#2068 the surrogate projectKey reaches the capability gate'),
+    (SESSION_DIR, '#2068 the surrogate projectKey keeps its raw unit inside the prefix'),
+    # fix-r1: the bare-message mapping the throwing-object test pins.
+    (SESSION_DIR, '#2068 the ToPrimitive failure keeps the bare V8 text'),
+    # #1623: the surrogate-rejection rows — the re-bound #1455 row's message
+    # assertion, the four guard-removal rows' panic anchors, and the message
+    # row's template tail (a `{method}` format string's stable fragment, the
+    # `permission-mode-gate-removed` prefix shape).
+    (SESSION_DIR, "#1623 the resume rejection is the shared guard's domain error"),
+    (SESSION_DIR, '#1623 resume_session rejects the surrogate key'),
+    (SESSION_DIR, 'refuses the lone-surrogate session key'),
+    (SESSION_DIR, '#1623 the surrogate-spelled tag is refused'),
+    (SESSION_DIR, "answers the guard family's surrogate message"),
+    (CONFIG, '#1623 the surrogate key answers the sessionKey gate'),
+    # #1623 fix-r2: the three entry gates' bound literals — the submit entry
+    # (test file), the rewind request gate (tools.rs carries its tests), and
+    # the archive session gate (test file).
+    (SUBMIT_TESTS, "#1623 the surrogate key answers the entry gate's error event"),
+    (METHODS_TOOLS, '#1623 rewind_files rejects the lone-surrogate key'),
+    (ARCHIVE_TESTS, '#1623 the archive gate rejects the lone-surrogate key'),
+    # #1623 fix-r4: the local-model read entry's bound literal (its tests file).
+    (SESSION_MODEL_TESTS, '#1623 session_model_get rejects the lone-surrogate session key'),
+    # #1623 fix-r5: the status write entry's bound literal (session_dir.rs
+    # carries its own tests module).
+    (SESSION_DIR, '#1623 record_agent_status_message rejects the lone-surrogate session key'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
@@ -894,7 +1593,9 @@ LITERAL_ANCHORS = [
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
                 REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
-                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS)
+                MANAGEMENT_TESTS, CRON, CRON_TESTS, TRANSCRIPT_LOCKS,
+                SUBMIT, SUBMIT_TESTS, ARCHIVE, ARCHIVE_TESTS, METHODS_TOOLS,
+                SESSION_MODEL, SESSION_MODEL_TESTS)
 
 
 def _assertions(case):

@@ -592,8 +592,10 @@ def _descend(dir_fd, part):
             child = os.open(part, os.O_RDONLY | _O_DIRECTORY | _NOFOLLOW, dir_fd=dir_fd)
         except FileNotFoundError as error:
             if not first:
-                # 建完到第二次 open 之间目录被移走：仍是环境不可用，必须收口成 rc2；
-                # 裸 raise 会冒成 traceback rc1，被下游读成「某个控件 SURVIVED」（Codex r14 P1）。
+                # 建完到第二次 open 之间目录被移走：裸 raise 会冒成 traceback rc1，
+                # 被下游读成「某个控件 SURVIVED」（Codex r14 P1）；收口成 OutputError
+                # 本身不决定 rc——控件循环里的调用点由调用方收成该控件 INVALID
+                # （#2573），只有 main() 发布 summary.json 处穿出为 rc2。
                 raise OutputError(f'cannot open {part!r} as a real directory: it disappeared '
                                   f'after it was created: {error}') from error
             try:
@@ -644,7 +646,8 @@ def open_output_dir(root, parts=()):
 
 def write_at(dir_fd, name, text, exclusive=False):
     """相对 ``dir_fd`` 写一个文件：``O_NOFOLLOW|O_NONBLOCK`` + ``S_ISREG`` + 失败一律折成
-    ``OutputError``（rc2）。
+    ``OutputError``——控件循环里的调用点被收成**该控件 INVALID**（#2573），只有 `main()`
+    发布 `summary.json` 处穿出为 rc2。
 
     ``O_NOFOLLOW`` 让预置的 ``.../methods.json -> ~/.bashrc`` 直接 ``ELOOP`` 失败，
     而不是以本进程权限截断目标（DeepSeek r11 P1）。``O_NONBLOCK`` + ``S_ISREG``
@@ -1171,15 +1174,26 @@ def run_control(control, out_root, oracle):
     except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
         record.update(verdict='INVALID', reason=f'build failed: {error!r}')
         return record
-    for name, (rows, frames) in bundles.items():
-        write_round(out_root, control.id, name, rows, frames)
+    # #2573 双谱系评审 P2（DS+MM sibling 两家撞上）：输出侧故障与 build 同为
+    # 「这条控件没跑成」，run_positive 已收口，run_control 的同形调用不收会让
+    # 同一故障在正控路径局部化、在负控路径整批 rc2——对称收 INVALID + return。
+    try:
+        for name, (rows, frames) in bundles.items():
+            write_round(out_root, control.id, name, rows, frames)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'write round failed: {error!r}')
+        return record
     # 旧产物不留在目录里冒充本轮输出（缺失即失败）。相对**持有的**控制目录 fd 操作，
     # 不按路径重新解析（父目录被换成链接时不误删别处文件）。
-    control_fd = open_output_dir(out_root, (control.id,))
     try:
-        remove_at(control_fd, 'check-output.json')
-    finally:
-        os.close(control_fd)
+        control_fd = open_output_dir(out_root, (control.id,))
+        try:
+            remove_at(control_fd, 'check-output.json')
+        finally:
+            os.close(control_fd)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'cannot prepare the output dir: {error!r}')
+        return record
     # 第一步：注入是否落地（重读落盘文件核对）。
     try:
         reread = {name: reread_round(out_dir / name) for name in bundles}
@@ -1202,11 +1216,16 @@ def run_control(control, out_root, oracle):
                       reason=f'checker timed out after {CHECK_TIMEOUT_SECONDS}s')
         return record
     record['rc'] = result.returncode
-    control_fd = open_output_dir(out_root, (control.id,))
+    # #2573：同 run_positive——check 输出落盘失败收 INVALID，不穿出控件循环。
     try:
-        write_at(control_fd, 'check-output.json', result.stdout)
-    finally:
-        os.close(control_fd)
+        control_fd = open_output_dir(out_root, (control.id,))
+        try:
+            write_at(control_fd, 'check-output.json', result.stdout)
+        finally:
+            os.close(control_fd)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'cannot record the check output: {error!r}')
+        return record
     if result.stderr.strip():
         record['stderr'] = result.stderr.strip()[:2000]
     if result.returncode == 0:
@@ -1264,12 +1283,25 @@ def run_positive(positive, out_root, oracle):
     except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
         record.update(verdict='INVALID', reason=f'build failed: {error!r}')
         return record
-    write_round(out_root, positive.id, 'round-01', rows, frames)
-    control_fd = open_output_dir(out_root, (positive.id,))
+    # #2573：输出侧故障（write_round / open_output_dir / remove_at / write_at 抛
+    # OutputError——磁盘满、目录不可开）与 build 同为「这条正控没跑成」，同样局部收
+    # INVALID + return；让它穿出 for positive 循环会被 main() 外层收成 rc2「输入
+    # 不可用」，正控记录不发布、summary 缺 positiveCounts（正控注册数现为 0，此
+    # 路径在 A8.6 复活正控前不可达，先收口）。
     try:
-        remove_at(control_fd, 'check-output.json')
-    finally:
-        os.close(control_fd)
+        write_round(out_root, positive.id, 'round-01', rows, frames)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'write round failed: {error!r}')
+        return record
+    try:
+        control_fd = open_output_dir(out_root, (positive.id,))
+        try:
+            remove_at(control_fd, 'check-output.json')
+        finally:
+            os.close(control_fd)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'cannot prepare the output dir: {error!r}')
+        return record
     command = [sys.executable, '-I', str(CHECKER), 'check',
                '--oracle', str(oracle), '--round', str(out_dir / 'round-01')]
     try:
@@ -1280,11 +1312,16 @@ def run_positive(positive, out_root, oracle):
                       reason=f'checker timed out after {CHECK_TIMEOUT_SECONDS}s')
         return record
     record['rc'] = result.returncode
-    control_fd = open_output_dir(out_root, (positive.id,))
+    # #2573：同上——check 输出落盘失败收 INVALID，不穿出控件循环。
     try:
-        write_at(control_fd, 'check-output.json', result.stdout)
-    finally:
-        os.close(control_fd)
+        control_fd = open_output_dir(out_root, (positive.id,))
+        try:
+            write_at(control_fd, 'check-output.json', result.stdout)
+        finally:
+            os.close(control_fd)
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'cannot record the check output: {error!r}')
+        return record
     if result.stderr.strip():
         record['stderr'] = result.stderr.strip()[:2000]
     try:
@@ -1515,7 +1552,8 @@ def run_locked(args, out_root):
         finally:
             os.close(out_fd)
     except OutputError as error:
-        # 写盘失败是「跑不了」（rc2），不是「某个控件的判据 FAIL」（rc1）。
+        # 这里只兜 summary 发布的写盘失败：是「跑不了」（rc2），不是「某个控件的判据
+        # FAIL」（rc1）；逐控件的写盘失败已在控件循环里收成该控件 INVALID（#2573）。
         print(f'negative_controls: 输出目录不可用：{error}', file=sys.stderr)
         return 2
     print(json.dumps({'status': summary['status'], 'counts': counts,

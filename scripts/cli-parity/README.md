@@ -46,7 +46,9 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 `signal.alarm(2280)`——2280 s 是调用方闹钟，不是租约属性），没有硬截止的块（如
 fe-parity 的协调者配方，`run.mjs` 无墙钟上限）一律发布。
 
-宿主（沙箱外协调者）的取锁/释放片段。形态对齐三装置（`.guard` flock + mkdir +
+宿主（沙箱外协调者）的取锁/释放/守卫片段，**整段保存为脚本运行**（正本形态见下文
+「取锁与释放必须挂在同一 shell 上下文」：脚本里 `$$` 即脚本自身进程，owner.pid 记真实
+持锁者）。形态对齐三装置（`.guard` flock + mkdir +
 `owner.json`），实现为**短命 `python3 -I` 进程**：不依赖 `flock(1)`/`uuidgen`（macOS
 无 `flock(1)`，仓内装置一律 `fcntl.flock`），guard 由 helper 持有并在退出时关闭——
 受保护块的后代不继承任何带锁 fd；任一步失败即非零退出，**不进入受保护块**
@@ -59,11 +61,16 @@ parity/gateway 读侧只校验 `pid`（正整数）与 `timestamp`（有限数�
 `token` 在 parity/gateway 读侧不参与校验（写小写 uuid hex 仅为与装置形态一致）：
 
 ```sh
-# 取锁：TOKEN 由执行本片段的 shell/子壳持有；owner 的 pid 由该 shell 显式传 $$ 记入
+# 取锁：TOKEN 由执行本片段的 shell 持有；owner 的 pid 由该 shell 显式传 $$ 记入
 # ——不能在 python 里用 os.getppid()：$(... <<'PY') 形态下 bash 会在 heredoc 命令替换里
 # 多 fork 一层中间子壳，getppid 记到的是这个**即退出**的中间壳，释放侧对不上号
 # （2026-11-10 macOS 实测）；而 $$ 在命令替换子壳里仍指**取锁的那个 shell**，
-# 释放 helper 同样重传 $$，同一 shell 上下文两端恒等
+# 释放 helper 同样重传 $$，同一 shell 上下文两端恒等。$$ 记到的是什么 pid 取决于
+# 本片段跑在哪种形态里（#2840 条目 2）：脚本或交互 shell 里 $$ 即该 shell 自身，
+# owner.pid 记的正是持锁、挂 trap 的 shell；粘进 ( set -eu … ) 子壳时 $$ 是父交互
+# shell 的 pid（bash/zsh 同；$BASHPID 才给子壳自身 pid，macOS 自带 /bin/bash 3.2.57
+# 没有，不能依赖），owner.pid 会记到长命终端上——所以本片段只以脚本/交互 shell
+# 形态为正本，见下文「取锁与释放必须挂在同一 shell 上下文」
 TOKEN=$(python3 -I - "$$" <<'PY'
 import fcntl, json, os, stat, sys, time, uuid
 LOCK = '/tmp/pdrs-parity.lock'
@@ -151,30 +158,64 @@ finally:
     os.close(fd)
 PY
 }
+
+# 租约硬守卫（#2840 条目 1）：受保护块里每条会 listen / 起 Chrome 的命令先过它——核
+# /tmp/pdrs-parity.lock/owner.json 的 token+pid 与本 shell 的 TOKEN/$$ 一致，核不过
+# sys.exit 非零。替换的是裸 `: "${TOKEN:?…}"`：那只判 TOKEN 非空（陈旧/继承的同名
+# 值也放行），交互 shell 下还只中止当行不退出；这里 TOKEN 用 ${TOKEN:-} 传入、完全
+# 不依赖 ${VAR:?}。守卫子壳里调用时 $$ 仍是取锁 shell 的 pid，恒等可核。
+pdrs_parity_fence() {
+  python3 -I - "${TOKEN:-}" "$$" <<'PY'
+import json, sys
+token, pid = sys.argv[1], sys.argv[2]
+try:
+    owner = json.load(open('/tmp/pdrs-parity.lock/owner.json'))
+except (OSError, ValueError):
+    sys.exit('需要 /tmp/pdrs-parity.lock 租约：owner.json 不可读——先按 '
+             'scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁')
+if (not isinstance(owner, dict) or token != owner.get('token')
+        or str(owner.get('pid')) != pid):
+    sys.exit('需要 /tmp/pdrs-parity.lock 租约：TOKEN/pid 与 owner.json 不符'
+             '（TOKEN 陈旧/继承，或不在取锁的 shell 上下文里）——先按 '
+             'scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁')
+PY
+}
 trap 'pdrs_lock_release $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# ……受保护的命令块……
+# ……受保护的命令块（需要租约的命令按 fe-parity 等装置 README 的守卫子壳形态：
+#    ( set -eu; pdrs_parity_fence; <命令> )——守卫核不过非零退出，命令不执行）……
 ```
 
-取锁与释放必须挂在**同一 shell 上下文**（同一子壳/脚本里取 `TOKEN` 并定义 trap）；
-两段贴进两个独立 shell 时 pid 对不上，释放按「ownership changed」保留锁——跨 shell
-只能走本节人工回收。**整段须粘贴进子壳或脚本**（如 fe-parity 各块那样的 `( set -eu … )`）：
-粘进交互式 shell 时 `trap … EXIT` 挂在交互 shell 上，租约会一直持到整个会话退出。
+取锁与释放必须挂在**同一 shell 上下文**（同一脚本或同一交互 shell 里取 `TOKEN` 并定义
+trap）；两段贴进两个独立 shell 时 pid 对不上，释放按「ownership changed」保留锁——跨
+shell 只能走本节人工回收。**正本形态是整段保存为脚本运行**（如
+`_tmp/<本次目录>/run-parity-block.sh`）：脚本里 POSIX `$$` 即脚本自身进程，
+`owner.json` 的 pid 记的正是真正持锁、挂 trap 的那个 shell。**不能粘进 `( set -eu … )`
+子壳**（#2840 条目 2）：子壳里 `$$` 仍是**父交互 shell** 的 pid（bash/zsh 同，
+2026-11-11 本机实测 `( echo $$ )` 与外层恒等；bash 4.1+ 的 `$BASHPID` 才给子壳自身
+pid，macOS 自带 /bin/bash 3.2.57 没有，不能依赖），owner.pid 会记成长命终端——人工
+回收第 1/3 步按 pid 永远对不上（`ps -p` 看到的 owner 一直活着），按 owner.pid 发
+SIGKILL 杀掉的是终端、持锁子壳成孤儿照常收尾释放锁，与「让锁按 cleanupPending 形态
+留下」相反。直接粘进交互 shell（不套子壳）仍可用：`trap … EXIT` 挂在交互 shell 上，
+租约会一直持到整个会话退出——只要取锁与命令块在同一 shell，守卫与释放都核得过。
 释放核 `token` 与 `pid` 双证（对齐装置的整条 owner 比对）。被 SIGKILL/断电打断来不及
 释放、受保护块以异常信号收尾（释放 helper 见 exit >128 且非 2/15 即保留），或核对不过
 （锁已被接管/身份变了），一律保留锁并按本节第 1–3 步人工回收——发布过 `cleanupPending`
 的锁**不会被自动接管**，只能人工持 guard 回收，这是防接管的代价。EXIT trap 在 shell
 退出时自动先跑，没有「先核完残留再释放」的窗口：**怀疑受保护块留下活监听**（fe-parity
 拉起的是 detached Chrome/Vite，`run.mjs:112-114`；node 自身只处理 SIGINT/SIGTERM——
-node 被 SIGKILL/OOM 时无人收尸）**时用 SIGKILL 中止宿主 shell**，让锁按
-`cleanupPending` 形态留下，再按第 1 步核进程组人工回收，不要等 trap 自己释放。释放
-helper 的非零退出**不会把整块的非零退出掩盖成零**（bash 实测：显式 `exit N` 时 N 保留；
-`set -eu` 中止时 trap 内失败以非零覆盖原状态码，如 137 变 1——方向 fail-safe，且释放
-失败必然伴随锁被保留，下一次取锁会报「锁被占」）。
+node 被 SIGKILL/OOM 时无人收尸）**时用 SIGKILL 中止持锁 shell**——即 owner.pid 记录的
+那个进程（脚本形态下是脚本自身；#2840 前的子壳粘贴形态会把它记成长命终端，杀终端救不
+了残留）——让锁按 `cleanupPending` 形态留下，再按第 1 步核进程组人工回收，不要等 trap
+自己释放。释放 helper 的非零退出**不会把整块的非零退出掩盖成零**（bash 实测：显式
+`exit N` 时 N 保留；`set -eu` 中止时 trap 内失败以非零覆盖原状态码，如 137 变 1——
+方向 fail-safe，且释放失败必然伴随锁被保留，下一次取锁会报「锁被占」）。
 
 运行器报「retaining shared lock」或下次运行报锁被占时：
-1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid：
+1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid
+   （`pid` 是**持锁脚本/交互 shell 自身**的 pid——正本宿主片段以脚本形态运行、显式传
+   `$$` 记入，见上文 `$$` 口径；不是它派生的子壳或 detached 子进程）：
    - **`cleanupPending: true` 不等于「无残留」**：它是获取时先发布的占位，意思是「残留清单还没发布」；
      只有正常释放且仍有存活组时才会被改写成 pgid 列表。看到 `true` 或看不到列表，要按 `pid` 查进程的
      启动会话与子进程组（`ps -o pid,pgid,sess,command -p <pid>`，再看 `-g <pgid>`）——**只按 pid 查进程树不够**：
@@ -204,7 +245,8 @@ helper 的非零退出**不会把整块的非零退出掩盖成零**（bash 实�
 3. **持 guard 互斥后再删**：用 `flock(1)` 或任意 `fcntl.flock(LOCK_EX)` 包装在 `/tmp/pdrs-parity.lock.guard` 上取独占锁
    （macOS 无 `flock(1)` 时用后者；装置自身的建锁、接管、释放都在同一 guard 下：`scripts/parity/round.py:199-207`、
    `scripts/gateway-parity/common.py:594-600`）。持锁期间**重新读一遍** `owner.json` 的 `pid` / `token` / `cleanupPending`，
-   确认还是第 1 步那个已停止的 owner（不是接管者刚发布的新 owner），再删 `owner.json` 并 `rmdir /tmp/pdrs-parity.lock`，
+   确认还是第 1 步那个已停止的 owner（不是接管者刚发布的新 owner；`pid` 指持锁脚本/交互
+   shell 自身，见第 1 步口径），再删 `owner.json` 并 `rmdir /tmp/pdrs-parity.lock`，
    删完才放开 guard。`owner.json` 缺失/不可解析时没有可比对的 owner，确认第 1、2 步的进程组都停干净后再删。
    **只删 `owner.json`、锁目录内的 tmp 残留（`owner.json.tmp.*` / `owner.tmp` / 宿主片段的
    `.releasing.<token>` 垃圾目录）与锁目录本身，不要删、不要替换 `/tmp/pdrs-parity.lock.guard`**
