@@ -90,7 +90,8 @@ class EnvironmentControls(unittest.TestCase):
     ci_job_level_registry = {
         'scope': ({'outputs', 'runs-on', 'steps'}, None, None),
         'metadata-observer': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
-        'negative-controls': ({'env', 'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
+        'negative-controls': ({'env', 'if', 'needs', 'outputs', 'runs-on', 'steps',
+                               'timeout-minutes'},
                               ['scope'], parsed_docs_only_if),
         'retirement-outcome-parity': ({'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
                                       ['scope'], parsed_docs_only_if),
@@ -98,7 +99,7 @@ class EnvironmentControls(unittest.TestCase):
                   ['scope', 'metadata-observer', 'rust', 'a51-coverage',
                    'negative-controls', 'retirement-outcome-parity'],
                   '${{ always() }}'),
-        'rust': ({'defaults', 'env', 'if', 'needs', 'runs-on', 'steps'},
+        'rust': ({'defaults', 'env', 'if', 'needs', 'outputs', 'runs-on', 'steps'},
                  ['scope'], parsed_docs_only_if),
         'a51-coverage': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
         # 必需检查必须无条件跑：`if` / `needs` 都不在白名单里。
@@ -438,7 +439,11 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 6, '#904 exactly six rejection steps')
+        # #3078 fix-r4：第七步是镜像构建号比对（Require same runner image build），
+        # 不是 #904 的拒绝步——它自带 if（docs_only 放行）与 run 块，不参与上面
+        # gate_steps 的精确条件分组。
+        self.assertEqual(len(steps), 7, '#904 exactly six rejection steps '
+                         'plus the #3078 same-build comparison')
 
         def gate_steps(condition):
             return [step for step in steps
@@ -518,6 +523,48 @@ class EnvironmentControls(unittest.TestCase):
             step = {}
             for field, node in item.value:
                 step[field.value] = node
+            # #3078 fix-r4：镜像构建号比对步不是 #904 拒绝步——自带 env（两 job 的
+            # outputs）与 run 块，键集合与 env 接线单独钉死。fix-r5（DS boundary#1
+            # P1 / MM concurrency#1 / MM sibling#1 三撞）：`if:` 完整标量、两个 env
+            # 的**值**、`working-directory` 值逐字钉——`if` 反转或删失、`exit 1` 改
+            # `exit 0` 都是「真实 PR 上比对永不执行 / 失配照绿」的假通过面（该步
+            # 是 #3078 唯一新增不变量的执法点，防护强度不得低于旁边六条拒绝步；
+            # run 体的行为由 test_same_build_comparison_step_logic_self_check 真
+            # 跑五场景兜住）。
+            if (step.get('name', None) is not None
+                    and step['name'].value
+                    == 'Require same runner image build for rust and negative controls'):
+                self.assertEqual(set(step),
+                                 {'name', 'if', 'working-directory', 'shell', 'env', 'run'},
+                                 '#3078 the same-build comparison step keys are exactly '
+                                 'the registered set (parsed)')
+                self.assertEqual(step['working-directory'].value, '.',
+                                 '#3078 the comparison step runs from the repository '
+                                 'root (parsed)')
+                # fix-r6（MM boundary#2 P2）：run 标量样式钉为字面块——折成 `>`
+                # 单字符漂移可存活全部行级钉（源码行未变），生产侧整块折成一行
+                # 让 bash 吃 syntax error、比对步每次 PR 都假红。
+                self.assertEqual(step['run'].style, '|',
+                                 '#3078 the comparison step run body must stay a literal '
+                                 'block scalar (folding it onto one line breaks bash '
+                                 'parsing on every PR)')
+                self.assertEqual(step['if'].value,
+                                 "${{ always() && needs.scope.outputs.docs_only "
+                                 "!= 'true' }}",
+                                 '#3078 the comparison step keeps its parsed docs_only '
+                                 'if condition verbatim (inverting or dropping it makes '
+                                 'the same-build check never run on real PRs)')
+                env_pairs = {pair[0].value: pair[1].value
+                             for pair in step['env'].value}
+                self.assertEqual(env_pairs,
+                                 {'RUST_IMAGE_VERSION':
+                                  '${{ needs.rust.outputs.image_version }}',
+                                  'NEGCTL_IMAGE_VERSION':
+                                  '${{ needs.negative-controls.outputs.image_version }}'},
+                                 '#3078 the comparison step env wires each side to its '
+                                 'own job output verbatim (parsed); wiring both sides to '
+                                 'the same job degenerates the comparison to always-equal')
+                continue
             self.assertLessEqual(set(step), {'if', 'name', 'run', 'shell', 'working-directory'},
                                  '#2017 aggregate Require step keys are exactly the registered set')
             run = step.get('run')
@@ -1150,7 +1197,9 @@ class EnvironmentControls(unittest.TestCase):
                       '        working-directory: .\n'
                       '        shell: bash\n'
                       '        run: exit 1\n')
-        change('scope-gate-removed', scope_step, '', '#904 exactly six rejection steps')
+        change('scope-gate-removed', scope_step, '',
+               '#904 exactly six rejection steps '
+               'plus the #3078 same-build comparison')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
                "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
         change('check-needs-drops-scope',
@@ -2067,6 +2116,9 @@ class EnvironmentControls(unittest.TestCase):
                              '#2780 the guard sits immediately after checkout '
                              '(fail-fast before any heavy step)')
             fields = self.ci_step_fields(guards_in_job[0], '#2780')
+            self.assertEqual(fields.get('id'), ('image_guard', []),
+                             '#3078 the guard step publishes its actual build stamp '
+                             'through $GITHUB_OUTPUT for the cross-job comparison')
             self.assertEqual(fields.get('working-directory'), ('.', []),
                              '#2780 the guard reads the workflow files from the repository root')
             self.assertEqual(fields.get('shell'), ('bash', []),
@@ -2074,6 +2126,42 @@ class EnvironmentControls(unittest.TestCase):
             for key in ('if', 'continue-on-error'):
                 self.assertNotIn(key, fields,
                                  '#2780 the guard steps stay unconditional')
+        # fix-r4（#3078 MM P1）：集合放宽后「两 job 同绿 ⟺ 同一镜像构建」不再由守卫
+        # 单独成立——守卫步把实际构建号写进 $GITHUB_OUTPUT（step id: image_guard），
+        # 两个 job 经 outputs 上报，check 汇聚 job 比对两 job 的实际构建号，不一致或
+        # 缺失即红（fail-closed）。下面五件逐件机检；配对负控见
+        # rejects_registration_drift 的 fix-r4 各条。
+        self.assertEqual(script.count(
+            'echo "image_version=${image_version}" '
+            '>> "${GITHUB_OUTPUT:-/dev/null}"\n'), 1,
+            '#3078 the guard reports its actual image version to the job outputs '
+            '(unset GITHUB_OUTPUT falls back to /dev/null so the guard-logic '
+            'self-test can execute the script outside Actions)')
+        ci_text = (Path(__file__).resolve().parents[3]
+                   / '.github/workflows/ci.yml').read_text()
+        outputs_wiring = ('    outputs:\n'
+                          '      image_version: '
+                          '${{ steps.image_guard.outputs.image_version }}\n')
+        self.assertEqual(ci_text.count(outputs_wiring), 2,
+                         '#3078 both cargo jobs wire the guard build stamp to job outputs')
+        compare_step = ('      - name: Require same runner image build for rust '
+                        'and negative controls\n')
+        self.assertIn(compare_step, ci_text,
+                      '#3078 the check aggregation job carries the same-build '
+                      'comparison step')
+        self.assertIn('needs.rust.outputs.image_version', ci_text,
+                      '#3078 the comparison step reads the rust job build stamp')
+        self.assertIn('needs.negative-controls.outputs.image_version', ci_text,
+                      '#3078 the comparison step reads the negative-controls job '
+                      'build stamp')
+        self.assertIn('if [ "$RUST_IMAGE_VERSION" != "$NEGCTL_IMAGE_VERSION" ]; then',
+                      ci_text,
+                      '#3078 the comparison step fails closed on a build mismatch '
+                      '(the actual comparability invariant behind KILLED/SURVIVED)')
+        self.assertIn('if [ -z "${RUST_IMAGE_VERSION:-}" ] '
+                      '|| [ -z "${NEGCTL_IMAGE_VERSION:-}" ]; then', ci_text,
+                      '#3078 the comparison step fails closed on a missing stamp '
+                      '(absent does not mean identical)')
         # 白名单值等的机检侧：钉定标签从守卫脚本派生（单一来源），扫描面也从守卫
         # 脚本的扫描行派生（单一来源，fix-r3 P2-a 主题 1 Python 侧目录派生），并与
         # .github/workflows 目录对账：新增工作流文件不进扫描面先红在这里（shell 侧
@@ -2139,7 +2227,8 @@ class EnvironmentControls(unittest.TestCase):
         # pr-gate.yml 路由（check_ci_mutations 的按文件名路由，#1809 r9 口径）。
         workflow = self.ci_workflow_fixture()
         guards = self.runner_image_guard_scripts('#2780')
-        step = (self.runner_image_guard_anchor + '        working-directory: .\n'
+        step = (self.runner_image_guard_anchor + '        id: image_guard\n'
+                '        working-directory: .\n'
                 '        shell: bash\n        run: |\n' + guards['negative-controls'][0])
         self.assertEqual(workflow.count(step), 2, '#2780 both guard steps share one shape')
         ci_cases = [('guard-step-removed-negative-controls',
@@ -2192,7 +2281,12 @@ class EnvironmentControls(unittest.TestCase):
                              'label'))
         # fix-r3（#2780 P2-a 主题 2/3）：钉值集合与守卫 env 的配对负控。集合类变异
         # 两副本同改（保持逐字全等，让红落在绑定断言上而不是分叉断言上）。
-        pin_line = '          expected_image_versions="20261101.360.1"\n'
+        # 2026-11-12 滚动窗口加值（#3078 DS 评审 P1 三路同撞）：锚点从工作流实文本
+        # 派生（:2417 同款写法），不再手抄钉值字面量——满足 runner_image_guard_pins
+        # 「钉值的单一来源就是守卫脚本本身」约定，滚动窗口加/删成员只改 ci.yml
+        # 两副本，本测试零改动。
+        pin_line = (re.search(r'^ {10}expected_image_versions="[^"]*"$',
+                              workflow, re.M)[0] + '\n')
         self.assertEqual(workflow.count(pin_line), 2,
                          '#2780 both copies carry the image-version pin')
         for label, new, message in (
@@ -2237,15 +2331,166 @@ class EnvironmentControls(unittest.TestCase):
         # fix-r3（#2780 P2-a 主题 3 补遗 + anthropic boundary#2）：working-directory
         # 漂移、同 job 重复守卫、flow 风格 job 绕过行级白名单——各自红在绑定断言。
         self.assertEqual(workflow.count(self.runner_image_guard_anchor
+                                        + '        id: image_guard\n'
                                         + '        working-directory: .\n'), 2,
                          '#2780 both guard steps pin working-directory at repo root')
         ci_cases.append(('guard-working-directory-drift',
                          workflow.replace(self.runner_image_guard_anchor
+                                          + '        id: image_guard\n'
                                           + '        working-directory: .\n',
                                           self.runner_image_guard_anchor
+                                          + '        id: image_guard\n'
                                           + '        working-directory: src\n'),
                          '#2780 the guard reads the workflow files from the '
                          'repository root'))
+        # fix-r4（#3078 MM P1）配对负控：构建号上报链五件——echo 删除（两副本同删，
+        # 保持逐字全等，让红落在上报断言而不是分叉断言）、单副本删 id（红在 step
+        # 形状全等）、job outputs 接线拆除（单 job）、check 汇聚比对步删除、比对
+        # 方向反转（!= 改 ==，假 PASS 面）。
+        echo_line = ('          echo "image_version=${image_version}" '
+                     '>> "${GITHUB_OUTPUT:-/dev/null}"\n')
+        self.assertEqual(workflow.count(echo_line), 2,
+                         '#3078 both guard copies carry the build-stamp echo')
+        ci_cases.append(('guard-output-echo-removed',
+                         workflow.replace(echo_line, ''),
+                         '#3078 the guard reports its actual image version'))
+        ci_cases.append(('guard-id-removed-one-copy',
+                         workflow.replace(self.runner_image_guard_anchor
+                                          + '        id: image_guard\n',
+                                          self.runner_image_guard_anchor, 1),
+                         '#3078 the guard step publishes its actual build stamp '
+                         'through $GITHUB_OUTPUT for the cross-job comparison'))
+        outputs_wiring = ('    outputs:\n'
+                          '      image_version: '
+                          '${{ steps.image_guard.outputs.image_version }}\n')
+        self.assertEqual(workflow.count(outputs_wiring), 2,
+                         '#3078 both cargo jobs declare the output wiring')
+        ci_cases.append(('job-output-unwired',
+                         workflow.replace(outputs_wiring, '', 1),
+                         '#3078 both cargo jobs wire the guard build stamp to job '
+                         'outputs'))
+        compare_step = ('      - name: Require same runner image build for rust '
+                        'and negative controls\n')
+        ci_cases.append(('check-comparison-removed',
+                         workflow.replace(compare_step + '        if: '
+                                          '${{ always() && needs.scope.outputs.'
+                                          'docs_only != \'true\' }}\n', ''),
+                         '#3078 the check aggregation job carries the same-build '
+                         'comparison step'))
+        ci_cases.append(('check-comparison-inverted',
+                         workflow.replace('if [ "$RUST_IMAGE_VERSION" != '
+                                          '"$NEGCTL_IMAGE_VERSION" ]; then',
+                                          'if [ "$RUST_IMAGE_VERSION" == '
+                                          '"$NEGCTL_IMAGE_VERSION" ]; then'),
+                         '#3078 the comparison step fails closed on a build mismatch'))
+        # fix-r5（#3078 DS boundary#1 P1）：比对步的 if 与 env 值此前无机检钉——
+        # if 反转/删失让真实 PR 上比对永不执行（假通过），env 两侧接同一 job 让
+        # 比对退化成自比自（恒等）。
+        compare_if_line = ("        if: ${{ always() && needs.scope.outputs."
+                           "docs_only != 'true' }}\n")
+        ci_cases.append(('check-comparison-if-inverted',
+                         workflow.replace(compare_if_line,
+                                          compare_if_line.replace('!=', '==')),
+                         "#3078 the comparison step keeps its parsed docs_only "
+                         'if condition verbatim'))
+        ci_cases.append(('check-comparison-if-dropped',
+                         workflow.replace(compare_if_line, '', 1),
+                         '#3078 the same-build comparison step keys are exactly '
+                         'the registered set (parsed)'))
+        ci_cases.append(('check-comparison-env-both-rust',
+                         workflow.replace('          NEGCTL_IMAGE_VERSION: '
+                                          '${{ needs.negative-controls.outputs.'
+                                          'image_version }}',
+                                          '          NEGCTL_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}'),
+                         '#3078 the comparison step env wires each side to its own '
+                         'job output verbatim (parsed)'))
+        # run 体插桩 `exit 0`（set -euo pipefail 之后）：行为自测的五场景全数存活面
+        # ——钉在 test_same_build_comparison_step_logic_self_check 的红上。
+        neutered = workflow.replace(
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n'
+              '          set -euo pipefail\n',
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n'
+              '          set -euo pipefail\n'
+              '          exit 0\n')
+        ci_cases.append(('check-comparison-run-neutered', neutered,
+                         '#3078 the comparison script must behave as pinned'))
+        # fix-r5（#3078 MM sibling#1 / MM concurrency#1 P1）：两个 fail-closed 分支
+        # 的 `exit 1` 改 `exit 0`——失配/缺失照绿的直接假 PASS 面，各配一条变异，
+        # 都钉在行为自测的红上（缺失场景 / 失配场景各自变绿）。
+        missing_exit = ('fail-closed（#3078 MM P1：缺失不等于同构建）" >&2\n'
+                       '            exit 1\n')
+        self.assertIn(missing_exit, workflow)
+        ci_cases.append(('check-comparison-missing-exit-neutered',
+                         workflow.replace(missing_exit,
+                                         missing_exit.replace('exit 1', 'exit 0')),
+                         '#3078 the comparison script must behave as pinned'))
+        mismatch_exit = ('需严格同构建结论时收窄集合到实际在服值（#3078 MM P1）" >&2\n'
+                        '            exit 1\n')
+        self.assertIn(mismatch_exit, workflow)
+        ci_cases.append(('check-comparison-mismatch-exit-neutered',
+                         workflow.replace(mismatch_exit,
+                                         mismatch_exit.replace('exit 1', 'exit 0')),
+                         '#3078 the comparison script must behave as pinned'))
+        # fix-r6（DS sibling#1 P2）：working-directory 值钉配对变异（同 hunk 的
+        # if / env 钉各有配对，同类先例 guard-working-directory-drift）。
+        ci_cases.append(('check-comparison-working-directory-drift',
+                         workflow.replace('        working-directory: .\n'
+                                          '        shell: bash\n'
+                                          '        env:\n'
+                                          '          RUST_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}',
+                                          '        working-directory: src\n'
+                                          '        shell: bash\n'
+                                          '        env:\n'
+                                          '          RUST_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}'),
+                         '#3078 the comparison step runs from the repository root '
+                         '(parsed)'))
+        # fix-r7（DS boundary#1 / MM sibling#2 双撞 P2）：run 标量样式钉配对变异——
+        # 折成 `>` 单字符漂移在生产侧整块折一行、bash syntax error 假红（先例：
+        # B2 的 literal-form 钉配 B2-folded-run）。
+        folded = workflow.replace(
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n',
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: >\n')
+        self.assertNotEqual(folded, workflow,
+                            '#3078 the folded-run mutation must actually apply')
+        ci_cases.append(('check-comparison-run-folded', folded,
+                         '#3078 the comparison step run body must stay a literal '
+                         'block scalar (folding it onto one line breaks bash '
+                         'parsing on every PR)'))
         ci_cases.append(('guard-duplicated',
                          workflow.replace(shift_anchor, step + shift_anchor, 1),
                          '#2780 exactly two runner image guard steps exist'))
@@ -2253,9 +2498,27 @@ class EnvironmentControls(unittest.TestCase):
         # 行式 job 声明守卫（ci_jobs 的 unsupported job declaration）会先红，构造
         # 不出只红在本断言上的 ci 变异——那层是 ci.yml 独立的既有防御，这里的牙
         # 由 pr-gate.yml 路由证明（该文件无同款行式守卫）。
-        self.check_ci_mutations(ci_cases,
-                                'test_runner_image_guard_steps_are_registered_and_identical',
-                                '#2780')
+        # fix-r5（#3078 DS boundary#1 P1）：比对步 if / env 值钉在解析测试上，
+        # run 体插桩钉在行为自测上——与守卫登记各条分开路由（不同执法点）。
+        fix_r5_parsed_cases = ('check-comparison-if-inverted',
+                               'check-comparison-if-dropped',
+                               'check-comparison-env-both-rust',
+                               'check-comparison-working-directory-drift',
+                               'check-comparison-run-folded')
+        fix_r5_behavior_cases = ('check-comparison-run-neutered',
+                                 'check-comparison-missing-exit-neutered',
+                                 'check-comparison-mismatch-exit-neutered')
+        self.check_ci_mutations(
+            [case for case in ci_cases if case[0] not in fix_r5_parsed_cases
+             and case[0] not in fix_r5_behavior_cases],
+            'test_runner_image_guard_steps_are_registered_and_identical', '#2780')
+        self.check_ci_mutations(
+            [case for case in ci_cases if case[0] in fix_r5_parsed_cases],
+            'test_ci_job_level_gates_are_pinned_by_parsed_yaml', '#3078')
+        self.check_ci_mutations(
+            [case for case in ci_cases
+             if case[0] in fix_r5_behavior_cases],
+            'test_same_build_comparison_step_logic_self_check', '#3078')
         gate_text = (Path(__file__).resolve().parents[3]
                      / '.github/workflows/pr-gate.yml').read_text()
         self.assertEqual(gate_text.count('    runs-on: ubuntu-24.04\n'), 1,
@@ -2437,6 +2700,57 @@ class EnvironmentControls(unittest.TestCase):
                         f'{results}')
         print(f'#2780 guard logic negative summary: {{'
               f'"KILLED": {len(results)}}}', flush=True)
+
+    def test_same_build_comparison_step_logic_self_check(self):
+        """#3078 fix-r5（DS boundary#2 P2-a）：比对步 run 体的行为自测——等值 rc 0、
+        失配 rc 1 命中失配标记、任一侧空 rc 1 命中缺失标记。守卫脚本有整套逻辑
+        自测（上），同一 diff 新增的比对步不能只靠子串钉定（`exit 0` 插桩即存活）。
+        fix-r6（DS boundary#1 / MM boundary#1 双撞 P2）：空值边界补全五格——
+        rust 侧空、negative-controls 侧空、两侧同空（`-z` 缺失检查唯一独挡的
+        那格：两侧空时相等比较 `'' != ''` 不成立，只有缺失检查能拦）。fix-r6
+        （MM boundary#3 P2）：子进程按同文件守卫自测约定钉死 PATH 与隔离 cwd，
+        不让可执行查找落到 os.defpath 的 CWD 首查。"""
+        jobs = self.ci_jobs()
+        steps = self.ci_steps('check', jobs['check'], '#3078')
+        compare = [step for step in steps
+                   if self.ci_step_fields(step, '#3078').get('name')
+                   == ('Require same runner image build for rust and negative controls', [])]
+        self.assertEqual(len(compare), 1,
+                         '#3078 exactly one same-build comparison step in the check job')
+        script = '\n'.join(self.ci_run_commands(compare[0], '#3078')) + '\n'
+        scenarios = [
+            ('equal-stamps-green', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                    'NEGCTL_IMAGE_VERSION': '20261111.370.1'},
+             True, '同构建核验通过'),
+            ('build-mismatch-red', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                    'NEGCTL_IMAGE_VERSION': '20261111.127.1'},
+             False, '落在不同 runner 镜像构建上'),
+            ('rust-stamp-missing-red', {'RUST_IMAGE_VERSION': '',
+                                        'NEGCTL_IMAGE_VERSION': '20261111.370.1'},
+             False, '缺失'),
+            ('negctl-stamp-missing-red', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                          'NEGCTL_IMAGE_VERSION': ''},
+             False, '缺失'),
+            ('both-stamps-missing-red', {'RUST_IMAGE_VERSION': '',
+                                         'NEGCTL_IMAGE_VERSION': ''},
+             False, '缺失'),
+        ]
+        results = []
+        for name, env, expect_pass, marker in scenarios:
+            with tempfile.TemporaryDirectory() as temp:
+                completed = subprocess.run(
+                    ['bash', '-c', script], cwd=temp,
+                    env={'PATH': '/usr/bin:/bin', **env},
+                    capture_output=True, text=True, timeout=30)
+            ok = ((completed.returncode == 0 and marker in completed.stdout) if expect_pass
+                  else (completed.returncode == 1 and marker in completed.stderr))
+            results.append((name, ok, completed.returncode,
+                            completed.stdout, completed.stderr))
+            print(f'#3078 {name}: {"OK" if ok else "BAD"}: '
+                  f'rc={completed.returncode} stdout={completed.stdout!r} '
+                  f'stderr={completed.stderr!r}', flush=True)
+        self.assertTrue(results and all(ok for _, ok, *_ in results),
+                        f'#3078 the comparison script must behave as pinned: {results}')
 
     def test_isolation_ci_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
