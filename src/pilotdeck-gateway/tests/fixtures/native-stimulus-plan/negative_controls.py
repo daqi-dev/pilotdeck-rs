@@ -234,7 +234,15 @@ def execution_environment():
         raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
     # #1402: this guard pair is byte-duplicated in native-session-e2e's
     # runner; consolidating it means changing the shared negative_process.py,
-    # which belongs to the M6 lane (#1099) and is out of scope here.
+    # which belongs to the M6 lane (#1099). The #1528 family batch did
+    # change that shared file once, under coordinator dispensation (the
+    # parity-lease acquire budget, min(lock_timeout, 60) -> the caller's
+    # value, for the e2e runner's queueing budget); every path this runner
+    # guards is outside scripts/gateway-parity/, so that acquire is a
+    # nullcontext here (see the fix-r2 note above the constants). M6 #1099
+    # has no active lane and no sibling branch edits that file, so no
+    # parallel conflict; coordinator-approved 2026-11-13, retained pending
+    # human re-review.
     return target_environment(root)
 
 
