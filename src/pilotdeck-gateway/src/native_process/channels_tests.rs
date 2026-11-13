@@ -1157,12 +1157,20 @@ impl Drop for FixedPortRegion {
                     drop(returned.0);
                 }
             }
-            Err(_not_started) => {
+            Err(not_started) => {
                 // #2461: no watcher thread (resource exhaustion is the
                 // realistic cause, plausibly mid-panic-unwind) — release
                 // synchronously here instead of panicking, and accept the
                 // degraded ordering: the claim pre-probe keeps a sibling run
-                // fail-closed on the freed-before-closed window.
+                // fail-closed on the freed-before-closed window. The third
+                // silent arm speaks too (review P2-a): the fallback is
+                // named on stderr first, best-effort like the watcher's own
+                // emit — a failed write is dropped, never a panic.
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "pdrs-2461-fixed-port-watch: watcher not started ({not_started}); \
+                     releasing the flock synchronously above a listener that may still accept"
+                );
                 drop(files);
             }
         }
@@ -1506,15 +1514,21 @@ fn probe_child_env(mode: &str, token: &str) -> Vec<(String, String)> {
 /// the fixture anchors stay killable through the parent's failure line.
 /// #2463: the window is cut on byte offsets, and a probe console carries
 /// multi-byte text (the readiness lines' own `— routes: …`), so the cut can
-/// land inside a character. `get` returns `None` exactly there, and the
-/// named fallback keeps the parent's message printable — the tail omitted
-/// with this line — instead of panicking on a non-boundary index.
+/// land inside a character. The cut then forward-aligns to the next
+/// character boundary — at most 3 bytes away, since a UTF-8 character is at
+/// most 4 bytes — so only those continuation bytes are lost and the child's
+/// panic payload survives; a boundary always exists under `saturating_sub`,
+/// and the named fallback keeps the builder total for the impossible case
+/// instead of panicking on a non-boundary index.
 fn console_tail(console: &str) -> String {
     let start = console.len().saturating_sub(4096);
-    match console.get(start..) {
+    match console
+        .get(start..)
+        .or_else(|| (1..=3).find_map(|delta| console.get(start + delta..)))
+    {
         Some(tail) => tail.to_owned(),
-        None => "#2463 the 4096-byte console tail cut landed inside a multi-byte \
-                 character; the tail is omitted"
+        None => "#2463 the 4096-byte console tail cut found no character \
+                 boundary within 3 bytes; the tail is omitted"
             .to_owned(),
     }
 }
@@ -1522,9 +1536,12 @@ fn console_tail(console: &str) -> String {
 /// #2463 control: a console whose 4096-byte tail cut lands inside the
 /// readiness line's em dash — the multi-byte text the probe consoles really
 /// carry (`— routes: …`, U+2014, 3 bytes; Node v22.22.0 probe) — must not
-/// panic the parent's message builder, and the fallback must be the named
-/// diagnostic line. The sample's cut position is asserted before the call, so
-/// a drifted sample cannot silently test a boundary-aligned cut.
+/// panic the parent's message builder, and the cut must forward-align to the
+/// next character boundary so the child's panic payload (the readiness line
+/// and everything after it) survives in the parent's failure line, instead
+/// of the whole tail being dropped for the named fallback. The sample's cut
+/// position is asserted before the call, so a drifted sample cannot
+/// silently test a boundary-aligned cut.
 #[test]
 fn console_tail_cuts_inside_a_multibyte_character_without_panicking() {
     let readiness = "webhook: listening on http://127.0.0.1:28643 — routes: (none configured)\n";
@@ -1554,9 +1571,19 @@ fn console_tail_cuts_inside_a_multibyte_character_without_panicking() {
             unreachable!("negative_assert! panics");
         }
     };
-    crate::negative_assert!(
-        tail.contains("#2463"),
-        "#2463 the uncuttable tail falls back to the named diagnostic line"
+    // The aligned cut keeps the payload: the tail is exactly the console
+    // from the first character boundary at or after the byte offset.
+    let aligned = (0..=3)
+        .find_map(|delta| {
+            console
+                .is_char_boundary(start + delta)
+                .then_some(start + delta)
+        })
+        .expect("#2463 a character boundary exists within 3 bytes of any cut");
+    crate::negative_assert_eq!(
+        tail,
+        console[aligned..].to_owned(),
+        "#2463 the multi-byte cut forward-aligns instead of dropping the tail"
     );
 }
 

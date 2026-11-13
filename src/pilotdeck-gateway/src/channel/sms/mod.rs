@@ -2022,6 +2022,18 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
     );
 }
 
+/// #2462: `raw_request` failures split by meaning — a refused port is the
+/// generator's `{"refused": true}` outcome, while every other transport or
+/// parse failure must fail the replay by name instead of masquerading as a
+/// refused port (a false `refused: true` passes the oracle comparison even
+/// though the listener is still up).
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) enum RawRequestError {
+    ConnectRefused,
+    Failed(String),
+}
+
 /// Raw-socket HTTP probe client used by the replay tests (`Connection: close`,
 /// full response bytes, minimal status/content-type/body parse). `half_close`
 /// mirrors the generator's `socket.end()`: the write side finishes after the
@@ -2031,11 +2043,20 @@ pub(crate) async fn raw_request(
     port: u16,
     raw: &[u8],
     half_close: bool,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, RawRequestError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            // #2462: the replay must tell a refused port (the generator's
+            // `{"refused": true}`) from any other transport failure, so the
+            // connect kind survives instead of being stringified away.
+            if error.kind() == std::io::ErrorKind::ConnectionRefused {
+                RawRequestError::ConnectRefused
+            } else {
+                RawRequestError::Failed(error.to_string())
+            }
+        })?;
     // A destroyed connection (oversized payload) surfaces as a write or read
     // error with zero response bytes, same as the probe client's `closed`.
     let _ = stream.write_all(raw).await;
@@ -2048,20 +2069,22 @@ pub(crate) async fn raw_request(
     if text.is_empty() {
         return Ok(serde_json::json!({"closed": true}));
     }
-    let split = text
-        .find("\r\n\r\n")
-        .ok_or("#1339 response without header end")?;
+    let split = text.find("\r\n\r\n").ok_or(RawRequestError::Failed(
+        "#1339 response without header end".to_owned(),
+    ))?;
     let (head, body) = text.split_at(split);
     let body = &body[4..];
     let status: u16 = head
         .split("\r\n")
         .next()
-        .ok_or("#1339 empty response head")?
+        .ok_or(RawRequestError::Failed(
+            "#1339 empty response head".to_owned(),
+        ))?
         .split(' ')
         .nth(1)
-        .ok_or("#1339 status line")?
+        .ok_or(RawRequestError::Failed("#1339 status line".to_owned()))?
         .parse()
-        .map_err(|_| "#1339 status code")?;
+        .map_err(|_| RawRequestError::Failed("#1339 status code".to_owned()))?;
     // The probe's `/^content-type:\s*(.*)$/im`: the header name matches
     // case-insensitively, the value is captured verbatim.
     let content_type = head.split("\r\n").skip(1).find_map(|line| {

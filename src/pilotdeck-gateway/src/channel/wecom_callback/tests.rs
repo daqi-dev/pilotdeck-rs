@@ -1265,10 +1265,23 @@ async fn loader_mount_builds_wecom_callback_channel() {
         .stop("test")
         .await
         .expect("#2426 wecom_callback stop");
-    assert!(
-        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
-        "#2426 the listener is gone after stop"
-    );
+    // #2462: only `ConnectionRefused` proves the listener is gone — any other
+    // connect error (fd exhaustion and the like) must fail the test by name
+    // instead of reading as "closed", and the probe itself is bounded.
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    {
+        Err(_deadline) => panic!("#2426 the close probe on port {port} hit the 5s bound"),
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+        Ok(Err(error)) => panic!(
+            "#2426 the close probe on port {port} failed as {error}; \
+             only ECONNREFUSED counts as the listener being gone"
+        ),
+        Ok(_still_open) => panic!("#2426 the listener is still up after stop"),
+    }
 }
 
 #[test]
