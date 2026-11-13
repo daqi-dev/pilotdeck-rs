@@ -7,8 +7,11 @@
   1. 有 `<!-- pr-gate:v1 ... roles=a:S,b:S,... -->` 结果块（scripts/run-review-roles.py 生成），
      且 sibling / concurrency / boundary / simplify 四个角色都在、都是 PASS；
      或有 `<!-- pr-gate:waiver <理由≥8字> -->`（纯文档/纯状态 PR 用，理由会打印出来供评审看）。
-  2. 有 issue 关联：`Closes|Fixes|Resolves #N`（合并即关单，GitHub 定顺序）或 `Refs #N`（一单多 PR，单保持开），
-     或 `<!-- no-issue <理由> -->`。
+  2. 有 issue 关联：`_ISSUE_KEYWORDS` 单源词表（fix-r17：不再手抄第二份窄枚举——旧文案
+     `Closes|Fixes|Resolves` 比 `_ISSUE_KEYWORDS` 少 Closed/Fixed/Resolved 等屈折，第三份手抄
+     漂移面，MM r15 sibling#2；对照规则 4 的 `_TYPE_WORDS` 同款处理）+ `#N`：关单形
+     （Closes/Fixes/Resolves…，合并即关单，GitHub 定顺序）与 `Refs` 形（一单多 PR，单保持开）
+     机检同收（语义区分在人，本脚本只认「有关联」），或 `<!-- no-issue <理由> -->`。
 
   3. 结果块 head= 须等于 PR 当前 head；不等时，只有块里的 patch=（审计时 `git diff base...head` 的补丁指纹）
      与当前 PR 补丁指纹（`git diff <PR base>...<PR head>`）相同才沿用——纯 rebase、内容逐字不变的提交链

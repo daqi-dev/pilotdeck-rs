@@ -20,6 +20,17 @@ ROOT = Path(__file__).resolve().parent.parent
 RUNNER = ROOT / "scripts" / "run-review-roles.py"
 ROLES = "sibling,concurrency,boundary,simplify"
 FINAL = "无问题\n覆盖: 全部\nVERDICT: P0=0 P1=0 P2=0 P3=0"
+# fix-r17 簇①（DS sibling#1/DS boundary#1/MM sibling#1/MM boundary#1/MM boundary#2 五撞同源）：
+# 非换行空白成员表**单源**——r12「单字符纯空白续写」成员循环与 r17「空白块×标点」组合正控表
+# 共用这一份，防第二份成员表漂移（r12 手抄 U+3000/NBSP/U+2009、r16 又只手抄单个 ASCII 空格
+# 正是同一反模式）。成员＝纯空白分支 `[^\S\r\n]+` 能吃的非换行空白 + ASCII 空白块（1/3 个）。
+WS_GAP_MEMBERS = (
+    (" ", "ASCII 空格×1"),
+    ("   ", "ASCII 空格×3"),
+    ("　", "全角空格 U+3000"),
+    ("\xa0", "NBSP U+00A0"),
+    (" ", "thin space U+2009"),
+)
 
 # 假 claude：按同目录 fake.json 的 mode 输出 stream-json（运行器从零构造子进程环境，不能靠环境变量传参）；
 # 把收到的 argv 与环境记到 log 供断言
@@ -951,7 +962,10 @@ def _run(gate, rrr, out_base: Path) -> int:
         # ②纯换行不并的语义保留（`[^\S\r\n]` 不含换行）；③标点分支收紧为至多一个换行——
         # 段落空行（两换行）不并入；④标点串 `[,+#]` 混排连续标点并组；⑤PAIR_SEP 字面量钉死
         # （防未来删成员静默缩窄）；⑥关键词同源断言随 fix-r13 删 ISSUE_LINK 退役（见 r13 段）。
-        for ws_ch, ws_name in [("　", "全角空格 U+3000"), (" ", "NBSP U+00A0"), (" ", "thin space U+2009")]:
+        # fix-r17 簇①：成员表抽成模块级 WS_GAP_MEMBERS 单源（上方定义）——本循环与下方
+        # r17「空白块×标点」组合正控表共用同一份，ASCII 空白块成员一并进本循环（语义上
+        # 同属纯空白续写，本就应过），成员增删只改一处。
+        for ws_ch, ws_name in WS_GAP_MEMBERS:
             if gate.pr_issues(f"Closes #1234{ws_ch}#5678\n") != frozenset({"1234", "5678"}):
                 fails.append(f"fix-r12 P0（DS r11 boundary#1）：{ws_name} 续写第 2 个号未进关联集"
                              f"（得 {sorted(gate.pr_issues(f'Closes #1234{ws_ch}#5678'))}）"
@@ -1022,6 +1036,17 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 在永不返回的调用上把整套套件挂死。
         _probe = (
             "import importlib.util, sys\n"
+            # fix-r17 簇④（MM r15 concurrency#1）：父进程被按 PID SIGTERM/SIGKILL 时，探针子进程
+            # 会成为孤儿继续空转（回退态的指数回溯＝100% CPU 持续到热寂）。CPU 秒数硬限 4 s：
+            # 到点内核发 SIGXCPU（默认动作终止），孤儿至多再烧 4 s CPU。**不用 signal.alarm/
+            # SIGALRM**——信号处理要经解释器投递，能否打断长 re 匹配依版本而定（本机 3.14
+            # 实测 re 引擎循环里会查 pending 信号、孤儿 3.9 s 被杀，见
+            # _tmp/20261113-3056-fixr17/orphan-rlimit-demo.txt，但这是实现细节不是承诺）；
+            # RLIMIT_CPU 由内核记账，不依赖解释器的任何投递行为，孤儿逃不掉。父侧 5 s 墙钟
+            # 超时保留不动（分工：墙钟超时负责「本套件内干净 FAIL」，CPU 硬限负责「父死后
+            # 不空转」）。
+            "import resource\n"
+            "resource.setrlimit(resource.RLIMIT_CPU, (4, 4))\n"
             "spec = importlib.util.spec_from_file_location('gate', sys.argv[1])\n"
             "gate = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(gate)\n"
@@ -1085,17 +1110,44 @@ def _run(gate, rrr, out_base: Path) -> int:
                          "上方逐词正控静默缩窄）")
         if gate._ISSUE_KEYWORDS != r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)":
             fails.append("fix-r16 P2：_ISSUE_KEYWORDS 字面量钉死被破坏（现值 "
-                         f"{gate._ISSUE_KEYWORDS!r}——成员变动须同步本断言与 fix-r13 单源锁，"
-                         "静默删词会让 pr_issues 漏号＝假 PASS）")
+                         f"{gate._ISSUE_KEYWORDS!r}——成员变动须同步本断言与 fix-r17 簇②"
+                         "包含锁/行为正控，静默删词会让 pr_issues 漏号＝假 PASS）")
+        # fix-r17 簇②（DS r15 sibling#2 + simplify#1 两撞）：关键词**包含锁**——字面量钉死只保证
+        # `_ISSUE_KEYWORDS` 这份字符串本身，不保证 ISSUE_NUM 真引了它（定义处与正则处是两处文本，
+        # 手抄第二份词表会静默漂移——与上方 _TYPE_WORDS in ECHO_HEAD/TITLE_HEAD.pattern 同款）。
+        if gate._ISSUE_KEYWORDS not in gate.ISSUE_NUM.pattern:
+            fails.append("fix-r17 簇②：ISSUE_NUM 须单源引 _ISSUE_KEYWORDS（词表定义处改词、"
+                         "正则处漏改 → pr_issues 漏号/错号 → 修复轮配对判定分裂＝假 PASS 面）")
+        # fix-r17 簇②：关键词**行为正控**——包含锁/字面量钉死都只锁字符串，不锁「正则真匹配得上」
+        # （前缀拼接处边界被改坏时上述两锁仍绿）。四个非 Refs 变体逐个实测（Closes/Fixes/Refs
+        # 形已散见上方用例，四个屈折变体此前零覆盖）。
+        for _kw in ("Resolves", "Resolved", "Closed", "Fixed"):
+            if gate.pr_issues(f"{_kw} #3056\n") != frozenset({"3056"}):
+                fails.append(f"fix-r17 簇②：关键词 {_kw} 行为正控——`{_kw} #3056` 应得 "
+                             f"{{'3056'}}，得 {sorted(gate.pr_issues(f'{_kw} #3056'))}"
+                             "（ISSUE_NUM 关键词分支匹配被改坏 → 关联合并丢 → 假 FAIL 面）")
         # fix-r16（MM r15 boundary#2 P2a）：「首个标点前的空白只由 _GAP_EDGE 吃」无正控——
         # _GAP_EDGE 前导 [^\S\r\n]* 被改掉时 `Refs #3056 ,#3074` 的第二个号被静默丢弃
         # → pr_issues 少号 → 标题侧 #N 配不上 → fix_round=None → 假 PASS 面。码位单源锁
         # 只覆盖单字符（W 或 P 单独），不覆盖「空白块+标点」组合。实测期望
         # {"3056","3074"}（_tmp/20261113-3056-fixr16/pre-measure.txt）。
-        if gate.pr_issues("Refs #3056 ,#3074\n") != frozenset({"3056", "3074"}):
-            fails.append("fix-r16 P2：标点前的空白须仍并组（前导空白单处化不得吞掉 GAP·W* "
-                         "的等价语义）——'Refs #3056 ,#3074' 应得 {'3056','3074'}，"
-                         f"得 {sorted(gate.pr_issues('Refs #3056 ,#3074'))}")
+        # fix-r17 簇①（DS sibling#1/DS boundary#1/MM sibling#1/MM boundary#1/MM boundary#2
+        # 五撞）：r16 只手抄了单个 ASCII 空格——_GAP_EDGE 前导 [^\S\r\n]* 收窄成 [ ]* 时
+        # 该断言仍绿（ASCII 空格活过 [ ]*）＝假 PASS 面未被覆盖。扩成小表：WS_GAP_MEMBERS ×
+        # 标点 {",", "，"}，成员与 r12 续写循环单源（见模块级 WS_GAP_MEMBERS 定义）。
+        # 分工：r13 全码位单源锁＝**单字符纯空白**路径（W 或 P 单独出现）；本表＝**空白块×
+        # 标点组合**路径（W+ 紧跟 P——两个量词类的交界正是 _GAP_EDGE 的专属覆盖面）。
+        for ws_ch, ws_name in WS_GAP_MEMBERS:
+            for _punct in (",", "，"):
+                if gate.pr_issues(f"Refs #3056{ws_ch}{_punct}#3074\n") != frozenset({"3056", "3074"}):
+                    fails.append(f"fix-r17 簇①：{ws_name} + 标点 {_punct!r} 组合下第 2 个号未进关联集"
+                                 f"（得 {sorted(gate.pr_issues(f'Refs #3056{ws_ch}{_punct}#3074'))}）——"
+                                 "_GAP_EDGE 前导空白类收窄时该成员的号静默丢失＝假 PASS 面")
+        # fix-r17 簇① CRLF 边（MM boundary#2）：_GAP_EDGE 的 \r?\n 换行边——CRLF 行界 + 标点
+        # 并组（r13 只钉了 LF 形 `Closes #3056\n,#3057`，\r 分支零覆盖）。
+        if gate.pr_issues("Closes #3056\r\n,#3074\n") != frozenset({"3056", "3074"}):
+            fails.append("fix-r17 簇① CRLF：_GAP_EDGE 的 \\r?\\n 边——'Closes #3056\\r\\n,#3074' "
+                         f"应得 {{'3056','3074'}}，得 {sorted(gate.pr_issues('Closes #3056\r\n,#3074'))}")
         # fix-r14（MM sibling#4 P2）：标题侧并组口径双向钉死——正控（PAIR_SEP 成员并组）+
         # 负控（非 gap 分隔符不并组、链只取最近 #N）。
         if gate.fix_round_from_titles(["fix(scripts) #3056;#3074 fix-r12：x"],
