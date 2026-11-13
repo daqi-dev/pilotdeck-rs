@@ -1607,6 +1607,65 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not gate._scan_pairs("fix(x) #1/#2；#1/#3 fix-r5", frozenset({"9999"}))[1]:
             fails.append("fix-r5 P2-a：互异但全体相交的链（共享 #1）短路判非枚举，异单 token 照进 foreign")
 
+        # —— #3074 fix-r6（DS r5 增量评审 7 条 P2 全 a 档：单源化/负控补齐/pdepth 钳 0/窄窗登记）——
+        # sibling#1 单源化：前向配对臂改走 `_bare_num_before(text, start, ends[i])` 后行为不变
+        # ——链成员豁免由 helper 的 chain_end 参数承载（裸号＝前方链自身成员不视作引用）
+        if gate._bare_num_before("+3074 fix-r5", 6) is not True \
+                or gate._bare_num_before("+3074 fix-r5", 6, 5) is not False \
+                or gate._bare_num_before("+3074 fix-r5", 6, 1) is not True:
+            fails.append("fix-r6 sibling#1：_bare_num_before 的 chain_end 豁免参数口径（数字起点 < chain_end "
+                         "⇒ 链成员返回 False）")
+        if gate.fix_round_from_title("fix(scripts) #3056+#3074 fix-r5：x", frozenset({"3074"})) != 5:
+            fails.append("fix-r6 sibling#1：单源化后链成员豁免语义不变（#3056+#3074 前向配对仍计 5）")
+        # sibling#2① 半角括号负控：括号深度判据的半角分支（与全角同判）——无冒号 + 半角括号
+        # 尾注形的链不参与枚举，异单失配照进 foreign
+        if not gate.foreign_fixround_pairs(["fix(scripts) #9999 fix-r5 修评审 (复用 #1321 机制)"],
+                                           frozenset({"3056"})):
+            fails.append("fix-r6 sibling#2①：半角括号尾注形（无冒号）的链不参与枚举，异单失配应进 foreign")
+        # sibling#2② + boundary#2 钳 0 后语义（以 clamp 行为为准，注释同步）：游离闭括号后
+        # **不接开括号**的链回到深度 0 参与枚举——两链不相交 ⇒ 枚举抑制 ⇒ foreign 为空，
+        # 与已登记「无冒号且无括号的裸尾注」窄窗同族（_enum_title docstring ③，在档）
+        if gate.foreign_fixround_pairs(["fix(scripts) #9999 fix-r5 修评审 a) 复盘 #1321 机制"],
+                                       frozenset({"3056"})):
+            fails.append("fix-r6 sibling#2②：游离闭括号后无开括号的链参与枚举（钳 0 后与无括号窄窗同族，在档）")
+        # sibling#3 _BARE_WINDOW 边界控（:314-316 注释「截断按无裸号计入＝宁高勿低」钉死）：
+        # 裸号前导符恰距 token 64 字符（窗口含界）⇒ 在窗口内＝裸号引用不计；65 字符 ⇒ 截断
+        # 按无裸号计入（假 FAIL 向宁高勿低）——窗口值或 max(0,…) 的改动会在此显式红
+        if gate.fix_round_from_title("fix(x) ；" + "9" * 62 + " fix-r5：x") is not None:
+            fails.append("fix-r6 sibling#3：裸号前导符距 token 恰 64 字符在窗口内（≤64），视为裸号引用不计")
+        if gate.fix_round_from_title("fix(x) ；" + "9" * 63 + " fix-r5：x") != 5:
+            fails.append("fix-r6 sibling#3：裸号前导符距 token 65 字符超出窗口，截断按无裸号计入（宁高勿低）")
+        # sibling#4 窄窗 pinning（fix-r2 :69-71 / fix-r10 :935 钉法对齐）：fix-r5 登记的两条
+        # 已知窄窗钉住当前行为（_enum_title docstring「已知窄窗」）——未来对 enum_end/括号界
+        # 的收紧/放松会让窄窗面变化在此显式红，登记文字与实际行为不再静默失配
+        if gate.foreign_fixround_pairs(["fix(x) #9999 fix-r5 复盘 #1321 机制"], frozenset({"3056"})):
+            fails.append("fix-r6 sibling#4：无冒号裸尾注窄窗在档（与 board 并记词法不可分，见 _enum_title docstring）")
+        if gate.foreign_fixround_pairs(["fix(x): #9999 fix-r5 修 #1321"], frozenset({"3056"})):
+            fails.append("fix-r6 sibling#4：前缀冒号窄窗在档（收紧会误伤 chore(board): 01:10 族，见 _enum_title docstring）")
+        # boundary#2 pdepth 钳 0 负控：游离闭括号 + 开括号（`a)（…）`／`a)(…)`）不再把深度
+        # 抵回 0 ⇒ 尾部注记链停在深度 1 不参与枚举 ⇒ P0 旁路形（fix-r2 异单旁路 + 加一个 `)`）
+        # 必须仍命中 foreign（旧「不钳 0」在此形复开旁路）
+        for t in ["fix(scripts) #9999 fix-r5 修评审 a)（复用 #1321 机制）",
+                  "fix(scripts) #9999 fix-r5 修评审 a)(复用 #1321 机制)"]:
+            if not gate.foreign_fixround_pairs([t], frozenset({"3056"})):
+                fails.append(f"fix-r6 boundary#2：游离闭括号+开括号不得把链抵回深度 0，"
+                             f"尾部注记形异单失配仍进 foreign（钳 0）：{t[:40]!r}")
+        # boundary#1 scope 括号族（docstring 已知窄窗①登记 + 单测）：类型词 scope 括号内的链
+        # 不参与枚举——token 前向配对链（scope 链）与 issues 全不相交时 fail-closed 拒收
+        # （假 FAIL 向窄窗；真实 PR body 有界实核见 _tmp/20261114-3074-fixr6/RESULT.md）
+        if not gate.foreign_fixround_pairs(
+                ["fix(webhook,#1689,#1947): fix-r3 — 三条 P1 当轮清零（#1334 收尾批第 3 轮）"],
+                frozenset({"1334"})):
+            fails.append("fix-r6 boundary#1：scope 括号链不参与枚举，前向配对与 issues 不相交时 "
+                         "fail-closed 拒收（窄窗在档，见 _enum_title docstring）")
+        # boundary#3 时间戳窗 pinning（登记不改标准，语料 0 实例）：锚点后条目内时间戳（HH:MM）
+        # 的冒号切 enum_end ⇒ 其后枚举链（{1318}）退出枚举 ⇒ 合法 board 形对 {1305} 进
+        # foreign 误报（假 FAIL 向窄窗在档，见 _enum_title docstring②）
+        if not gate._scan_pairs("chore(state) #1305 fix-r3 09:30 合入；#1318 缺第二家",
+                                frozenset({"3056"}))[1]:
+            fails.append("fix-r6 boundary#3：锚点后时间戳冒号切 enum_end 的窄窗在档（board 形 foreign "
+                         "误报＝假 FAIL 向，语料 0 实例）")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
