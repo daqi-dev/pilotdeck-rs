@@ -3,12 +3,13 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 77; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 78; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
 `sms-oracle-signed-signature-header`, `#1913` added
 `sms-oracle-recorded-version`, `#2152` added
 `sms-oracle-recorded-omit-host`, `#2691` added the three port-guard
-switches — the `switches` table is the truth source). `#1879` only
+switches, `#2041` added `sms-oracle-wire-body-len-fork` — the `switches`
+table is the truth source). `#1879` only
 rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring
@@ -280,6 +281,12 @@ switches = [
     ('sms-oracle-boundary-unregistered', SMS / 'tests.rs',
      'recorded_boundary_body_length_rejects_unregistered_case',
      '#1339 #1984 rejects an undeclared boundary case'),
+    # #2041: build_raw re-derives its wire body length inline (the pre-#2041
+    # second copy) and stops honoring `truncate` — the gate and the bytes on
+    # the wire fork again, the exact regression the shared derivation closed.
+    ('sms-oracle-wire-body-len-fork', SMS / 'tests.rs',
+     'gate_and_build_raw_share_the_wire_body_length',
+     '#2041 the gate and build_raw must agree on the wire body length'),
     ('sms-oracle-env-value', SMS / 'tests.rs', 'recorded_env_value_rejects_drift',
      '#1339 #1729 rejects env_value drift'),
     ('sms-oracle-send-fail-entry', SMS / 'tests.rs', 'recorded_send_fail_entry_rejects_drift',

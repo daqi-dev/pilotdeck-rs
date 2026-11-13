@@ -1825,6 +1825,24 @@ fn recorded_body_len_checked(step: &Value) -> Result<usize, String> {
     recorded_body_spec_checked(step).map(|(_, _, length)| length)
 }
 
+/// #2041: wire body bytes of one recorded `request` step — the bytes that
+/// actually reach the product after `truncate`, clamped at zero like the
+/// generator's `Math.max(0, bytes.length - truncate)` (generate.mts:250),
+/// with the length still derived through `recorded_body_spec_checked` so a
+/// 1 MiB boundary body is never materialized just to be measured. This is
+/// the single derivation of the wire body length: the #1984 boundary gate,
+/// `build_raw` and the #1901 stall-shape check all call it, so the three
+/// cannot fork back into parallel copies that agree only by coincidence.
+fn wire_body_len_checked(step: &Value) -> Result<usize, String> {
+    let truncate =
+        usize::try_from(recorded_truncate_checked(step)?.unwrap_or_default()).unwrap_or(usize::MAX);
+    Ok(recorded_body_len_checked(step)?.saturating_sub(truncate))
+}
+
+fn wire_body_len(step: &Value) -> usize {
+    wire_body_len_checked(step).unwrap_or_else(|error| panic!("{error}"))
+}
+
 fn recorded_body(step: &Value) -> Vec<u8> {
     recorded_body_checked(step).unwrap_or_else(|error| panic!("{error}"))
 }
@@ -1849,11 +1867,9 @@ fn recorded_request_body_lengths(case: &Value) -> Result<Vec<usize>, String> {
         .into_iter()
         .flatten()
         .filter(|step| step.get("op").and_then(Value::as_str) == Some("request"))
-        .map(|step| {
-            let truncate = usize::try_from(recorded_truncate_checked(step)?.unwrap_or_default())
-                .unwrap_or(usize::MAX);
-            Ok(recorded_body_len_checked(step)?.saturating_sub(truncate))
-        })
+        // #2041: the one shared wire-length derivation, the same one
+        // `build_raw` and the #1901 stall shape use.
+        .map(wire_body_len_checked)
         .collect()
 }
 
@@ -1889,7 +1905,14 @@ fn assert_boundary_body_len(name: &str, case: &Value) {
     assert_boundary_body_len_checked(name, case).unwrap_or_else(|error| panic!("{error}"));
 }
 
-fn build_raw(step: &Value) -> Vec<u8> {
+/// Recorded request head and wire body of one step (#2041). The head carries
+/// the recorded `Content-Length` — the full body length, exactly what the
+/// generator declares (`Buffer.byteLength(bytes)`, generate.mts:259) — while
+/// the body is cut to `wire_body_len`, the single wire-length derivation the
+/// boundary gate also uses. `build_raw` concatenates the two; the split lets
+/// the gate-equivalence test observe the wire body without re-deriving the
+/// head format.
+fn build_raw_parts(step: &Value) -> (Vec<u8>, Vec<u8>) {
     let body = recorded_body(step);
     let headers = recorded_headers(step);
     // #1913: `Connection: close` was hardcoded with the 1.1 request line;
@@ -1914,7 +1937,7 @@ fn build_raw(step: &Value) -> Vec<u8> {
     } else {
         "Host: 127.0.0.1\r\n"
     };
-    let mut raw = format!(
+    let mut head = format!(
         "{} {} {}\r\n{host}{connection}",
         recorded_method(step).unwrap_or("POST"),
         recorded_path(step).unwrap_or("/sms/incoming"),
@@ -1922,15 +1945,30 @@ fn build_raw(step: &Value) -> Vec<u8> {
     )
     .into_bytes();
     for (key, value) in headers {
-        raw.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
+        head.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
-    raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
-    let head_len = raw.len();
+    head.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+    // #2041: the wire body length comes from the one shared derivation, so
+    // the bytes on the wire and the boundary gate's classification cannot
+    // fork; `truncate` keeps the tail off the wire while the recorded
+    // `Content-Length` above stays the full length.
+    let wire_len = if crate::mutants::on("sms-oracle-wire-body-len-fork") {
+        // Negative control: `build_raw` re-derives its own wire length (the
+        // pre-#2041 shape of a second, forking copy) and stops honoring
+        // `truncate` — `gate_and_build_raw_share_the_wire_body_length`
+        // must go red here.
+        body.len()
+    } else {
+        wire_body_len(step)
+    };
+    let mut wire_body = body;
+    wire_body.truncate(wire_len);
+    (head, wire_body)
+}
+
+fn build_raw(step: &Value) -> Vec<u8> {
+    let (mut raw, body) = build_raw_parts(step);
     raw.extend_from_slice(&body);
-    // Truncate body bytes only, preserving the recorded Content-Length.
-    let truncate =
-        usize::try_from(recorded_truncate(step).unwrap_or_default()).unwrap_or(usize::MAX);
-    raw.truncate(head_len + body.len().saturating_sub(truncate));
     raw
 }
 
@@ -2376,6 +2414,95 @@ fn recorded_boundary_body_length_counts_only_wire_bytes() {
         .is_err(),
         "#1339 #1984 truncation shortens the replayed body below the cap"
     );
+}
+
+/// #2041: the #1984 review found the "wire body length" derived three times
+/// in parallel (the boundary gate, `build_raw`, and the #1901 stall shape);
+/// the copies agreed only by coincidence, so a later change to one of them —
+/// say, a new truncation semantics inside `build_raw` — would not move the
+/// others and the boundary cells would be silently misjudged again. This test
+/// pins the equivalence directly: for every shape below and every request
+/// step of every oracle cell, the gate's number is the count of body bytes
+/// `build_raw` actually puts after the head, so the two call sites cannot
+/// fork without a red test (`sms-oracle-wire-body-len-fork`).
+#[test]
+fn gate_and_build_raw_share_the_wire_body_length() {
+    let table: &[(&str, Value)] = &[
+        (
+            "plain body",
+            json!({"steps":[{"op":"request","body":"abcdefgh"}]}),
+        ),
+        (
+            "absent truncate",
+            json!({"steps":[{"op":"request","body":"abcdef"}]}),
+        ),
+        (
+            "zero truncate",
+            json!({"steps":[{"op":"request","body":"abcdef","truncate":0_u64}]}),
+        ),
+        (
+            "null truncate is absence",
+            json!({"steps":[{"op":"request","body":"abcdef","truncate":null}]}),
+        ),
+        (
+            "partial truncate",
+            json!({"steps":[{"op":"request","body":"abcdef","truncate":2_u64}]}),
+        ),
+        (
+            "truncate equal to the body",
+            json!({"steps":[{"op":"request","body":"abc","truncate":3_u64}]}),
+        ),
+        (
+            "truncate past the body clamps at zero",
+            json!({"steps":[{"op":"request","body":"abc","truncate":100_u64}]}),
+        ),
+        (
+            "repeat body",
+            json!({"steps":[{"op":"request","body":{"repeat":"xy","count":3},"truncate":4_u64}]}),
+        ),
+        (
+            "several request steps, non-request steps not counted",
+            json!({"steps":[
+                {"op":"request","body":"abc","truncate":1_u64},
+                {"op":"settle","body":"must-not-count"},
+                {"op":"request","body":{"repeat":"z","count":10},"truncate":7_u64},
+            ]}),
+        ),
+        (
+            "boundary shapes",
+            json!({"steps":[
+                {"op":"request","body":{"repeat":"x","count":1_048_576_u64}},
+                {"op":"settle"},
+                {"op":"request","body":{"repeat":"y","count":1_048_577_u64},"truncate":1_u64},
+            ]}),
+        ),
+    ];
+    let mut cases: Vec<(String, Value)> = table
+        .iter()
+        .map(|(label, case)| ((*label).to_owned(), case.clone()))
+        .collect();
+    for case in oracle_cases() {
+        let name = case["name"]
+            .as_str()
+            .expect("#2041 every oracle case carries a string name")
+            .to_owned();
+        cases.push((name, case));
+    }
+    for (label, case) in cases {
+        let gate = recorded_request_body_lengths(&case)
+            .unwrap_or_else(|error| panic!("#2041 {label} gate derivation: {error}"));
+        let wire = recorded_steps(&case)
+            .expect("#2041 steps")
+            .iter()
+            .filter(|step| step.get("op").and_then(Value::as_str) == Some("request"))
+            .map(|step| build_raw_parts(step).1.len())
+            .collect::<Vec<usize>>();
+        crate::negative_assert_eq!(
+            gate,
+            wire,
+            "#2041 the gate and build_raw must agree on the wire body length ({label})"
+        );
+    }
 }
 
 /// #1984: the declared boundary table and the fixture must agree in both
@@ -3397,17 +3524,21 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
          request shape"
     );
     let declared = recorded_body(step).len();
-    let truncate = usize::try_from(recorded_truncate(step).unwrap_or_default())
-        .expect("#1901 truncate fits usize");
+    let truncate = recorded_truncate(step).unwrap_or_default();
     // The generator clamps with `Math.max(0, len - truncate)`, so a truncation
     // longer than the body can only come from hand-edited fixtures; keep that
     // corruption loud instead of letting it collapse to `sent = 0` below.
+    // #2041: compared in the recorded u64 domain — a `truncate` wider than
+    // `usize` is the same corruption and fails here just as loudly.
     crate::negative_assert!(
-        truncate <= declared,
+        truncate <= declared as u64,
         "#1901 body-read-timeout: truncate {truncate} exceeds the declared body \
          ({declared} bytes)"
     );
-    let sent = declared - truncate;
+    // #2041: the sent length is the one shared wire derivation
+    // (`wire_body_len`), the same one the boundary gate and `build_raw` use,
+    // so the stall shape cannot fork from the replay's own truncation.
+    let sent = wire_body_len(step);
     crate::negative_assert!(
         sent < declared,
         "#1901 body-read-timeout: the request must stall before its declared \
