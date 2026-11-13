@@ -326,7 +326,7 @@ class Static:
                     continue  # This exact branch exits before the capture path.
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        if target.id in ('originals', 'snapshots') and not isinstance(node.value, (ast.Dict, ast.DictComp)):
+                        if target.id in SNAPSHOT_NAMES and not isinstance(node.value, (ast.Dict, ast.DictComp)):
                             raise Unsupported('unsupported snapshot mapping initializer')
                         self.defs.setdefault(target.id, []).append((node.lineno, node.value))
                     elif isinstance(target, ast.Tuple):
@@ -631,7 +631,7 @@ class Static:
             base = self.value(call.args[0], call.lineno, local)
             paths = self.value(call.args[1], call.lineno, local)
             return {path: self.confined(Path(base) / path).read_bytes() for path in paths}
-        choices = (self.snapshot_definitions(name, line) if name in ('originals', 'snapshots')
+        choices = (self.snapshot_definitions(name, line) if name in SNAPSHOT_NAMES
                    else [(n, value) for n, value in self.defs.get(name, []) if n < line])
         if not choices:
             raise Unsupported(f'unresolved name {name}')
@@ -855,7 +855,7 @@ class Static:
             if expression.func.attr in ('replace', 'strip', 'decode'):
                 return self.snapshot_target(expression.func.value, line, local)
         if (isinstance(expression, ast.Subscript) and isinstance(expression.value, ast.Name)
-                and expression.value.id in ('originals', 'snapshots')):
+                and expression.value.id in SNAPSHOT_NAMES):
             return self.target(expression.slice, line, local)
         raise Unsupported('unresolved source path: unsupported snapshot origin')
 
