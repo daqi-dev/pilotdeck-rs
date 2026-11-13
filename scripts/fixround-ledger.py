@@ -402,7 +402,7 @@ def count(path: str) -> int:
             rc = 1
     # 悬置可见性（fix-r5 修 5）：悬置键不进停手计数，但运营上要知道有几个轮在等补跑、
     # 逾期即记 1 次——不打印会把「须补跑」变成只有翻台账才能发现的静默义务
-    # fix-r6（DS r5 P2a）：contention_first（首次争抢，排除段）与 suspended 同为「须补跑」的
+    # fix-r9（DS r5 P2a）：contention_first（首次争抢，排除段）与 suspended 同为「须补跑」的
     # 悬置形态——卡面判据 5 两类都不进停手计数，运营上都须可见，只打印 suspended 会把首次
     # 争抢的补跑义务藏进台账里
     pending = [rec for rec in merged if classify(rec) in ("suspended", "contention_first")]

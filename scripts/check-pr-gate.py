@@ -97,15 +97,25 @@ FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d+)(?![A-Za-z0-9_-])")
 # 引用别的单的轮号按 issue 号归属各单，不再「每标题首个」（低估→跳过 N≥4 residual＝假 PASS）
 # /「行内 max」（高估→多要 residual＝假 FAIL）二选一。#N 串由链接符连成（#3056+#3057 一组）；
 # 空隙视为紧贴（#1#2 也链）。pr_issues（本 PR 关联单号）从去围栏正文的 ISSUE_NUM 提取。
-# fix-r6（DS r5 boundary P1）HASH_REF 加词界：前后排除字母/数字/下划线/前置 #——`boundary#1`、
-# `C#1234` 里的 #N 不再算「就近配对 #N」；前置**数字保留**（lookbehind 不排数字），`#1#2` 紧贴
-# 链行为（空隙视为紧贴，见上）不变。
+# fix-r9（DS r5 boundary P1）HASH_REF 加词界：前后排除字母/数字/下划线/前置 #——`boundary#1`、
+# `C#1234`、`conc#1`、`boundary-rerun#1` 里的 #N 不再算「就近配对 #N」（伪 token 会抢真实
+# 配对＝假 PASS）。fix-r10 复核 DS r9 boundary#2 P2 的「排除表收窄」方案（只排角色词与独立
+# C/F，放过 `PR#3074` 真引用）：真实语料复算证伪——复活集全是 `conc#1`/`bnd#1`/`r3b#1`/
+# `boundary-rerun#1` 伪 token（词表永远补不全，见 memory「词汇枚举式修判读不收敛」），而
+# 语料 10686 条里 glued `PR#N`/`issue#N` **真引用 0 实例**——按评审给的另一选项**接受窄窗**：
+# 字母紧贴的真实引用不参与配对（`… #9999 fix-r2 … PR#3074 fix-r8` 判不出 8），整条无 #N 时
+# 仍走「全部轮号计入」兜底；一律排字母是结构性封类，不再逐词打补丁。前置**数字保留**
+# （lookbehind 不排数字），`#1#2` 紧贴链行为（空隙视为紧贴，见上）不变。
 HASH_REF = re.compile(r"(?<![A-Za-z_#])#(\d+)(?![A-Za-z0-9_])")
-# fix-r6（DS r5 boundary P0）多单关联列表：关键词后面的续写列表（`Closes #3056、#3057`、
+# fix-r9（DS r5 boundary P0）多单关联列表：关键词后面的续写列表（`Closes #3056、#3057`、
 # `Refs #3056/#3057`）第 2 个及以后的号也进集合——只取首个会让「标题引用 #3057 的修复轮」
 # 判 fix_round=None，fixtype/residual/N≥4 整套跳过＝尺子假 PASS。
+# fix-r10（DS r9 boundary#1 P0 + sibling#1 P1 双谱系同撞）：续写分隔符补**空白与 `+`**，与
+# PAIR_SEP（+:、，/ 空白制表）口径对齐——board 真实形态 `Closes #382 #387 #452`、
+# `Refs #1696 #1684`、`Refs #1985+#2053` 此前仍只取首号，同一假 PASS 面换分隔符复现；
+# `\s+` 分隔不会把 `Closes #3056 and #3058` 的连词并进（`and` 不匹配 `#\d+` 前缀）。
 ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+"
-                       r"#(?P<nums>\d+(?:\s*[,，、/]\s*#\d+)*)(?![A-Za-z0-9_])", re.I)
+                       r"#(?P<nums>\d+(?:(?:\s*[,，、/+]\s*|\s+)#\d+)*)(?![A-Za-z0-9_])", re.I)
 PAIR_SEP = frozenset("+,、，/ \t")
 # 修 4（fix-r5，boundary#4 P2）本地回显扫描的判据：只认「结构化回显」——类型词 + (scope) +
 # 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
@@ -188,8 +198,10 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
 
 def pr_issues(masked: str) -> frozenset[str]:
     """PR 关联单号集合（修 2 配对判定的「本单」）：去围栏正文里所有 Closes/Fixes/Resolves/
-    Refs #N 的 N，含续写列表的全部号（fix-r6，DS r5 boundary P0：`Closes #3056、#3057` 的
-    3057 也进集合——首个之外的号丢掉会让引用它们的标题判不进本 PR 修复轮）；与规则 2 的
+    Refs #N 的 N，含续写列表的全部号（fix-r9，DS r5 boundary P0：`Closes #3056、#3057` 的
+    3057 也进集合——首个之外的号丢掉会让引用它们的标题判不进本 PR 修复轮；fix-r10，DS r9
+    boundary#1/sibling#1 双撞 P0：续写分隔符含空白与 `+`（与 PAIR_SEP 对齐），`Closes
+    #382 #387 #452`、`Refs #1985+#2053` 的后续号同样进集合）；与规则 2 的
     ISSUE_LINK 同款关键词口径。规则 2 要求 PR 必有关联，正常过闸 PR 非空；空集时配对
     token 全不计——配对判据不放大「正文没写关联」的违规。"""
     return frozenset(n for m in ISSUE_NUM.finditer(masked)
@@ -224,8 +236,10 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
       路径走正文首行兜底——非首行正文回显不再识别，**有意收窄**，fix-r6 起有负控钉死；
       调用方 main 打 stderr 显式告警说明缺哪件，不静默降级，fix-r7）；
     - ([], "") = 空集：**只有 base==head**（无提交可判）是合法空集，不是 git 失败，按「无主
-      信号」与本地形态同款走正文首行 + 结构化回显兜底（fix-r6 P2a：空集与 None 一样没有任何
-      标题证据，回显扫描该开；「只看首行」的收紧只给「集合在但全不命中」的 CI 形态）。git log
+      信号」与本地形态同款走正文首行 + 结构化回显兜底（fix-r9 P2a：空集与 None 一样没有任何
+      标题证据，回显扫描该开；「只看首行」的收紧只给「集合在但全不命中」的 CI 形态；DS r9
+      sibling#4：空 subject 提交过滤后同样得空列表，check() 的 `not titles` 与 base==head
+      空集同走回显兜底，方向 fail-safe）。git log
       **空输出且 base≠head** 是坏范围（head 是 base 的
       祖先：--base/--head 传反 / base 是 head 的后代，`git rev-parse` 比对 + `git
       merge-base --is-ancestor` 判）——fail-closed 拒收写明原因，不得当合法空集静默丢主信号
@@ -289,8 +303,9 @@ def fix_round_from_body(body: str, echo_scan: bool = False, issues: frozenset[st
     fix-r1 P0 的 CJK 连写首行「修复fix-r5：」靠它；已知窄代价：类型词开头的散文行恰在首行
     也判修复轮，假 FAIL 向，fix-r4 修 3.5 钉死）。**别再往正文正则里加词**（fix-r4 停点
     报告证明行内无判别量）。
-    fix-r5 修 4（boundary#4 P2）：echo_scan=True（仅主信号缺失——本地 --body-file 不传
-    --base/--head 的路径）时，首行不命中再扫**全正文结构化回显**（ECHO_HEAD：`fix(...)
+    fix-r5 修 4（boundary#4 P2）：echo_scan=True（主信号缺失——本地 --body-file 不传
+    --base/--head 的路径，或 base==head 空集、空 subject 过滤后空列表〔fix-r9 P2a〕）时，
+    首行不命中再扫**全正文结构化回显**（ECHO_HEAD：`fix(...)
     #N fix-rM` 形态，#N 配对到本 PR 关联单才计入）——本地先跑闸门是硬步骤，只看首行会把
     「## 概述」开头的正文判非修复轮、本地过 CI 再拒。CI 形态（titles 在但全不命中）**不**
     走回显扫描，保持只看首行（fix-r6 起有负控钉死）。"""
@@ -530,8 +545,8 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
     if titles is not None:
         fix_round = fix_round_from_titles(titles, issues)
     if fix_round is None:
-        # 修 4（fix-r5，boundary#4 P2）：主信号缺失（本地形态，或 base==head 的空集——fix-r6
-        # P2a：空集同样无主信号可用）时正文兜底带全正文结构化回显扫描（ECHO_HEAD + 配对）；
+        # 修 4（fix-r5，boundary#4 P2）：主信号缺失（本地形态，或 base==head 的空集、空 subject
+        # 过滤后空列表——fix-r9 P2a：空集同样无主信号可用）时正文兜底带全正文结构化回显扫描（ECHO_HEAD + 配对）；
         # 集合存在但全不命中（CI 形态）保持只看首行（fix-r6 负控钉死）
         fix_round = fix_round_from_body(masked, echo_scan=titles is None or not titles, issues=issues)
     w = WAIVER.search(masked)
