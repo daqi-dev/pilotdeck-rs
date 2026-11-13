@@ -23,6 +23,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -604,11 +605,28 @@ def main():
         non_darwin = DARWIN_ONLY | BASELINE_MACOS_ONLY
         requested = set(args.mutations) if args.mutations else non_darwin
         for name in sorted(requested & DARWIN_ONLY):
-            row = next(r for r in mutations if r[0] == name)
+            # A DARWIN_ONLY name the table no longer carries is set/table
+            # drift, not a skip: record the row INVALID instead of letting
+            # next() abort the whole sweep on a StopIteration (fix-r5,
+            # review P2a — every row must be accounted for before summary).
+            row = next((r for r in mutations if r[0] == name), None)
+            if row is None:
+                entry = {'name': name, 'status': 'INVALID',
+                         'reason': 'DARWIN_ONLY names a row the mutations '
+                                   'table does not carry'}
+                summary.append(entry)
+                save(f'{name}.json', json.dumps(entry, indent=2) + '\n')
+                print(f'{name}: {entry["status"]}: {entry["reason"]}', flush=True)
+                continue
             darwin_source, old, test = row[1], row[2], row[4]
             with mutating_sources(root, [darwin_source], baseline=args.baseline) as snapshots:
                 content = snapshots[darwin_source].decode()
-                defined = f'fn {test}(' in content
+                # A definition shape, not a substring: a deleted parent whose
+                # name survives in a comment or a string literal would
+                # otherwise still count as defined (fix-r5, review P2a).
+                defined = re.search(
+                    rf'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn '
+                    rf'{re.escape(test)}\s*\(', content, re.M)
                 count = content.count(old)
                 if count != 1:
                     entry = {'name': name, 'status': 'INVALID',

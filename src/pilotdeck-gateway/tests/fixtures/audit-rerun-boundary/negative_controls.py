@@ -72,6 +72,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -166,7 +167,7 @@ MUTATIONS = [
     # bytes it measured: a drifted unit table (2048 B is wrong on every
     # measured host) must fail closed before any rerun runs.
     ('fsize-unit-constant-trusted', SOURCE,
-     'landed > 0 && landed < 4096 && RERUN_OUTPUT_LIMIT % landed == 0',
+     'landed > 0 && landed < 4096 && RERUN_OUTPUT_LIMIT.is_multiple_of(landed)',
      'landed == 2048',
      'test_process::owned_rerun_hits_the_kernel_output_cap',
      "#1723 the wrapping shell's ulimit -f unit is"),
@@ -335,7 +336,12 @@ def main():
             # silently forever on every non-Linux host.
             with mutating_sources(ROOT, [source], baseline=args.baseline) as snapshots:
                 content = snapshots[source].decode()
-                defined = f'fn {test.rsplit("::", 1)[-1]}(' in content
+                # A definition shape, not a substring: a deleted parent whose
+                # name survives in a comment or a string literal would
+                # otherwise still count as defined (fix-r5, review P2a).
+                defined = re.search(
+                    rf'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn '
+                    rf'{re.escape(test.rsplit("::", 1)[-1])}\s*\(', content, re.M)
                 count = content.count(old)
                 if count != 1:
                     status, reason = 'INVALID', f'anchor count {count}'
