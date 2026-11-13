@@ -34,7 +34,7 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 且不创建证据目录；它不发布 `summary.json` 失败总结，因为这些分支一行变异都没跑。其余运行期结果
 仍按该函数的既有语义（SURVIVED / INVALID → 1）。
 
-契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本，其 `main()` 对所有守卫失败一律返回 rc=2（含进入守卫前的拒跑）；本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
+契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本：守卫失败与运行中异常其 `main()` 返回 rc=2；模块级名册漂移拒跑发生在进入 `main()` 之前（`sys.exit(<str>)`），退出码为 rc=1（#1076 诊断，`test_a_renamed_row_is_refused_without_evidence` 钉住）。本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
 
 `_shared.negative_control.mutation_suite` 另有一条启动期规则（#1666/#1734）：它先占证据目录再取环境，
 所以 `CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白走 `negative_selection.missing_target()`；

@@ -4415,6 +4415,13 @@ class EnvironmentControls(unittest.TestCase):
                       flush=True)
             # #3043 fix-r6：共享发布形态的条目没有本地 atomic 函数，形态半边跳过。
             if function is None:
+                # DS fix-r6 simplify P2：None 的理由须可证伪——该夹具确无本地
+                # atomic 写函数；哪天它长出了 write_atomic/atomic_write，这里
+                # 变红提醒改登记函数名，不能照抄 None 让形态半边静默缺席。
+                self.assertNotIn('def write_atomic', source,
+                                 f'#3043 {relative} 记 None 却定义了 write_atomic')
+                self.assertNotIn('def atomic_write', source,
+                                 f'#3043 {relative} 记 None 却定义了 atomic_write')
                 continue
             scratch = re.search(r"PUBLISH_DIR = (?:ROOT|root) / (['\"])\.negctl-publish\1",
                                 source)

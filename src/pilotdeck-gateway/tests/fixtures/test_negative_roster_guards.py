@@ -1700,13 +1700,18 @@ class SharedRunnerRosterGuard(unittest.TestCase):
     with its own outside-literal denominator, not a register row.
     """
 
-    def run_copy(self, source, argv=()):
+    def run_copy(self, source, argv=(), with_output=False):
         """Run a staged copy of the driver in a temp tree; return (result, out).
 
         ``argv`` lands after the script name, so the copy's own ``main()``
         parses it exactly like a real invocation. The guarded sources the
         ``--check`` walk reads are staged next to the copy so the pristine
         direction exercises the real 39-anchor walk end to end.
+        ``with_output=True`` appends ``--output <out>`` so the refusal cases
+        below stay falsifiable: if a pre-run refusal ever stopped firing,
+        the run would proceed past argparse and create ``out`` (DS fix-r6
+        boundary P2 -- the bare ``assertFalse(out.exists())`` used to hold
+        vacuously because no path ever created ``out``).
         """
         base = Path(tempfile.mkdtemp(prefix='pdrs-3043-shared-runner-roster-'))
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
@@ -1729,6 +1734,8 @@ class SharedRunnerRosterGuard(unittest.TestCase):
                                               repr(str(FIXTURES))),
             encoding='utf-8')
         out = base / 'out'
+        if with_output:
+            argv = (*argv, '--output', str(out))
         result = subprocess.run(
             [sys.executable, '-B', str(boot), str(copy), *argv],
             capture_output=True, text=True, timeout=60,
@@ -1743,7 +1750,8 @@ class SharedRunnerRosterGuard(unittest.TestCase):
         result, out = self.run_copy(
             source.replace(_SHARED_RUNNER_TABLE_ROW,
                            _SHARED_RUNNER_TABLE_ROW.replace('narrowed',
-                                                            'narrowed-x')))
+                                                            'narrowed-x')),
+            with_output=True)
         self.assertEqual(result.returncode, 1,
                          f'#3043 a renamed row is a pre-run refusal (rc 1): '
                          f'{result.stderr!r}')
@@ -1764,7 +1772,7 @@ class SharedRunnerRosterGuard(unittest.TestCase):
                             _SHARED_RUNNER_TABLE_ROW)
                    .replace('\n        "__swap__",\n',
                             _SHARED_RUNNER_TABLE_ROW_MOVED))
-        result, out = self.run_copy(swapped)
+        result, out = self.run_copy(swapped, with_output=True)
         self.assertEqual(result.returncode, 1,
                          f'#3043 a reordered row is a pre-run refusal (rc 1): '
                          f'{result.stderr!r}')
@@ -1804,6 +1812,9 @@ class SharedRunnerRosterGuard(unittest.TestCase):
                          f'{result.stderr!r}')
         self.assertIn('--output is required unless --check is used',
                       result.stderr)
+        # Shape guard only (DS fix-r6 boundary P2): this case deliberately
+        # does NOT pass --output -- the pinned refusal is exactly the
+        # missing-output usage error, so no path here creates ``out``.
         self.assertFalse(out.exists())
         # The outside literal: the real module must still carry the whole
         # 39-name pair, so the shrunk source fails this pin exactly when
@@ -1825,7 +1836,7 @@ class SharedRunnerRosterGuard(unittest.TestCase):
         result, out = self.run_copy(
             (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
              ).read_text(encoding='utf-8'),
-            argv=('--check',))
+            argv=('--check',), with_output=True)
         self.assertEqual(result.returncode, 0,
                          f'#3043 the pristine copy must walk all '
                          f'{SHARED_RUNNER_ROSTER} anchors and exit 0: '
