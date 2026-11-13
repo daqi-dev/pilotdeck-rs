@@ -14,26 +14,34 @@
      与当前 PR 补丁指纹（`git diff <PR base>...<PR head>`）相同才沿用——纯 rebase、内容逐字不变的提交链
      不必重审（同 Gerrit trivial rebase 保留评审）；任何一行不同、上下文变了、或算不出指纹，都按旧提交拒收。
 
-  4. 修复轮字段（#3056，长尾收口卡「机检落点」；fix-r6 主信号源扩为集合）：**主信号 = PR 范围
-     提交标题集合**（--base/--head/--repo 齐给时 `git log --format=%s <base>..<head>`，head
-     提交天然包含在集合内，不单独走一条路）——对集合内每条标题套同一判据：类型词
-     （fix/chore/docs/feat/refactor/test/style/perf/build/ci/revert）开头 + 可选 `(scope)`/`!` +
-     冒号〔半/全角〕或空白分隔 + 行内 `fix-r<N>`（ASCII 词边界）；任一标题命中即判为修复轮 PR，
-     **每条命中标题的轮号 = 行内首个 fix-r<N>**（标题里引用**别的单**的轮号——board 同步尾标题
-     `chore(state) board …#2691 fix-r2…#2692 fix-r8 在跑`——只取首个，不再被当成本轮，
-     fix-r7 / DS r6 boundary#1），**再跨标题取 max**（同一分支会累积 rN→rN+1 多个修复提交，
-     当前轮=真实修复提交的最大轮）。fix-r5 只看 head 单标题时，head 提交标题不带 `fix-rN` 的修复轮 PR（多提交
-     轮的尾提交常是 `chore: sync board` / typo / merge 提交，`specs/README.md:59` 提交规约并不
-     要求每个提交带 fix-rN）被判非修复轮，fixtype / residual / 多块一致整套跳过 = 假 PASS；
-     本地 `--body-file` 不传 `--head` 的路径同样收窄。scope / 时间戳 / `PR` / `#N(+#N)*` 等
+  4. 修复轮字段（#3056，长尾收口卡「机检落点」；fix-r6 主信号源扩为集合；fix-r5 修 2/4）：
+     **主信号 = PR 范围提交标题集合**（--base/--head/--repo 齐给时 `git log --format=%s
+     <base>..<head>`，head 提交天然包含在集合内，不单独走一条路）——对集合内每条标题套同一
+     判据：类型词（fix/chore/docs/feat/refactor/test/style/perf/build/ci/revert）开头 + 可选
+     `(scope)`/`!` + 冒号〔半/全角〕或空白分隔 + 行内 `fix-r<N>`（ASCII 词边界）；任一标题
+     命中即判为修复轮 PR，**每条命中标题的轮号按配对判定**（fix-r5 修 2，boundary#2 P1）：
+     token 前方最近的 `#N`（由 +/,/、/空白链成的 #N 串）与本 PR 关联单号（正文 Closes/
+     Fixes/Resolves/Refs #N 的 N）有交集才计入——标题里引用**别的单**的轮号（board 同步尾
+     `chore(state) board …#2691 fix-r2…#2692 fix-r8 在跑`）按 issue 号各归各的单，不再
+     「首个」（本单轮号不在首位会**低估**：跳过 N≥4 的 residual 必填＝假 PASS）也不「行内
+     max」（引用轮号更大会**高估**：多要 residual＝假 FAIL）；无 #N 的标题全 token 计入
+     （宁高勿低，fail-closed）；token 前方无 #N 且在题头区（首个全角「：」之前）也计入
+     （`fix(scope) 名 fix-rN：…（#refs 在后）` 的实修形态）。**再跨标题取 max**（同一分支
+     会累积 rN→rN+1 多个修复提交，当前轮=真实修复提交的最大轮）。fix-r5 只看 head 单标题时，
+     head 提交标题不带 `fix-rN` 的修复轮 PR（多提交轮的尾提交常是 `chore: sync board` /
+     typo / merge 提交，`specs/README.md:59` 提交规约并不要求每个提交带 fix-rN）被判非修复轮，
+     fixtype / residual / 多块一致整套跳过 = 假 PASS。scope / 时间戳 / `PR` / `#N(+#N)*` 等
      元素只是前缀后的可选普通文本、**不设间隔上限**（词表里 #N→fix-r 间隔最长 208 字符，
      设 ≤20 有界间隔会把 17 条真实形态判漏）。正文回显不是任何路径的主信号（行内词表判据
      r2→r3→r4 三轮不收敛，全量词表证明「结构化标题」与「类型词开头的散文」两群在行内无判别量，
      见 state/decisions-20261113.md「#3056 fix-r4 修 1 停点裁定」），**别再往正文正则里加词**；
      正文只作**兜底**：--base/--head/--repo 任一缺失（本地 `--body-file` 不传 head 的路径——
-     缺件先打 stderr 显式告警说明主信号缺失原因，不静默降级，fix-r7）或集合全不
-     命中时，看正文第一个非空行是否含 `fix-r<N>`（宽松口径，fix-r1 P0 的 CJK 连写首行
-     「修复fix-r5：」靠它；非首行正文回显不再识别——**有意收窄**，fix-r6 起有负控钉死）。
+     缺件先打 stderr 显式告警说明主信号缺失原因，不静默降级，fix-r7）时，首行宽松（fix-r1
+     P0 的 CJK 连写首行「修复fix-r5：」靠它）不命中再扫**全正文结构化回显**（`fix(...) #N
+     fix-rM` 形态：类型词 + (scope) + 冒号（可无）+ #N + 就近 fix-r，#N 配对到本 PR 关联单才
+     计入——scope 括号 + #N + 配对三重结构与散文分开，fix-r5 修 4，boundary#4：本地过闸是
+     硬步骤，「## 概述」开头的正文不再判非修复轮）；集合全不命中（CI 形态）保持只看正文
+     第一个非空行（宽松口径，fix-r4 修 3.5 的已知窄代价钉死，fix-r6 起有负控）。
      git log 失败（git 起不来 / 非零退出）fail-closed 拒收，**不得当「非修复轮」放行**；
      空输出两分（fix-r7，DS r6 boundary#3）：base==head 是合法空集（无提交可判），head 是
      base 的祖先（--base/--head 传反 / base 是 head 的后代，`git merge-base --is-ancestor` 判）
@@ -85,6 +93,19 @@ FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
 # \w 边界把整轮判没 → fixtype/residual/N≥4 全跳、闸门假 PASS（DS boundary P0，Python 3.14 实测
 # re.match(r"\w", "复") 为 True）。中文不是 fix-r 的词组成部分，ASCII 边界足够。
 FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d+)(?![A-Za-z0-9_-])")
+# 修 2（fix-r5，boundary#2 P1）配对判定的机件：标题里 #N 与 fix-r<N> 就近配对——
+# 引用别的单的轮号按 issue 号归属各单，不再「每标题首个」（低估→跳过 N≥4 residual＝假 PASS）
+# /「行内 max」（高估→多要 residual＝假 FAIL）二选一。#N 串由链接符连成（#3056+#3057 一组）；
+# 空隙视为紧贴（#1#2 也链）。pr_issues（本 PR 关联单号）从去围栏正文的 ISSUE_NUM 提取。
+HASH_REF = re.compile(r"#(\d+)")
+ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#(\d+)(?![A-Za-z0-9_])", re.I)
+PAIR_SEP = frozenset("+,、，/ \t")
+# 修 4（fix-r5，boundary#4 P2）本地回显扫描的判据：只认「结构化回显」——类型词 + (scope) +
+# 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
+# 报告证明「类型词开头的散文」与真实标题在行内没有判别量（「test 覆盖了 fix-r5 的场景」
+# 也以类型词开头），靠 scope 括号 + #N 引用 + 配到本 PR 单号三重结构才与散文分开。
+ECHO_HEAD = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)"
+                       r"\([^)\n]{1,80}\)\s*[:：]?\s*(?:PR\s+)?#\d+")
 # #3056 fix-r5 修 1 换结构化信号源（state/decisions-20261113.md「#3056 fix-r4 修 1 停点裁定」）
 # → fix-r6 扩为集合（DS boundary#1 P0 + concurrency#1 P1 双撞同根因）：修复轮判定的**主信号 =
 # PR 范围提交标题集合**（pr_commit_titles + fix_round_from_titles，`git log --format=%s
@@ -105,10 +126,13 @@ FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d+)(?![A-Za-z0-9_-])")
 #     间隔形）等仓内 1657+ 真实形态全过——scope / 时间戳 / `PR` / `#N(+#N)*` 等元素只是前缀后的
 #     可选普通文本，不设间隔上限（词表里 #N→fix-r 间隔最长 208 字符）。
 #   - 行内出现 fix-r<N>（FIXROUND_RE，ASCII 词边界）。
-# 标题判据与正文判据的关系：正文回显不再是主信号（旧 TITLE_ECHO 回显扫描已删）；标题判不出
+# 标题判据与正文判据的关系：正文回显不再是主信号（旧 TITLE_ECHO 词表回显扫描已删）；标题判不出
 # 修复轮（未给 --head/--repo、或标题非类型词开头形，如 `Revert "…"` / `fix-r2 #2516 …`）时才走
-# 正文首行兜底。标题里散文形（`test 覆盖了 fix-r5 的场景`）与真实标题在行内不可分——判修复轮只
-# 多一道 fixtype/residual 要求（假 FAIL 向窄代价）；正文里的散文因判据不再看正文而天然安全。
+# 正文兜底。fix-r5 修 4（boundary#4）：主信号**缺失**（本地 --body-file 形态）时兜底扩为
+# 首行宽松 + 全正文**结构化**回显扫描（ECHO_HEAD：scope 括号 + #N + 配对三重结构）——判别量
+# 来自结构而非词表，散文（`test 覆盖了 fix-r5 的场景`）仍不可入；集合在但全不命中（CI 形态）
+# 保持只看首行。标题里散文形与真实标题在行内不可分——判修复轮只多一道 fixtype/residual
+# 要求（假 FAIL 向窄代价）。
 TITLE_HEAD = re.compile(r"^(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)"
                         r"(\([^)\n]{0,80}\))?!?(?:[:：]|\s)")
 RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.M)
@@ -117,19 +141,64 @@ RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.
 WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) + "]+)")
 
 
-def fix_round_from_title(title: str):
+def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
+    """配对判定核心（fix-r5 修 2，boundary#2 P1；fix_round_from_title 与正文回显扫描共用）：
+    text（提交标题或回显行）内每个 fix-r<N> 的计入判定。题头区 = 首个全角「：」之前（无则
+    整条；ASCII 冒号不切——`chore(state) 01:45 #1305 …` 的时间戳与前缀冒号 `fix(scripts):`
+    都不是题头分界）。每个 token：
+      - 整条无任何 #N → 计入（宁高勿低，fail-closed：漏计轮号会跳过 N≥4 的 residual 必填）；
+      - 有就近配对集（token 前方最近的 #N、由 +/,/、/空白链成的 #N 串）→ 配对集 ∩ 本 PR
+        单号 ≠ ∅ 才计入——board 尾 `…#2691 fix-r2…#2692 fix-r8 在跑` 里 8 归 #2692、
+        2 归 #2691，各归各的单；
+      - 前方无 #N 且在题头区 → 计入（SELF：`fix(scope) 名 fix-rN：…（#refs 在后）` 的
+        实修形态，refs 在题头之后的括注里）。
+    题头区外的无配对 token（板尾裸号 `交接段：…1623 fix-r6`）不计。issues 为空集时
+    配对 token 全不计（正文没写关联的 PR 本就过不了规则 2，配对判据不放大该违规）。"""
+    hashes = list(HASH_REF.finditer(text))
+    zsplit = text.split("：", 1)
+    zone_end = len(zsplit[0]) if len(zsplit) == 2 else len(text)
+    chains: list[frozenset[str]] = []
+    for i, h in enumerate(hashes):
+        grp = {h.group(1)}
+        j = i
+        while j > 0 and all(c in PAIR_SEP for c in text[hashes[j - 1].end():hashes[j].start()]):
+            grp.add(hashes[j - 1].group(1))
+            j -= 1
+        chains.append(frozenset(grp))
+    rounds: list[int] = []
+    for m in FIXROUND_RE.finditer(text):
+        if not hashes:
+            rounds.append(int(m.group(1)))
+            continue
+        prev = [i for i, h in enumerate(hashes) if h.end() <= m.start()]
+        if prev:
+            if chains[prev[-1]] & issues:
+                rounds.append(int(m.group(1)))
+        elif m.start() < zone_end:
+            rounds.append(int(m.group(1)))
+    return rounds
+
+
+def pr_issues(masked: str) -> frozenset[str]:
+    """PR 关联单号集合（修 2 配对判定的「本单」）：去围栏正文里所有 Closes/Fixes/Resolves/
+    Refs #N 的 N（与规则 2 的 ISSUE_LINK 同款口径，带捕获组）。规则 2 要求 PR 必有关联，
+    正常过闸 PR 非空；空集时配对 token 全不计——配对判据不放大「正文没写关联」的违规。"""
+    return frozenset(m.group(1) for m in ISSUE_NUM.finditer(masked))
+
+
+def fix_round_from_title(title: str, issues: frozenset[str] = frozenset()):
     """单条提交标题判修复轮（fix_round_from_titles 集合主信号的逐条判据，#3056 fix-r6；
-    判据见 TITLE_HEAD 注释）：类型词开头前缀 + 行内 fix-r<N>，取首个匹配的轮号；不匹配返回
-    None（调用方走正文首行兜底）。标题里多个 fix-r<N> 时取首个——引用**别的单**的轮号
-    （board 同步尾标题 `…#2691 fix-r2…#2692 fix-r8 在跑`）不算本标题的轮号（fix-r7，DS r6
-    boundary#1：旧集合路径对单标题内所有 fix-rN 取 finditer+max，引用轮 2→8/26 被当当前轮，
-    实际 fix-r2 的 PR 被抬过 N≥4 门槛要求 residual ＝假 FAIL）；fix_round_from_titles 在此
-    之上只做**跨标题**取 max——语义统一为「每标题首个、跨标题 max」，单条标题输入的集合
-    结果就是本函数的返回值。"""
+    前缀判据见 TITLE_HEAD 注释）：类型词开头前缀 + 行内 fix-r<N> **配对判定**（fix-r5 修 2，
+    boundary#2 P1：#N 与 fix-r<N> 就近配对，只计 N == 本 PR 单号的轮号；无 #N 的标题全
+    token 计入，宁高勿低），计入 token 取 max；不匹配返回 None（调用方走正文兜底）。
+    fix-r7 的「每标题首个」只堵了高估方向（引用轮 2→8/26 抬过 N≥4 门槛＝假 FAIL，DS r6
+    boundary#1）；低估方向（本单轮号不在首位——board 尾里本单在前、别的单带更大轮号在后，
+    或范围只有 board 尾）取到引用轮 2、residual 因 fix_round<4 直接跳过＝假 PASS——配对
+    判定双向都修。"""
     if not TITLE_HEAD.match(title):
         return None
-    m = FIXROUND_RE.search(title)
-    return int(m.group(1)) if m else None
+    rounds = _paired_rounds(title, issues)
+    return max(rounds) if rounds else None
 
 
 def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None, str]:
@@ -190,36 +259,42 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
     return [t.strip() for t in cp.stdout.decode("utf-8", "surrogateescape").split("\n") if t.strip()], ""
 
 
-def fix_round_from_titles(titles: list[str]):
-    """PR 范围提交标题集合判修复轮（**主信号**，#3056 fix-r6；轮号取法 fix-r7 改）：对集合内
-    每条标题套 fix_round_from_title 的同一判据（TITLE_HEAD 前缀 + 行内 FIXROUND_RE），任一
-    命中即判修复轮。轮号选择规则：**每条标题的轮号 = 行内首个 fix-r<N>，再跨标题取 max**。
-    跨标题取 max 是因为同一分支会累积 rN→rN+1 多个修复提交（fix-r3 修完又叠 fix-r5，两个
-    标题都在 base..head 里），当前轮=真实修复提交的最大轮——取到旧轮号会让 N≥4 的 residual
-    门槛跟着旧轮走（拿 fix-r2 判 fix-r5 的 PR 会漏 residual 要求）。每标题取首个是因为标题里
-    引用**别的单**的轮号（board 同步尾标题 `chore(state) board …#2691 fix-r2…#2692 fix-r8
-    在跑` 是 fix-r6 动机场景的常见形态）不该被当成本轮：旧实现对单标题内所有 fix-rN 取
-    finditer+max，实际 fix-r2 的 PR 被引用轮号抬过 N≥4 门槛、被要求 residual ＝假 FAIL
-    （DS r6 boundary#1，真实证据 _tmp/20261113-3056-fixr6/wordlist-set-coverage.txt 列 12 条
-    首个≠max，最坏 2→26）。全部不命中返回 None（调用方走正文首行兜底）。"""
-    rounds = [r for t in titles if (r := fix_round_from_title(t)) is not None]
+def fix_round_from_titles(titles: list[str], issues: frozenset[str] = frozenset()):
+    """PR 范围提交标题集合判修复轮（**主信号**，#3056 fix-r6）：对集合内每条标题套
+    fix_round_from_title 的同一判据（TITLE_HEAD 前缀 + 配对判定，fix-r5 修 2），任一命中
+    即判修复轮；**跨标题取 max**——同一分支会累积 rN→rN+1 多个修复提交（fix-r3 修完又叠
+    fix-r5，两个标题都在 base..head 里），当前轮=真实修复提交的最大轮，取到旧轮号会让
+    N≥4 的 residual 门槛跟着旧轮走。单标题内的轮号按配对归属（见 _paired_rounds），
+    不再「每标题首个」（fix-r7）/「行内 max」（fix-r6 旧码）——两个方向都有真实证据
+    （_tmp/20261113-3056-fixr6/wordlist-set-coverage.txt 列 12 条首个≠max，最坏 2→26）。
+    全部不命中返回 None（调用方走正文兜底）。"""
+    rounds = [r for t in titles if (r := fix_round_from_title(t, issues)) is not None]
     return max(rounds) if rounds else None
 
 
-def fix_round_from_body(body: str):
-    """**兜底**（不再是主信号，#3056 fix-r5 修 1）：正文第一个非空行含 fix-r<N> 即判修复轮，
-    此后的正文行**一概不看**——旧 TITLE_ECHO 回显扫描已删（词表证明行内无判别量，见 TITLE_HEAD
-    注释；**别再往正文正则里加词**）。首行宽松是 fix-r1 P0 的硬要求：CJK 连写首行
-    「修复fix-r5：」无类型词、无 #N，收紧即整轮判没（假 PASS）。已知窄代价（有意保留，
-    fix-r4 修 3.5 同款）：类型词开头的散文行恰为首个非空行时按宽松口径判修复轮（要求
-    fixtype，假 FAIL 向）；同一行在非首行位置则不判（判据不再看正文）。"""
+def fix_round_from_body(body: str, echo_scan: bool = False, issues: frozenset[str] = frozenset()):
+    """**兜底**（主信号是提交标题集合）：正文第一个非空行含 fix-r<N> 即判修复轮（宽松口径，
+    fix-r1 P0 的 CJK 连写首行「修复fix-r5：」靠它；已知窄代价：类型词开头的散文行恰在首行
+    也判修复轮，假 FAIL 向，fix-r4 修 3.5 钉死）。**别再往正文正则里加词**（fix-r4 停点
+    报告证明行内无判别量）。
+    fix-r5 修 4（boundary#4 P2）：echo_scan=True（仅主信号缺失——本地 --body-file 不传
+    --base/--head 的路径）时，首行不命中再扫**全正文结构化回显**（ECHO_HEAD：`fix(...)
+    #N fix-rM` 形态，#N 配对到本 PR 关联单才计入）——本地先跑闸门是硬步骤，只看首行会把
+    「## 概述」开头的正文判非修复轮、本地过 CI 再拒。CI 形态（titles 在但全不命中）**不**
+    走回显扫描，保持只看首行（fix-r6 起有负控钉死）。"""
+    first = None
     for line in body.split("\n"):
         s = line.strip()
         if not s:
             continue
         m = FIXROUND_RE.search(s)
-        return int(m.group(1)) if m else None
-    return None
+        first = int(m.group(1)) if m else None
+        break
+    if first is not None or not echo_scan:
+        return first
+    rounds = [r for ln in body.split("\n") if ECHO_HEAD.match(ln.strip())
+              for r in _paired_rounds(ln.strip(), issues)]
+    return max(rounds) if rounds else None
 
 
 def _kv(attrs: str) -> dict:
@@ -436,10 +511,16 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
     if terr:
         errs.append(f"修复轮判定 fail-closed：读不到 PR 范围（{base[:12]}..{head[:12]}）提交标题"
                     f"（{terr}）——不得当非修复轮放行；补 --base/--head/--repo（指向含这两个提交的仓库）后重跑")
+    # 修 2（fix-r5，boundary#2 P1）：配对判定先取「本 PR 单号」——去围栏正文所有 Closes/
+    # Fixes/Resolves/Refs #N（规则 2 的 ISSUE_LINK 同款口径）；标题里引用别的单的轮号按
+    # issue 号各归各的单，不再被当成本轮（既不「首个」低估、也不「行内 max」高估）
+    issues = pr_issues(masked)
     if titles is not None:
-        fix_round = fix_round_from_titles(titles)
+        fix_round = fix_round_from_titles(titles, issues)
     if fix_round is None:
-        fix_round = fix_round_from_body(masked)
+        # 修 4（fix-r5，boundary#4 P2）：主信号缺失（本地形态）时正文兜底带全正文结构化回显
+        # 扫描（ECHO_HEAD + 配对）；集合全不命中（CI 形态）保持只看首行（fix-r6 负控钉死）
+        fix_round = fix_round_from_body(masked, echo_scan=titles is None, issues=issues)
     w = WAIVER.search(masked)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
@@ -531,7 +612,8 @@ def main() -> int:
     sig_missing = [f"--{n}" for n, v in (("base", a.base), ("head", a.head), ("repo", a.repo)) if not v]
     if sig_missing:
         print(f"check-pr-gate: 修复轮主信号（PR 范围提交标题集合，git log <base>..<head>）不可用："
-              f"缺 {' '.join(sig_missing)}——已降级为正文首行兜底（修复轮判定只看正文第一个非空行；"
+              f"缺 {' '.join(sig_missing)}——已降级为正文兜底（首行宽松 + 全正文结构化回显扫描"
+              f" fix(...) #N fix-rM 形态，#N 须配对到本 PR 关联单，fix-r5 修 4；"
               f"权威路径请 --base 与 --head 同给，且 --repo 指向含这两个提交的仓库）", file=sys.stderr)
     errs = check(body, a.head, patch, a.base, a.repo)
     for e in errs:

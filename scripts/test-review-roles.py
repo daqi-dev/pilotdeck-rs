@@ -735,32 +735,37 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not any("缺 issue 关联" in e for e in errs):
             fails.append(f"修8 负控：引用块里的 Refs #1 不算 issue 关联：{errs}")
 
-        # —— #3056 fix-r5 修 1（结构性换信号源；state/decisions-20261113.md「fix-r4 修 1 停点裁定」）
-        # → fix-r6 扩为集合（DS boundary#1 P0 + concurrency#1 P1 双撞同根因）：主信号 = PR 范围
-        # 提交标题集合（git log --format=%s <base>..<head>，head 天然在集合内，不单独走一条路）；
-        # 正文回显扫描已删（行内词表判据 r2→r3→r4 三轮不收敛，fix-r4 停点报告用全量词表证明
-        # 「结构化标题」与「类型词开头的散文」两群在行内无判别量），正文只剩首行宽松兜底
-        # （fix-r4 修 3.5 边界钉见下，继续有效）——逐条标题判据的正控
-        # （停点报告 §三 六形 + 冒号/全角/散文间隔形）不变
-        for t, want in [("fix(scripts) PR #3047 fix-r3：修 DS boundary#1 与 MM boundary#1 双撞", 3),
-                        ("chore(tools) 分段检查器 fix-r1：堵四个假 PASS 面", 1),
-                        ("chore(tools) fix-r21 WIP 快照：run-review-roles 接 minimax 通道", 21),
-                        ("chore(state) 01:45 #1305 fix-r3 P0=0 P1=0 两家收", 3),
-                        ("fix(gateway) #1 修复fix-r5：停泊补 waker", 5),
-                        ("fix(scripts) #3056+#3057 fix-r3：同轮双单", 3),
-                        ("fix(scripts): #3074 fix-r3：修闸门", 3),
-                        ("fix: #3074 fix-r3：修闸门", 3),
-                        ("fix(tools)：#3056 fix-r2：修台账", 2),
-                        ("chore: retrigger CI for the fix-r1 Linux close-kind probe", 1)]:
-            if gate.fix_round_from_title(t) != want:
+        # —— #3056 fix-r5 修 2（boundary#2 P1）配对判定正控（逐条标题判据）：#N 与 fix-r<N>
+        # 就近配对，配对集 ∩ 本 PR 单号 ≠ ∅ 才计入；标题无任何 #N 时全 token 计入（宁高勿低
+        # fail-closed）。词表正控（fix-r4 停点报告 §三 六形 + 冒号/全角/散文间隔形）换
+        # (标题, issues, 期望) 三元组——issues 从正文 Refs/Closes 提取（check() 同款口径）
+        for t, iv, want in [("fix(scripts) PR #3047 fix-r3：修 DS boundary#1 与 MM boundary#1 双撞", {"3047"}, 3),
+                            ("chore(tools) 分段检查器 fix-r1：堵四个假 PASS 面", frozenset(), 1),
+                            ("chore(tools) fix-r21 WIP 快照：run-review-roles 接 minimax 通道", frozenset(), 21),
+                            ("chore(state) 01:45 #1305 fix-r3 P0=0 P1=0 两家收", {"1305"}, 3),
+                            ("fix(gateway) #1 修复fix-r5：停泊补 waker", {"1"}, 5),
+                            ("fix(scripts) #3056+#3057 fix-r3：同轮双单", {"3056"}, 3),
+                            ("fix(scripts): #3074 fix-r3：修闸门", {"3074"}, 3),
+                            ("fix: #3074 fix-r3：修闸门", {"3074"}, 3),
+                            ("fix(tools)：#3056 fix-r2：修台账", {"3056"}, 2),
+                            ("chore: retrigger CI for the fix-r1 Linux close-kind probe", frozenset(), 1)]:
+            if gate.fix_round_from_title(t, iv) != want:
                 fails.append(f"fix-r5 正控：head 标题应判修复轮 {want}：{t[:56]!r}")
+        # 修 2 低估方向负控（任务书硬要求：低估必须红）——配对集与 issues 不相交 → 整条
+        # 不判：引用别的单的轮号不得当成本轮；空集 issues（正文没写关联）配对 token 也不计
+        # （不放大「正文没写关联」的违规——该违规由规则 2 自己拒收）
+        for t, iv in [("fix(scripts) #3057 fix-r3：同轮双单", {"3056"}),
+                      ("fix(gateway) #1 修复fix-r5：停泊补 waker", {"2"}),
+                      ("fix(scripts) #3056+#3057 fix-r3：同轮双单", {"999"}),
+                      ("fix(scripts): #3074 fix-r3：修闸门", frozenset())]:
+            if gate.fix_round_from_title(t, iv) is not None:
+                fails.append(f"fix-r5 修2 负控：标题轮号配不到本 PR 单号不应判修复轮：{t[:56]!r}")
         for t in ("fixed #1 fix-r5 的对照", 'Revert "fix(scripts) #1 fix-r5：停泊补 waker"',
                   "fix-r2 #2516 收尾", "fix(scripts) 没有轮号的普通提交"):
             if gate.fix_round_from_title(t) is not None:
                 fails.append(f"fix-r5 负控：head 标题不应判修复轮：{t[:56]!r}")
-        # 四负控（停点报告 §三 同一组，原正文散文负控）：判据不再看正文 → 天然安全；兜底只看
-        # 首行——非首行散文（含旧 TITLE_ECHO 会误吞的 `test: #123 fix-r5 的场景已补`）全拒；
-        # 非首行回显行也不再判（扫描已删）
+        # 四负控（停点报告 §三 同一组，原正文散文负控）：CI 形态只看首行——非首行散文
+        # （含旧 TITLE_ECHO 会误吞的 `test: #123 fix-r5 的场景已补`）全拒（echo_scan=False）
         for prose in ("test 覆盖了 fix-r5 的场景", "fixed #1 fix-r5",
                      "test: #123 fix-r5 的场景已补",
                      "chore 更新 board：#1357 依赖普查完成，顺带记录了 fix-r3 的现场",
@@ -768,6 +773,26 @@ def _run(gate, rrr, out_base: Path) -> int:
                      "fix-r5 任务书在 _tmp 目录", "上轮 fix-r5 评审指出的问题已处理。"):
             if gate.fix_round_from_body("## 概述\n\n" + prose + "\n") is not None:
                 fails.append(f"fix-r5 负控：正文非首行（散文/回显/提及）不应判修复轮：{prose[:44]!r}")
+        # 修 4（boundary#4 P2）本地形态：echo_scan=True 只认**结构化**回显——ECHO_HEAD 要
+        # scope 括号 + #N，散文行（类型词开头但无括号/无 #N、fixed、非类型词开头）不可入
+        for prose in ("test 覆盖了 fix-r5 的场景", "fixed #1 fix-r5",
+                     "test: #123 fix-r5 的场景已补",
+                     "chore 更新 board：#1357 依赖普查完成，顺带记录了 fix-r3 的现场",
+                     "fix-r5 任务书在 _tmp 目录", "上轮 fix-r5 评审指出的问题已处理。"):
+            if gate.fix_round_from_body("## 概述\n\n" + prose + "\n", echo_scan=True,
+                                        issues=frozenset({"1"})) is not None:
+                fails.append(f"fix-r5 修4 负控：本地回显扫描只认结构化回显，散文行不可入：{prose[:44]!r}")
+        # 修 4 正控：本地形态首行干净、回显在非首行、#N 配到本 PR 单 → 判修复轮；配不到
+        # 本单 → 不计（配对判定的另一半）；首行命中则不进扫描（宽松口径不受 issues 影响）
+        if gate.fix_round_from_body("![ci](https://example.com/b.svg)\n\nfix(scripts): #1 fix-r5：修闸门\n\nRefs #1\n",
+                                    echo_scan=True, issues=frozenset({"1"})) != 5:
+            fails.append("fix-r5 修4 正控：首行干净 + 非首行结构化回显（#1 配到本单）应判修复轮 5")
+        if gate.fix_round_from_body("![ci](https://example.com/b.svg)\n\nfix(scripts): #3074 fix-r3：修闸门\n\nRefs #1\n",
+                                    echo_scan=True, issues=frozenset({"1"})) is not None:
+            fails.append("fix-r5 修4 负控：本地回显行 #3074 配不到本 PR 单（Refs #1）不应判修复轮")
+        if gate.fix_round_from_body("修复fix-r5：停泊补 waker\n\nfix(scripts): #3074 fix-r3：x\n",
+                                    echo_scan=True, issues=frozenset({"1"})) != 5:
+            fails.append("fix-r5 修4 边界：首行宽松命中即返回，不进回显扫描（首行不受配对影响）")
 
         # 主信号走真实 git（fix-r6 集合语义）：独立夹具仓（不碰 run() 用的 wt），提交链
         # base → fix-r3 → fix-r5 → fix-r2 → board 尾提交（真实形态，fix-r7：引用 #2691 fix-r2 /
@@ -798,40 +823,58 @@ def _run(gate, rrr, out_base: Path) -> int:
 
         # 集合判据直接断言（任务书验 2）：多轮累积（fix-r3 + fix-r5 两提交在范围里）取 max=5；
         # head（board 形尾提交，引用轮 2/8）天然在集合内，不单独走一条路；轮号取**真实修复
-        # 提交**的最大轮 5，不取 board 引用轮（fix-r7，DS r6 boundary#1）
+        # 提交**的最大轮 5，不取 board 引用轮（fix-r7，DS r6 boundary#1；fix-r5 修 2 起按
+        # issues 配对：本单 #3074 的 fix-r5 计入，board 引用 #2691/#2692 的轮按各单归属不计）
         titles, terr = gate.pr_commit_titles(str(wt2), c_base, h_sync)
-        if terr or titles is None or gate.fix_round_from_titles(titles) != 5:
+        if terr or titles is None or gate.fix_round_from_titles(titles, frozenset({"3074"})) != 5:
             fails.append(f"fix-r6 集合判据：范围含 fix-r3+fix-r5 应取 max=5（terr={terr}，titles={titles}）")
-        # fix-r7 轮号取法（DS r6 boundary#1）：每条标题取行内**首个** fix-r<N>、再跨标题取
-        # max——单条标题内引用别的单的轮号（board 尾标题引用 #2691 fix-r2/#2692 fix-r8）不再
-        # 被取 max 当成本轮（旧 finditer+max 会把仅含 board 尾标题的范围判成 8）。
-        # 单条标题输入的集合结果 = fix_round_from_title(该标题)（语义统一，旧「单标题内取
-        # max ≠ 逐条判据」的失实等价断言已废，注释照新语义写）：
-        #   (h_r5, h_sync)   范围 = [fix-r2 真实提交, board 尾提交]      → 2（不是 8）
-        #   (h_r2, h_sync)   范围 = [board 尾提交]                      → 2（首个，不是行内 max 8）
-        #   (h_r5, h_plain2) 范围 = [fix-r2 真实提交, board, 普通状态]   → 2
-        #   (h_sync, h_plain2) 范围 = [chore(state) 交接段]              → None（非修复轮）
-        for b, h, want in [(c_base, h_r3, 3), (h_r5, h_sync, 2), (h_r2, h_sync, 2),
-                           (h_r5, h_plain2, 2), (h_sync, h_plain2, None)]:
+        # 同一范围换本单视角（修 2）：issues={#3047} → 只剩 h_r3 的 fix-r3 计入 → 3——跨标题
+        # max 按本单归属逐条筛，不是全范围一把 max
+        if gate.fix_round_from_titles(titles, frozenset({"3047"})) != 3:
+            fails.append("fix-r5 修2 配对：同一范围换 issues={#3047} 应只剩 fix-r3 → 3")
+        # fix-r5 修 2 配对判定（boundary#2 P1，取代 fix-r7「每标题首个」与 fix-r6「行内 max」）：
+        # 每条标题内 #N 与 fix-r<N> 就近配对，只计 N == 本 PR 单号的轮号；board 尾标题的引用
+        # 轮按 issue 号归属各单（2 归 #2691、8 归 #2692），配不到本单 → 整条不判。低估方向
+        # （本单轮号不在首位 / 范围只有 board 尾 → 旧「首个」取 2 跳过 N≥4 residual＝假 PASS）
+        # 与高估方向（引用轮 8 抬过 N≥4 门槛＝假 FAIL）双向都钉：
+        #   (c_base, h_r3)     范围 = [fix-r3 真实提交 #3047]          → {3047} → 3
+        #   (h_r5, h_sync)    范围 = [fix-r2 真实提交, board 尾]       → {3074} → 2（不是 8）
+        #   (h_r2, h_sync)    范围 = [board 尾提交]                     → {2691} → 2 / {2692} → 8（各归各单）
+        #                                                      {3074} → None（引用轮不冒充本单轮）
+        #   (h_r5, h_plain2)  范围 = [fix-r2 真实提交, board, 普通状态] → {3074} → 2
+        #   (h_sync, h_plain2) 范围 = [chore(state) 交接段]             → None（非修复轮）
+        for b, h, iv, want in [(c_base, h_r3, frozenset({"3047"}), 3),
+                               (h_r5, h_sync, frozenset({"3074"}), 2),
+                               (h_r2, h_sync, frozenset({"2691"}), 2),
+                               (h_r2, h_sync, frozenset({"2692"}), 8),
+                               (h_r2, h_sync, frozenset({"3074"}), None),
+                               (h_r5, h_plain2, frozenset({"3074"}), 2),
+                               (h_sync, h_plain2, frozenset({"3074"}), None)]:
             titles, terr = gate.pr_commit_titles(str(wt2), b, h)
-            if terr or titles is None or gate.fix_round_from_titles(titles) != want:
-                fails.append(f"fix-r7 轮号取法：{b[:7]}..{h[:7]} 应判 {want}（terr={terr}，titles={titles}）")
-        # 纯函数正负控（不依赖 git）：跨标题 max 保留 + board 引用轮不抬轮
+            if terr or titles is None or gate.fix_round_from_titles(titles, iv) != want:
+                fails.append(f"fix-r5 修2 配对：{b[:7]}..{h[:7]} + issues={sorted(iv)} 应判 {want}"
+                             f"（terr={terr}，titles={titles}）")
+        # 纯函数正负控（不依赖 git）：跨标题 max 保留 + board 引用轮按 issues 归属
         board_t = "chore(state) board 10:1x–12:3x 增记：#2691 fix-r2 P1×3 不入队、#2692 fix-r8 在跑"
-        if gate.fix_round_from_titles([board_t]) != 2:
-            fails.append("fix-r7 轮号取法：仅 board 尾标题（首个 fix-r2、行内 max fix-r8）应判 2 不是 8")
-        if gate.fix_round_from_titles(["fix(scripts) #3074 fix-r2：修轮号取法", board_t]) != 2:
-            fails.append("fix-r7 轮号取法：真实 fix-r2 提交 + board 尾标题应判 2 不是 8")
-        if gate.fix_round_from_titles(["fix(scripts) #1 fix-r3：a", "fix(scripts) #1 fix-r5：b", board_t]) != 5:
-            fails.append("fix-r7 轮号取法：跨标题 max 保留（fix-r3+fix-r5+board 引用轮 → 5 不是 8）")
-        if gate.fix_round_from_titles([board_t, "fix(scripts) #1 fix-r21：c"]) != 21:
-            fails.append("fix-r7 轮号取法：跨标题 max 保留（board 引用轮 2 不遮真实 fix-r21）")
+        if gate.fix_round_from_titles([board_t], frozenset({"2691"})) != 2:
+            fails.append("fix-r5 修2 配对：仅 board 尾标题 + issues={#2691} 应判 2（引用轮 2 归 #2691）")
+        if gate.fix_round_from_titles([board_t], frozenset({"2692"})) != 8:
+            fails.append("fix-r5 修2 配对：仅 board 尾标题 + issues={#2692} 应判 8（引用轮 8 归 #2692，不再被「首个」遮成 2）")
+        if gate.fix_round_from_titles([board_t], frozenset({"999"})) is not None:
+            fails.append("fix-r5 修2 负控：board 尾标题引用轮配不到本 PR 单不应判修复轮（旧「首个」会冒充 2）")
+        if gate.fix_round_from_titles(["fix(scripts) #3074 fix-r2：修轮号取法", board_t], frozenset({"3074"})) != 2:
+            fails.append("fix-r5 修2 配对：真实 fix-r2 提交 + board 尾标题 + issues={#3074} 应判 2")
+        if gate.fix_round_from_titles(["fix(scripts) #1 fix-r3：a", "fix(scripts) #1 fix-r5：b", board_t], frozenset({"1"})) != 5:
+            fails.append("fix-r5 修2 配对：跨标题 max 保留（fix-r3+fix-r5+board 引用轮 → 5 不是 8）")
+        if gate.fix_round_from_titles([board_t, "fix(scripts) #1 fix-r21：c"], frozenset({"1"})) != 21:
+            fails.append("fix-r5 修2 配对：跨标题 max 保留（board 引用轮 2 不遮真实 fix-r21）")
 
         # fix-r5 双撞 P0 的最小复现转抓（任务书验 5，DS boundary#1 静态场景；fix-r7 夹具换真实
         # board 形态）：head=board 尾提交（引用 #2691 fix-r2/#2692 fix-r8）、正文标准 `## 概述`、
-        # 更早提交带 fix-r5 → 集合判修复轮 5（真实修复提交的最大轮，非引用轮）→ 缺 fixtype 拒收
+        # 更早提交带 fix-r5 → 集合判修复轮 5（真实修复提交的最大轮，非引用轮）→ 缺 fixtype 拒收。
+        # Refs 关联单换 #3074（修 2）：h_r5 提交标题的 #3074 配到本单才计入
         p0_body = ("## 概述\n\nhead 提交标题不带 fix-rN 的多提交修复轮不再漏判。\n\n"
-                   + blk_t.format(h=h_sync) + "Refs #1\n")
+                   + blk_t.format(h=h_sync) + "Refs #3074\n")
         errs = gate2(p0_body, h_sync, c_base)
         if not any("fix-r5" in e and "fixtype" in e for e in errs):
             fails.append(f"fix-r6 P0 转抓：head=chore:sync board + 更早提交 fix-r5 应按修复轮 5 拒收缺 fixtype：{errs}")
@@ -848,13 +891,16 @@ def _run(gate, rrr, out_base: Path) -> int:
         if errs:
             fails.append(f"fix-r6 正控：badge 首行 + 集合判修复轮 + 齐字段应过闸：{errs}")
         # 多轮累积端到端（任务书验 2）：范围 = [fix-r3, fix-r5]，正文无 fix-rN → 轮号 5 不是 3
-        # （取错成 fix-r3 会免 residual 且报错写旧轮号）
-        acc_body = "## 概述\n\n多提交修复轮。\n\n" + blk_t.format(h=h_r5) + "Refs #1\n"
+        # （取错成 fix-r3 会免 residual 且报错写旧轮号）；Refs #3074（修 2）→ 只有 #3074 的
+        # fix-r5 计入（#3047 的 fix-r3 属别的单），5 不依赖「全范围一把 max」
+        acc_body = "## 概述\n\n多提交修复轮。\n\n" + blk_t.format(h=h_r5) + "Refs #3074\n"
         errs = gate2(acc_body, h_r5, c_base)
         if not any("fix-r5" in e and "fixtype" in e for e in errs) or not any("pdrs-residual" in e for e in errs):
             fails.append(f"fix-r6 多轮累积：fix-r3+fix-r5 在范围里应取 max=5（缺 fixtype/residual 拒收）：{errs}")
-        # 集合赢过正文首行旧回显（主信号优先，正文兜底不覆盖集合判定）
-        errs = gate2("fix(gateway) #1 fix-r5：正文首行是旧回显\n\n" + blk_t.format(h=h_r3) + "Refs #1\n", h_r3, c_base)
+        # 集合赢过正文首行旧回显（主信号优先，正文兜底不覆盖集合判定）；Refs #3047（修 2）→
+        # h_r3 标题的 #3047 配到本单，fix-r3 计入；若配错（如沿用 Refs #1）集合全不命中，会
+        # 掉回正文首行 fix-r5——主信号优先就测不到了
+        errs = gate2("fix(gateway) #1 fix-r5：正文首行是旧回显\n\n" + blk_t.format(h=h_r3) + "Refs #3047\n", h_r3, c_base)
         if not any("fix-r3" in e for e in errs):
             fails.append(f"fix-r6 主信号优先：集合判 fix-r3 不得被正文首行 fix-r5 旧回显覆盖：{errs}")
         # 集合路径负控（任务书验 3）：范围标题全不带 fix-rN（fix-r7 起基点改 board 尾提交之后
@@ -870,14 +916,24 @@ def _run(gate, rrr, out_base: Path) -> int:
         errs = gate2("test: #123 fix-r5 的场景已补\n\n" + blk_t.format(h=h_plain2) + "Refs #1\n", h_plain2, h_sync)
         if not any("fix-r5" in e and "fixtype" in e for e in errs):
             fails.append(f"fix-r6 兜底不回退：范围全不命中 + 正文首行 fix-r5 应按修复轮 5 要求 fixtype：{errs}")
-        # 无 --head 端到端负控（任务书验 4，concurrency#1 场景 a）：本地 --body-file 不传
-        # --head/--base → 主信号不可用，兜底只看正文首行（badge）→ 非修复轮——**这一收窄是
-        # 有意的**（fix-r5 删了非首行回显扫描、fix-r6 回补负控钉死），非首行回显不再识别
+        # 无 --head 端到端（任务书验 4 + 修 4，boundary#4 P2）：本地 --body-file 不传
+        # --head/--base → 主信号缺失，兜底 = 首行宽松 + 全正文结构化回显扫描——badge 开头、
+        # 非首行 `fix(scripts): #1 fix-r5：…` 是结构化回显（scope 括号 + #N + 配到本 PR 单
+        # Refs #1）→ 判修复轮 5、要求 fixtype/residual。fix-r5~r6 的「只看首行」收窄被修 4
+        # 反转：本地先跑闸门是硬步骤，只看首行会把 badge/「## 概述」开头的正文判非修复轮、
+        # 本地过 CI 再拒（boundary#4 的原诉）
         nohead_body = ("![ci](https://example.com/b.svg)\n\nfix(scripts): #1 fix-r5：修闸门\n\n"
                        + blk_t.format(h="") + "Refs #1\n")
-        if gate.check(nohead_body, "", "", "", ""):
-            fails.append(f"fix-r6 收窄负控：无 --head 时 badge 首行 + 非首行回显应判非修复轮整体过闸"
-                         f"（不要求 fixtype，有意收窄钉死）：{gate.check(nohead_body, '', '', '', '')}")
+        errs = gate.check(nohead_body, "", "", "", "")
+        if not any("fix-r5" in e and "fixtype" in e for e in errs) or not any("pdrs-residual" in e for e in errs):
+            fails.append(f"fix-r5 修4 正控：无 --head 时 badge 首行 + 非首行结构化回显应按修复轮 5 "
+                         f"要求 fixtype+residual（本地过、CI 双保险）：{errs}")
+        # 修 4 配对负控（本地形态）：回显行 #N 配不到本 PR 关联单 → 不计 → 非修复轮整体过闸
+        nohead_neg = ("![ci](https://example.com/b.svg)\n\nfix(scripts): #3074 fix-r3：修闸门\n\n"
+                      + blk_t.format(h="") + "Refs #1\n")
+        if gate.check(nohead_neg, "", "", "", ""):
+            fails.append(f"fix-r5 修4 负控：本地回显行 #3074 配不到本 PR 单（Refs #1）不应判修复轮："
+                         f"{gate.check(nohead_neg, '', '', '', '')}")
         # git 失败 fail-closed（集合路径，任务书验 6）：head/base 未知提交、repo 不是 git 仓库
         # （目录存在但不 init——不存在的路径连 chdir 都失败，测不到「不是仓库」本身），都不得当
         # 「非修复轮」放行
