@@ -271,6 +271,14 @@ SCANNED_EXTRA = (
     # and restoration with `raise`. Both are at zero assert statements today.
     '_shared/regeneration-negative.py',
     '_shared/negative_sqlite_header.py',
+    # #2981 fix-r5 (DS sibling#1): the two abort-accounting meta-control
+    # drivers this issue keeps editing. Both are at zero ``ast.Assert``
+    # statements today (verified per-file at registration; their judgment is
+    # unittest methods and their premise pins are `raise`, so they are meant
+    # to stay that way), so registering them makes a reintroduced bare
+    # `assert` a CI failure instead of untested drift.
+    'sdk-signals/test_negative_controls.py',
+    'sdk-signals-close-order-pin/test_negative_controls.py',
 )
 _CLEANUP = []
 
