@@ -76,7 +76,11 @@ join, a display string that only looks like a path, a package initialiser whose
 own imports must be keyed, and new blind, import-only or unresolvable tables
 appearing outside both registers.
 
-Scope: the four tables named by #2133 are the ones that carry anchors today;
+Scope: the four tables named by #2133 are the ones that carried anchors at
+birth; #3043 fix-r3 promoted ``close-order-reader-failclosed`` out of
+``KNOWN_BLIND`` the same way (its fix-r2 roster guard had added a second
+import key, which is what the register's re-measure is for), so five carry
+them today;
 adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
 ``DISCOVERY_ANCHORS`` match its own keys. Everything else that already builds
 repository paths from bare file names, or imports a shared helper without
@@ -124,6 +128,12 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #3043 fix-r3：fix-r2 的名册守卫给该表带来第 2 条 import 键
+    # （negative_selection），KNOWN_BLIND 的 '1 key' 随之过期（三家独立
+    # 撞同一条）；按「register 是修表清单，不是豁免」彻底修——补
+    # DISCOVERY_ANCHORS 移入本登记，改 negative_process /
+    # negative_selection 任一执行器从此会排程该表。
+    'close-order-reader-failclosed/negative_controls.py',
 )
 
 
@@ -4390,7 +4400,7 @@ def sweep(root=FIXTURES):
             # that helper only if the helper's key occurs in its own text; the
             # import line spells the module name, not the key. This is the same
             # blind spot as a bare file name, one level up, and it applies to
-            # every table — not just the four that declare anchors.
+            # every table — not just the five that declare anchors.
             keys.setdefault(key, [IMPORTED_HELPER_REASON])
         # "Blind" is exactly the loop's condition: the literal key does not
         # occur anywhere in the table, so ``git grep -F`` cannot find it. A key
@@ -4938,7 +4948,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
-            'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
+            'registered table count': r'本闸门当前登记 (\d+) 张表（#2133 点名的',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

@@ -101,7 +101,8 @@ jobs:
       # 判别力由负控自证：
       # 逐条删掉锚点、注入一条新行、`TABLES` 为空、锚点重复赋值、新盲表 / 新不可解表
       # 未登记、登记条数过期。纯静态，不需要 cargo。
-      # 当前登记 #2133 点名的 4 张表；其余同类盲表逐张记在测试的 KNOWN_BLIND 登记里
+      # 当前登记 5 张表（#2133 点名的 4 张 + #3043 fix-r3 补锚移入的
+      # close-order-reader-failclosed）；其余同类盲表逐张记在测试的 KNOWN_BLIND 登记里
       # （约定见 fixtures/README.md，逐表清单见 #2141），新盲表出现即本步变红。
       - name: 网关负控发现锚点自检（#2133）
         working-directory: src/pilotdeck-gateway/tests/fixtures
@@ -128,7 +129,11 @@ jobs:
         # #1800 fix-r1（PR #2979）：增第七模块（sdk-signals-close-order-pin），
         # 真跑钉与守卫已同步扩到七模块；fix-r2 判决路径补两用例后 Ran 10，
         # fix-r3 stdout 写失败 Ran 11、fix-r4 管道配对用例 Ran 12、fix-r5
-        # 判决+管道三态第三腿 Ran 13、fix-r6 三态×管道矩阵末格 Ran 14。
+        # 判决+管道三态第三腿 Ran 13、fix-r6 三态×管道矩阵末格 Ran 14、
+        # #3043 abort×reader 第四格（真 head -1 子进程管道）Ran 15；
+        # fix-r3 harness 名册守卫 96 拒绝路径用例 Ran 16；
+        # fix-r4 两轴闭合枚举拒跑 2 用例 + 名册守卫收窄回 cancel×head
+        # 格后的宽度 2 用例 Ran 20。
         timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
@@ -419,6 +424,13 @@ jobs:
           # （stale 扫描在树锁内读净树，锁忙本身也是 rc 2 拒跑）；全量杀灭轮（需要 cargo
           # 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/issue-2495/negative_controls.py --check
+          # #3043 fix-r4（评审 a1，同 #1433/#1354/#2391 先例）：close-order-reader
+          # 负控夹具的 --check 也进 CI——名册（ROWS 对 EXPECTED_NAMES，含 --check
+          # 路径先于参数处理）与锚点任一漂移即本步非零退出，不再只靠宿主链；同删
+          # 两边的分母逃逸另由 test_negative_roster_guards 的独立字面量
+          # CLOSE_ORDER_READER_ROSTER 钉（MODE_ROSTER 同族先例）；全量杀灭轮
+          # （需要 cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/close-order-reader-failclosed/negative_controls.py --check
           # #2488（#2566 先行补上 re-arm 行，#2488 再把 --check 深度对齐 cron-schedule）：
           # always-on-2294 负控夹具的 --check 也进 CI——锚点 / README 场景总数与分组
           # 计数 / Rows 名册 / 每个场景绑定回放 / 每条变异绑定的测试真的存在，任一
