@@ -1,15 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-13 13:01（12:55 交接段见文末；READY 全量重写反映三代码 PR 收口与 3078 在队；sweep-1247 rc=0 失联 0 台；旧快照 git 历史可溯）：**三条修复车道 gate PASS 等镜像守卫解锁**——#3042/#3074/#3088 均待 #3078 合入后 merge main 转绿入队；盘 125 GiB avail、_build+_tmp 49 GiB · fleet 全空载 · human-comments 空
+updated: 2026-11-13 13:30（12:55 交接段见文末；13:30 增：红灯 8 十二张重判登记完毕、1087 六张 P2 处置登记、macmini disk5 重格中）：**三条修复车道 gate PASS 等镜像守卫解锁**——#3042/#3074/#3088 均待 #3078 合入后 merge main 转绿入队；_build+_tmp 49 GiB · human-comments 空
 
 - #3078 | impl | doing | 镜像守卫修复已入合并队列第 1 位（AWAITING_CHECKS，merge-group CI ~31 min）；MERGED 后核邮箱并触发四分支合流
-- #3042 | impl | doing | 1087 r15+MM r14 判读闭环：DS r15 块（head b20f9ad34）已贴、MM r14 六条 P2 逐条处置（#3108/#3109/#3110）、gate PASS；等 3078 合入 merge main → CI 绿入队；入队后关单收口须处置 #3001/#3094/#3100/#3108/#3109/#3110
+- #3042 | impl | doing | 1087 r15+MM r14 判读闭环：DS r15 块（head b20f9ad34）已贴、MM r14 六条 P2 已逐条处置登记（_tmp/20261113-sweep-verdicts/verdicts.md A 节）、gate PASS；等 3078 合入 merge main → CI 绿入队；合入后 #3001 条1/#3100 条2/3 生效可关、批件见 1087-p2-batch
 - #3074 | impl | doing | 3056 r17 收货+DS 增量四角色全 PASS（head c8bd2d5e3，P2=7 判定不修备案进 decisions-20261113）；gate PASS；等 3078 合流入队
 - #3088 | impl | doing | 1723 r6 整类收口（head 2c75de686，DS6 四角色 P0/P1/P2 全 0）body 补齐、gate PASS；等 3078 合流入队；收尾自查未做（Refs #1723 不 Closes）
 - #3105 | impl | doing | state PR（decisions+board，两提交待合）；等 3078 合入 merge main 转绿入队
 
-- sweep-1247 | coord | blocked | 13:47 轮已完成 rc=0 失联 0 台（_tmp/20261107-coord/sweep-1247.md），红灯归因并入下一段交接
+- sweep-1247 | coord | blocked | 13:47 轮 rc=0 失联 0 台（_tmp/20261107-coord/sweep-1247.md）；红灯 8 十二张已重判并登记：8 开车道重开（premise-lanes-8）、2 误灯（#2461/#2463 由 #3102 承载）、2 可关维持（#2476/#2693）
+- premise-lanes-8 | impl | blocked | 红灯 8 重判八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605（证据 _tmp/20261107-coord/premise-rejudge-1302.md，判定 verdicts.md B 节；#2448 修法须先 Node 实测、#2459 修法决策卡随后）；前置 = mirror-prs 积压清偿
+- 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序（独立 issue、两家评审、真实数据复算、--write 重登记）；前置 = #3042 合入（同域串行）
 - mirror-prs | impl | blocked | 镜像漂移期积压 PR（#3057/#2987/#2974/#2969/#2967/#2944/#2931/#2912/#2911/#2769 等）：#3078 合入后逐张 Re-run/换块入队，前置 = #3078
 - legacy-batches | coord | blocked | 旧 p2batch-j/l/m、t-harvest、hop-car-L/M/N、recover-*、销账三批：3078 合入解锁后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
