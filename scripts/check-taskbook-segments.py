@@ -44,7 +44,8 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
 （多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
 
 修复轮字段（#3056 长尾收口卡「机检落点」，置于 big/small 分支之前——小包同受检）：
-任务书路径段全匹配 fix-r<N> 即修复轮（ops dispatch-fix 生成于 _tmp/<日期>-issue-<N>/fix-rN/task.md），
+任务书路径段全匹配 fix-r<N>[b] 即修复轮（b 为接续轮后缀，算第 N 轮；ops dispatch-fix 生成于
+_tmp/<日期>-issue-<N>/fix-rN[/b]/task.md；词表与 gate 侧 FIXROUND_RE 单源），
 须含恰好一条 `<!-- pdrs-fixtype: 枚举式|结构性|不适用 [论证] -->`（独占一行；值只认字面三值，
 「结构派生 / 自动派生」等子类字样一律写「结构性」；枚举式附边界论证、结构性附词表核验，空白 /
 占位符不算）；fix-rN 的 N≥4 另须 `<!-- pdrs-residual: <非空判读> -->`（恰好一次；无上一轮时允许

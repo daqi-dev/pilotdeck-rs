@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -775,7 +776,8 @@ def _run(gate, rrr, out_base: Path) -> int:
                   "fix-r2 #2516 收尾", "fix(scripts) 没有轮号的普通提交"):
             if gate.fix_round_from_title(t) is not None:
                 fails.append(f"fix-r5 负控：head 标题不应判修复轮：{t[:56]!r}")
-        # 四负控（停点报告 §三 同一组，原正文散文负控）：CI 形态只看首行——非首行散文
+        # 四负控（停点报告 §三 同一组，原正文散文负控）：本地/空集/CI 三形态的兜底都走
+        # 「首行宽松 + 全正文结构化回显」（fix-r3 P0③ 起 CI 形态同口径）——非首行散文
         # （含旧 TITLE_ECHO 会误吞的 `test: #123 fix-r5 的场景已补`）全拒（echo_scan=False）
         for prose in ("test 覆盖了 fix-r5 的场景", "fixed #1 fix-r5",
                      "test: #123 fix-r5 的场景已补",
@@ -1468,6 +1470,84 @@ def _run(gate, rrr, out_base: Path) -> int:
         errs = gate.check(blk_t.format(h=h_over) + "Refs #3056\n", h_over, "", c_base, str(wt2))
         if len(errs) != 1 or "超长数字串" not in errs[0]:
             fails.append(f"fix-r3 P2a：19 位单号的提交标题应单条 fail-closed 拒收（旧实现 int() 崩溃）：{errs}")
+
+        # —— #3074 fix-r4（DS r3 增量评审 P0×2 / P1×2 / P2 顺手修）——
+        # P0-A 正控（boundary#1，协调者仲裁输入 _tmp/20261114-3074-fixr4-arb/arb.py）：裸号
+        # 口径收窄为「数字前（跳过空白）最近的非空白字符是枚举分隔（非 \w、非 ASCII :、非 #）」
+        # ——`worktree 60`（席位上限值，字母前邻）与 `01:45`（分钟，ASCII 冒号前邻）豁免，
+        # r1..r7 真实修复轮族恢复判轮（A/B 复算回退方向 7 条全回：wordlist-ab-recompute.txt）
+        for t, want in [("chore(tools) worktree 60 fix-r1：磁盘三档的唯一实现 + 闸门 fail-closed", 1),
+                        ("chore(tools) worktree 60 fix-r4：判档入口不再对空/非数字放行", 4),
+                        ("chore(tools) worktree 60 fix-r7：排障入口在子目录不再量错根", 7),
+                        ("chore(state) 01:45 fix-r5 同步", 5)]:
+            if gate.fix_round_from_title(t) != want:
+                fails.append(f"fix-r4 P0-A 正控：真实修复轮标题应判 {want}：{t[:48]!r}")
+        # P0-A 负控：board/交接段裸号引用（数字前是 ：、+、×、（ 等枚举分隔）仍压——A/B
+        # 复算「仍被压」5 条真候选的机制钉子（02:xx/04:31 交接段形态）
+        for t in ["chore(state) board 04:31 交接段：1800 fix-r6 推 PR 3009",
+                  "chore(state) board 09:30 交接段：2964 pathname 家族 P1×3 fix-r10 统一收口",
+                  "chore(state) board 12:19 交接段：2943 fix-r2 交付 + 2932 fix-r2 实测仲裁派单",
+                  "chore(state) board 13:30 交接段：1833 宿主实杀 14/14 闭环 + 1623 fix-r6 双谱系收敛入队"]:
+            if gate.fix_round_from_title(t) is not None:
+                fails.append(f"fix-r4 P0-A 负控：board/交接段裸号引用（枚举分隔前邻）不得判修复轮：{t[:48]!r}")
+        # P0-B 计时回归钉（concurrency#1 + boundary#2 双撞）：`#1；`×N 每条 hash 各成一条链，
+        # 两两 isdisjoint 是 O(C²)（仲裁实测 n=16000 达 3.24 s，纯二次）；线性短路 + 去重后须 <2 s
+        t0 = time.perf_counter()
+        gate._scan_pairs("chore(x) " + "#1；" * 16000, frozenset({"9999"}))
+        if (dt0 := time.perf_counter() - t0) >= 2.0:
+            fails.append(f"fix-r4 P0-B 计时钉：16000 条链的枚举判定应 <2 s（实测 {dt0:.3f}s，防 O(C²) 退化）")
+        # P1-E 计时钉（concurrency#2 + boundary#3 同族）：无 #N 的 TITLE_HEAD 标题每 token 前缀
+        # 切片 + 整段重扫是 O(T·n)（实测旧口径 n=8000 达 1.77 s）；有界窗口 + 单调指针后须 <2 s
+        t0 = time.perf_counter()
+        gate._scan_pairs("fix(x) " + "fix-r1 " * 12000, frozenset())
+        if (dt1 := time.perf_counter() - t0) >= 2.0:
+            fails.append(f"fix-r4 P1-E 计时钉：12000 个 token 的裸号判定应 <2 s（实测 {dt1:.3f}s，防 O(T·n) 退化）")
+        # P1-C 负控（sibling#1 + boundary#4 双撞）：枚举判定限题头区内的链——题头区单链 +
+        # 尾部 #N 注记不构成枚举，异单失配照旧进 foreign（fix-r2 P0 旁路不复开）
+        if not gate.foreign_fixround_pairs(["fix(scripts) #9999 fix-r5：修评审（复用 #1321 机制）"],
+                                           frozenset({"3056"})):
+            fails.append("fix-r4 P1-C 负控：题头区单链 + 尾部 #N 注记不构成枚举，异单失配应进 foreign")
+        if not gate.foreign_fixround_pairs(["#3056 fix-r3：合 #1305、#1318 两处"], frozenset()):
+            fails.append("fix-r4 P1-C 负控：no-issue 时题头区单链标题照旧进 foreign（枚举抑制不开旁路）")
+        # P1-C 正控（保 r3 面 A 语义）：两条不相交链都在题头区内的枚举/board 标题仍整条不作
+        # foreign 判定（case1 真实形态：无全角冒号 → 整条是题头区）
+        if gate._scan_pairs("chore(state) 01:45 #1305 fix-r3 两家收敛；#1318 缺第二家标缺口",
+                            frozenset({"1318"}))[1]:
+            fails.append("fix-r4 P1-C 正控：题头区内两链（无全角冒号形）仍是枚举标题，不作 foreign 判定")
+        # P1-C 端到端：异单×多链 / no-issue×多链都必须 fail-closed 拒收（尾部注记链关不掉封堵）
+        subprocess.run([*g2, "checkout", "-q", "-b", "fixr4-enum-bypass"], check=True)
+        h_enum = titled2("fix(scripts) #9999 fix-r5：修评审（复用 #1321 机制）")
+        subprocess.run([*g2, "checkout", "-q", "-"], check=True)
+        eblk = blk_t.format(h=h_enum)
+        errs = gate2("## 概述\n\n异单多链形态。\n\n" + eblk + "Closes #3056\n", h_enum, c_base)
+        if not any("异单旁路" in e and "#9999" in e for e in errs):
+            fails.append(f"fix-r4 P1-C：异单×多链（题头区 #9999 + 尾部 #1321）应 fail-closed 拒收：{errs}")
+        errs = gate2("## 概述\n\nno-issue 多链形态。\n\n" + eblk + "<!-- no-issue 纯文档轮豁免说明文字足够长 -->\n", h_enum, c_base)
+        if not any("no-issue 旁路" in e and "#9999" in e for e in errs):
+            fails.append(f"fix-r4 P1-C：no-issue×多链（题头区 #9999 + 尾部 #1321）应 fail-closed 拒收：{errs}")
+        # P1-D 负控（sibling#2）：后向配对分支补裸号守卫——board 尾 token 前紧邻裸号 + 后方
+        # #N ∈ issues 也不计入（语料 probe-corpus.txt board 13:42 形，旧判 2 ＝假 FAIL）
+        if gate.fix_round_from_title(
+                "chore(state) board 13:42 交接段：队列 60→120（2879 踢出谜底）+ 2932 fix-r2 交付 + #2957 P1×3 + 远端三车道续",
+                frozenset({"2957"})) is not None:
+            fails.append("fix-r4 P1-D 负控：board 尾后向配对（裸号 2932 紧邻 token + 后方 #2957 ∈ issues）不得计入")
+        # P1-D 正控：无裸号紧邻的后向配对（r3 P0③ 修复形）不受新守卫影响
+        if gate.fix_round_from_title("fix(gateway)：fix-r5 修 #3074", frozenset({"3074"})) != 5:
+            fails.append("fix-r4 P1-D 正控：无裸号的后向配对（fix-r5 修 #3074）照常计 5")
+        # P2-1 负控（concurrency#3 + boundary#8 + sibling#3 三撞）：19 位 + b 后缀的超长 token
+        # 旧既不匹配主词表也不触发 OVER fail-closed＝静默漏判——OVER 词表同步 b? 后必须报错
+        if gate._overflow_err("fix-r" + "9" * 19 + "b：x", "t") is None:
+            fails.append("fix-r4 P2-1：fix-r + 19 位 + b 应 fail-closed（FIXROUND_OVER 同步 b?）")
+        if gate._overflow_err("r" + "9" * 19 + "b x", "t") is None:
+            fails.append("fix-r4 P2-1：r + 19 位 + b 应 fail-closed（RSHORT_OVER 同步 b?）")
+        # P2-1 正控（boundary#7）：「简写 + 接续轮」组合形 r14b 算第 14 轮（RSHORT 同步 b?）
+        if gate.fix_round_from_title("fix(scripts) #3056 r14b：接续轮收尾", frozenset({"3056"})) != 14:
+            fails.append("fix-r4 P2-1 正控：简写接续轮 r14b 应算第 14 轮")
+        # P2-3（concurrency#4 + boundary#12 双撞）：超长数字串早退不得吞既有 errs——git 失败
+        # 原因与超长串都报（repo 指错 → pr_commit_titles 失败 + 正文 19 位 #N）
+        errs = gate.check("## 概述\n\nRefs #" + "1" * 19 + "\n" + blk_t.format(h=""), h_enum, "", c_base, "/nonexistent-repo-xyz")
+        if not any("读不到 PR 范围" in e for e in errs) or not any("超长数字串" in e for e in errs):
+            fails.append(f"fix-r4 P2-3：超长串早退应保留 git 失败原因（errs 不丢）：{errs}")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"

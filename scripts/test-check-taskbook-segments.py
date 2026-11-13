@@ -1394,15 +1394,18 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_MIN_ROUND 派生自 check-pr-gate（同一门槛，不复制第二份）")
         fails += 0 if ok else 1
 
-        # 15) 轮号词表单源（#3056 fix-r3 P1-3，MM boundary#2）：任务书侧 FIX_ROUND_PART 必须
-        # 派生自 check-pr-gate.py 的 FIXROUND_RE（同一对象），且赋值行不得再写 re.compile 拷贝
-        # ——两份定义会在 b 后缀 / 位界改动时一侧认接续轮另一侧不认（该轮族的 fixtype/residual/
-        # 多块一致整段跳过＝假 PASS）；`is` 断言钉死「同一对象」而非「同字面」（同字面拷贝照样漂移）
+        # 15) 轮号词表单源（#3056 fix-r3 P1-3，MM boundary#2；fix-r4 P2-4，DS concurrency#5 +
+        # boundary#11 双撞）：任务书侧 FIX_ROUND_PART 必须派生自 check-pr-gate.py 的 FIXROUND_RE，
+        # 且赋值行不得再写 re.compile 拷贝——两份定义会在 b 后缀 / 位界改动时一侧认接续轮
+        # 另一侧不认（该轮族的 fixtype/residual/多块一致整段跳过＝假 PASS）。断言用
+        # .pattern+.flags 而非 `is`：两侧对象来自两次独立 exec_module，identity 只靠 CPython
+        # re._cache 的实现细节偶然成立，缓存淘汰 / re.purge() 即假 FAIL。
         _f_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
                      if ln.startswith("FIX_ROUND_PART = ")]
-        ok = (ctbs.FIX_ROUND_PART is _gate.FIXROUND_RE and len(_f_assign) == 1
-              and "_gate_module()" in _f_assign[0])
-        print(f"{'PASS' if ok else 'FAIL'}  FIX_ROUND_PART 派生自 check-pr-gate 的 FIXROUND_RE（同一对象，不复制第二份）")
+        ok = (ctbs.FIX_ROUND_PART.pattern == _gate.FIXROUND_RE.pattern
+              and ctbs.FIX_ROUND_PART.flags == _gate.FIXROUND_RE.flags and len(_f_assign) == 1
+              and "_gate_module()" in _f_assign[0] and "re.compile" not in _f_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  FIX_ROUND_PART 派生自 check-pr-gate 的 FIXROUND_RE（pattern+flags 同一，不复制第二份）")
         fails += 0 if ok else 1
 
 
