@@ -1009,20 +1009,17 @@ def _run(gate, rrr, out_base: Path) -> int:
         # fix-r14（DS r13 concurrency#1 + boundary#1、MM concurrency#1 三谱系同撞 P0，仲裁实测
         # `_tmp/20261113-3056-fixr14/redos-arbitration.txt`）：标点分支嵌套量词 `(P+)+`
         # 的指数回溯——长标点串（其后再无 #N）须在时限内返回，r13 形态实测 n=22 已 0.32s、
-        # 每 +2 标点 ×4.3（n=40 外推 20+ 分钟＝闸门挂起，正文作者可控）。语义（只取首号且
-        # 并组不变）就地断言；**时限断言见 r15 子进程探针**。
-        for attack in ("Closes #3056" + "," * 200 + "x",
-                       "Refs #3056 " + "+ ," * 100 + "、"*100 + "x",
-                       "Closes #3056" + ",\n"*100 + "x"):
-            got = gate.pr_issues(attack + "\n")
-            if got != frozenset({"3056"}):
-                fails.append(f"fix-r14 P0 回归护栏：长标点串只取首号且并组语义不变，得 {sorted(got)}")
+        # 每 +2 标点 ×4.3（n=40 外推 20+ 分钟＝闸门挂起，正文作者可控）。
+        # fix-r16（DS r15 boundary#1 + MM sibling#1/concurrency#1/boundary#1 四撞同源 P1）：
+        # r14 三攻击形不再就地调用——就地断言排在子进程探针之前，回退指数形时套件在探针
+        # 前就地挂死，「回退态＝干净 FAIL」对指数类不成立；三形全部并入下方探针
+        # （punct / punct_mix / punct_nl），语义（只取首号且并组不变）与时限断言同在子进程内。
         # fix-r15（DS r14 sibling#1 P0 + boundary#1 P1，仲裁实测 arbitrate-r14-ds.txt；护栏
         # fail-fast 缺陷＝MM r14 concurrency#2 + boundary#2 同撞）：两个二次回溯面——
         # `_paired_rounds` 的 #N 链构建 O(k²)（实测 k=32000 达 103.9 s）、前导空白×标点
         # 相邻星号 O(K·M)（实测 n=4000 已 0.88 s）——各补一条探针；**全部探针跑在带超时的
         # 子进程里**：回退成二次/指数形态时子进程被杀＝干净 FAIL，不再像旧的事后计时那样
-        # 在永不返回的调用上把整套套件挂死（r14 三攻击形的时限断言同改走子进程）。
+        # 在永不返回的调用上把整套套件挂死。
         _probe = (
             "import importlib.util, sys\n"
             "spec = importlib.util.spec_from_file_location('gate', sys.argv[1])\n"
@@ -1030,18 +1027,25 @@ def _run(gate, rrr, out_base: Path) -> int:
             "spec.loader.exec_module(gate)\n"
             "mode, n = sys.argv[2], int(sys.argv[3])\n"
             "if mode == 'chain':\n"
-            "    print(gate.fix_round_from_title('fix(scripts) #1' + '#1'*n + ' fix-r4',\n"
+            "    print(gate.fix_round_from_title('fix(scripts) #1' + '#1'*n + ' fix-r4'*n,\n"
             "                                    frozenset({'1'})))\n"
             "elif mode == 'ws':\n"
             "    print(sorted(gate.pr_issues('Refs #1' + ' '*n + ','*n + 'x')))\n"
             "elif mode == 'punct':\n"
             "    print(sorted(gate.pr_issues('Closes #3056' + ','*n + 'x')))\n"
+            "elif mode == 'punct_mix':\n"
+            "    print(sorted(gate.pr_issues('Refs #3056 ' + '+ ,'*n + '、'*n + 'x')))\n"
+            "elif mode == 'punct_nl':\n"
+            "    print(sorted(gate.pr_issues('Closes #3056' + (',' + chr(10))*n + 'x')))\n"
         )
         _gate_py = str(ROOT / "scripts" / "check-pr-gate.py")
         for _mode, _n, _want, _why in (
                 ("punct", 200, "['3056']", "嵌套量词 `(P+)+` 形回退会指数化"),
+                ("punct_mix", 200, "['3056']", "标点间交错空白（新轮形 W* 槽）回退会指数化"),
+                ("punct_nl", 200, "['3056']", "标点后接换行（_GAP_EDGE 的 \\r?\\n 边）回退会指数化"),
                 ("ws", 20000, "['1']", "相邻星号（前导空白×标点）二次回溯 O(K·M)"),
-                ("chain", 20000, "4", "_paired_rounds #N 链构建 O(k²)")):
+                ("chain", 20000, "4", "_paired_rounds #N 链构建 O(k²) 与前方最近 #N 线性全扫"
+                 " O(k·m)（fix-r16：token 与 hash 同量级，钉死二分半边）")):
             try:
                 _cp = subprocess.run([sys.executable, "-I", "-c", _probe, _gate_py, _mode, str(_n)],
                                      capture_output=True, text=True, timeout=5)
@@ -1071,6 +1075,27 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.ECHO_HEAD.match("deps(s) #1 fix-r2：x") or gate.TITLE_HEAD.match("deps(scripts): x"):
             fails.append("fix-r15 类型词负控：deps 不在 _TYPE_WORDS，两正则不得命中"
                          "（命中＝词表漂进了别的来源）")
+        # fix-r16（DS r15 sibling#3 P2a）：词表由 _TYPE_WORDS 自身解析会静默丢词（成员循环
+        # 缩窄反模式，同文件 PAIR_SEP 已用字面量钉死）——删 revert 后逐词正控仍绿、Revert
+        # 型修复轮标题判不出 → fix_round=None → 假 PASS。_ISSUE_KEYWORDS 同理（删词 →
+        # pr_issues 漏号 → 同一假 PASS 面）。
+        if gate._TYPE_WORDS != r"(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)":
+            fails.append("fix-r16 P2：_TYPE_WORDS 字面量钉死被破坏（现值 "
+                         f"{gate._TYPE_WORDS!r}——成员变动须同步本断言，静默删成员会让"
+                         "上方逐词正控静默缩窄）")
+        if gate._ISSUE_KEYWORDS != r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)":
+            fails.append("fix-r16 P2：_ISSUE_KEYWORDS 字面量钉死被破坏（现值 "
+                         f"{gate._ISSUE_KEYWORDS!r}——成员变动须同步本断言与 fix-r13 单源锁，"
+                         "静默删词会让 pr_issues 漏号＝假 PASS）")
+        # fix-r16（MM r15 boundary#2 P2a）：「首个标点前的空白只由 _GAP_EDGE 吃」无正控——
+        # _GAP_EDGE 前导 [^\S\r\n]* 被改掉时 `Refs #3056 ,#3074` 的第二个号被静默丢弃
+        # → pr_issues 少号 → 标题侧 #N 配不上 → fix_round=None → 假 PASS 面。码位单源锁
+        # 只覆盖单字符（W 或 P 单独），不覆盖「空白块+标点」组合。实测期望
+        # {"3056","3074"}（_tmp/20261113-3056-fixr16/pre-measure.txt）。
+        if gate.pr_issues("Refs #3056 ,#3074\n") != frozenset({"3056", "3074"}):
+            fails.append("fix-r16 P2：标点前的空白须仍并组（前导空白单处化不得吞掉 GAP·W* "
+                         "的等价语义）——'Refs #3056 ,#3074' 应得 {'3056','3074'}，"
+                         f"得 {sorted(gate.pr_issues('Refs #3056 ,#3074'))}")
         # fix-r14（MM sibling#4 P2）：标题侧并组口径双向钉死——正控（PAIR_SEP 成员并组）+
         # 负控（非 gap 分隔符不并组、链只取最近 #N）。
         if gate.fix_round_from_titles(["fix(scripts) #3056;#3074 fix-r12：x"],
