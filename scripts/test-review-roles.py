@@ -778,13 +778,18 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"fix-r5 负控：head 标题不应判修复轮：{t[:56]!r}")
         # 四负控（停点报告 §三 同一组，原正文散文负控）：本地/空集/CI 三形态的兜底都走
         # 「首行宽松 + 全正文结构化回显」（fix-r3 P0③ 起 CI 形态同口径）——非首行散文
-        # （含旧 TITLE_ECHO 会误吞的 `test: #123 fix-r5 的场景已补`）全拒（echo_scan=False）
+        # （含旧 TITLE_ECHO 会误吞的 `test: #123 fix-r5 的场景已补`）全拒。fix-r8
+        # boundary#3（MM r7 评审）：调用改走生产路径 echo_scan=True（check() 一律
+        # echo_scan=True，负控走默认 False 是假绿——把该参数删掉/改回 False 时本负控
+        # 不再钉住回显误入面）；改前实测（_tmp/20261114-3074-fixr8/）：7 条散文在
+        # echo_scan=True + issues 默认 ∅ 下仍全 None——ECHO_HEAD 只命中
+        # `fix(gateway) #1 fix-r5：停泊补 waker`，链 {1} ∩ ∅ = ∅ → 不计。
         for prose in ("test 覆盖了 fix-r5 的场景", "fixed #1 fix-r5",
                      "test: #123 fix-r5 的场景已补",
                      "chore 更新 board：#1357 依赖普查完成，顺带记录了 fix-r3 的现场",
                      "fix(gateway) #1 fix-r5：停泊补 waker",
                      "fix-r5 任务书在 _tmp 目录", "上轮 fix-r5 评审指出的问题已处理。"):
-            if gate.fix_round_from_body("## 概述\n\n" + prose + "\n") is not None:
+            if gate.fix_round_from_body("## 概述\n\n" + prose + "\n", echo_scan=True) is not None:
                 fails.append(f"fix-r5 负控：正文非首行（散文/回显/提及）不应判修复轮：{prose[:44]!r}")
         # 修 4（boundary#4 P2）本地形态：echo_scan=True 只认**结构化**回显——ECHO_HEAD 要
         # scope 括号 + #N，散文行（类型词开头但无括号/无 #N、fixed、非类型词开头）不可入
@@ -1609,9 +1614,13 @@ def _run(gate, rrr, out_base: Path) -> int:
 
         # —— #3074 fix-r6（DS r5 增量评审 7 条 P2 全 a 档：单源化/负控补齐/pdepth 钳 0/窄窗登记）——
         # sibling#1 单源化：前向配对臂改走 `_bare_num_before(text, start, ends[i])` 后行为不变
-        # ——链成员豁免由 helper 的 chain_end 参数承载（裸号＝前方链自身成员不视作引用）
+        # ——链成员豁免由 helper 的 chain_end 参数承载（裸号＝前方链自身成员不视作引用）。
+        # fix-r8（MM r7 concurrency P1）：中间那条 `chain_end=5` 是生产不可达的假绿形状
+        # （数字起点 1 < 5，hash 内数字不可能被前导符类匹配）——换成生产真实链形
+        # `#3056+3074 fix-r5`（token start=11、chain_end=5、数字起点 6 ≥ 5，经 fix-r8
+        # 第二道豁免「与最近前方 hash 只隔链分隔符」判链成员）；端到端断言见下方 fix-r8 块
         if gate._bare_num_before("+3074 fix-r5", 6) is not True \
-                or gate._bare_num_before("+3074 fix-r5", 6, 5) is not False \
+                or gate._bare_num_before("#3056+3074 fix-r5", 11, 5) is not False \
                 or gate._bare_num_before("+3074 fix-r5", 6, 1) is not True:
             fails.append("fix-r6 sibling#1：_bare_num_before 的 chain_end 豁免参数口径（数字起点 < chain_end "
                          "⇒ 链成员返回 False）")
@@ -1667,6 +1676,10 @@ def _run(gate, rrr, out_base: Path) -> int:
         # （带尾闭括号）、评审更短版（无尾闭括号也复发）、合法注记形对照（始终命中）
         for t in ["fix(scripts) #9999 fix-r5 修评审（a) 复用 #1321 机制）",
                   "fix(scripts) #9999 fix-r5 修评审（a) 复盘 #1321 机制",
+                  # fix-r8 sibling#3（MM r7 评审）：混宽镜像序**另一半**——半角开 + 全角闭
+                  # `(a）`，旧单深度下同样 −1 抵回 0（只钉 `（a)` 一半是假绿：改回单宽度
+                  # 分类时该形静默回归）；分类后 hw 深度停在 1，链不参与枚举
+                  "fix(scripts) #9999 fix-r5 修评审 (a）复用 #1321 机制",
                   "fix(scripts) #9999 fix-r5 修评审（复用 #1321 机制）"]:
             if not gate.foreign_fixround_pairs([t], frozenset({"3056"})):
                 fails.append(f"fix-r7 sibling#1：混宽镜像序/尾部注记形的异单失配应进 foreign"
@@ -1697,6 +1710,60 @@ def _run(gate, rrr, out_base: Path) -> int:
                 frozenset({"3056"})):
             fails.append("fix-r7 sibling#3：全角游离闭括号后无开括号的链参与枚举（钳 0 后与"
                          "无括号窄窗同族，③ 在档）")
+
+        # —— #3074 fix-r8（MM r7 增量评审三 P1 当轮修 + P2 六条，协调者实测复现
+        # _tmp/20261114-3074-mm-p1-probe/RESULT.md；尺子的 P1 不适用修复轮上限放行）——
+        # sibling P1（r<N> 简写锚点失切）：`fix(scripts) r5: #9999 fix-r7 修评审 #1321 机制`
+        # （正文 Closes #3056）的 r5 在首个 #N 之前、其 ASCII 冒号落在旧锚点（#9999）之前
+        # → enum_end 不切 → 题头区两条不相交链 ⇒ enum 抑制 foreign ＝ fix-r2 P0 异单旁路
+        # 在 r<N>+冒号拼写复开（修复前 _scan_pairs 返回 ([], [])，foreign 丢失；同族
+        # fix-r<N> 拼写 `#9999 fix-r7:` 被 fix-r5 P0 正确切掉＝行为分裂）。修法＝锚点扩族
+        # 「紧跟 ASCII 冒号的 r<N> token」；两条实测形：假通过形断言修复后 foreign 非空，
+        # fix-r7: 对照形不回归（仍是 foreign 非空）
+        if not gate.foreign_fixround_pairs(
+                ["fix(scripts) r5: #9999 fix-r7 修评审 #1321 机制"], frozenset({"3056"})):
+            fails.append("fix-r8 sibling P1：r<N>+ASCII 冒号拼写（r5: 在首个 #N 前）不再旁路——"
+                         "锚点含紧跟冒号的 rN token，enum_end 被切，异单失配进 foreign 拒收")
+        if not gate.foreign_fixround_pairs(
+                ["fix(scripts) #9999 fix-r7: 修评审 #1321 机制"], frozenset({"3056"})):
+            fails.append("fix-r8 sibling P1 对照：fix-r<N>+冒号拼写（#9999 fix-r7:）不回归，"
+                         "异单失配仍进 foreign（fix-r5 P0 封堵原形）")
+        # 锚点不过宽 pinning：散文 rN（后不接冒号）不作锚——`r4 01:10` 的时间冒号不被
+        # 误当代号（误锚会切 enum_end ⇒ 其后 {1305}/{1318} 链退出枚举 ⇒ 合法 board 形
+        # foreign 误报＝假 FAIL）；anchor 扩成未过滤裸 RSHORT 时此断言必红
+        if gate._scan_pairs("chore(state) r4 01:10 #1305 fix-r3 交付；#1318 缺第二家",
+                           frozenset({"3056"}))[1]:
+            fails.append("fix-r8 sibling P1 pinning：散文 rN（后不接冒号）不作锚，01:10 时间冒号"
+                         "不切 enum_end，board 双链仍按枚举抑制（不误报 foreign）")
+        # concurrency P1（链尾裸号整条丢弃）：`#3056+3074 fix-r5`（issues={3056}）旧口径
+        # rounds=[] foreign=[]——轮号既不计入也不拒收，fixtype/residual/多块一致整段跳过
+        # ＝假 PASS。修法＝裸号判据与链成员判据分家：与最近前方 hash 只隔链分隔符
+        # （PAIR_SEP ∪ 非换行空白）的裸号是链成员（`#A+B`/`#A、B` 的 B），不触发守卫，
+        # 照常配对（∩ issues ≠ ∅ 计入 / 全不相交进 foreign 拒收）
+        if gate.fix_round_from_title("fix(scripts) #3056+3074 fix-r5：修闸门",
+                                     frozenset({"3056"})) != 5:
+            fails.append("fix-r8 concurrency P1：链尾裸号成员（#3056+3074 的 3074）不再整条丢弃，"
+                         "前向配对照常计 5（对照 #3056+#3074 同判，行为不再分裂）")
+        if gate.fix_round_from_title("fix(scripts) #3056、3074 fix-r5：修闸门",
+                                     frozenset({"3056"})) != 5:
+            fails.append("fix-r8 concurrency P1：全角顿号链尾裸号形（#3056、3074）同判链成员，计 5")
+        if not gate._scan_pairs("fix(scripts) #3056+3074 fix-r5：修闸门",
+                                frozenset({"9999"}))[1]:
+            fails.append("fix-r8 concurrency P1：链尾裸号形配不上本 PR 单号时照进 foreign 拒收"
+                         "（杜绝「既不计入也不拒收」的静默放行）")
+        # 守卫另一半不回退：非链连接的裸号（中间隔了非链字符）仍是 board/交接段引用，
+        # 不计、不进 foreign（fix-r4 P0-A / fix-r5 P1 原语义）
+        if gate._scan_pairs("chore(state) 22:51 补落（2558 fix-r5 派 macmini）",
+                            frozenset({"3056"})) != ([], []):
+            fails.append("fix-r8 concurrency P1 pinning：非链连接的裸号（board 尾引用）仍不计不拒")
+        # boundary#5（`）` 减法分支 pinning）：题头区「全角闭合括号在前 + 枚举链在后」的
+        # board 形——配对全角括号（复盘）把深度收回 0，其后两条不相交链照常参与枚举
+        # ⇒ foreign 抑制；把 `）→fw_pdepth-1` 减法整支删掉则 fw 停在 1、链退出枚举 ⇒
+        # foreign 误报（假 FAIL 向），此负控必红
+        if gate.foreign_fixround_pairs(
+                ["fix(scripts)（复盘） #9999 修评审；#1321 收尾 fix-r5"], frozenset({"3056"})):
+            fails.append("fix-r8 boundary#5：全角闭合括号在前的减法分支在案——配对（）后深度回 0，"
+                         "枚举链照常参与并抑制 foreign（删减法支会假红）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
