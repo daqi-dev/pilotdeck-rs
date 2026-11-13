@@ -343,7 +343,17 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
     ——否则构形 `fix(scripts) #9999 fix-r5：修评审（复用 #1321 机制）` + `Closes #3056` 里链
     {9999}/{1321} 不相交 → enum=True → 异单失配不进 foreign ＝ fix-r2 P0 旁路复开（假 PASS）。
     题头区限定的正确性依据：gap 字符（PAIR_SEP ∪ 非换行空白）不含全角「：」→ 链不跨「：」，
-    「链首在题头区」⇒ 整条链在题头区。"""
+    「链首在题头区」⇒ 整条链在题头区。
+    fix-r5 P0（DS r4 boundary#1）：全角「：」不是唯一的题头分隔拼写——ASCII 冒号（真实语料
+    wordlist-ab-recompute.txt:561 `fix(gateway-parity) #1355/#1652 fix-r25: …`）与无冒号
+    形（`… fix-r5 修评审（复用 #1321 机制）`）下 zone_end=len(text)，同一旁路复开（仲裁
+    四形三假 PASS）。调用方参与判据再收两道界（都在 `_scan_pairs` 内计算，见其 zone_end 后
+    注释）：**enum_end**（首个锚点——#N 或 fix-rN token——之后的 ASCII ':'，前缀/时间冒号在
+    锚点前不作界）与**括号深度 0**（全/半角括号内的链是注记/board 括注，不是枚举项）。
+    已知窄窗（登记不改标准）：无冒号且无括号的裸尾注 `fix(x) #9999 fix-r5 复盘 #1321 机制`
+    与前缀冒号形 `fix(x): #9999 fix-r5 修 #1321`（锚点在冒号后）仍被枚举抑制——前者与
+    真实 board 并记（`#1305 fix-r3 …；#1318 …`）在词法上不可分，后者收紧会误伤
+    `chore(board): 01:10 …` 族；A/B 复算确认两形语料 0 实例。"""
     uniq = set(chains)
     if len(uniq) < 2 or len(uniq) > _ENUM_CHAIN_CAP:
         return False
@@ -358,7 +368,9 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     """配对判定核心（fix-r5 修 2，boundary#2 P1；fix_round_from_title 与正文回显扫描共用）：
     text（提交标题或回显行）内每个 fix-r<N> / 题头区内与 #N 链紧邻的 r<N>（fix-r3 P0① 简写形）
     的计入判定。题头区 = 首个全角「：」之前（无则整条；ASCII 冒号不切——`chore(state) 01:45
-    #1305 …` 的时间戳与前缀冒号 `fix(scripts):` 都不是题头分界）。返回 (rounds, foreign)：
+    #1305 …` 的时间戳与前缀冒号 `fix(scripts):` 都不是题头分界；fix-r5 P0 起**枚举链的
+    参与判据**另有独立的界，见下 foreign 半边与 `_enum_title` docstring）。返回 (rounds,
+    foreign)：
     rounds = 计入的轮号；foreign = 题头区内「#N 配对链非空且与 issues 全不相交」的
     (轮号, 链)（fix-r2 P0 旁路封堵的依据，见 foreign_fixround_pairs）。每个 token：
       - 整条无任何 #N → 计入（宁高勿低，fail-closed：漏计轮号会跳过 N≥4 的 residual 必填；
@@ -378,7 +390,13 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
         并记形态，协调者仲裁实测 case1 `chore(state) 01:45 #1305 fix-r3 …；#1318 缺第二家
         标缺口` 被 foreign 假 FAIL）整条不作 foreign 判定，计入分支不受影响；fix-r4 P1-C：
         枚举只看**题头区内**的链——题头区外的尾部 #N 注记（`（复用 #1321 机制）`）不构成
-        枚举，异单失配照进 foreign，no-issue/异单旁路（fix-r2 P0）不复开）；
+        枚举，异单失配照进 foreign，no-issue/异单旁路（fix-r2 P0）不复开；fix-r5 P1
+        （DS r4 sibling#1）：该前向配对臂补裸号守卫——token 前紧邻裸号（裸号不是前方链
+        自身成员，见代码内 `bm.start(2) >= ends[i]` 判据）时整 token 视为 board/交接段
+        引用，不计、不进 foreign，与另三个免配对/后向分支单源 `_bare_num_before`）；
+        fix-r5 P0（DS r4 boundary#1，仲裁 `_tmp/20261114-3074-fixr4-arb/arb-fixr4-out.txt`）：
+        枚举链的参与判据在「题头区内」之上再收两道界——锚点后 ASCII 冒号、括号深度 ≥1
+        （见 `_enum_title` docstring），无全角冒号标题的尾部 #N 注记不再关掉 foreign 封堵）；
       - 前方无 #N 且在题头区 → 计入（SELF：`fix(scope) 名 fix-rN：…（#refs 在后）` 的
         实修形态，refs 在题头之后的括注里；fix-r3 P1-1 面 B 引入、fix-r4 P0-A 收窄口径的
         裸号守卫同样拒收）；
@@ -398,6 +416,24 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     hashes = list(HASH_REF.finditer(text))
     zsplit = text.split("：", 1)
     zone_end = len(zsplit[0]) if len(zsplit) == 2 else len(text)
+    # fix-r5 P0（DS r4 boundary#1，仲裁 _tmp/20261114-3074-fixr4-arb/arb-fixr4-out.txt）：
+    # 题头区只认全角「：」⇒ ASCII 冒号/无冒号标题 zone_end=len(text)，尾部 #N 注记
+    # （`（复用 #1321 机制）`、`: 按 #1355/#1652 …`）留在「区内」参与枚举 ⇒ enum=True ⇒
+    # foreign 抑制 ⇒ fix-r2 P0 异单/no-issue 旁路在另一种拼写复开（仲裁四形里三形假 PASS）。
+    # 封堵**只收窄枚举链的参与判据**（enum 门），不动 zone_end 本体——zone_end 还门着
+    # SELF/RSHORT/foreign 的 token 资格，按评审建议整体取 min(：,:) 前移会把 `fix(x) #N
+    # 13:42 fix-r5`（锚点后 ASCII 时间冒号）的 SELF 计入判没（假 FAIL 向）。两道附加界：
+    # ①enum_cut＝首个**锚点之后**的 ASCII ':'（锚点＝首个 #N 或 fix-r<N> token 的位置；
+    #   `fix(scripts):` / `chore(board):` 前缀冒号与 `01:45` 时间冒号都在锚点之前，不作界
+    #   ——r4 P0-A 的 `01:45 fix-r5 同步` 计 5、`chore(board): 01:10 …` 的题头区链分布
+    #   不变）；②链首落在全/半角括号深度 ≥1 处的链不参与（`修评审（复用 #1321 机制）`
+    #   尾部注记形）。两道界只让 enum 变 False（fail-closed：foreign 只会新增命中），且
+    #   rounds 计入分支不经过 enum——封堵面零回退；链 gap 字符（PAIR_SEP ∪ 非换行空白）
+    #   不含 `:`/`（）()` ⇒ 链不跨界，「链首在界内 ⇒ 整链在界内」与 r4 P1-C 同构。
+    anchor = min([h.start() for h in hashes]
+                 + [m.start() for m in FIXROUND_RE.finditer(text)], default=len(text))
+    acolon = text.find(":", anchor)
+    enum_end = min(zone_end, acolon) if acolon >= 0 else zone_end
     # fix-r15（DS r14 sibling#1 P0，仲裁实测 `_tmp/20261113-3056-fixr14/arbitrate-r14-ds.txt`）：
     # 旧实现每个 hash 向左走整条链（无记忆化）+ 每 token 线性全扫前方 hash——连续
     # `#1#1…` k 个号 ⇒ O(k²)，实测 k=32000 达 103.9 s（每翻倍 ×4）＝闸门挂起，提交标题
@@ -420,9 +456,23 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     # 只压 foreign 半边＝假 FAIL 面，不放宽计入）。fix-r4 限定**题头区内的链**才参与枚举判定
     # （gap 字符不含全角「：」→ 链不跨题头区分界，链首在题头区 ⇒ 整链在题头区）——题头区外
     # 的尾部 #N 注记（`（复用 #1321 机制）`）不再把异单失配的 foreign 封堵关掉（fix-r2 P0
-    # 旁路复开面，DS sibling#1 + boundary#4）；枚举计算走 _enum_title（去重 + 公共元素短路 +
-    # 上限，O(C) 摊还——O(C²) 挂起面见该函数注释）。
-    enum_title = _enum_title([chain_sets[c] for c, p in enumerate(chain_first) if p < zone_end])
+    # 旁路复开面，DS sibling#1 + boundary#4）；fix-r5 P0 再收 enum_end 与括号深度两道界（见
+    # 上方 zone_end 后注释）。枚举计算走 _enum_title（去重 + 公共元素短路 + 上限，O(C) 摊还
+    # ——O(C²) 挂起面见该函数注释）。括号深度用单调指针单遍累计（pscan 只前进，O(n) 总量）。
+    enum_chains: list[frozenset[str]] = []
+    pscan = 0    # 括号深度已扫描到的位置（token 间不回退）
+    pdepth = 0  # text[pscan] 处的括号深度（全/半角开括号 +1，闭括号 -1，不钳 0：游离
+                # 闭括号让后续链停在负深度＝不参与枚举，fail-closed 向）
+    for c, p in enumerate(chain_first):
+        while pscan < p:
+            if text[pscan] in "（(":
+                pdepth += 1
+            elif text[pscan] in "）)":
+                pdepth -= 1
+            pscan += 1
+        if p < enum_end and pdepth == 0:
+            enum_chains.append(chain_sets[c])
+    enum_title = _enum_title(enum_chains)
     ends = [h.end() for h in hashes]
     starts = [h.start() for h in hashes]
     # token 收集：FIXROUND_RE 全部 + 题头区内紧邻 #N 链的 RSHORT 简写（P0①），按位置排序。
@@ -459,10 +509,19 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             continue
         i = bisect_right(ends, start) - 1  # 前方最近 hash（原 prev[-1]）
         if i >= 0:
-            if not chain_sets[heads[i]].isdisjoint(issues):
-                rounds.append(int(num))
-            elif start < zone_end and not enum_title:
-                foreign.append((int(num), chain_sets[heads[i]]))
+            # fix-r5 P1（DS r4 sibling#1，仲裁同上 P0 目录）：前向配对臂补裸号守卫——同族
+            # 另三处（无 #N 全计入 / SELF / 后向配对）已加，此处漏。**偏离评审建议一处**：
+            # 直接套 `_bare_num_before` 会把裸号＝前方链自身成员的形误伤（`#3056+#3074
+            # fix-r5：x`——链 gap `+` 使 BARE_NUM_BEFORE 命中"3074"，但它是配对链成员不是
+            # 引用，:1416 的 foreign 正控与 `fix(scripts) #3056+#3074 fix-r5：x` 计 5 依赖
+            # 此形），故守卫带链成员豁免：裸数字起点在最近前方 hash 结束之前 ⇒ 是该 hash
+            # 自身的数字（`#A+B` 形），不视作引用。
+            bm = BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)
+            if bm is None or bm.start(2) < ends[i]:
+                if not chain_sets[heads[i]].isdisjoint(issues):
+                    rounds.append(int(num))
+                elif start < zone_end and not enum_title:
+                    foreign.append((int(num), chain_sets[heads[i]]))
         elif allow_unpaired and start < zone_end and not _bare_num_before(text, start):
             rounds.append(int(num))  # SELF
         else:

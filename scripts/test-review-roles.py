@@ -1549,6 +1549,64 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not any("读不到 PR 范围" in e for e in errs) or not any("超长数字串" in e for e in errs):
             fails.append(f"fix-r4 P2-3：超长串早退应保留 git 失败原因（errs 不丢）：{errs}")
 
+        # —— #3074 fix-r5（DS r4 增量评审 boundary#1 P0 + sibling#1 P1 + sibling#3 P2 顺手修）——
+        # P0 负控（boundary#1，协调者仲裁 _tmp/20261114-3074-fixr4-arb/arb-fixr4-out.txt 四形）：
+        # 题头区分界只认全角「：」⇒ ASCII 冒号/无冒号标题的尾部 #N 注记参与枚举 → foreign 抑制
+        # → fix-r2 P0 异单旁路复开。封堵＝枚举链参与判据再收两道界（锚点后 ASCII 冒号切
+        # enum_end + 括号深度 ≥1 的链不参与），四形全部异单命中：
+        for t in ["fix(scripts) #9999 fix-r5: 修评审（复用 #1321 机制）",        # ASCII 冒号形
+                  "fix(scripts) #9999 fix-r5 修评审（复用 #1321 机制）",        # 无冒号形
+                  "fix(gateway-parity) #9999 fix-r25: 按 #1355/#1652 双谱系修复"]:  # 真实语料形
+            if not gate.foreign_fixround_pairs([t], frozenset({"3056"})):
+                fails.append(f"fix-r5 P0 负控：ASCII 冒号/无冒号形的异单旁路应进 foreign 拒收：{t[:52]!r}")
+        # P0 正控：锚点（首个 #N/fix-rN）**之前**的 ASCII 冒号不作 enum 界——前缀冒号
+        # （`chore(board):`）与时间冒号（`01:45`）都在锚点前，题头区链分布不变（board 大型
+        # 并记形的枚举抑制不误伤；`chore(state) 01:45 fix-r5 同步` 计 5 见 fix-r4 P0-A 正控）
+        if gate._scan_pairs("chore(board): 01:10 协调轮——#428 fix-r2 合入；#406 fix-r8 缺第二家",
+                            frozenset({"9999"}))[1]:
+            fails.append("fix-r5 P0 正控：锚点前 ASCII 冒号不作 enum 界，board 并记两链仍枚举抑制"
+                         "（前缀冒号收紧会误伤 chore(board): 01:10 族）")
+        # P0 正控：括号深度界只压「括号内链」——括号外两链照常构成枚举（case1 真实形态）
+        if gate._scan_pairs("chore(state) 01:45 #1305 fix-r3 两家收敛；#1318 缺第二家标缺口（转 #9999）",
+                            frozenset({"1318"}))[1]:
+            fails.append("fix-r5 P0 正控：括号外两链（{1305}/{1318}）仍是枚举标题，不作 foreign 判定"
+                         "（尾部括号内 #9999 注记不改变抑制）")
+        # P0 端到端（任务书硬判据）：ASCII 冒号形 + 无冒号形 + Closes #3056 → 异单旁路必须报错
+        for bi, h_txt in enumerate(["fix(scripts) #9999 fix-r5: 修评审（复用 #1321 机制）",
+                                    "fix(scripts) #9999 fix-r5 修评审（复用 #1321 机制）"]):
+            subprocess.run([*g2, "checkout", "-q", "-b", f"fixr5-zone-bypass-{bi}"], check=True)
+            h_byp = titled2(h_txt)
+            subprocess.run([*g2, "checkout", "-q", "-"], check=True)
+            errs = gate2("## 概述\n\n异单旁路拼写复开。\n\n" + blk_t.format(h=h_byp) + "Closes #3056\n", h_byp, c_base)
+            if not any("异单旁路" in e and "#9999" in e for e in errs):
+                fails.append(f"fix-r5 P0 e2e：异单×尾部注记（{h_txt[:36]!r}…）应 fail-closed 拒收：{errs}")
+        # P1 负控（sibling#1）：前向配对臂裸号守卫——#2957∈issues 在前 + 裸号 2932 紧邻 token
+        # 的镜像顺序形（P1-D 修的是 token 在 #N 前的顺序）不得计入（纯 state 假 FAIL）
+        if gate.fix_round_from_title("chore(state) board 13:42 交接段：#2957 P1×3 + 2932 fix-r2 交付",
+                                     frozenset({"2957"})) is not None:
+            fails.append("fix-r5 P1 负控：前向配对（#2957∈issues 在前 + 裸号 2932 紧邻 token）不得计入")
+        # P1 负控（foreign 半边）：裸号引用 token 不进 foreign（board 引用不是本 PR 修复轮）
+        if gate._scan_pairs("chore(state) board 13:42 交接段：#2957 P1×3 + 2932 fix-r2 交付",
+                            frozenset({"9999"}))[1]:
+            fails.append("fix-r5 P1 负控：裸号引用 token 不进 foreign（board 尾引用形，整 token 视为引用）")
+        # P1 正控：无裸号的前向配对照常计入；链成员裸号（#A+#B 链尾号紧邻 token）不误伤
+        if gate.fix_round_from_title("fix(scripts) #2957 fix-r2 交付", frozenset({"2957"})) != 2:
+            fails.append("fix-r5 P1 正控：无裸号的前向配对（#2957 fix-r2）照常计 2")
+        if gate.fix_round_from_title("fix(scripts) #3056+#3074 fix-r5：x", frozenset({"3074"})) != 5:
+            fails.append("fix-r5 P1 正控：链成员裸号（#3056+#3074 的 3074）不是引用，前向配对照常计 5")
+        # P2-a 负控（sibling#3）：_ENUM_CHAIN_CAP 无用例——201 条互异链（>200）按非枚举
+        # fail-closed，异单 token 照进 foreign；200 条（=cap）在界内仍按枚举抑制
+        cap_over = "fix(x) " + "；".join(f"#{n}" for n in range(1, 202)) + " fix-r5"
+        if not gate.foreign_fixround_pairs([cap_over], frozenset({"9999"})):
+            fails.append("fix-r5 P2-a：>200 条互异链按非枚举处理（fail-closed），异单 token 照进 foreign")
+        cap_edge = "fix(x) " + "；".join(f"#{n}" for n in range(1, 201)) + " fix-r5"
+        if gate._scan_pairs(cap_edge, frozenset({"9999"}))[1]:
+            fails.append("fix-r5 P2-a：=200 条互异链在 cap 界内仍按枚举抑制（上限不误伤界内 board 形）")
+        # P2-a 负控：公共元素短路分支——互异但全体相交（共享 #1）⇒ 非枚举，异单照进 foreign
+        # （短路若误返 True 会关掉 foreign 封堵；`#1；#2；#1` 同集去重形不构成枚举已有 :1418 正控）
+        if not gate._scan_pairs("fix(x) #1/#2；#1/#3 fix-r5", frozenset({"9999"}))[1]:
+            fails.append("fix-r5 P2-a：互异但全体相交的链（共享 #1）短路判非枚举，异单 token 照进 foreign")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
