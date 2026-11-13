@@ -80,7 +80,12 @@ REQUIRED_ROLES = ("sibling", "concurrency", "boundary", "simplify")
 # （check-taskbook-segments.py:96 的先例注释）。
 MARKER = re.compile(r"<!--\s*pr-gate:v1(?![A-Za-z0-9_])([^>]*)-->")
 WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S)
-ISSUE_LINK = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d+(?![A-Za-z0-9_])", re.I)
+# fix-r12（DS r11 concurrency#1 P2，P2-b 口径）：关键词词表单源——ISSUE_LINK 与 ISSUE_NUM
+# 共用 `_ISSUE_KEYWORDS`，并配同源断言测试（test-review-roles.py r12 块）。两份手抄同漂移
+# 是 r9-r11 分隔符同款反模式：增关键词只改一处时另一处漏改 → pr_issues 得空集/首段缺号
+# → 配对全不计 → 假 PASS。定义先于两个使用者。
+_ISSUE_KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)"
+ISSUE_LINK = re.compile(r"(?<![A-Za-z0-9_])" + _ISSUE_KEYWORDS + r"\s+#\d+(?![A-Za-z0-9_])", re.I)
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 补丁指纹的 diff 参数全部写死：不受本机 / CI 的 diff.renames、diff.algorithm、前缀、颜色、外部 diff 配置影响
 FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
@@ -117,16 +122,24 @@ HASH_REF = re.compile(r"(?<![A-Za-z_#])#(\d+)(?![A-Za-z0-9_])")
 # fix-r11（DS r10 sibling#1 + boundary#1 + simplify#1 三 P2 同簇，结构性修）：续写分隔符
 # 从 PAIR_SEP **单源派生**——标点类不再手抄第二份字面量（r9 补 `[,，、/]`、r10 再补 `+` 与
 # 空白正是两份定义漂移的产物，同一词汇位逐轮补词必出新洞，memory「词汇枚举式修判读不
-# 收敛」：PAIR_SEP 早含 `+` 而 ISSUE_NUM 到 r10 才跟上）；纯空白续写收紧为 `[ \t]+`（`\s`
-# 含换行，会把下一行行首 `#N` 并进关联集——过严方向、board 0 实例，收紧后
-# `Closes #3056\n\n#3074` 不再并入，DS r10 simplify#1）；**空档＝粘写**（`Refs #3056#3057`）
+# 收敛」：PAIR_SEP 早含 `+` 而 ISSUE_NUM 到 r10 才跟上）；**空档＝粘写**（`Refs #3056#3057`）
 # 与 `_paired_rounds` 的「空隙视为紧贴」并组口径对齐（DS r10 boundary#1：粘写下
-# pr_issues 只取首号 → 同一假 PASS 机制换分隔符）；显式分隔符两侧 `\s*` 保留换行容忍
-# （`closes #3056,\n#3057` 既有用例）。
+# pr_issues 只取首号 → 同一假 PASS 机制换分隔符）。
+# fix-r12（DS r11 boundary#1 P0 + sibling#1 + concurrency#1 + simplify#1#2 + boundary#2 P2 同簇
+# 收口）：①纯空白续写 `[ \t]+` → `[^\S\r\n]+`（`[ \t]` 丢了 r10 `\s+` 本收的**非 ASCII
+# 空白**：U+3000 全角空格 / U+00A0 NBSP / U+2009——实测 `_tmp/20261113-3056-fixr12/
+# nbsp-fullwidth-probe.txt`，中文输入法全角空格续写 `Closes #3056　#3057` 丢号 → 同一
+# 假 PASS 面；`[^\S\r\n]` 保留「纯换行不并」的原意）；②标点改**标点串** `[{punct}]+`
+# （与 `_paired_rounds` 的「gap 每字符在 PAIR_SEP」判据对齐——`Refs #3056+/#3057` 混排
+# 也能并组）；③标点两侧 `\s*` 收紧为 `[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?`——**至多一个换行**
+# （`closes #3056,\n#3057` 单换行容忍保留，`Closes #3056,\n\n#3074` 段落空行不再并入，
+# 消除「同一条正文边界两套口径」）；④关键词词表收敛为 `_ISSUE_KEYWORDS` 单源（定义
+# 在 ISSUE_LINK 处，本处只是引用）。
 PAIR_SEP = frozenset("+,、，/ \t")
 _ISSUE_GAP_PUNCT = "".join(re.escape(c) for c in sorted(PAIR_SEP - {" ", "\t"}))
-ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+"
-                       rf"#(?P<nums>\d+(?:(?:\s*[{_ISSUE_GAP_PUNCT}]\s*|[ \t]+|)#\d+)*)(?![A-Za-z0-9_])", re.I)
+ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])" + _ISSUE_KEYWORDS + r"\s+"
+                       rf"#(?P<nums>\d+(?:(?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}]+[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?"
+                       rf"|[^\S\r\n]+|)#\d+)*)(?![A-Za-z0-9_])", re.I)
 # 修 4（fix-r5，boundary#4 P2）本地回显扫描的判据：只认「结构化回显」——类型词 + (scope) +
 # 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
 # 报告证明「类型词开头的散文」与真实标题在行内没有判别量（「test 覆盖了 fix-r5 的场景」
