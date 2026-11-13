@@ -17,7 +17,8 @@
   4. 修复轮字段（#3056，长尾收口卡「机检落点」；fix-r6 主信号源扩为集合；fix-r5 修 2/4）：
      **主信号 = PR 范围提交标题集合**（--base/--head/--repo 齐给时 `git log --format=%s
      <base>..<head>`，head 提交天然包含在集合内，不单独走一条路）——对集合内每条标题套同一
-     判据：类型词（fix/chore/docs/feat/refactor/test/style/perf/build/ci/revert）开头 + 可选
+     判据：类型词（`_TYPE_WORDS` 单源词表，fix-r15：不再手抄枚举——DS r14 sibling#3 /
+     MM r14 sibling#2 + boundary#4 同撞「第三份手抄漂移面」）开头 + 可选
      `(scope)`/`!` + 冒号〔半/全角〕或空白分隔 + 行内 `fix-r<N>`（ASCII 词边界）；任一标题
      命中即判为修复轮 PR，**每条命中标题的轮号按配对判定**（fix-r5 修 2，boundary#2 P1）：
      token 前方最近的 `#N`（由 +/,/、/空白链成的 #N 串）与本 PR 关联单号（正文 Closes/
@@ -75,6 +76,7 @@ import os
 import re
 import subprocess
 import sys
+from bisect import bisect_right
 
 REQUIRED_ROLES = ("sibling", "concurrency", "boundary", "simplify")
 # 边界一律用 ASCII 环视而不是 \b（#3056 fix-r2 修 3①，MM2 sibling#1）：Python 的 \w 含 CJK，
@@ -158,15 +160,23 @@ def _is_issue_gap_char(c: str) -> bool:
 
 
 ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])" + _ISSUE_KEYWORDS + r"\s+"
-                       rf"#(?P<nums>\d+(?:(?:{_GAP_EDGE}(?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}])+{_GAP_EDGE}"
+                       rf"#(?P<nums>\d+(?:(?:{_GAP_EDGE}[{_ISSUE_GAP_PUNCT}](?:[^\S\r\n]*[{_ISSUE_GAP_PUNCT}])*{_GAP_EDGE}"
                        rf"|[^\S\r\n]+|)#\d+)*)(?![A-Za-z0-9_])", re.I)
 # fix-r14（DS r13 concurrency#1 + boundary#1、MM concurrency#1 三谱系同撞 P0，仲裁实测
 # `_tmp/20261113-3056-fixr14/redos-arbitration.txt`）：标点分支外层 `+` 内层「空白* + 标点+」
 # 的嵌套量词是 `(P+)+` 形——M 个连续标点可被切成 2^(M-1) 种轮组合，gap 后无 #N 时全枚举
 # （实测 n=22 已 0.32s、每 +2 标点 ×4.3，n=40 外推 20+ 分钟＝闸门挂起，PR 正文作者可控）。
-# 改为每轮恰吃**一个**标点 `(?:[^\S\r\n]*[P])+`：标点串的轮划分唯一（第 i 轮＝第 i 个标点），
-# 语言等价、回溯线性；空白重分配也不可能爆炸——轮首空白星缩短后 `[P]` 立即在空白位失败，
-# 无成功路径。别再写回嵌套 `[P]+`（或任何「内外层都能吃同一字符类」的重复单元）。
+# 改为每轮恰吃**一个**标点：标点串的轮划分唯一（第 i 轮＝第 i 个标点），语言等价、标点维度
+# 线性。别再写回嵌套 `[P]+`（或任何「内外层都能吃同一字符类」的重复单元）。
+# fix-r15（DS r14 boundary#1 P1、MM r14 concurrency#1 + boundary#1 同撞，两家取高；仲裁实测
+# `_tmp/20261113-3056-fixr14/arbitrate-r14-ds.txt`）：r14 形态仍留**相邻星号**二次回溯面——
+# 轮首 `[^\S\r\n]*` 与左侧 `_GAP_EDGE` 尾部 `[^\S\r\n]*` 相邻（`a*a*` 形），前导空白 K ×
+# 标点 M 在失败路径上 O(K·M)（实测 `Refs #1 + " "*n + ","*n + "x"` 每翻倍 ×4，n=4000 已
+# 0.88 s；r14 注释「空白重分配也不可能爆炸」只看了标点维度，空白维度不成立——已删）。修法＝
+# **前导空白单处化**：首个标点前只由 `_GAP_EDGE` 吃空白，轮形 `[P](?:W*[P])*`——
+# `GAP·W* ≡ GAP`（W 与标点/换行类不相交，首轮前导空白可无损并入 GAP，语言等价），轮间
+# `P…W*…P` 无重叠类，全分支无非确定性切分。语言等价由词表复算 + 语义回归钉死
+# （test-review-roles.py r15 块）。同理别写回「同一段空白两处星号都能吃」的任何形态。
 # 类型词表单源（fix-r14，DS r13 sibling#1 P2）：ECHO_HEAD 与 TITLE_HEAD 两处手抄是 r12
 # ISSUE_LINK/ISSUE_NUM 同款反模式——一处加词（如 deps）另一处漏改 → CI 路径与本地回显
 # 路径的修复轮判定分裂。两正则只准引 `_TYPE_WORDS`；测试侧有同源断言。
@@ -230,22 +240,30 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
     hashes = list(HASH_REF.finditer(text))
     zsplit = text.split("：", 1)
     zone_end = len(zsplit[0]) if len(zsplit) == 2 else len(text)
-    chains: list[frozenset[str]] = []
+    # fix-r15（DS r14 sibling#1 P0，仲裁实测 `_tmp/20261113-3056-fixr14/arbitrate-r14-ds.txt`）：
+    # 旧实现每个 hash 向左走整条链（无记忆化）+ 每 token 线性全扫前方 hash——连续
+    # `#1#1…` k 个号 ⇒ O(k²)，实测 k=32000 达 103.9 s（每翻倍 ×4）＝闸门挂起，提交标题
+    # 作者可控。改为单次左→右扫描记链头索引、每条链的配对集只物化一次（等价：左行闭包＝
+    # 链连通分量）；「token 前方最近 #N」用二分取代线性全扫（同一挂起面的另一半）。
+    heads: list[int] = []          # heads[i] = hash i 所在链的链头下标
+    members: list[list[str]] = []  # members[链头] = 该链全部 #N（O(1) 摊还追加）
     for i, h in enumerate(hashes):
-        grp = {h.group(1)}
-        j = i
-        while j > 0 and all(_is_issue_gap_char(c) for c in text[hashes[j - 1].end():hashes[j].start()]):
-            grp.add(hashes[j - 1].group(1))
-            j -= 1
-        chains.append(frozenset(grp))
+        if i and all(_is_issue_gap_char(c) for c in text[hashes[i - 1].end():h.start()]):
+            heads.append(heads[i - 1])
+            members[heads[i - 1]].append(h.group(1))
+        else:
+            heads.append(len(members))
+            members.append([h.group(1)])
+    chain_sets = [frozenset(g) for g in members]
+    ends = [h.end() for h in hashes]
     rounds: list[int] = []
     for m in FIXROUND_RE.finditer(text):
         if not hashes:
             rounds.append(int(m.group(1)))
             continue
-        prev = [i for i, h in enumerate(hashes) if h.end() <= m.start()]
-        if prev:
-            if chains[prev[-1]] & issues:
+        i = bisect_right(ends, m.start()) - 1  # 前方最近 hash（原 prev[-1]）
+        if i >= 0:
+            if not chain_sets[heads[i]].isdisjoint(issues):
                 rounds.append(int(m.group(1)))
         elif m.start() < zone_end:
             rounds.append(int(m.group(1)))
@@ -289,8 +307,10 @@ def pr_commit_titles(repo: str, base: str, head: str) -> tuple[list[str] | None,
       「非修复轮」放行**：判不出是不是修复轮就跳过 fixtype/residual 检查，正是 r3/r4 双撞
       P0 的假 PASS 面；
     - (None, "") = 缺 --base/--head/--repo 任一（不是错误：本地 --body-file 不传 head 的
-      路径走正文首行兜底——非首行正文回显不再识别，**有意收窄**，fix-r6 起有负控钉死；
-      调用方 main 打 stderr 显式告警说明缺哪件，不静默降级，fix-r7）；
+      路径＝无标题证据，与空集同口径走「首行宽松 + 全正文结构化回显扫描」兜底——fix-r14
+      MM sibling#1：模块 docstring rule 4 已按此改，此处同步；fix-r6 的「有意收窄、非首行
+      回显不再识别」只保留给「集合在但全不命中」的 CI 形态；调用方 main 打 stderr 显式
+      告警说明缺哪件，不静默降级，fix-r7）；
     - ([], "") = 空集：**无标题证据**的两形态——base==head（无提交可判）**或**范围内提交
       subject 全为空（过滤后空列表）——都不是 git 失败，按「无主
       信号」与本地形态同款走正文首行 + 结构化回显兜底（fix-r9 P2a：空集与 None 一样没有任何

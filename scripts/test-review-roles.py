@@ -1009,26 +1009,68 @@ def _run(gate, rrr, out_base: Path) -> int:
         # fix-r14（DS r13 concurrency#1 + boundary#1、MM concurrency#1 三谱系同撞 P0，仲裁实测
         # `_tmp/20261113-3056-fixr14/redos-arbitration.txt`）：标点分支嵌套量词 `(P+)+`
         # 的指数回溯——长标点串（其后再无 #N）须在时限内返回，r13 形态实测 n=22 已 0.32s、
-        # 每 +2 标点 ×4.3（n=40 外推 20+ 分钟＝闸门挂起，正文作者可控）。线性形态
-        # `(?:[^\S\r\n]*[P])+`（每轮恰一个标点）下 n=200 须有界。
-        import time as _time
+        # 每 +2 标点 ×4.3（n=40 外推 20+ 分钟＝闸门挂起，正文作者可控）。语义（只取首号且
+        # 并组不变）就地断言；**时限断言见 r15 子进程探针**。
         for attack in ("Closes #3056" + "," * 200 + "x",
                        "Refs #3056 " + "+ ," * 100 + "、"*100 + "x",
                        "Closes #3056" + ",\n"*100 + "x"):
-            t0 = _time.monotonic()
             got = gate.pr_issues(attack + "\n")
-            dt = _time.monotonic() - t0
             if got != frozenset({"3056"}):
                 fails.append(f"fix-r14 P0 回归护栏：长标点串只取首号且并组语义不变，得 {sorted(got)}")
-            if dt > 2.0:
-                fails.append(f"fix-r14 P0 回归护栏：长标点串（{len(attack)} 字符）耗时 {dt:.3f}s > 2s"
-                             "——嵌套量词回退（`(P+)+` 形）会指数化，改每轮恰一个标点的线性形态")
+        # fix-r15（DS r14 sibling#1 P0 + boundary#1 P1，仲裁实测 arbitrate-r14-ds.txt；护栏
+        # fail-fast 缺陷＝MM r14 concurrency#2 + boundary#2 同撞）：两个二次回溯面——
+        # `_paired_rounds` 的 #N 链构建 O(k²)（实测 k=32000 达 103.9 s）、前导空白×标点
+        # 相邻星号 O(K·M)（实测 n=4000 已 0.88 s）——各补一条探针；**全部探针跑在带超时的
+        # 子进程里**：回退成二次/指数形态时子进程被杀＝干净 FAIL，不再像旧的事后计时那样
+        # 在永不返回的调用上把整套套件挂死（r14 三攻击形的时限断言同改走子进程）。
+        _probe = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('gate', sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "mode, n = sys.argv[2], int(sys.argv[3])\n"
+            "if mode == 'chain':\n"
+            "    print(gate.fix_round_from_title('fix(scripts) #1' + '#1'*n + ' fix-r4',\n"
+            "                                    frozenset({'1'})))\n"
+            "elif mode == 'ws':\n"
+            "    print(sorted(gate.pr_issues('Refs #1' + ' '*n + ','*n + 'x')))\n"
+            "elif mode == 'punct':\n"
+            "    print(sorted(gate.pr_issues('Closes #3056' + ','*n + 'x')))\n"
+        )
+        _gate_py = str(ROOT / "scripts" / "check-pr-gate.py")
+        for _mode, _n, _want, _why in (
+                ("punct", 200, "['3056']", "嵌套量词 `(P+)+` 形回退会指数化"),
+                ("ws", 20000, "['1']", "相邻星号（前导空白×标点）二次回溯 O(K·M)"),
+                ("chain", 20000, "4", "_paired_rounds #N 链构建 O(k²)")):
+            try:
+                _cp = subprocess.run([sys.executable, "-I", "-c", _probe, _gate_py, _mode, str(_n)],
+                                     capture_output=True, text=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                fails.append(f"fix-r15 P0/P1 回归护栏：{_mode} 探针超时（>5s）——{_why}，"
+                             "闸门会挂起（作者可控标题/正文），修法见 check-pr-gate.py fix-r15 注释")
+                continue
+            if _cp.returncode != 0:
+                fails.append(f"fix-r15 探针异常退出 {_cp.returncode}: {_cp.stderr[-300:]}")
+            elif _cp.stdout.strip() != _want:
+                fails.append(f"fix-r15 {_mode} 语义漂移：得 {_cp.stdout.strip()!r} 期望 {_want!r}")
         # fix-r14（DS r13 sibling#1 P2）：类型词表单源——ECHO_HEAD 与 TITLE_HEAD 只准引
         # `_TYPE_WORDS`，一处加词另一处漏改会让 CI 路径与本地回显路径的修复轮判定分裂
         # （r12 ISSUE_LINK/ISSUE_NUM 同款手抄漂移反模式）。
         if gate._TYPE_WORDS not in gate.ECHO_HEAD.pattern or gate._TYPE_WORDS not in gate.TITLE_HEAD.pattern:
             fails.append("fix-r14 P2（DS r13 sibling#1）：ECHO_HEAD/TITLE_HEAD 须单源引 _TYPE_WORDS"
                          "（两份手抄词表漂移 → 双路径修复轮判定分裂）")
+        # fix-r15（DS r14 sibling#2 P2 + MM boundary#3 P3 同撞）：子串包含锁抓不到「手抄同一
+        # 字面量 / 附加别的分支」——行为对拍补位：逐词（词表由 _TYPE_WORDS 自身解析，不手抄
+        # 第二份）断言 ECHO_HEAD/TITLE_HEAD 命中全部词、表外词（deps）两者均不命中。
+        import re as _re
+        for _w in _re.findall(r"[a-z]+", gate._TYPE_WORDS):
+            if not gate.ECHO_HEAD.match(f"{_w}(s) #1 fix-r2：x"):
+                fails.append(f"fix-r15 类型词正控：ECHO_HEAD 须命中 {_w}(s) 回显形态（词表漂移）")
+            if not gate.TITLE_HEAD.match(f"{_w}(scripts): x"):
+                fails.append(f"fix-r15 类型词正控：TITLE_HEAD 须命中 {_w}(scripts) 标题形态（词表漂移）")
+        if gate.ECHO_HEAD.match("deps(s) #1 fix-r2：x") or gate.TITLE_HEAD.match("deps(scripts): x"):
+            fails.append("fix-r15 类型词负控：deps 不在 _TYPE_WORDS，两正则不得命中"
+                         "（命中＝词表漂进了别的来源）")
         # fix-r14（MM sibling#4 P2）：标题侧并组口径双向钉死——正控（PAIR_SEP 成员并组）+
         # 负控（非 gap 分隔符不并组、链只取最近 #N）。
         if gate.fix_round_from_titles(["fix(scripts) #3056;#3074 fix-r12：x"],
