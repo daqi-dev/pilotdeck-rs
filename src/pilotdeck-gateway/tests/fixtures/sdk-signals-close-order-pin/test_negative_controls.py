@@ -1150,6 +1150,125 @@ class PreGuardRefusalTests(unittest.TestCase):
         self.assertFalse(out.exists())
 
 
+# #3043 fix-r5 (sibling#2): the startup roster pin is driven through a real
+# subprocess like the classes above, but nothing needs patching — only the
+# module-level checks matter, so the copy runs with the real shared helpers
+# (the bootstrap pre-inserts the real fixtures root on sys.path; the copy's
+# own parents[1] insert lands in the temporary tree and resolves nothing).
+ROSTER_BOOT_SOURCE = """\
+import sys
+copy, out = sys.argv[1], sys.argv[2]
+sys.argv = ['negative_controls.py', out]
+sys.path.insert(0, __REAL_FIXTURES__)
+import runpy
+runpy.run_path(copy, run_name='__main__')
+"""
+
+# Table rows carry an 8-space indent, EXPECTED_NAMES entries a 4-space one,
+# and each anchor is newline-anchored so it names exactly one site — never a
+# substring of the other indent, never the docstring bullets.
+_TABLE_ROW = '\n        "unordered-close-id-renamed",\n'
+_ROSTER_ENTRY = '\n    "unordered-close-id-renamed",\n'
+_TABLE_ROW_MOVED = '\n        "unordered-close-row-removed",\n'
+_TABLE_ROW_NEXT = '\n        "unordered-close-boundary-dropped",\n'
+
+
+class StaticRosterTests(unittest.TestCase):
+    """#3043 fix-r5: the static name roster refuses same-count drift (rc 1).
+
+    EXPECTED_TOTAL already blocks a deleted row and a duplicated name, but a
+    rename, a reorder or a same-count substitution kept every prior check
+    green (measured pre-fix: a renamed row reached the CARGO_TARGET_DIR
+    refusal). The EXPECTED_NAMES + registered() pair closes that gap per
+    specs/negative-controls/README.md invariant 1. The refusal keeps this
+    runner's pinned rc-1 pre-run contract, and no evidence directory may
+    appear for any of them. The pristine width direction proves the negative
+    results come from the roster, not the bootstrap: an unmutated copy of the
+    same driver reaches the next pre-run refusal instead.
+    """
+
+    def run_copy(self, source):
+        base = Path(tempfile.mkdtemp(prefix='pdrs-3043-roster-'))
+        _BASES.append(base)
+        tree = base / ('src/pilotdeck-gateway/tests/'
+                       'fixtures/sdk-signals-close-order-pin')
+        tree.mkdir(parents=True)
+        copy = tree / 'negative_controls.py'
+        copy.write_text(source, encoding='utf-8')
+        boot = base / 'boot.py'
+        boot.write_text(
+            ROSTER_BOOT_SOURCE.replace('__REAL_FIXTURES__',
+                                       repr(str(FIXTURES))),
+            encoding='utf-8')
+        out = base / 'out'
+        result = subprocess.run(
+            [sys.executable, '-B', str(boot), str(copy), str(out)],
+            capture_output=True, text=True, timeout=60,
+            env={key: value for key, value in os.environ.items()
+                 if key != 'CARGO_TARGET_DIR'})
+        return result, out
+
+    def test_a_renamed_row_is_refused_without_evidence(self):
+        source = PIN_SCRIPT.read_text(encoding='utf-8')
+        self.assertEqual(source.count(_TABLE_ROW), 1)
+        result, out = self.run_copy(
+            source.replace(_TABLE_ROW,
+                           _TABLE_ROW.replace('id-renamed', 'id-renamed-x')))
+        self.assertEqual(result.returncode, 1,
+                         f'#3043 a renamed row is a pre-guard refusal '
+                         f'(rc 1): {result.stderr!r}')
+        self.assertIn('#1382 mutation roster drifted from the static inventory',
+                      result.stderr)
+        self.assertIn('unordered-close-id-renamed', result.stderr)
+        self.assertIn('unordered-close-id-renamed-x', result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_reordered_row_is_refused_without_evidence(self):
+        source = PIN_SCRIPT.read_text(encoding='utf-8')
+        self.assertEqual(source.count(_TABLE_ROW), 1)
+        self.assertEqual(source.count(_TABLE_ROW_MOVED), 1)
+        swapped = (source
+                   .replace(_TABLE_ROW, '\n        "__swap__",\n')
+                   .replace(_TABLE_ROW_MOVED, _TABLE_ROW)
+                   .replace('\n        "__swap__",\n', _TABLE_ROW_MOVED))
+        result, out = self.run_copy(swapped)
+        self.assertEqual(result.returncode, 1,
+                         f'#3043 a reordered row is a pre-guard refusal '
+                         f'(rc 1): {result.stderr!r}')
+        self.assertIn('#1382 mutation roster drifted from the static inventory',
+                      result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_row_deleted_with_its_roster_entry_still_shrinks_the_denominator(self):
+        # The double edit registered() alone cannot see (both sides shrink
+        # together) is exactly why the EXPECTED_TOTAL count literal stays: the
+        # pair is two-sided, and this cell pins the count side of it.
+        source = PIN_SCRIPT.read_text(encoding='utf-8')
+        self.assertEqual(source.count(_TABLE_ROW), 1)
+        self.assertEqual(source.count(_ROSTER_ENTRY), 1)
+        index = source.index(_TABLE_ROW)
+        start = source.rfind('    (\n', 0, index)
+        end = source.index('    (\n', index + 1)
+        without_row = source[:start] + source[end:]
+        self.assertNotIn(_TABLE_ROW, without_row)
+        self.assertEqual(without_row.count(_TABLE_ROW_NEXT), 1)
+        result, out = self.run_copy(without_row.replace(_ROSTER_ENTRY, ''))
+        self.assertEqual(result.returncode, 1,
+                         f'#3043 a double-deleted row still shrinks the '
+                         f'denominator (rc 1): {result.stderr!r}')
+        self.assertIn('#1506 fixed product mutation denominator', result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_pristine_copy_reaches_the_next_refusal(self):
+        result, out = self.run_copy(PIN_SCRIPT.read_text(encoding='utf-8'))
+        self.assertEqual(result.returncode, 1,
+                         f'#3043 the pristine copy must clear the roster and '
+                         f'stop at the next pre-guard refusal: '
+                         f'{result.stderr!r}')
+        self.assertIn('#1382 CARGO_TARGET_DIR must be supplied', result.stderr)
+        self.assertFalse(out.exists())
+
+
 def tearDownModule():
     for base in _BASES:
         shutil.rmtree(base, ignore_errors=True)

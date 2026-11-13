@@ -118,6 +118,7 @@ from negative_process import (
     new_output_directory,
     run_owned,
 )
+from negative_selection import registered
 from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
@@ -321,6 +322,42 @@ def check_mutation_table(rows):
 
 
 check_mutation_table(mutations)
+
+# #3043 fix-r5: the count literal above blocks a deleted row and a duplicate
+# name, but a rename, a reorder or a same-count substitution keeps every check
+# green (verified: a renamed row reached the CARGO_TARGET_DIR refusal
+# pre-fix). The static name roster below closes that gap per
+# specs/negative-controls/README.md invariant 1 ("the denominator is a static
+# literal, not the runtime table length"): `registered()` compares the table
+# against this frozen ordered tuple, so any name-level drift now refuses
+# before a control runs. Together the pair is two-sided: EXPECTED_TOTAL still
+# catches the "row deleted together with its roster entry" double-edit (the
+# count drops), which a names-only mirror cannot see on its own. The refusal
+# keeps this runner's pinned rc-1 pre-run contract (#1382), unlike the
+# settings-gateway sibling's rc-2 `refuse()`.
+EXPECTED_NAMES = (
+    "unordered-close-row-removed",
+    "unordered-close-id-renamed",
+    "unordered-close-boundary-dropped",
+    "unordered-close-content-retargeted",
+    "unordered-close-content-old-retargeted",
+    "unordered-close-content-new-retargeted",
+    "unordered-close-assertion-retargeted",
+    "unordered-close-test-retargeted",
+    "unordered-close-boundary-content-retargeted",
+    "unordered-close-boundary-key-renamed",
+    "unordered-close-boundary-row-removed",
+    "unordered-close-path-retargeted",
+    "unordered-close-boundary-old-retargeted",
+    "unordered-close-boundary-new-retargeted",
+    "unordered-close-boundary-test-retargeted",
+    "unordered-close-boundary-path-retargeted",
+)
+
+try:
+    registered(mutations, EXPECTED_NAMES)
+except ValueError as error:
+    sys.exit(f"#1382 mutation roster drifted from the static inventory: {error}")
 
 
 def check_restore_set():
