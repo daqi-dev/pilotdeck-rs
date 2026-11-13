@@ -6527,3 +6527,30 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ### 下一步
 按未结义务表序推进，不空等；下一个交接点 ~09:45。
+
+## 2026-11-13 09:49 交接段（coord2/e7；上一段 07:45，超时原因：盘满事故恢复 + 五线收块挤占）
+
+### 做了什么
+1. **本机盘满事故与恢复**：07:45 后本机 `_build`+`_tmp` 一度打满，Bash 全线 ENOSPC 瘫痪；删四棵闲置树 cargo-target 释放 ~50 GiB 恢复（wt-1723 活跃 worker 保留）；事故教训落 memory（ENOSPC 下 Monitor 工具可作救援通道）。此后 `du -sk` 常态化。
+2. **3056 fix-r9 完成并送审**：DS r5 评审 P0（pr_issues 多单列表只取首号）+ P1（HASH_REF 词界）+ 三 P2a 全修——`ISSUE_NUM` 加 `nums` 组、`pr_issues` 取全号、HASH_REF `(?<![A-Za-z_#])#(\d+)(?![A-Za-z0-9_])`（**前置数字保留**保 `#1#2` 紧贴链，与评审建议的偏差见 PR 正文）、echo_scan 空集、README 删重复 bullet、ledger 悬置可见性分列；三套件测试 rc=0 + 真实数据复算（10683 条语料，A 面 542 杀 token 全有词界理由、B 面 1690 条回退 0、C 面 85 形态全号进集）。提交 4d777a28e 推送；**8b4afafed 误标 fix-r5 已 amend 改标 fix-r8**（4de29f52e，board:6484 既定处置），证据目录同步改名；PR #3074 正文整体换 r9 版（历史评审块留评论链）。**DS r9 增量评审已回：四角色 PASS 但 boundary P0 + sibling P1 双谱系同撞**——`ISSUE_NUM` 分隔符白名单 `[,，、/]` 漏空白与 `+`（board 真实形态 `Closes #382 #387 #452`、`Refs #1696 #1684`、`Refs #1985+#2053` 只取首号＝P0 假 PASS 面换分隔符复现），且 C 面复算枚举器与实现同源（自证）；boundary 另给 P2（`PR#3074` 字母紧贴真引用被词界误杀的窄窗）。→ **fix-r10 当轮修**（分隔符对齐 PAIR_SEP + 独立枚举器复算 + PR# 窄窗按评审建议收窄排除表 + led13 断言补齐 + fix-r6 误标签改 fix-r9）。
+3. **1087 r12 提交推送**：DS r11 评审修点（boundary#1 pre-mkdir 拒绝落 marker 双夹具孪生 + sibling#1 atomic_write 清理 unlink 四夹具 suppress + revoke-note-dropped 变异）提交 5f45e5e7e 推送；锚点自查 3 passed rc=0、twins 21/20/36 全绿。DS r12 增量评审在飞（base 99d583488）；MM 全量差分等额度恢复。
+4. **2476 三义务齐**：negctl 8/8 KILLED + 宿主补跑 cargo no-run/clippy 双 rc=0（清磁盘后重试成功）；DS r5 增量评审在飞（base de8c257e6）；评完贴块 #3097。
+5. **1723 fix-r5 worker 已交付待收**：本机 GLM（09:32 RESULT、09:39 glm.exit）——fsize 锚串同步 + 定义形状正则 + 单行负控 KILLED 实证 + 锚点扫描 205 passed；改动仅两 negative_controls.py（已暂存未提交）。**PR #3088 CI 红**：pr-gate 缺审计块+缺 Refs（正文空，待收货时补）、negative-controls 红（fsize INVALID，fix-r5 未提交正是其修）、rust `negative_anchor_selfcheck` 红于两夹具 "unsupported snapshot binding: snapshots must have exactly one declaration"——是否 fix-r5 覆盖待判读，若非分支回归先核 main 绿基线。
+6. **3071 已 MERGED、3078 仍 OPEN**：3078/3071 合并等待器（bohgf5njw）按双终态条件继续挂；3078 自身 checks 待核（该单此前在队列弹跳，见 06:22 段根因记录）。
+7. **2461 fix-r6 macmini worker 在跑**（remote-wait4，09:24 rel=_tmp/20261026-issue-2461/fix-r6）；3088/3105 CI 等待器在挂。
+
+### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查）
+| # | 下一步动作 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3056 fix-r10：分隔符补空白/`+` 对齐 PAIR_SEP + 独立枚举器重跑复算 + PR# 窄窗处置 + led13 断言 + 标签改 r9 → 提交推送 → DS r10 增量 + MM 补谱系 → 贴块 → 入队 | coord2/e7 | 10:45 |
+| 2 | 1723 fix-r5 收货：核对暂存 == final.patch、read_tests.rs stat 脏排除 → commit 推送 → 判读 rust 锚点自检红（unsupported snapshot binding）是否 fix-r5 覆盖（先核 main 绿基线）→ 补 PR #3088 正文（自证 + Refs #1723 + 评审轮记录）→ 双谱系增量 → 入队 | coord2/e7 | 10:30 |
+| 3 | 1087 DS r12 增量收块（but0ewy33 在飞）→ 贴块 #3042；MM 全量差分等额度恢复补第二谱系 | coord2/e7 | 评审完成即收 |
+| 4 | 2476 DS r5 增量收块（bd4gpvm3c 在飞）→ 贴块 #3097 → gate → 入队（MM 谱系 11-12 已过一轮，判两家是否已齐） | coord2/e7 | 评审完成即收 |
+| 5 | 2461 fix-r6 macmini 交付收货（waiter 在挂）→ 推送 → 双谱系评审 | coord2/e7 | 交付即收 |
+| 6 | MM 额度恢复窗口：1087 r12 MM 全量、3056 r9 补 MM 增量（修 P0/P1 轮两家）按需派；429 不弃车等重置 | coord2/e7 | 11:00 |
+| 7 | 3078 checks 核绿 → 入队 → MERGED 后核邮箱 + 执行 queue-plan-post3078.md 链（等待器 bohgf5njw） | coord2/e7 | 10:30 |
+| 8 | decisions-20261113.md 全量 PR 入库（沿 07:45 段义务 8 未动：2 存量卡 + fix-r6 集合化 + 1087 批 3/4 扩展 + 装置缺陷处置 + 量纲注记；主仓分支 claude/decisions-20261113 已有 ecaef3f6c4 等 5 提交待整理） | coord2/e7 | 11:30 |
+| 9 | P2-跟进集中清 wave（开着 >10；含 3098/3099/3100/3103/3104） | coord2/e7 | 3078 合入后当轮 |
+
+### 下一步
+按未结义务表序推进，不空等；下一个交接点 ~11:45。
