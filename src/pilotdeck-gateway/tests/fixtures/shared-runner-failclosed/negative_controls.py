@@ -30,6 +30,17 @@ is not a pass, and the marker echoed anywhere but the bound test's own
 AssertionError block is not a kill; the bound test now runs as the script it
 lives in so the canonical ``__main__`` description layouts match.
 
+#3043 fix-r6 (#3134 P1) adds the static name roster the sdk-signals sibling
+got in the same r5 diff: ``MUTANT_ROWS`` is compared against the frozen
+``EXPECTED_NAMES`` tuple by ``negative_selection.registered()`` at module
+load, so a renamed, reordered, duplicated or single-deleted row refuses
+before any control runs (the rc-1 startup refusal below -- a run that
+never started must not be readable as a green ``--check`` or a smaller
+all-KILLED summary). The pair is two-sided with the test-side denominator
+literal (``SHARED_RUNNER_ROSTER`` in ``test_negative_roster_guards.py``):
+deleting a row together with its roster entry shrinks both sides of the
+registered() mirror, and only that outside literal refuses it.
+
 Each mutant is syntax-compiled before its positive control runs.  A stale
 anchor aborts the whole selected run as INVALID (never SURVIVED).  All selected
 rows finish before the summary is published; any non-KILLED row is a nonzero
@@ -49,6 +60,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (mutating_sources, new_output_directory,
                               run_owned, write_source_atomic)
+from negative_selection import registered
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
@@ -456,6 +468,67 @@ MUTANT_ROWS = [
     ),
 ]
 
+# #3043 fix-r6 (#3134 P1, mirroring the sdk-signals-close-order-pin r5 fix
+# at its negative_controls.py EXPECTED_NAMES block): without a static
+# denominator, a single edit deleting any MUTANT_ROWS row left --check
+# printing "{len(selected)} anchors: ok" at rc 0 and a full run publishing
+# an (N-1)/(N-1) all-KILLED exit 0 (the DS r6 sibling P1, verified on a
+# mutated tmp copy pre-fix). The frozen ordered roster below closes every
+# name-level drift -- rename, reorder, duplicate, single delete -- per
+# specs/negative-controls/README.md invariant 1 ("the denominator is a
+# static literal, not the runtime table length"). The refusal keeps this
+# runner's startup contract shape (a module-level sys.exit with the drift
+# diagnostic, rc 1, before argparse or any anchor is touched); the
+# double-delete escape (row plus its roster entry removed together) is
+# what the outside literal SHARED_RUNNER_ROSTER in
+# test_negative_roster_guards.py refuses.
+EXPECTED_NAMES = (
+    'runner-baseexception-narrowed',
+    'runner-publish-before-verify',
+    'runner-nonatomic-publish',
+    'sqlite-baseexception-narrowed',
+    'sqlite-publish-in-loop',
+    'sqlite-nonatomic-publish',
+    'runner-refusal-exit-two',
+    'sqlite-refusal-exit-two',
+    'runner-body-refusal-exit-two',
+    'sqlite-body-refusal-exit-two',
+    'runner-body-error-overwritten-exit-one',
+    'sqlite-body-error-overwritten-exit-one',
+    'runner-body-cancellation-exit-one',
+    'sqlite-body-cancellation-exit-one',
+    'runner-restore-phase-body',
+    'sqlite-restore-phase-body',
+    'runner-exit-branch-one',
+    'sqlite-exit-branch-one',
+    'runner-restore-branch-one',
+    'sqlite-restore-branch-one',
+    'audit-binding-empty-short-allowed',
+    'audit-binding-extra-level-allowed',
+    'audit-binding-unlisted-module-allowed',
+    'audit-binding-missing-declaration-allowed',
+    'audit-binding-suffix-name-allowed',
+    'audit-binding-embedded-fn-allowed',
+    'audit-binding-longer-macro-allowed',
+    'audit-binding-declares-empty-short-allowed',
+    'audit-binding-qualifiers-dropped',
+    'audit-binding-qualifier-suffix-allowed',
+    'audit-binding-line-comment-kept',
+    'audit-binding-block-comment-kept',
+    'audit-binding-string-literal-kept',
+    'audit-binding-char-literal-kept',
+    'audit-binding-unterminated-string-accepted',
+    'audit-binding-c-string-prefix-allowed',
+    'audit-binding-char-escape-allowed',
+    'audit-binding-c-string-hash-prefix-accepted',
+    'audit-binding-c-string-gate-allowed',
+)
+
+try:
+    registered(MUTANT_ROWS, EXPECTED_NAMES)
+except ValueError as error:
+    sys.exit(f'#1076 mutation roster drifted from the static inventory: {error}')
+
 
 def apply_mutation(name, original, before, after):
     """Return the mutant bytes, or fail closed on a stale/no-op anchor."""
@@ -551,11 +624,17 @@ def classify(result, test, message):
 def publish(output, results):
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    target = output / 'summary.json'
-    temporary = target.with_name(target.name + '.tmp')
-    temporary.write_text(json.dumps({'controls': results, 'counts': counts},
-                                    indent=2) + '\n')
-    temporary.replace(target)
+    # #3043 fix-r6: the summary temp keeps the family's inline evidence-write
+    # receiver shape (`(out / ...).write_text(...)`, native-config:1732-1734,
+    # native-stimulus-plan:244-266) now that this fixture is registered on the
+    # #1692 §9 write-guard side: sibling_write_guards allows an in-place
+    # write_text only on a receiver derived from the output directory, and a
+    # bare local name reads there as a truncating write of a guarded source.
+    # Same bytes, same one-rename publish; only the receiver is spelled
+    # inline off `output`.
+    (output / 'summary.json.tmp').write_text(
+        json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
+    (output / 'summary.json.tmp').replace(output / 'summary.json')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()),
           flush=True)
 

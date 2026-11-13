@@ -1668,9 +1668,14 @@ class EnvironmentControls(unittest.TestCase):
             ('settings-gateway/test_negative_controls.py', 13),
             ('test_negative_run_guards', 8),
             ('network-timing/test_negative_controls.py', 10),
-            ('test_negative_roster_guards', 20),
+            # #3043 fix-r6 同口径：本文件（test_negative_roster_guards）新增
+            # SharedRunnerRosterGuard 四向名册守卫，20→24。
+            ('test_negative_roster_guards', 24),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 20),
+            # #3043 fix-r5 给该夹具补了 StaticRosterTests 四向名册守卫
+            # （rename / reorder / 双删 / 纯净宽度），口径=当前 test_ 方法数：
+            # 20→24，不抬则删掉那四条 CI 仍绿（下限漂移洞）。
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 24),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -3125,6 +3130,15 @@ class EnvironmentControls(unittest.TestCase):
         ('native-config/negative_controls.py', 'write_atomic'),
         ('model-complete/negative-controls.py', 'atomic_write'),
         ('native-stimulus-plan/negative_controls.py', 'write_atomic'),
+        # #3043 fix-r6（DS r5 sibling P2a-2）：shared-runner-failclosed 的发布/
+        # 还原在 fix-r5 已走共享 negative_process.write_source_atomic（那条形态
+        # 由 publish_guards 对 negative_process.py 单独钉），但本夹具没进任何
+        # §9 名单，把它改回 `path.write_text(...)` 三家钉子全绿。登记进来只为铺
+        # sibling_write_guards 的「被变异源零原地截断写」AST 判据（下面
+        # SIBLING_WRITE_MUTANTS 两条变异必须杀）；夹具自身没有本地 atomic
+        # 函数与模块级 PUBLISH_DIR，所以 function 记 None —— sibling_atomic_
+        # guards 形态半边对它跳过，写守卫半边全量跑。
+        ('shared-runner-failclosed/negative_controls.py', None),
     )
     # r14（zai 6 P1 + deepseek 2 P1）：r13 按「模块级 + 属性名 ∈ 保留名单」枚举，
     # 于是 setattr 调用 / Subscript 目标 / 函数体 / 接收者反向 / 写方法调用 / 别名导入
@@ -3491,6 +3505,18 @@ class EnvironmentControls(unittest.TestCase):
             ('truncating-mutant-write', 'write_atomic(path, changed.encode())',
              'path.write_bytes(changed.encode())'),
             ('truncating-restore-write', 'write_atomic(path, originals[path])',
+             'path.write_bytes(originals[path])'),
+        ),
+        # #3043 fix-r6：两个发布点换成原地截断写必须红——fix-r5 把它们搬上
+        # write_source_atomic 之前这里是裸 write，恰是 #1903 半文件形态。
+        'shared-runner-failclosed/negative_controls.py': (
+            ('truncating-mutant-write',
+             "write_source_atomic(\n"
+             "                            ROOT, path,\n"
+             "                            texts[path].replace(before, after, 1).encode('utf-8'))",
+             "path.write_text(texts[path].replace(before, after, 1))"),
+            ('truncating-restore-write',
+             'write_source_atomic(ROOT, path, originals[path])',
              'path.write_bytes(originals[path])'),
         ),
     }
@@ -4374,9 +4400,22 @@ class EnvironmentControls(unittest.TestCase):
         root = Path(__file__).resolve().parent / 'fixtures'
         for relative, function in self.SIBLING_ATOMIC_WRITES:
             source = (root / relative).read_text()
-            self.sibling_atomic_guards(source, function)
+            if function is not None:
+                self.sibling_atomic_guards(source, function)
             # 每个变异写入点都要走它：形式各异，所以钉「原地截断写零命中」。
+            # #3043 fix-r6：这一半对 function=None 的条目（共享 write_source_
+            # atomic 的夹具）照跑 —— 注册它的目的就是这条 AST 判据。
             self.sibling_write_guards(source, relative)
+            for label, old, new in self.SIBLING_WRITE_MUTANTS[relative]:
+                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
+                    self.sibling_write_guards(source.replace(old, new, 1), relative)
+                print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
+                      flush=True)
+            # #3043 fix-r6：共享发布形态的条目没有本地 atomic 函数，形态半边跳过。
+            if function is None:
+                continue
             scratch = re.search(r"PUBLISH_DIR = (?:ROOT|root) / (['\"])\.negctl-publish\1",
                                 source)
             self.assertIsNotNone(scratch, f'#1692 §9 r2 {relative} scratch constant')
@@ -4433,13 +4472,6 @@ class EnvironmentControls(unittest.TestCase):
                     self.sibling_atomic_guards(mutated, function)
                 print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
                       flush=True)
-            for label, old, new in self.SIBLING_WRITE_MUTANTS[relative]:
-                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
-                with self.assertRaises(AssertionError,
-                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
-                    self.sibling_write_guards(source.replace(old, new, 1), relative)
-                print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
-                      flush=True)
         # r15（两家 10 条 P1）：静态判据对「换一种拼写改道」永远差一步 —— 改判行为。
         # 三处夹具各在 `python3 -I` 子进程里真跑一次发布，观测 `os.replace` 的**源**
         # 是不是仓根暂存目录、目标是不是就是那个临时文件（同一 inode）。
@@ -4448,6 +4480,9 @@ class EnvironmentControls(unittest.TestCase):
         repository_root = Path(__file__).resolve().parents[3]
         scratch = repository_root / '.negctl-publish'
         for relative, function in self.SIBLING_ATOMIC_WRITES:
+            # #3043 fix-r6：共享发布形态（function=None）没有本地发布函数可观测。
+            if function is None:
+                continue
             probe_root = Path(tempfile.mkdtemp(prefix='.negctl-probe-',
                                                dir=repository_root))
             try:
