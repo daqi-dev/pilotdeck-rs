@@ -3,12 +3,14 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 77; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 79; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
 `sms-oracle-signed-signature-header`, `#1913` added
 `sms-oracle-recorded-version`, `#2152` added
 `sms-oracle-recorded-omit-host`, `#2691` added the three port-guard
-switches — the `switches` table is the truth source). `#1879` only
+switches, `#2461` fix-r6 added `sms-replay-connect-unknown-as-refused`
+and `sms-raw-request-connect-unknown-as-refused` — the `switches` table is
+the truth source). `#1879` only
 rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring

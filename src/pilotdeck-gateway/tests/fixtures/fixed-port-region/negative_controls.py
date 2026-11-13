@@ -19,7 +19,9 @@ release is dropped before `Drop` returns and therefore kills deterministically.
 Rows 4-6 pin the #2462 judgment: any error read as a refusal, an accepted
 connect read as closed, and a refusal that no longer matches each turn the
 same four-shape control red by name. Rows 7-9 pin the #2463 byte window: the
-panicking slice, the dropped alignment, and the halved window.
+panicking slice, the dropped alignment, and the halved window. Row 10 pins
+the #2461 fix-r7 deadline alignment: the watcher cap tied back to the claim
+wait recreates the pre-r7 race where the waiter always expired first.
 
 Prefix '' with every cell a full module path (same widening precedent as
 `channel-loader-startup`), exact mode, one cell per row: the mutation must
@@ -89,6 +91,29 @@ GET_WITHOUT_ALIGNMENT = (
     '    match console.get(start..) {\n'
 )
 
+# The halved window of row 9: the boundary-aligned tail is no longer the
+# last 4096 bytes.
+GET_MATCH_HALVED = (
+    '    let start = console.len().saturating_sub(2048);\n'
+    '    match console\n'
+    '        .get(start..)\n'
+    '        .or_else(|| (1..=3).find_map(|delta| console.get(start + delta..)))\n'
+    '    {\n'
+)
+
+# #2461 fix-r7 row 10: the watcher cap's derivation. Dividing by one ties the
+# cap back to the full claim wait — the pre-r7 shape where the waiter's
+# deadline (starting when it begins waiting) always expired before the cap
+# arm (starting when the region drops) could release the flock.
+WATCHER_CAP = (
+    'const FIXED_PORT_WATCHER_CAP: Duration = '
+    'Duration::from_secs(FIXED_PORT_CLAIM_WAIT_SECS / 2);\n'
+)
+WATCHER_CAP_TIED = (
+    'const FIXED_PORT_WATCHER_CAP: Duration = '
+    'Duration::from_secs(FIXED_PORT_CLAIM_WAIT_SECS / 1);\n'
+)
+
 # The cap-arm cell: the diagnostic is exactly one line and carries the port.
 CAP_COUNT = ('native_process::channels_tests::fixed_port_watcher_cap_releases_through_the_named_diagnostic',
              '#2461 the cap arm emits exactly one named diagnostic')
@@ -111,6 +136,9 @@ TAIL_ALIGNED = ('native_process::channels_tests::console_tail_cuts_inside_a_mult
                 '#2463 the multi-byte cut forward-aligns instead of dropping the tail')
 TAIL_WINDOW = ('native_process::channels_tests::console_tail_takes_the_last_4096_bytes',
                '#2463 the tail of a boundary-aligned console is its last 4096 bytes')
+# The fix-r7 cell: the invariant itself, stated where the constants live.
+CLAIM_OUTLIVES = ('native_process::channels_tests::fixed_port_claim_wait_strictly_outlives_the_watcher_cap',
+                  '#2461 the claim wait strictly outlives the watcher cap, so the cap arm can still save a waiter that arrived first')
 
 MUTATIONS = [
     # The emit is deleted: the cap arm releases through the diagnostic that
@@ -158,12 +186,14 @@ MUTATIONS = [
     # The window is halved: the boundary-aligned tail is no longer the last
     # 4096 bytes.
     ('console-tail-window-halved', source, GET_MATCH,
-     '    let start = console.len().saturating_sub(2048);\n'
-     '    match console\n'
-     '        .get(start..)\n'
-     '        .or_else(|| (1..=3).find_map(|delta| console.get(start + delta..)))\n'
-     '    {\n',
+     GET_MATCH_HALVED,
      [TAIL_WINDOW]),
+    # The cap ties back to the full claim wait: the pre-r7 race where the
+    # waiter's deadline always expired before the cap arm could release the
+    # flock, so the sibling failed `#2301` by name instead of being saved.
+    ('watcher-cap-equals-claim-wait', source, WATCHER_CAP,
+     WATCHER_CAP_TIED,
+     [CLAIM_OUTLIVES]),
 ]
 
 
