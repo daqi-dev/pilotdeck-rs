@@ -3637,18 +3637,34 @@ async fn replay_named(name: &str) {
                     let mut record = record.lock().expect("#1339 record mutex");
                     record.responses.push(match outcome {
                         Ok(value) => value,
-                        // The generator's connect refused mapping; the probe client
-                        // reports ECONNREFUSED the same way for raw requests.
-                        Err(_) => json!({"refused": true}),
+                        // #2462: the generator maps only ECONNREFUSED to
+                        // `{"refused": true}`; any other transport failure fails
+                        // the replay by name instead of masquerading as a
+                        // refused port (a false `refused: true` would pass the
+                        // oracle comparison while the listener is still up).
+                        Err(RawRequestError::ConnectRefused) => json!({"refused": true}),
+                        Err(RawRequestError::Failed(message)) => panic!(
+                            "#2462 probe request on port {port} failed as {message}; \
+                             only ECONNREFUSED counts as refused"
+                        ),
                     });
                     record.responses.clone()
                 };
                 assert_responses_so_far(&seen, &case, name);
             }
             "connect" => {
-                let refused = bounded("connect probe", TcpStream::connect(("127.0.0.1", port)))
-                    .await
-                    .is_err();
+                // #2462: same criterion as the generator's connect probe and
+                // the `portIsFree` guard — `ConnectionRefused` is the only
+                // error that counts as a refused port.
+                let refused =
+                    match bounded("connect probe", TcpStream::connect(("127.0.0.1", port))).await {
+                        Ok(_connected) => false,
+                        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => true,
+                        Err(error) => panic!(
+                            "#2462 connect probe on port {port} failed as {error}; \
+                         only ECONNREFUSED counts as refused"
+                        ),
+                    };
                 let seen = {
                     let mut record = record.lock().expect("#1339 record mutex");
                     record.responses.push(json!({"refused": refused}));

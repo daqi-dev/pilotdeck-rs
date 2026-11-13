@@ -19,7 +19,7 @@ release is dropped before `Drop` returns and therefore kills deterministically.
 Rows 4-6 pin the #2462 judgment: any error read as a refusal, an accepted
 connect read as closed, and a refusal that no longer matches each turn the
 same four-shape control red by name. Rows 7-9 pin the #2463 byte window: the
-panicking slice, the unnamed fallback, and the halved window.
+panicking slice, the dropped alignment, and the halved window.
 
 Prefix '' with every cell a full module path (same widening precedent as
 `channel-loader-startup`), exact mode, one cell per row: the mutation must
@@ -62,18 +62,24 @@ REFUSED_GUARD = (
 # #2462 row 5: the Ok arm, reclassified as a refusal.
 ACCEPTED_ARM = '        Ok(()) => FixedPortProbe::Accepted,\n'
 
-# #2463 row 7: the boundary-safe `get`, reverted to the panicking slice.
-# The two-line anchor keeps it distinct from the test's own saturating_sub.
+# #2463 rows 7+8: the alignment chain — the boundary-safe `get` plus the
+# `.or_else` forward-alignment. Row 7 reverts it to the panicking byte slice;
+# row 8 drops the `.or_else`, so a multi-byte cut falls to the named fallback
+# and the payload dies with it. The multi-line anchor keeps it distinct from
+# the test's own saturating_sub.
 GET_MATCH = (
     '    let start = console.len().saturating_sub(4096);\n'
-    '    match console.get(start..) {\n'
+    '    match console\n'
+    '        .get(start..)\n'
+    '        .or_else(|| (1..=3).find_map(|delta| console.get(start + delta..)))\n'
+    '    {\n'
 )
 
-# #2463 row 8: the named fallback, replaced by an unnamed empty tail.
-NAMED_FALLBACK = (
-    '        None => "#2463 the 4096-byte console tail cut landed inside a multi-byte \\\n'
-    '                 character; the tail is omitted"\n'
-    '            .to_owned(),\n'
+# The un-aligned shape row 8 replaces the chain with: a plain `get` whose
+# `None` arm is the named fallback (the payload is then dropped wholesale).
+GET_WITHOUT_ALIGNMENT = (
+    '    let start = console.len().saturating_sub(4096);\n'
+    '    match console.get(start..) {\n'
 )
 
 # The cap-arm cell: the diagnostic is exactly one line and carries the port.
@@ -91,11 +97,11 @@ PROBE_ACCEPTED = ('native_process::channels_tests::only_a_refusal_proves_the_fix
                   '#2462 an accepted connect is a named failure')
 PROBE_OTHER = ('native_process::channels_tests::only_a_refusal_proves_the_fixed_port_closed',
                '#2462 a non-refused error kind is a named failure')
-# The #2463 cells: the panic, the fallback, and the window.
+# The #2463 cells: the panic, the dropped alignment, and the window.
 TAIL_NO_PANIC = ('native_process::channels_tests::console_tail_cuts_inside_a_multibyte_character_without_panicking',
                  '#2463 console_tail must not panic when the 4 KiB cut lands inside a character')
-TAIL_FALLBACK = ('native_process::channels_tests::console_tail_cuts_inside_a_multibyte_character_without_panicking',
-                 '#2463 the uncuttable tail falls back to the named diagnostic line')
+TAIL_ALIGNED = ('native_process::channels_tests::console_tail_cuts_inside_a_multibyte_character_without_panicking',
+                '#2463 the multi-byte cut forward-aligns instead of dropping the tail')
 TAIL_WINDOW = ('native_process::channels_tests::console_tail_takes_the_last_4096_bytes',
                '#2463 the tail of a boundary-aligned console is its last 4096 bytes')
 
@@ -131,21 +137,25 @@ MUTATIONS = [
      '            FixedPortProbe::Refused\n'
      '        }\n',
      [PROBE_REFUSED]),
-    # The `get` becomes the byte slice: the multi-byte cut panics the message
-    # builder instead of falling back.
+    # The alignment chain reverts to the byte slice: the multi-byte cut panics
+    # the message builder instead of aligning.
     ('console-tail-panics-on-multibyte-cut', source, GET_MATCH,
      '    let start = console.len().saturating_sub(4096);\n'
      '    match Some(&console[start..]) {\n',
      [TAIL_NO_PANIC]),
-    # The fallback goes unnamed: the tail is empty instead of the diagnostic.
-    ('console-tail-fallback-unnamed', source, NAMED_FALLBACK,
-     '        None => String::new(),\n',
-     [TAIL_FALLBACK]),
+    # The `.or_else` alignment is dropped: a multi-byte cut falls to the
+    # named fallback and the payload is dropped wholesale.
+    ('console-tail-alignment-dropped', source, GET_MATCH,
+     GET_WITHOUT_ALIGNMENT,
+     [TAIL_ALIGNED]),
     # The window is halved: the boundary-aligned tail is no longer the last
     # 4096 bytes.
     ('console-tail-window-halved', source, GET_MATCH,
      '    let start = console.len().saturating_sub(2048);\n'
-     '    match console.get(start..) {\n',
+     '    match console\n'
+     '        .get(start..)\n'
+     '        .or_else(|| (1..=3).find_map(|delta| console.get(start + delta..)))\n'
+     '    {\n',
      [TAIL_WINDOW]),
 ]
 
