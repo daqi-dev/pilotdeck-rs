@@ -162,9 +162,12 @@ mutations = [
 # failed control. #2590 item 7 (MM-sibling#2): the EXPECTED_NAMES roster is
 # the form the *migrated* family uses — sdk-mcp-session-tools (#1433),
 # handle-path-macos (#1990) and settings-gateway (#1734) are the precedents
-# to cite. The native-management and native-settings fixtures still compare a
-# local ordered tuple and exit via `SystemExit`/`sys.exit` (rc 1), so they
-# are explicitly not that precedent yet.
+# to cite. #1642 fix-r2 migrated native-management and
+# native-registry-switch to this form; the remaining rc 1 leftovers of the
+# same family are native-settings (`sys.exit(str)`), turn-gateway-clock-edge
+# (lines 99-108) and config-store (lines 950-959), whose `enforce_denominator`
+# helpers raise `SystemExit` with a string — explicitly not this precedent
+# yet; their migration is tracked in #3114 (c-class follow-up of this PR).
 EXPECTED_NAMES = (
     'dedup-gating-restored',
     'inspectable-registered-domain-restored',

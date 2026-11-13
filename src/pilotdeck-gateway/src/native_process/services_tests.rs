@@ -57,14 +57,23 @@ use std::sync::Arc;
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
+        // #2335: guard first — a panic inside the build loop otherwise leaks
+        // the temp tree; only a constructed `Scratch` unwinds through `Drop`.
+        // The canonical path is written back into the guard, never a second
+        // `Self(...)`, which would drop-and-delete the tree it points at.
         let root = std::env::temp_dir().join(format!("pdrs-1321-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join(".tmp").join("chat-upload-leases").join("u1"))
+        let mut scratch = Self(root);
+        std::fs::create_dir_all(scratch.0.join(".tmp").join("chat-upload-leases").join("u1"))
             .expect("#1321 scratch lease dirs");
-        let canonical = root.canonicalize().expect("#1321 scratch canonical path");
+        let canonical = scratch
+            .0
+            .canonicalize()
+            .expect("#1321 scratch canonical path");
         // Keep the canonical lease root layout after the rename.
         std::fs::create_dir_all(canonical.join(".tmp").join("chat-upload-leases").join("u1"))
             .expect("#1321 scratch canonical lease dirs");
-        Self(canonical)
+        scratch.0 = canonical;
+        scratch
     }
     fn lease(&self, name: &str) -> String {
         let path = self

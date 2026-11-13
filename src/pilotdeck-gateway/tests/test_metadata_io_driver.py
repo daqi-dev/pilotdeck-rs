@@ -9222,6 +9222,7 @@ self_check_controls_run | return | return problems
         b2 = [
             'python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_entry_guard.py',
             'python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_negative_controls.py',
+            'python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_protocol.py',
             'python3 -I scripts/test-approval-provenance.py',
             'python3 -I scripts/test-review-deepseek.py',
             'python3 -I scripts/test-review-minimax.py',

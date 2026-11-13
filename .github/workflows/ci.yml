@@ -438,6 +438,23 @@ jobs:
           # 名册闭集（名字+顺序+条数+夹具字节 SHA）另由 always_on 模块自己的
           # negative_controls_manifest Rust 测试钉死（随 rust job 跑）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py --check
+          # #1642 fix-r2（评审 b1/b2/a1/a2，同 #1433/#2590 先例）：native-management 与
+          # native-registry-switch 两夹具的 --check 进 CI——管理路由夹具自本轮起同族对齐
+          # #1369 口径（锚点 + 绑定），名册漂移在 import 即以 rc 2 拒跑；两个纯 Python 协议
+          # 测试分别钉守卫失败相位退出码（enter 拒跑 rc 2 / body、restore 后红轮 rc 1）、
+          # SKIPPED 行不随守卫失败翻 INVALID、以及名册漂移的 rc 2 拒跑；全量杀灭轮（需要
+          # cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-management/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-registry-switch/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-management/test_protocol.py
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-registry-switch/test_roster.py
+          # #1642 fix-r4（评审 P1-B sibling#3）：native-dispatch 完成启动拒跑迁移（未知/
+          # 重复名、不可用 target、已存在输出目录 -> rc 2），--check 与其协议测试进 CI
+          # （协议测试同时钉 P1-D：write_source_atomic 无条件替换为临时目录内的
+          # plain_writer，不碰真实树）；a51 步新补的 frozen-reinsert-guard/test_protocol.py
+          # 钉 P1-A/P1-B 的冻结侧相位。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-dispatch/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-dispatch/test_protocol.py
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零
@@ -867,9 +884,13 @@ jobs:
       - name: B2 冻结与批准依据（干净检出）
         working-directory: .
         shell: bash
+        # #1642 fix-r4（评审 P1-A/P1-B）：冻结守卫的失败相位纯 Python 协议测试——延迟
+        # 信号 SystemExit(128+signum) 穿透处理器（rc 143、无 summary），enter 拒跑
+        # rc 2 且撤 `.claim` 与目录、exit 后红轮 rc 1 全行 INVALID。
         run: |
           python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_entry_guard.py
           python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_negative_controls.py
+          python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_protocol.py
           python3 -I scripts/test-approval-provenance.py
           python3 -I scripts/test-review-deepseek.py
           python3 -I scripts/test-review-minimax.py

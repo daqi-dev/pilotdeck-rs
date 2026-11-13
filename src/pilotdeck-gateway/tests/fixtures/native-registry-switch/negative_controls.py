@@ -26,7 +26,13 @@ PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_registry_switch.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
+# Discovery anchor: fixtures/rust_binding_views.py (the shared binding-scan
+# views this table's test_body reads; without the literal a change to the
+# helper never schedules this control).
+from rust_binding_views import (carries_test_attribute, scanned_views,
+                                 verify_structure_matches_shared_scanner)
 
 mutations = [
     # The switch itself must resolve "off" to the off state: flipping the
@@ -77,6 +83,26 @@ mutations = [
     true
 }''',
      'native_process::tests::requests_registry_switch_gates_run_reads', '#1369 describe_server gates run capabilities'),
+    # #1642: the same family probes for the two other Requests-bound gates.
+    # The switch test keeps the memory gateway disabled and cron
+    # unconfigured in every iteration, so an always-true gate advertises
+    # the pairs the not-advertised assertions refuse.
+    ('registry-memory-ungated', CAPABILITIES,
+     '''fn memory(requests: &Requests) -> bool {
+    requests.memory.is_enabled()
+}''',
+     '''fn memory(_requests: &Requests) -> bool {
+    true
+}''',
+     'native_process::tests::requests_registry_switch_gates_run_reads', '#1642 describe_server gates memory capabilities on the bound gateway'),
+    ('registry-cron-ungated', CAPABILITIES,
+     '''fn cron(requests: &Requests) -> bool {
+    requests.cron.is_some()
+}''',
+     '''fn cron(_requests: &Requests) -> bool {
+    true
+}''',
+     'native_process::tests::requests_registry_switch_gates_run_reads', '#1642 describe_server gates cron capabilities on the configured runtime'),
     # TS InProcessGateway.ts:2525-2544: a configured registry still serves
     # run reads; the reader must not be forced to None.
     ('registry-reader-always-none', RUNS_METHODS,
@@ -94,24 +120,99 @@ mutations = [
      'executable_native_registry_switch', '#1369 executable off registry receipt'),
 ]
 
+# #1642 fix-r1（PR #2931 评审，DS sibling#3 + Grok P2#1 两家撞）：本表曾是自己的
+# 分母——删一行仍然报 "{n}/{n}" 读绿。fix-r2（评审 sibling P2#2）：名册核对迁到
+# 共享 negative_selection.registered + refuse——逐名（含顺序、重复）比对，计数
+# 蕴含其中，EXPECTED_TOTAL 字面量随之删除；名册不符是「从未开跑」（rc 2，与
+# specs/negative-controls/README.md 的退出码四分表一致），不再是
+# `raise SystemExit(str)` 的 rc 1。import 即校验（--check 与全量跑同走）。
+EXPECTED_NAMES = (
+    'registry-switch-ignored',
+    'registry-switch-opens-when-off',
+    'registry-default-off',
+    'registry-invalid-accepted',
+    'registry-capabilities-ungated',
+    'registry-memory-ungated',
+    'registry-cron-ungated',
+    'registry-reader-always-none',
+    'registry-receipt-not-published',
+)
+try:
+    registered(mutations, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(str(error))
+
 
 def test_body(test, texts=None):
     if texts is None:
         texts = {path: path.read_text() for path in [TESTS, PROCESS_TEST]}
     path = TESTS if test.startswith('native_process::tests::') else PROCESS_TEST
+    # #1642 fix-r4 (review P1-E): the match ran over the raw file text, so a
+    # `// panic!("#1369 <anchor>")` inside the body kept the binding green and
+    # a same-named plain `fn` stood in for a deleted test. The pattern now
+    # matches on the shared literal-blanked structure view (a body inside a
+    # comment or a string literal is not code, and `carries_test_attribute`
+    # reads the same view, so `#[test]` only a literal carries does not count),
+    # while the returned slice is the kept view the assertion literal lives in.
     # These files use top-level test functions. A column-zero closing brace is
     # the end of this function, so a sibling's assertion cannot satisfy it.
+    kept, structure = scanned_views(texts[path])
     pattern = r'^(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^}'
-    bodies = re.findall(pattern, texts[path], re.M | re.S)
-    return bodies[0] if len(bodies) == 1 else ''
+    found = [match for match in re.finditer(pattern, structure, re.M | re.S)
+             if carries_test_attribute(structure, match.start())]
+    if len(found) != 1:
+        return ''
+    return kept[found[0].start():found[0].end()]
 
 
 def check_binding_scope():
-    fixture = 'fn target() {\n}\nfn sibling() {\n assert!(false, "only sibling");\n}\n'
-    if 'only sibling' in test_body('target', {PROCESS_TEST: fixture}):
-        raise RuntimeError('#1369 binding checker accepted sibling assertion')
-    if 'only sibling' not in test_body('sibling', {PROCESS_TEST: fixture}):
+    """Self-test the binding checker's discrimination on synthetic sources."""
+    # #1642 fix-r4 (review P1-E): every carrier that is not real code must
+    # fail the binding -- a comment inside the live body, a same-named plain
+    # `fn`, or a `#[test] fn` that only a raw string carries.
+    fixture = ('#[test]\n'
+               'fn target() {\n'
+               '    panic!("#1369 own marker");\n'
+               '    // panic!("#1369 comment carrier");\n'
+               '}\n'
+               '#[test]\n'
+               'fn sibling() {\n'
+               '    assert!(false, "#1369 sibling marker");\n'
+               '}\n')
+    plain = ('fn target() {\n'
+             '    panic!("#1369 plain non-test carrier");\n'
+             '}\n')
+    literal = ('#[test]\n'
+               'fn sibling() {\n'
+               '    assert!(false, "#1369 sibling marker");\n'
+               '}\n'
+               'fn documented() {\n'
+               '    let sample = r#"\n'
+               '#[test]\n'
+               'fn target() {\n'
+               '    panic!("#1369 literal carrier");\n'
+               '}\n'
+               '"#;\n'
+               '    let _ = sample;\n'
+               '}\n')
+    body = test_body('target', {PROCESS_TEST: fixture})
+    if '#1369 own marker' not in body:
         raise RuntimeError('#1369 binding checker lost its own assertion')
+    if '#1369 comment carrier' in body:
+        raise RuntimeError('#1369 binding checker accepted a comment carrier')
+    if '#1369 sibling marker' in body:
+        raise RuntimeError('#1369 binding checker accepted a sibling assertion')
+    if test_body('sibling', {PROCESS_TEST: fixture}) == '':
+        raise RuntimeError('#1369 binding checker lost its own test')
+    if test_body('target', {PROCESS_TEST: plain}) != '':
+        raise RuntimeError('#1369 binding checker accepted a non-test carrier')
+    if test_body('target', {PROCESS_TEST: literal}) != '':
+        raise RuntimeError('#1369 binding checker accepted a literal-only carrier')
+    try:
+        verify_structure_matches_shared_scanner(fixture)
+        verify_structure_matches_shared_scanner(literal)
+    except ValueError as error:
+        raise RuntimeError(f'#1369 binding views drifted from the shared scanner: {error}')
 
 
 def main():
@@ -134,13 +235,26 @@ def main():
     if args.check:
         print(f'#1369 {len(mutations)} unique anchors and assertion bindings: OK')
         return 0
-    selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not selected or (args.selected and len(selected) != len(args.selected)):
-        raise SystemExit('#1369 unknown or repeated mutation')
-    if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#1369 output and caller CARGO_TARGET_DIR required')
-    output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    # #1642 fix-r3 (review b, MM sibling#2): the startup refusals the four-way
+    # table (specs/negative-controls/README.md) promises go through
+    # negative_selection now -- `raise SystemExit(str)` exits 1 and reads as
+    # "ran but not green". Target first (absent / empty / blank / dot), then
+    # the caller's selection, then the evidence claim: an existing output
+    # directory refuses instead of dying on a bare FileExistsError.
+    if missing_target():
+        refuse('#1369 set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse_unusable_target()
+    if not args.output:
+        refuse('usage: negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    repeated = sorted({name for name in args.selected if args.selected.count(name) > 1})
+    if repeated:
+        refuse('#1369 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1369 unknown mutation name: ' + ', '.join(unknown))
+    selected = mutations if not args.selected else [row for row in mutations
+                                                    if row[0] in set(args.selected)]
+    output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
@@ -174,8 +288,17 @@ def main():
         (output / f'{label}.log').write_text(result.stdout + result.stderr)
         return result
 
+    # #1642 fix-r3 (review P1-3, DS sibling#3): the guarded window now tracks
+    # its phase. A guard that never started (dirty tree, busy lock) is a
+    # startup refusal; a guard that fails after the body ran is a red run
+    # with every recorded row revoked -- the same shape native-management
+    # carries, instead of the flat "everything is a red run" the except used
+    # to hand back regardless of when the guard failed.
+    phase = 'enter'
+    guard_failed = False
     try:
         with mutating_sources(ROOT, guarded) as originals:
+            phase = 'body'
             guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
             if any(row[4] == 'executable_native_registry_switch' for row in selected):
                 slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=600)
@@ -220,12 +343,31 @@ def main():
                     item.update(status='INVALID', reason=item['reason'] + f'; restored: {error}')
                 results.append(item)
                 print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
-    except Exception as error:
+            phase = 'exit'
+    except BaseException as error:
+        # #1642 fix-r3 (review a9 shape, DS r2c#2): a SIGTERM deferred through
+        # the restore window re-enters as SystemExit(128+signum) and stays off
+        # the exit-code table -- swallowing it used to publish an all-INVALID
+        # summary over a restored tree and rewrite 143 to 1.
+        if isinstance(error, SystemExit):
+            raise
         reason = f'source guard: {type(error).__name__}: {error}'
+        # #1642 fix-r3 (review b): a guard that never started is a refusal --
+        # rc 2, no summary, and the empty claim withdrawn so a host re-run
+        # with the same output path does not die on a leftover directory
+        # (utf16-residual-sort's startup_refusal precedent; rmdir only
+        # removes the empty case -- a run that already wrote logs keeps them).
+        if phase == 'enter':
+            try:
+                output.rmdir()
+            except OSError:
+                pass
+            refuse(f'guard refused to start: {error!r}')
         invalidate_completed(results, reason)
         for name, _, _, _, test, assertion in selected[len(results):]:
             results.append(dict(name=name, test=test, assertion=assertion,
                                 status='INVALID', reason=reason, compiled=False))
+        guard_failed = True
     counts = {state: sum(row['status'] == state for row in results)
               for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
     temporary = output / 'summary.json.tmp'
@@ -233,6 +375,11 @@ def main():
         {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
+    # A guard failure after the body ran leaves no trustworthy row (and the
+    # tree restoration itself is in doubt), so it is a red run even if the
+    # recorded statuses happen to read green: rc 1, the four-way table.
+    if guard_failed:
+        return 1
     success = 'COMPILED' if args.compile_only else 'KILLED'
     return int(any(row['status'] != success for row in results))
 
