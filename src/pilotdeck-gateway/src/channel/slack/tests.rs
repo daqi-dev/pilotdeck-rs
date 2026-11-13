@@ -700,15 +700,21 @@ static FIXTURE_PORT_SEGMENT: std::sync::LazyLock<tokio::sync::Mutex<()>> =
 
 /// The generator's per-case port rotation is host-global; a port held by
 /// anything else means the replay would measure the holder, not the channel.
+/// #2461 fix-r6: only a refusal proves the port free — the old `is_ok()`
+/// guard read every other error kind (an fd-exhausted or never-answering
+/// probe) as "free" too, the exact false PASS shape this family was filed
+/// for — so the judgment goes through the shared fixed-port probe.
 async fn ensure_replay_port_free(port: u16) {
-    if bounded(
-        "#1344 the replay port is free for this case",
-        TcpStream::connect(("127.0.0.1", port)),
+    let probe = crate::test_fixed_port_probe::probe_fixed_port(
+        "replay-port free probe",
+        ("127.0.0.1", port),
+        DEADLINE,
     )
-    .await
-    .is_ok()
+    .await;
+    if let Some(failure) =
+        crate::test_fixed_port_probe::fixed_port_probe_failure("#1344", port, "free", &probe)
     {
-        panic!("#1344 replay port {port} is already in use");
+        panic!("{failure}");
     }
 }
 

@@ -1129,10 +1129,47 @@ async fn stop_accepting_drains_existing() {
     client.hello().await;
     client.json().await;
     stop.send(()).expect("#749 stop accepting");
+    // #2461 fix-r6: only a refusal terminates the wait — the old
+    // `is_err()` read every error kind as "stopped", so an fd-exhausted or
+    // never-answering probe would "prove" the drain done (the #749 false
+    // PASS). An accepted connect means the listener still answers: keep
+    // waiting under the same outer deadline. A mid-close reset or abort
+    // does too: the kernel RSTs the accept backlog as the listener drops,
+    // and those answers prove nothing either way — a reset resolves to a
+    // refusal once the socket is gone, an aborted attempt (ECONNABORTED,
+    // the same teardown reported by a different platform arm) resolves the
+    // same way, and the outer deadline names it if it never does.
+    // #2461 fix-r7 (review DS concurrency#1): the fallback speaks through
+    // `negative_assert!` on the bound anchor, so whichever failure point
+    // the `native-ws-skip-drain` mutation surfaces first, the judge reads a
+    // receipt (a bare panic carries none and judged INVALID).
     timeout(DEADLINE, async {
         loop {
-            if TcpStream::connect(address).await.is_err() {
-                break;
+            let probe = crate::test_fixed_port_probe::probe_fixed_port(
+                "drain close probe",
+                address,
+                DEADLINE,
+            )
+            .await;
+            match probe {
+                crate::test_fixed_port_probe::FixedPortProbe::Refused => break,
+                crate::test_fixed_port_probe::FixedPortProbe::Accepted(_) => {}
+                crate::test_fixed_port_probe::FixedPortProbe::Unknown(ref error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                    ) => {}
+                crate::test_fixed_port_probe::FixedPortProbe::Unknown(error) => {
+                    // The detail line keeps the probe's answer attributable;
+                    // the receipt rides the bound assertion below.
+                    eprintln!(
+                        "#749 the drain probe on port {} answered {error}; \
+                         only ECONNREFUSED proves the listener stopped accepting",
+                        address.port()
+                    );
+                    crate::negative_assert!(false, "#749 drain waits for existing socket");
+                    unreachable!("negative_assert! panics");
+                }
             }
             tokio::task::yield_now().await;
         }

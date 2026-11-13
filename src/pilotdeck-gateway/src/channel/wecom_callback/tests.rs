@@ -1265,10 +1265,22 @@ async fn loader_mount_builds_wecom_callback_channel() {
         .stop("test")
         .await
         .expect("#2426 wecom_callback stop");
-    assert!(
-        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
-        "#2426 the listener is gone after stop"
-    );
+    // #2462: only `ConnectionRefused` proves the listener is gone — any other
+    // connect error (fd exhaustion and the like) must fail the test by name
+    // instead of reading as "closed", and the probe itself is bounded.
+    // #2461 fix-r6: the judgment goes through the shared fixed-port probe
+    // instead of this site's own four-arm match.
+    let probe = crate::test_fixed_port_probe::probe_fixed_port(
+        "close probe",
+        ("127.0.0.1", port),
+        std::time::Duration::from_secs(5),
+    )
+    .await;
+    if let Some(failure) =
+        crate::test_fixed_port_probe::fixed_port_probe_failure("#2426", port, "closed", &probe)
+    {
+        panic!("{failure}");
+    }
 }
 
 #[test]

@@ -57,3 +57,4 @@
 - [大总管会话启动](20261107-coord-session-launch.md) — 起会话用 `claude --permission-mode bypassPermissions`；`--allow-dangerously-skip-permissions` 实测落 auto mode，分类器抖动会被误读成权限被拒
 - [PR 换头后旧结果块删 marker 行](20261112-pr-gate-stale-marker.md) — check-pr-gate 逐块校验，旧 head 块挡整闸；贴新块前 grep 全部 pr-gate:v1 行清旧头
 - [git mv 后再 Edit 须重新 add](20261112-git-mv-edit-readd.md) — rename 不连带内容改动；add 失败重试漏新路径致提交纯 rename、尺子在工作树假 PASS；提交树 git show 复核
+- [macmini pdrs-host 新盘布局](20261112-macmini-pdrs-host-ssd-migration.md) — 2026-11-13 人令全清重格 disk5→pdrs-ssd（7.7 TB APFS）；sparsebundle 核验迁移回挂 /Volumes/pdrs-host 挂载点名不变；构建仍走内置，剩余 ~6.9 Ti 冷存储；disk4 飞书是用户盘不碰

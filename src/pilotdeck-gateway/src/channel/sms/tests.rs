@@ -16,6 +16,7 @@ use super::super::loader::{
     ChannelLoaderMounts, LoadEnabledChannelsOptions, load_enabled_channels,
 };
 use crate::channel::protocol::{ChannelLog, ChannelStartDeps};
+use crate::test_fixed_port_probe::FixedPortProbe;
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-sms/oracle.json");
 const EXPECTED_CASE_COUNT: usize = 59;
@@ -2999,17 +3000,23 @@ async fn ensure_replay_port_free(port: u16, host: &str) {
     // #1339 fix-r9 (P2, four roles): the IPv4 probe carries the same shape as
     // the generator's `portIsFree` — `bounded` caps the wait and
     // `ConnectionRefused` is the only proof of a free port.
-    match bounded(
-        "port guard 127.0.0.1",
-        TcpStream::connect(("127.0.0.1", port)),
-    )
-    .await
-    {
-        Ok(_) => panic!(
+    // #2461 fix-r6: the three-way judgment routes through the shared
+    // fixed-port classifier; both site texts stay anchored as they were
+    // (`port_busy_preflight_fails_fast` asserts the busy-port panic, and the
+    // `bounded` label is the macOS dual-stall attribution in
+    // `dual_stack_occupier_is_reported_by_the_fixed_host_bind_probe`).
+    match crate::test_fixed_port_probe::classify_fixed_port_probe(
+        bounded(
+            "port guard 127.0.0.1",
+            TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await,
+    ) {
+        FixedPortProbe::Accepted(_) => panic!(
             "#1339 port {port} already in use; a concurrent channel-sms replay would corrupt the oracle"
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
-        Err(error) => {
+        FixedPortProbe::Refused => {}
+        FixedPortProbe::Unknown(error) => {
             panic!("#1339 cannot prove port {port} is free on IPv4 ({error}); refusing to replay")
         }
     }
@@ -3075,6 +3082,17 @@ enum V6Port {
 /// someone else serves `[::]:<port>` — the exact shape fix-r10 closed. Every
 /// error that is not provably "no IPv6" must stay [`V6Port::Unknown`].
 fn means_no_ipv6(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::AddrNotAvailable
+        || error.raw_os_error() == Some(libc::EAFNOSUPPORT)
+}
+
+/// Does this error mean "this host has no IPv4 address family"? #2461 fix-r6:
+/// the same judgment as [`means_no_ipv6`], mirrored for the dual-stack test's
+/// v4 branch — the *bind* probe there is the decider (the connect's error
+/// kind is intentionally inconclusive; a host with IPv4 switched off answers
+/// `EAFNOSUPPORT`/`EADDRNOTAVAIL`, not `ECONNREFUSED`), and only a provable
+/// absence of IPv4 may skip the branch.
+fn means_no_ipv4(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::AddrNotAvailable
         || error.raw_os_error() == Some(libc::EAFNOSUPPORT)
 }
@@ -3263,6 +3281,41 @@ fn means_no_ipv6_accepts_only_address_family_errors() {
         assert!(
             !means_no_ipv6(&err(raw)),
             "errno {raw} must not be read as `no IPv6`"
+        );
+    }
+}
+
+/// #2461 fix-r6: the same pin for the v4 half the dual-stack test now leans
+/// on — without it, deleting the `EAFNOSUPPORT` arm or re-adding a non-family
+/// arm leaves every existing test green on a host that has IPv4, and only an
+/// IPv4-less host or a sandboxed runner would notice (the same one-direction
+/// false pass / false failure split [`means_no_ipv6_accepts_only_address_family_errors`]
+/// was filed for).
+#[test]
+fn means_no_ipv4_accepts_only_address_family_errors() {
+    let err = std::io::Error::from_raw_os_error;
+    // Address-family errors: this host really has no usable IPv4.
+    crate::negative_assert!(
+        means_no_ipv4(&err(libc::EAFNOSUPPORT)),
+        "#2461 EAFNOSUPPORT must be read as `no IPv4`"
+    );
+    crate::negative_assert!(
+        means_no_ipv4(&err(libc::EADDRNOTAVAIL)),
+        "#2461 EADDRNOTAVAIL must be read as `no IPv4`"
+    );
+    // Anything else — port taken, permission, descriptors, unimplemented
+    // syscall — proves nothing about IPv4 and must fail the dual-stack test
+    // by name instead of being read as "no IPv4 here" (fail-open).
+    for raw in [
+        libc::EADDRINUSE,
+        libc::EACCES,
+        libc::EMFILE,
+        libc::ENOSYS,
+        libc::EOPNOTSUPP,
+    ] {
+        crate::negative_assert!(
+            !means_no_ipv4(&err(raw)),
+            "#2461 errno {raw} must not be read as `no IPv4`"
         );
     }
 }
@@ -3511,6 +3564,33 @@ fn body_read_deadline_defaults_to_the_node_request_timeout() {
     );
 }
 
+/// #2461 fix-r6 (review P2#5 / structural #3): the replay connect arm's
+/// judgment, extracted as a pure function so the unknown arm has an
+/// observable injection point (#1589 issue #6 shape). The classifier is the
+/// shared fixed-port one; only this arm's verdict vocabulary lives here —
+/// `Ok(true)` records the generator's `{"refused": true}` cell, `Err` fails
+/// the replay by name. `sms-replay-connect-unknown-as-refused` restores the
+/// pre-#2462 `Err(_) => true` fold that read every error kind as a refused
+/// port (a false `refused: true` passes the oracle comparison while the
+/// listener is still up).
+fn replay_connect_refused<T>(port: u16, probe: Result<T, std::io::Error>) -> Result<bool, String> {
+    match crate::test_fixed_port_probe::classify_fixed_port_probe(probe) {
+        FixedPortProbe::Refused => Ok(true),
+        FixedPortProbe::Accepted(_) => Ok(false),
+        FixedPortProbe::Unknown(error) => {
+            if crate::mutants::on("sms-replay-connect-unknown-as-refused") {
+                // The pre-#2462 shape: any error read as a refused port.
+                Ok(true)
+            } else {
+                Err(format!(
+                    "#2462 connect probe on port {port} failed as {error}; \
+                     only ECONNREFUSED counts as refused"
+                ))
+            }
+        }
+    }
+}
+
 async fn replay_named(name: &str) {
     let case = case_by_name(name);
     validate_mock_recording(&case);
@@ -3637,18 +3717,34 @@ async fn replay_named(name: &str) {
                     let mut record = record.lock().expect("#1339 record mutex");
                     record.responses.push(match outcome {
                         Ok(value) => value,
-                        // The generator's connect refused mapping; the probe client
-                        // reports ECONNREFUSED the same way for raw requests.
-                        Err(_) => json!({"refused": true}),
+                        // #2462: the generator maps only ECONNREFUSED to
+                        // `{"refused": true}`; any other transport failure fails
+                        // the replay by name instead of masquerading as a
+                        // refused port (a false `refused: true` would pass the
+                        // oracle comparison while the listener is still up).
+                        Err(RawRequestError::ConnectRefused) => json!({"refused": true}),
+                        Err(RawRequestError::Failed(message)) => panic!(
+                            "#2462 probe request on port {port} failed as {message}; \
+                             only ECONNREFUSED counts as refused"
+                        ),
                     });
                     record.responses.clone()
                 };
                 assert_responses_so_far(&seen, &case, name);
             }
             "connect" => {
-                let refused = bounded("connect probe", TcpStream::connect(("127.0.0.1", port)))
-                    .await
-                    .is_err();
+                // #2462: same criterion as the generator's connect probe and
+                // the `portIsFree` guard — `ConnectionRefused` is the only
+                // error that counts as a refused port. #2461 fix-r6: the
+                // judgment is `replay_connect_refused` above, so its unknown
+                // arm has its own negative-control nail.
+                let refused = match replay_connect_refused(
+                    port,
+                    bounded("connect probe", TcpStream::connect(("127.0.0.1", port))).await,
+                ) {
+                    Ok(refused) => refused,
+                    Err(failure) => panic!("{failure}"),
+                };
                 let seen = {
                     let mut record = record.lock().expect("#1339 record mutex");
                     record.responses.push(json!({"refused": refused}));
@@ -4375,9 +4471,27 @@ async fn dual_stack_probe_uses_the_assigned_port() {
             // binding. A bind-based control would share the very option that
             // can be wrong (`SO_REUSEADDR` makes the v4 bind succeed on a
             // dual-stack macOS host) and would make this assertion vacuous.
-            let host_is_dual_stack = TcpStream::connect(("127.0.0.1", control_port))
-                .await
-                .is_ok();
+            // #2461 fix-r6: the connect is a fixed-port criterion — only a
+            // refusal says "not dual-stack", so it classifies through the
+            // shared probe with its own 5-second bound instead of the old
+            // `is_ok()` fold (which read an fd-exhausted or never-answering
+            // probe as "not dual-stack" and silently accepted the skip).
+            let host_is_dual_stack = {
+                let probe = crate::test_fixed_port_probe::probe_fixed_port(
+                    "dual-stack control probe",
+                    ("127.0.0.1", control_port),
+                    Duration::from_secs(5),
+                )
+                .await;
+                match probe {
+                    FixedPortProbe::Accepted(_) => true,
+                    FixedPortProbe::Refused => false,
+                    FixedPortProbe::Unknown(error) => panic!(
+                        "#1339 the dual-stack control probe on port {control_port} could not \
+                         run ({error}); only ECONNREFUSED says this host is not dual-stack"
+                    ),
+                }
+            };
             assert!(
                 !host_is_dual_stack,
                 "#1339 this host is dual-stack, yet bind_dual_stack(0) refused: {error}"
@@ -4407,18 +4521,42 @@ async fn dual_stack_probe_uses_the_assigned_port() {
     // — and this branch is reached. A `.expect` here would turn a supported
     // host red, the same defect fix-r6 removed from the other branch. Prove
     // the host really has no IPv4 before skipping.
-    match TcpStream::connect(("127.0.0.1", port)).await {
+    // #2461 fix-r6: the connect's error *kind* is intentionally inconclusive
+    // here — a host with IPv4 switched off answers `EAFNOSUPPORT` /
+    // `EADDRNOTAVAIL`, not `ECONNREFUSED` — so it stays a plain Ok/Err
+    // router under a 5-second bound, and the *bind* probe below is the
+    // decider: a provable absence of IPv4 (`means_no_ipv4`) is the only
+    // error that may skip; a bind that succeeds is a contradiction, and any
+    // other bind failure must fail by name instead of deleting the v4
+    // coverage fail-open.
+    let v4_connect = tokio::time::timeout(
+        Duration::from_secs(5),
+        TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "#1339 the v4-side probe did not answer inside 5s",
+        ))
+    });
+    match v4_connect {
         Ok(_) => {}
-        Err(v4_error) => {
-            let v4_bindable = TcpListener::bind(("127.0.0.1", 0)).await.is_ok();
-            assert!(
-                !v4_bindable,
-                "#1339 this host binds IPv4 yet the v4 side of `::` refused: {v4_error}"
-            );
-            crate::test_skip_line::stderr_skip_line(&format!(
-                "#1339 skipped: host has no IPv4 (`127.0.0.1` connect failed: {v4_error})\n"
-            ));
-        }
+        Err(v4_error) => match TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(_binds) => panic!(
+                "#1339 this host binds IPv4 yet the v4 side of `::` did not answer: {v4_error}"
+            ),
+            Err(bind_error) if means_no_ipv4(&bind_error) => {
+                crate::test_skip_line::stderr_skip_line(&format!(
+                    "#1339 skipped: host has no IPv4 (`127.0.0.1` connect failed: {v4_error}; \
+                     bind failed: {bind_error})\n"
+                ));
+            }
+            Err(bind_error) => panic!(
+                "#1339 cannot prove this host has no IPv4 (bind: {bind_error}); \
+                 refusing to skip (v4 side: {v4_error})"
+            ),
+        },
     }
 }
 
@@ -6745,4 +6883,87 @@ fn classify_v4_probe_other_errors_stay_unknown() {
             "#1589 v4 probe must keep unattributable errors Unknown"
         );
     }
+}
+
+/// #2461 fix-r6 (review P2#5 / structural #3): pin the replay connect arm's
+/// unknown errors as named failures, including the arms a healthy host never
+/// reaches. `sms-replay-connect-unknown-as-refused` restores the pre-#2462
+/// `Err(_) => true` fold — a false `refused: true` would pass the oracle
+/// comparison while the listener is still up.
+#[test]
+fn replay_connect_probe_unknown_errors_stay_named() {
+    for error in [
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        std::io::Error::from_raw_os_error(libc::EMFILE),
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "#2462 the connect probe's bound elapsed",
+        ),
+    ] {
+        let described = format!("{error}");
+        let outcome = replay_connect_refused(28645, Err::<(), std::io::Error>(error));
+        crate::negative_assert!(
+            matches!(&outcome, Err(failure)
+                if failure.contains("#2462") && failure.contains(&described)),
+            "#2462 the replay connect probe must fail by name, not as refused: \
+             {described} folded into {outcome:?}"
+        );
+    }
+    crate::negative_assert_eq!(
+        replay_connect_refused(
+            28645,
+            Err::<(), std::io::Error>(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
+        ),
+        Ok(true),
+        "#2462 only a refusal records refused=true"
+    );
+    crate::negative_assert_eq!(
+        replay_connect_refused(28645, Ok(())),
+        Ok(false),
+        "#2462 an accepted connect records refused=false"
+    );
+}
+
+/// #2461 fix-r6 (review P2#5 / structural #3): the same pin for
+/// `raw_request`'s connect mapping — a non-refused transport failure must
+/// stay a named `Failed` outcome, never a masqueraded `ConnectRefused`.
+/// `sms-raw-request-connect-unknown-as-refused` restores the pre-#2462 fold.
+/// #2461 fix-r7 (review MM boundary#1): the connect now travels through the
+/// shared bounded `probe_fixed_port`, so the injection point is the probe
+/// outcome itself (`FixedPortProbe::Unknown(error)`), the same shape the
+/// bound path classifies — the arms and the anchors are unchanged.
+#[test]
+fn raw_request_connect_mapping_keeps_unknown_errors_named() {
+    for error in [
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        std::io::Error::from_raw_os_error(libc::EMFILE),
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "#2462 the raw-request connect bound elapsed",
+        ),
+    ] {
+        let described = format!("{error}");
+        crate::negative_assert!(
+            matches!(
+                super::raw_request_connect_outcome(FixedPortProbe::<()>::Unknown(error)),
+                Err(RawRequestError::Failed(_))
+            ),
+            "#2462 a non-refused connect stays a named raw-request failure: \
+             {described} must not fold into ConnectRefused"
+        );
+    }
+    crate::negative_assert!(
+        matches!(
+            super::raw_request_connect_outcome(FixedPortProbe::<()>::Refused),
+            Err(RawRequestError::ConnectRefused)
+        ),
+        "#2462 a refused connect maps to ConnectRefused"
+    );
+    crate::negative_assert!(
+        matches!(
+            super::raw_request_connect_outcome(FixedPortProbe::Accepted(0)),
+            Ok(0)
+        ),
+        "#2462 an accepted connect maps to the stream"
+    );
 }
