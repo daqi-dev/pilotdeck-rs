@@ -1650,14 +1650,6 @@ def _run(gate, rrr, out_base: Path) -> int:
             if not gate.foreign_fixround_pairs([t], frozenset({"3056"})):
                 fails.append(f"fix-r6 boundary#2：游离闭括号+开括号不得把链抵回深度 0，"
                              f"尾部注记形异单失配仍进 foreign（钳 0）：{t[:40]!r}")
-        # boundary#1 scope 括号族（docstring 已知窄窗①登记 + 单测）：类型词 scope 括号内的链
-        # 不参与枚举——token 前向配对链（scope 链）与 issues 全不相交时 fail-closed 拒收
-        # （假 FAIL 向窄窗；真实 PR body 有界实核见 _tmp/20261114-3074-fixr6/RESULT.md）
-        if not gate.foreign_fixround_pairs(
-                ["fix(webhook,#1689,#1947): fix-r3 — 三条 P1 当轮清零（#1334 收尾批第 3 轮）"],
-                frozenset({"1334"})):
-            fails.append("fix-r6 boundary#1：scope 括号链不参与枚举，前向配对与 issues 不相交时 "
-                         "fail-closed 拒收（窄窗在档，见 _enum_title docstring）")
         # boundary#3 时间戳窗 pinning（登记不改标准，语料 0 实例）：锚点后条目内时间戳（HH:MM）
         # 的冒号切 enum_end ⇒ 其后枚举链（{1318}）退出枚举 ⇒ 合法 board 形对 {1305} 进
         # foreign 误报（假 FAIL 向窄窗在档，见 _enum_title docstring②）
@@ -1665,6 +1657,46 @@ def _run(gate, rrr, out_base: Path) -> int:
                                 frozenset({"3056"}))[1]:
             fails.append("fix-r6 boundary#3：锚点后时间戳冒号切 enum_end 的窄窗在档（board 形 foreign "
                          "误报＝假 FAIL 向，语料 0 实例）")
+
+        # —— #3074 fix-r7（DS r6 增量评审 sibling#1 P1 混宽括号镜像序 + P2×3 当轮修）——
+        # sibling#1 P1 负控（协调者实测复现贴 PR）：混宽括号镜像序——全角开 `（` + 半角闭
+        # `)` 把旧单深度抵回 0，尾部注记链参与枚举 ⇒ enum 抑制 foreign ＝ fix-r2 P0 旁路
+        # 复开（修复前 _scan_pairs 返回 ([], [])，foreign 丢失）。修法＝深度按宽度分类两条
+        # （全角（）/半角 () 各自 +1/钳 0 减），链参与枚举须两类都为 0：`（a)` 形全角深度
+        # 停在 1 ⇒ 注记链不参与 ⇒ 异单失配照进 foreign（fail-closed 向）。三条形：实测形
+        # （带尾闭括号）、评审更短版（无尾闭括号也复发）、合法注记形对照（始终命中）
+        for t in ["fix(scripts) #9999 fix-r5 修评审（a) 复用 #1321 机制）",
+                  "fix(scripts) #9999 fix-r5 修评审（a) 复盘 #1321 机制",
+                  "fix(scripts) #9999 fix-r5 修评审（复用 #1321 机制）"]:
+            if not gate.foreign_fixround_pairs([t], frozenset({"3056"})):
+                fails.append(f"fix-r7 sibling#1：混宽镜像序/尾部注记形的异单失配应进 foreign"
+                             f"（分类深度封堵，两类都 0 才参与枚举）：{t[:40]!r}")
+        # sibling#2 boundary#1 单测假绿修正：原标题（`…): fix-r3 — …`）的尾部 {1334} 被
+        # ASCII 冒号与括号深度两道独立界同时排除、scope 链单独只有 1 条，enum 翻不翻转
+        # 断言都不变。加第三条深度 0 独立链 #9999（评审给的现成标题）：现值 enum_chains=
+        # [{9999}] 单链不抑制 → foreign 非空；scope 界失效则 {1689,1947} 与 {9999} 不相交
+        # → enum=True → foreign 空，本断言必红（scope 括号族窄窗①在档，见 _enum_title
+        # docstring；真实 PR body 有界实核见 _tmp/20261114-3074-fixr6/RESULT.md）
+        if not gate.foreign_fixround_pairs(
+                ["fix(webhook,#1689,#1947) #9999 fix-r3 — 三条 P1 当轮清零（#1334 收尾批第 3 轮）"],
+                frozenset({"1334"})):
+            fails.append("fix-r7 sibling#2：scope 括号链不参与枚举，第三条深度 0 链 {9999} 在场时 "
+                         "scope 界失效会翻转 enum（假绿封堵），异单失配仍进 foreign 拒收")
+        # sibling#3 全角闭括号两形（照 boundary#2 成对写法补齐——fix-r6 的钳 0/pinning 负控
+        # 只用 ASCII `a)`，把 `）` 从钳 0 分支删掉时旧测试全绿＝假绿）：`a）（复用 #1321
+        # 机制）` 断言 foreign 非空（游离全角闭括号钳 0 + 后随全角开括号 ⇒ 链停在全角深度
+        # 1 不参与枚举，异单失配照进 foreign）；`a）复盘 #1321 机制` 断言 foreign 空
+        # （③ pinning：钳 0 后游离闭括号不接开括号的链回到深度 0 参与枚举，窄窗在档）
+        if not gate.foreign_fixround_pairs(
+                ["fix(scripts) #9999 fix-r5 修评审 a）（复用 #1321 机制）"],
+                frozenset({"3056"})):
+            fails.append("fix-r7 sibling#3：全角游离闭括号+开括号（a）（…）不得把链抵回深度 0，"
+                         "异单失配仍进 foreign（全角钳 0 分支）")
+        if gate.foreign_fixround_pairs(
+                ["fix(scripts) #9999 fix-r5 修评审 a）复盘 #1321 机制"],
+                frozenset({"3056"})):
+            fails.append("fix-r7 sibling#3：全角游离闭括号后无开括号的链参与枚举（钳 0 后与"
+                         "无括号窄窗同族，③ 在档）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
