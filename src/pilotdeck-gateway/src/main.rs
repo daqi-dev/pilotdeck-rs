@@ -56,8 +56,20 @@ async fn main() -> Result<(), ProxyError> {
     });
     let listener = TcpListener::bind(listen).await?;
     let address = listener.local_addr()?;
-    println!("PilotDeck server listening: http://{address}");
-    println!("WebSocket: ws://{address}/ws");
+    // #2558: best-effort console lines, like TS's `console.log` — a raw
+    // `println!` here panics when the write fails (std behavior), and these
+    // banners run on the startup path inside the main task: a closed stdout
+    // would kill the listener right after the bind, before the accept loop
+    // answers a connection. The stdout twin of the metadata line below (the
+    // stderr half of the same fix, `refresh.rs`'s `log` default shape).
+    pilotdeck_gateway::native_process::console_log_line(
+        &mut std::io::stdout(),
+        &format!("PilotDeck server listening: http://{address}"),
+    );
+    pilotdeck_gateway::native_process::console_log_line(
+        &mut std::io::stdout(),
+        &format!("WebSocket: ws://{address}/ws"),
+    );
     // #2558: a best-effort console line, like TS's `console.error` — an
     // `eprintln!` here panics when the write fails (std behavior), and this
     // line runs on the startup path inside the main task: an unwritable

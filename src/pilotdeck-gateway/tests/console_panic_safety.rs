@@ -22,12 +22,23 @@
 //! (`production_tree_stays_eprintln_free`) that polices the whole
 //! production tree instead of only the listed files — tls.rs never named
 //! `console_log_line`, so no derived rule had pulled it into either
-//! table while it still carried eight `eprintln!` sites. The lib-side probes (`http_proxy::tests`,
+//! table while it still carried eight `eprintln!` sites. fix-r4 closed
+//! the stdout face of the same scans: the entry's banner `println!`s
+//! (`main.rs`, the two lines whose stderr neighbors were already fixed)
+//! went through the writer, the detector's match set widened from
+//! `eprintln` alone to all three panicking console macros (`eprintln` /
+//! `println` / `print`), and the test-support `println!` diagnostics the
+//! widened scan newly reached — gated where the in-file `#[cfg(test)]`
+//! skip cannot see it (the `host/tests/` declaration site, the
+//! `#[cfg(all(test, unix))]` spelling) — were converted to the writer
+//! too, so the widened scan stays green without widening any exemption.
+//! The lib-side probes (`http_proxy::tests`,
 //! `upstream::tests`, `runtime::memory::maintenance::tests`, plus
 //! `native_process::channels_tests`' failing-sink unit case) drive the
 //! reachable sites in re-exec'd children with EPIPE stderr; this file owns
 //! what only the real binary can pin — the entry's own three sites — plus
-//! the lexical guards that keep every #2558 file `eprintln!`-free for the
+//! the lexical guards that keep every #2558 file free of the panicking
+//! console macros (`eprintln!` / `println!` / `print!`, fix-r4) for the
 //! branches no portable child can reach (the accept-error line has no
 //! deterministic fd-exhaustion trigger, and a panic inside the entry's
 //! spawned connection task is contained by tokio, invisible to this
@@ -55,14 +66,19 @@ use std::{
 /// through the writer in #2434; fix-r2 added the assembly's own
 /// diagnostics, the default tail/debug/log sinks, and the status/dump/
 /// abort/registration lines listed in the module docs; fix-r3 added the
-/// TLS CA warn lines in `runtime/model/http/tls.rs`). Kept complete
-/// against new callers by `shared_writer_call_sites_stay_listed`, and
-/// since fix-r3 every entry is also an anchor of the whole-tree scan in
+/// TLS CA warn lines in `runtime/model/http/tls.rs`; fix-r4 added the
+/// three test-support files whose `println!` diagnostics the widened
+/// three-macro scan reaches although their gating — the `host/tests.rs`
+/// declaration site, the `#[cfg(all(test, unix))]` spelling in
+/// `file_memory.rs` — is invisible to the in-file `#[cfg(test)]` skip:
+/// converted to the writer rather than widening any exemption). Kept
+/// complete against new callers by `shared_writer_call_sites_stay_listed`,
+/// and since fix-r3 every entry is also an anchor of the whole-tree scan in
 /// `production_tree_stays_eprintln_free`. Scanned through the shared
 /// proc-macro2 lexer (`common/source_inputs`), never a text search:
 /// comments and string literals — including the doc comments that quote
 /// the macro — are token kinds there and cannot false-positive.
-const EPRINTLN_FREE_SOURCES: [&str; 20] = [
+const EPRINTLN_FREE_SOURCES: [&str; 23] = [
     "src/main.rs",
     "src/http_proxy.rs",
     "src/upstream.rs",
@@ -83,10 +99,16 @@ const EPRINTLN_FREE_SOURCES: [&str; 20] = [
     "src/runtime/model/http.rs",
     "src/lib.rs",
     "src/runtime/model/http/tls.rs",
+    "src/host/tests/resume.rs",
+    "src/host/tests/cancel_exit.rs",
+    "src/runtime/memory/edgeclaw/file_memory.rs",
 ];
 
 /// Lexical guard: none of the #2558 files may write an error console line
-/// with the panicking `eprintln!` again. This is the only killable pin for
+/// with a panicking console macro (`eprintln!`, `println!`, `print!`;
+/// fix-r4 widened the set from `eprintln!` alone — the entry's stdout
+/// banners had stayed bare on the very file whose stderr lines were
+/// already fixed) again. This is the only killable pin for
 /// the two entry lines no child can observe (the accept-error branch has no
 /// portable trigger, and the spawned connection task's panic is contained
 /// by tokio), and it kills every site mutation even where the behavioral
@@ -116,24 +138,31 @@ fn error_console_writes_stay_non_panicking() {
 /// The guard must be able to fail (DS r1 boundary#1): an `eprintln!` site
 /// fed to `assert_no_eprintln` has to panic, so an emptied or silently
 /// weakened detector cannot pass as a green run of the file scan above.
+/// fix-r4 feeds all three console macros — the widened match set is
+/// load-bearing per macro, not only on the stderr spelling it started
+/// from, so a detector reverted to `eprintln`-alone fails here too.
 #[test]
 fn assert_no_eprintln_kills_a_real_eprintln() {
-    let fixture = "fn f() { eprintln!(\"#2558 fixture line\"); }";
-    let tokens = source_inputs::lex_source(fixture)
-        .unwrap_or_else(|error| panic!("#2558 lexing the self-test fixture: {error}"));
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        assert_no_eprintln(&tokens, "fixture.rs")
-    }))
-    .expect_err("#2558 the detector must panic on a real eprintln! site");
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .unwrap_or_default();
-    assert!(
-        message.contains("#2558 fixture.rs still writes an error console line"),
-        "#2558 the detector's panic must name the offending file, got {message:?}"
-    );
+    for word in ["eprintln", "println", "print"] {
+        let fixture = format!("fn f() {{ {word}!(\"#2558 fixture line\"); }}");
+        let tokens = source_inputs::lex_source(&fixture)
+            .unwrap_or_else(|error| panic!("#2558 lexing the self-test fixture: {error}"));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_no_eprintln(&tokens, "fixture.rs")
+        }))
+        .expect_err(&format!(
+            "#2558 the detector must panic on a real {word}! site"
+        ));
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            message.contains("#2558 fixture.rs still writes an error console line"),
+            "#2558 the detector's panic must name the offending file, got {message:?}"
+        );
+    }
 }
 
 /// The cfg(test) exemption (fix-r2) must hold in both directions: a gated
@@ -265,7 +294,15 @@ fn shared_writer_call_sites_stay_listed() {
 /// to `EPRINTLN_FREE_SOURCES` — both guards were green while the crate
 /// still panicked on a failed stderr write. This scan closes that escape
 /// class: any production file under `src/` that writes the panicking
-/// `eprintln!` fails, listed or not. Items gated by `#[cfg(test)]` inside
+/// `eprintln!` fails, listed or not. fix-r4 widened the detector's match
+/// set to all three panicking console macros, so the same scan now polices
+/// the stdout face too — and the widening immediately reached three
+/// test-support files whose gating is invisible to the in-file skip
+/// (`host/tests/resume.rs` / `host/tests/cancel_exit.rs`, gated at the
+/// `host/tests.rs` declaration; `file_memory.rs`'s
+/// `#[cfg(all(test, unix))]` modules): their `println!` diagnostics were
+/// converted to the writer, the fail-closed remedy that widens no
+/// exemption. Items gated by `#[cfg(test)]` inside
 /// a scanned file are skipped by the same detector the listed-file scan
 /// uses; test-support file spellings are excluded by
 /// [`production_rust_sources`]. An unhandled test-gating spelling (a
@@ -380,11 +417,18 @@ fn assert_no_eprintln(tokens: &[SourceToken], file: &str) {
     let mut index = 0;
     while index < tokens.len() {
         match &tokens[index] {
-            SourceToken::Ident(word) if word == "eprintln" => {
+            // fix-r4: all three panicking console macros, not `eprintln`
+            // alone — the stdout face (a bare `println!` banner) panics on
+            // a failed write exactly like the stderr spelling, so the
+            // match set grew to cover it; only the match arm changed, the
+            // exemption predicates and the `#[cfg(test)]` skip did not.
+            SourceToken::Ident(word)
+                if word == "eprintln" || word == "println" || word == "print" =>
+            {
                 assert!(
                     tokens.get(index + 1) != Some(&SourceToken::Punct('!')),
                     "#2558 {file} still writes an error console line with the \
-                     panicking `eprintln!` (std panics when the write fails); \
+                     panicking `{word}!` (std panics when the write fails); \
                      route it through `console_log_line` instead"
                 );
                 index += 1;

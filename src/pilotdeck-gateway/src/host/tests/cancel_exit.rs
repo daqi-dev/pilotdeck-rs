@@ -1,5 +1,10 @@
 //! Cancel-state interleavings: real owned pipes plus a frozen monotonic clock.
 use super::*;
+// #2558 fix-r4: the pass markers below go through the shared writer so the
+// widened console-macro scan (`tests/console_panic_safety.rs`) stays green —
+// it cannot see this file's declaration-site `#[cfg(test)]` gating
+// (`host/tests.rs`); the printed text is unchanged.
+use crate::native_process::channels::console_log_line;
 use std::sync::Mutex;
 
 const REAP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -317,8 +322,11 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
             assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
             receipt.assert_pass(mode);
             assert_peer_reaped(&receipt).await;
-            println!(
-                "CANCEL_RECONNECT_PASS before={before} peer={mode} loop_exit=5.001s disposed=1"
+            console_log_line(
+                &mut std::io::stdout(),
+                &format!(
+                    "CANCEL_RECONNECT_PASS before={before} peer={mode} loop_exit=5.001s disposed=1"
+                ),
             );
         }
     }
@@ -486,8 +494,11 @@ async fn cancellation_bounds_pending_terminal_application_and_preserves_known_te
         assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
         receipt.assert_pass(mode);
         assert_peer_reaped(&receipt).await;
-        println!(
-            "CANCEL_TERMINAL_PASS {mode} cancel_after_final={cancel_after_final} loop_exit=5.001s terminal=1 applied={expected:?} disposed=1"
+        console_log_line(
+            &mut std::io::stdout(),
+            &format!(
+                "CANCEL_TERMINAL_PASS {mode} cancel_after_final={cancel_after_final} loop_exit=5.001s terminal=1 applied={expected:?} disposed=1"
+            ),
         );
     }
 }
