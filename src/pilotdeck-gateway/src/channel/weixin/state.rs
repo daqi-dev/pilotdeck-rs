@@ -33,7 +33,11 @@ struct Inner {
     /// was armed with and retires itself, untouched, when it is stale.
     timer_seq: HashMap<JsString, u64>,
     dirty: HashMap<JsString, JsValue>,
-    in_flight: HashMap<JsString, watch::Sender<bool>>,
+    /// The live drain per key. The payload is the drain's outcome once it
+    /// settles (`None` while it runs): a waiter gets the same result the
+    /// drainer did — TS hands the waiter the drainer's very promise, so a
+    /// failed write rejects every awaiter of it, not just the starter.
+    in_flight: HashMap<JsString, watch::Sender<Option<Result<(), String>>>>,
 }
 
 struct Shared {
@@ -301,8 +305,9 @@ impl ChannelStatePersistence {
     }
 
     /// `flush` — cancels pending timers and awaits a drained write for every
-    /// dirty or in-flight key. Returns the first write error, as the TS
-    /// `Promise.all` rejection does.
+    /// dirty or in-flight key. Returns the first write error in key order,
+    /// not `Promise.all`'s temporally first rejection — a registered
+    /// intentional deviation (`A8.3-CH-WEIXIN-FLUSH-001`).
     pub async fn flush(&self) -> Result<(), String> {
         {
             let mut inner = self.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -325,11 +330,21 @@ impl ChannelStatePersistence {
         };
         keys.sort_by(|a, b| a.units().cmp(b.units()));
         keys.dedup();
-        for key in &keys {
-            // TS rejects all awaiters with the same error; only the caller that
-            // started the drain observes it here. Failure-path detail outside
-            // the golden surface (writes do not fail in the replayed cases).
-            self.ensure_write(key).await?;
+        // TS `Promise.all(keys.map((key) => this.ensureWrite(key)))`: every
+        // drain starts before the first await settles (each future's first
+        // poll runs the lock section that claims the key), and one key's
+        // rejection neither cancels nor starves the others. A sequential `?`
+        // here would leave the keys after the failure unwritten — the P3
+        // probe pinned the TS shape (`every key attempted before any
+        // rejection: true`). The error is the first one in key order, the
+        // deterministic stand-in for `Promise.all`'s first temporal
+        // rejection — a registered intentional deviation, not an
+        // equivalence claim (`A8.3-CH-WEIXIN-FLUSH-001`: the TS flush
+        // rejects with the temporally first of two failing keys).
+        let outcomes =
+            futures_util::future::join_all(keys.iter().map(|key| self.ensure_write(key))).await;
+        for outcome in outcomes {
+            outcome?;
         }
         Ok(())
     }
@@ -344,28 +359,35 @@ impl ChannelStatePersistence {
                     None => {
                         inner
                             .in_flight
-                            .insert(channel_key.clone(), watch::Sender::new(false));
+                            .insert(channel_key.clone(), watch::Sender::new(None));
                         None
                     }
                 }
             };
             let Some(mut waiter) = waiter else { break };
             // The entry is removed by the drainer's guard, however its task
-            // ends. A closed sender means that drainer was dropped before it
-            // wrote anything: start a fresh drain instead of reporting a
-            // success that never reached the disk (and never hangs).
-            if waiter.wait_for(|done| *done).await.is_err() {
-                continue;
+            // ends. A settled payload is the drainer's outcome — the waiter
+            // observes the same failure the drainer did, as the TS waiter
+            // (handed the drainer's own promise) does. A closed sender means
+            // that drainer was dropped before it settled anything: start a
+            // fresh drain instead of reporting a result that never reached
+            // the disk (and never hangs).
+            match waiter.wait_for(|done| done.is_some()).await {
+                Ok(outcome) => {
+                    return outcome
+                        .clone()
+                        .expect("#1725 the wait_for predicate guarantees a payload");
+                }
+                Err(_) => continue,
             }
-            return Ok(());
         }
         let mut guard = InFlightGuard {
             shared: self.shared.as_ref(),
             channel_key,
-            completed: false,
+            outcome: None,
         };
         let result = self.drain_writes(channel_key).await;
-        guard.completed = true;
+        guard.outcome = Some(result.clone());
         drop(guard);
         result
     }
@@ -439,14 +461,16 @@ impl ChannelStatePersistence {
 
 /// Clears the key's in-flight entry however the drain ends — the TS
 /// `.finally(() => inFlight.delete(key))`. A drainer that returns (even with a
-/// write error) marks its waiters done; one whose task is dropped mid-write
-/// marks nothing, so the senders close and the waiters can start a fresh drain
-/// instead of reporting a success that never reached the disk.
+/// write error) settles its waiters on that outcome; one whose task is dropped
+/// mid-write settles nothing, so the senders close and the waiters can start a
+/// fresh drain instead of reporting a result that never reached the disk.
 struct InFlightGuard<'a> {
     shared: &'a Shared,
     channel_key: &'a JsString,
-    /// Set once `drainWrites` returned; a dropped future leaves it false.
-    completed: bool,
+    /// The drain's outcome, set once `drainWrites` returned; a dropped future
+    /// leaves it `None`, so its waiters restart instead of inheriting a
+    /// result that never happened.
+    outcome: Option<Result<(), String>>,
 }
 
 impl Drop for InFlightGuard<'_> {
@@ -458,10 +482,8 @@ impl Drop for InFlightGuard<'_> {
             .unwrap_or_else(|e| e.into_inner())
             .in_flight
             .remove(self.channel_key);
-        if let Some(sender) = sender
-            && self.completed
-        {
-            let _ = sender.send_replace(true);
+        if let (Some(sender), Some(outcome)) = (sender, self.outcome.take()) {
+            let _ = sender.send_replace(Some(outcome));
         }
     }
 }

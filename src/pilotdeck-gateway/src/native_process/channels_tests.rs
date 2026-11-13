@@ -9,7 +9,10 @@ use crate::channel::protocol::{
     BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelStartDeps,
     ReconcileResult,
 };
-use crate::channel::runtime_status::{channel_runtime_status_path, read_snapshot};
+use crate::channel::runtime_status::{
+    ChannelRuntimeStatusUpdate, channel_runtime_status_path,
+    create_channel_runtime_status_reporter_locked, read_snapshot,
+};
 use crate::channel::weixin::{
     WeixinAbortFuture, WeixinChannelOptions, WeixinChannelState, WeixinChannelStatus,
     WeixinGatewayPort, WeixinRuntimeStatusReporter, WeixinSessionMapper, WeixinStateChange,
@@ -627,6 +630,77 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
         field_text(entry, "state"),
         Some("stopped".into()),
         "#1328 close reports the stopped state"
+    );
+}
+
+/// #1725#1: the reporter's whole read-modify-write sits inside the shared
+/// lock — the TS module is synchronous on one event loop, so two concurrent
+/// reports cannot interleave their read-snapshot → merge → publish stretches
+/// and lose an update. Holding the lock pins the reporter entirely; a report
+/// blocked on the lock writes nothing, and a file rewrite that lands while it
+/// is blocked is still there after it publishes (it re-reads *after*
+/// acquiring the lock). The tmp+rename publish also never leaves its scratch
+/// file behind.
+#[test]
+fn reporter_updates_serialize_through_the_shared_lock() {
+    let home = Root::new();
+    let lock = Arc::new(Mutex::new(()));
+    let reporter = create_channel_runtime_status_reporter_locked(home.path(), lock.clone());
+    let update = |state: &str| ChannelRuntimeStatusUpdate {
+        state: state.into(),
+        message: None,
+        account_id: None,
+        error: None,
+        qr_url: None,
+    };
+    reporter(&JsString::from("weixin"), &update("connected"));
+    let path = channel_runtime_status_path(&home.path());
+
+    // Holding the shared lock pins the reporter's whole critical section: a
+    // concurrent report cannot have run its read-modify-write.
+    let guard = lock.lock().expect("#1725 shared lock");
+    let writer = {
+        let reporter = reporter.clone();
+        std::thread::spawn(move || reporter(&JsString::from("feishu"), &update("connected")))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    let raw = crate::test_negative_receipt::expect_ok(
+        std::fs::read_to_string(&path),
+        "#1725 runtime status file",
+    );
+    crate::negative_assert!(
+        !raw.contains("feishu"),
+        "#1725 a report blocked on the shared lock writes nothing"
+    );
+
+    // A rewrite that lands while the report is blocked — the update the
+    // report would have lost if it had read its snapshot before the lock.
+    std::fs::write(
+        &path,
+        "{\"updatedAt\":\"blocked\",\"channels\":{\"weixin\":{\"state\":\"connected\"},\"other\":{\"state\":\"connected\"}}}\n",
+    )
+    .expect("#1725 concurrent status rewrite");
+    drop(guard);
+    writer.join().expect("#1725 the blocked report finishes");
+
+    let (_, status) = read_status_file(&path);
+    for channel in ["weixin", "other", "feishu"] {
+        crate::negative_assert!(
+            status
+                .get("channels")
+                .and_then(|channels| channels.get(channel))
+                .is_some(),
+            "#1725 the blocked report re-reads under the lock and keeps the concurrent rewrite: {channel}"
+        );
+    }
+    let leftovers = std::fs::read_dir(path.parent().expect("#1725 status parent dir"))
+        .expect("#1725 status dir listing")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+        .count();
+    crate::negative_assert!(
+        leftovers == 0,
+        "#1725 the atomic status publish leaves no tmp file behind"
     );
 }
 

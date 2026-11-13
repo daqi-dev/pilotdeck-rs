@@ -24,7 +24,7 @@ async function freshServer(port) {
   });
 }
 
-async function timedClose(server, label, holdMs) {
+async function timedClose(server, label, holdMs, extra = {}) {
   const t0 = Date.now();
   let settled = false;
   const p = server.close().then(
@@ -36,8 +36,12 @@ async function timedClose(server, label, holdMs) {
     },
   );
   await new Promise((r) => setTimeout(r, holdMs));
-  rec.log(label, { settledAfterHoldMs: settled, holdMs });
-  return { p, settledAfterHoldMs: settled };
+  // fix-r2（Grok boundary#2 + DS concurrency#2 撞条加固）：skipped 降级行不落
+  // settledAfterHoldMs 实测值、返回值同取 null——是否降级由本函数显式决定，
+  // 不再依赖调用方以 null 经对象展开顺序覆盖实测值（记录与控制流同源）。
+  const settledAfterHoldMs = extra.skipped === true ? null : settled;
+  rec.log(label, { ...extra, holdMs, settledAfterHoldMs });
+  return { p, settledAfterHoldMs };
 }
 
 async function main() {
@@ -66,10 +70,64 @@ async function main() {
   {
     const s = await freshServer(39876);
     const ka = await keepAliveProbe(39876);
-    await ka.once("/health");
-    const { p, settledAfterHoldMs } = await timedClose(s, "C:idle-keepalive", 2000);
-    say(`C settled=${settledAfterHoldMs}`);
-    if (!settledAfterHoldMs) {
+    // #2756（升 P1，同 p16 #2662 守门形状）：入池前提守门——首次请求失败或响应
+    // Connection 非 keep-alive（缺头按完整 HTTP/1.1 隐式，RFC 7230 §6.3）时 agent
+    // 池内无 idle socket，本格退化成「无连接」状态 A，settled 仍会 true——仍按
+    // A14②「空闲 keep-alive settle」引用即假证据，故记 SKIP 行、结论行降级。
+    const first = await ka.once("/health");
+    const premise = first.premise === true;
+    if (!premise) {
+      rec.log("C/SKIP-idle-keepalive", {
+        reason: first.premiseReason,
+        first,
+        note: "入池前提未成立（首次请求失败或响应 Connection 非 keep-alive，agent 池内无 idle socket）——C 格退化成无连接状态 A，settled 不作 A14②「空闲 keep-alive settle」对照",
+      });
+    }
+    // #2756 fix-r1（boundary P1 仲裁 + 评审 boundary P2 三态统一）：入池前提 =
+    // 首请求入池 + close 前最后一刻池仍占用（服务端空闲收尾窗实测 ~5.5–6s；
+    // server.close() 本身 ~11ms 内即 FIN 掉池内 socket，判池须在 close 前，见
+    // 轮次证据 exp-close-pool.out）。前提不成立时结论行记 skipped:true、
+    // settledAfterHoldMs 置 null——与 p1_p2/p6/p16 三探针三态编码统一
+    // （settled 原值不再落「A14② settle」证据位：该降级状态的 settle 属无连接
+    // 状态 A，已被 A 格覆盖）。fix-r2（DS concurrency#2 撞条）：复检位置不动
+    // （仲裁：timedClose 入口即发起 close，hold 是 close 后的观测窗）；但降级行
+    // premise（初始入池前提原值）与 premiseAtClose（close 前池状态）分立，不再
+    // 折叠成 premise:false；freeSocketCount 判定与记录同用一份局部快照。
+    // fix-r3（DS concurrency#1 降级判据）：复检与 close() 发起之间只隔同步代码、
+    // close() 内部 channel 停 await 期间理论上仍可被服务端 idle 超时抢先 FIN——
+    // 本探针 fake gateway、无 channel，该 await 仅微任务，实测不可达（复检→Node
+    // 级 close 同毫秒、池占用不变，见 fix-r3 exp-close-tick-race 场景 B）；有
+    // channel 且 stop 真异步时可达（场景 C）。
+    const freeSocketsBeforeClose = ka.freeSocketCount();
+    const premiseAtClose = premise && freeSocketsBeforeClose > 0;
+    if (premise && !premiseAtClose) {
+      rec.log("C/SKIP-pool-drained-before-reuse", {
+        reason: "池在 close 前被服务端空闲超时收尾（首次 /health 入池后、timedClose 前池已空）",
+        note: "C 格退化成无连接状态 A（agent 池内已无 idle socket），settled 不作 A14②「空闲 keep-alive settle」对照",
+      });
+    }
+    // fix-r3（Grok simplify P3 顺手项）：两支 extra 合 base 常量再展开。
+    const cExtra = {
+      premise,
+      premiseAtClose,
+      freeSocketsBeforeClose,
+      ...(premiseAtClose ? {} : {
+        skipped: true,
+        reason: premise
+          ? "池在 close 前被服务端空闲超时收尾（见 C/SKIP-pool-drained-before-reuse）"
+          : "入池前提未成立（见 C/SKIP-idle-keepalive）",
+      }),
+    };
+    const { p, settledAfterHoldMs } = await timedClose(s, "C:idle-keepalive", 2000, cExtra);
+    say(premiseAtClose
+      ? `C settled=${settledAfterHoldMs}`
+      : `C skipped（${cExtra.reason}——不作 A14② 空闲 keep-alive settle 对照）`);
+    // fix-r3（DS boundary#1 + concurrency#2 撞条，必修）：等待/打印分支改精确判
+    // premiseAtClose && settledAfterHoldMs === false——fix-r2 的降级哨兵
+    // settledAfterHoldMs:null 在旧判 !settledAfterHoldMs 下恒真，降级路径会走进
+    // 本分支多打一条「C resolved after agent destroy」假因果证据（stdout 说
+    // destroy 后才放行、JSON 行却记 skipped，二者互为反证）。
+    if (premiseAtClose && settledAfterHoldMs === false) {
       ka.destroy();
       await p;
       say("C resolved after agent destroy");

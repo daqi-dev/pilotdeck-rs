@@ -49,13 +49,39 @@ async function main() {
   rec.log("ws@S0/describe_server", await wsA.request("describe_server"));
   const wsB = await wsConnect(BASE, port, TOKEN); // 只建连不 hello，留到 close 后再 hello（闸门格）
   const ka = await keepAliveProbe(port);
-  rec.log("ka@S0/first", await ka.once("/health"));
+  // #2756（同 p16 #2662 守门形状）：建池前提守门——首次请求失败或响应 Connection
+  // 非 keep-alive（缺头按完整 HTTP/1.1 隐式）时 agent 池空，close 后的
+  // ka@after-close/reuse* 是新连接撞已关 listener（错误串相同但「复用已关连接」
+  // 解释无依据，matrix.md §4.2 该格结论失据），故记 SKIP 行、reuse 两行跳过。
+  const kaFirst = await ka.once("/health");
+  const kaPool = kaFirst.premise === true;
+  rec.log("ka@S0/first", kaFirst);
+  if (!kaPool) {
+    rec.log("ka/SKIP-after-close-reuse", {
+      reason: kaFirst.premiseReason,
+      kaFirst,
+      note: "建池前提未成立：ka@after-close/reuse* 跳过（新连接对照已由 http@after-close/health 覆盖，不重复产出），「关闭后复用报 ECONNREFUSED」结论不作对照",
+    });
+  }
 
   // ---- 组装 shutdown，三步受控 ----
   const autoStop = deferred();
   const flush = deferred();
   const disposeGw = deferred();
   const stepOrder = [];
+  // #2756 fix-r2（DS concurrency#1 + Grok concurrency#1 撞条）：池占用复检的
+  // 赋值与 SKIP 日志搬进 closeServer 钩子本体（见下）——复检与 server.close()
+  // 之间不再隔 autoStop.resolve() 的停机链 await，「最后一刻」结构上成立。
+  // 初值 false：listener 拒新循环只保证 close() 已发起（钩子已进），5s 兜底
+  // 超时路径下若钩子未跑到，按保守值跳过 reuse 行（不产假证据）。
+  // fix-r3（DS concurrency#1 降级判据）：「最后一刻」只覆盖到 close() 发起——
+  // close() 内部 channel 停 await 期间理论上仍可被服务端 idle 超时抢先 FIN，
+  // 「消除 TOCTOU」降级为「消除钩子前停机链 await」；本探针 fake gateway、
+  // 无 channel，该 await 仅微任务，窗口实测不可达（复检→Node 级 close 同毫秒、
+  // 池占用不变，见 fix-r3 exp-close-tick-race 场景 B；有 channel 且 stop 真异步
+  // 时可达，场景 C）。
+  let kaPoolAtClose = false;
+  let closeServerHookRan = false;
   const bundle = new PilotDeckServerShutdownBundle({
     automation: {
       stop: () => {
@@ -66,6 +92,25 @@ async function main() {
     },
     closeServer: () => {
       stepOrder.push("closeServer:enter");
+      // fix-r1（boundary P1 仲裁 + DS concurrency#1 残余）：入池前提不能只用 S0
+      // 的 kaPool 快照——S0→close 跨过服务端空闲收尾窗（实测 ~5.5–6s）时池已被
+      // 收空，close 的 FIN 无池内 socket 可拆、ka@after-close/reuse* 是纯新连接。
+      // 复检放 close 前最后一刻：server.close() 本身 ~11ms 内即 FIN 掉池内
+      // socket，close 后判池恒为空、无判别力（实测见轮次证据 exp-close-pool.out）。
+      // fix-r2：复检从 autoStop.resolve() 之前搬进本钩子——复检与 close() 发起
+      // 之间不再隔停机链 await。fix-r3 降级：close() 内部 channel 停 await 期间
+      // 理论上仍可被 idle 超时抢先（本探针无 channel、仅微任务，实测不可达，见
+      // 上方 fix-r3 注释与 exp-close-tick-race）。
+      // fix-r3（DS sibling#4）：置位点在复检紧邻处——钩子进入但未跑到复检
+      //（如挂起在更早的 await）同样按「未复检」三态处理。
+      closeServerHookRan = true;
+      kaPoolAtClose = kaPool && ka.freeSocketCount() > 0;
+      if (kaPool && !kaPoolAtClose) {
+        rec.log("ka/SKIP-pool-drained-before-reuse", {
+          reason: "池在 close 前被服务端空闲超时收尾（ka@S0/first 入池后、closeServer 前池已空）",
+          note: "ka@after-close/reuse* 跳过：池已空时测到的是新连接撞已关 listener（新连接对照已由 http@after-close/health 覆盖，不重复产出），「关闭后复用（agent 丢弃已关 socket 重建连）」结论不作对照",
+        });
+      }
       return server.close();
     },
     flushChannelState: async () => {
@@ -103,8 +148,30 @@ async function main() {
   rec.log("http@after-close/health", await httpProbe(port, "/health"));
   rec.log("ws@after-close/existing-describe", await wsA.request("describe_server"));
   rec.log("ws@after-close/existing-hello", await wsB.hello());
-  rec.log("ka@after-close/reuse", await ka.once("/health"));
-  rec.log("ka@after-close/reuse2", await ka.once("/api/web/projects"));
+  // #2756：前提未成立时跳过（池空时测到的是新连接而非复用，证据无效——同 p16 观察 3
+  // 形状）；fix-r1 起前提 = kaPoolAtClose（S0 入池 + close 前池仍占用，fix-r2 起
+  // 在 closeServer 钩子内复检赋值，见 ka/SKIP-pool-drained-before-reuse）。
+  // fix-r2（DS sibling#1 + Grok sibling#1 撞条）：once 返回的 reusedSocket 仅在
+  // p6 的 keepalive-http 在途行可辨新旧连接——close 后本探针的两行两种路径
+  // （正常重建连 / 池提前收尾的新连接）同为 false，判别依据是钩子内复检，
+  // reusedSocket 作参考。fix-r2（Grok simplify#2）：两行 reason 提局部常量。
+  // fix-r3（DS sibling#4 = Grok boundary#2 撞条）：kaPoolAtClose 初值三态分立——
+  // 钩子未跑到复检（5s 兜底超时路径）时不再折叠进「池被空闲收尾」reason：SKIP 行
+  // 只在钩子内复检处写、该路径下不存在，指向它即成因失实；用独立 reason，不指向
+  // SKIP 行。kaPool=false 时建池前提 SKIP 行（ka/SKIP-after-close-reuse）在主流程
+  // 写、恒存在，reason 照旧。
+  const reuseSkipReason = !kaPool
+    ? "建池前提未成立（见 ka/SKIP-after-close-reuse）"
+    : !closeServerHookRan
+      ? "closeServer 钩子未跑到池占用复检（5s 兜底超时路径，kaPoolAtClose 保持初值 false）"
+      : "池在 close 前被服务端空闲超时收尾（见 ka/SKIP-pool-drained-before-reuse）";
+  if (kaPoolAtClose) {
+    rec.log("ka@after-close/reuse", await ka.once("/health"));
+    rec.log("ka@after-close/reuse2", await ka.once("/api/web/projects"));
+  } else {
+    rec.log("ka@after-close/reuse", { skipped: true, closeServerHookRan, reason: reuseSkipReason });
+    rec.log("ka@after-close/reuse2", { skipped: true, closeServerHookRan, reason: reuseSkipReason });
+  }
   try {
     await server.reconcileChannels({ channels: [], managedChannelKeys: [] });
     rec.log("reconcile@after-close", { ok: true });

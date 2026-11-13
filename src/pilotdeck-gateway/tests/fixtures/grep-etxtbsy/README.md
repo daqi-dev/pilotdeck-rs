@@ -240,6 +240,20 @@ panic 用例
   `#1409 the pid-mode guard must reap the stranger` 判杀。组模式早有
   `stranger-reap-removed`，pid 模式此前只有 kill 一个变异体；僵尸有没有被
   收走，唯一的证据就是从 `/proc` 里消失，所以判据直接看条目。
+- `reap-evidence-error-always-gone`（#2592 新增，#2142 fix-r3 评审 DS
+  sibling #1 转跟进，Linux，绑定单元测试）：pid 模式收割证据的读取错误分
+  类退回 fail-open——`Path::exists()` 把任何 `/proc` 读错误都读成「条目已消
+  失」，受限 procfs（hidepid / 受限容器 / gVisor）对仍在的 stranger 回
+  EACCES 时轮询立即退出、断言在未收割的情况下 PASS（上一行可借道假 PASS
+  的形状，与 fix-r3 修掉的 `group_is_gone_within` fail-open 同一形状）。分
+  类收口为单一函数 `reap_evidence_is_gone`（复用 `metadata_failure_is_gone`：
+  只有 ENOENT 是收割，其余错误视为 stranger 仍在、继续轮询、超时后断言失
+  败），绑定新单元测试
+  `pid_mode::a_reap_read_error_means_gone_only_when_the_entry_is_absent`（与
+  `metadata-failure-always-gone` 绑定的 `a_proc_read_error_…` 同一形态：健康
+  宿主的 `/proc` 对后代永远不回错误侧，故钉分类函数本身）的
+  `#2592 an unreadable /proc entry means the stranger's state is unknown,
+  never reaped`。
 - `scan-descriptor-dir-unreadable`（#1409 第 1 条，P1，Linux 契约）：把
   `read_dir` 的 `/proc/<pid>/fd` 改成不存在的名字——修前前两级读失败一律
   `continue`，扫描一条管道都看不见仍返回 Ok，绑定用例照常 PASS；修后自检
@@ -422,6 +436,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=40 lib=3 test=37 unix=16 linux-survives=9 linux-invalid=15 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false terminal-state-production-hardcoded-false blind-source-self-unrelated probe-group-kill-removed metadata-failure-always-gone group-gone-always-false -->
+<!-- mutants: total=41 lib=3 test=38 unix=16 linux-survives=9 linux-invalid=16 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed reap-evidence-error-always-gone scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false terminal-state-production-hardcoded-false blind-source-self-unrelated probe-group-kill-removed metadata-failure-always-gone group-gone-always-false -->
 

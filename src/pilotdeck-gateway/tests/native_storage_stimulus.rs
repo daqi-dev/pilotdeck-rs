@@ -19,9 +19,6 @@ mod test_permission_faults;
 mod test_process;
 #[path = "common/scratch.rs"]
 mod test_scratch;
-#[allow(dead_code)]
-#[path = "common/skip_line.rs"]
-mod test_skip_line;
 // Real binaries, isolated state, Node observer and local-only provider.
 use std::{path::PathBuf, process::Command};
 #[test]

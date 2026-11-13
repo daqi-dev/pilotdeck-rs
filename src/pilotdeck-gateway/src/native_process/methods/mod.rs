@@ -181,5 +181,99 @@ pub(super) fn require_text(
     }
 }
 
+/// The sessionKey guard the session_dir and config families share: the TS
+/// `?.trim()` gate (`require_text`) plus the #1623 lone-surrogate rejection.
+///
+/// TS accepts a lone surrogate in `sessionKey` (`?.trim()` leaves it intact —
+/// #1455 probe4), but every disk identity is rendered through
+/// `String::from_utf16_lossy` (`sanitize_session_id`), so `s\u{D800}` and
+/// `s\u{FFFD}` are one transcript / file-history / tool-results / subagents
+/// path: a surrogate key reaches another session's files and can append into
+/// or delete them (#1623 probes `_tmp/20261111-issue-1623/`, Node v22.22.0
+/// fs alias + the Rust end-to-end alias demonstration). Human decision #1623
+/// 方案 B: reject the surrogate key — stricter than TS — and keep the lossy
+/// disk identity (no sanitize injectivity change, no migration); the
+/// divergence is registered as `A7-W5-SESSION-KEY-SURROGATE-REJECT-001`.
+/// A paired surrogate (an astral character) and an explicit U+FFFD stay
+/// valid keys; only the unpaired shape is refused.
+pub(super) fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
+    let key = require_text(
+        params,
+        "sessionKey",
+        "INVALID_SESSION_KEY",
+        "sessionKey is required.",
+    )?;
+    if has_unpaired_surrogate(key.units()) {
+        return Err(RequestError {
+            code: "INVALID_SESSION_KEY".into(),
+            message: SESSION_KEY_SURROGATE_MESSAGE.into(),
+            details: None,
+            validation: None,
+        });
+    }
+    Ok(key)
+}
+
+/// The #1623 surrogate-rejection message, shared by every gate the divergence
+/// covers (session_dir / config / rewind_files request families, the
+/// connection-owned `submit_turn` entry, and the `native_archive` family) so
+/// the wording cannot drift between them.
+pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =
+    "sessionKey must not contain an unpaired surrogate.";
+
+/// True when the UTF-16 units contain a surrogate without its pair — the one
+/// shape the #1623 gate refuses. `char::decode_utf16` is the same walk the
+/// storage's `String::from_utf16_lossy` performs, so the two can never
+/// disagree about which keys are "lossy".
+pub(crate) fn has_unpaired_surrogate(units: &[u16]) -> bool {
+    char::decode_utf16(units.iter().copied()).any(|unit| unit.is_err())
+}
+
+/// `input.projectKey ?? fallbackProjectRoot` — the projectKey read the
+/// session_dir and config families share (#2068; probes
+/// `_tmp/20261110-issue-2068/probe/probe-2068.out` and `probe-2068-r2.out`,
+/// Node v22.22.0). Only the nullish spellings fall back to the configured
+/// project; a string is a real key, converted lossily for the
+/// configured-project comparison (#2083's treatment — a lone surrogate
+/// reaches the unserved-key refusal, it does not fold onto the configured
+/// project); anything else is Node `path.resolve`'s `TypeError
+/// [ERR_INVALID_ARG_TYPE]`, built from the shared `argument_received` /
+/// `invalid_arg_type_message` ports so the wording and the `-0` /
+/// constructor spellings cannot drift from the family's other `paths[0]`
+/// guards (`session_model.rs` `path_argument`, `skills/mod.rs` `path_arg`,
+/// `management.rs` `validate_command_project`). The code survives the
+/// boundary (`hasStructuredErrorCode`; the frozen oracle's `project-number`
+/// WS original is `ERR_INVALID_ARG_TYPE`), and Node's description-phase
+/// throws are bare TypeErrors that serialize as `gateway_request_failed`
+/// with the bare message.
+pub(super) fn resolve_project_key(
+    params: &JsValue,
+    fallback: &std::path::Path,
+) -> Result<String, RequestError> {
+    match input_property(params, "projectKey")?.as_ref() {
+        None | Some(JsValue::Undefined) | Some(JsValue::Null) => {
+            Ok(fallback.to_string_lossy().into_owned())
+        }
+        Some(JsValue::String(key)) => Ok(String::from_utf16_lossy(key.units())),
+        // Node's description phase can itself throw (a truthy primitive
+        // `constructor` or an unconvertible `constructor.name`), and that
+        // bare TypeError/RangeError escapes before `ERR_INVALID_ARG_TYPE` is
+        // ever built: it carries no `code`, and the boundary keeps only
+        // `error.message` — the same Throws mapping `management.rs`
+        // `validate_command_project` gives this arm.
+        Some(other) => match crate::metadata::argument_received(other) {
+            crate::metadata::ArgumentReceived::Text(received) => Err(RequestError {
+                code: "ERR_INVALID_ARG_TYPE".into(),
+                message: crate::metadata::invalid_arg_type_message("paths[0]", &received),
+                details: None,
+                validation: None,
+            }),
+            crate::metadata::ArgumentReceived::Throws { message, .. } => {
+                Err(RequestError::new(message))
+            }
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests;

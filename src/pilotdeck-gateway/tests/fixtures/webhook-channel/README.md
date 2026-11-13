@@ -23,3 +23,5 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 #1729：`negative_controls.py` 当时增至 **49** 个开关（以 `switches` 表为准；`#1729` 之前为 20 个），新增 26 个录制字段保护，覆盖每个录制字段的读取点（含终态比对的 `expected` 容器）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1334、字段和实际值；既有 webhook 差异条目（`A8.3-CH-WEBHOOK-001/002/003`）不含开关计数判据。`steps` 按必填字段读取：键缺席即失败（不再静默变成零步重放），但空数组合法——`port-in-use` / `invalid-port` 两例本就录制为零步，故不照搬 sms 的空数组拒绝。
 
 #1682：`negative_controls.py` 现有 **50** 个开关（新增 `webhook-prototype-routes-off`：恢复「只查自有键」的旧查找，`object-prototype-route-names` 单元格四步里前三步转红——`nope-signed` 既非自有键也非原型名，修前修后都是 404）。金样 `expectedCaseCount` 20 → **21**。
+
+#2153 / #2789：新增 2 个开关（共 **52** 个）：`webhook-replay-cl0-mask-always` 钉「重放归一化的 `content-length: 0` 掩码只作用在 `unknown-method` 登记步」（`normalize` 无视作用域即红），`webhook-replay-cl0-wide` 钉「`fn parser_admission` 不得放宽」（放宽后唯一性守卫 `unknown_method_is_the_label_of_exactly_one_oracle_step` 读同一谓词转红）。每步只一个开关，与 `generate.mts` 录制侧同一常量语义（A8.4-NATIVE-HTTP-001）。
