@@ -6680,3 +6680,28 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 5 | 2931 run 43425343173 终态（bj0pr12gn）绿入队；2912/3102/3042 队列终态核邮箱关账 | coord2/e7 | 等待器触发即收 |
 | 6 | #3042 合入后：#3001 条1/#3100 条2/3 关账；1087-p2-batch 批件开单 | coord2/e7 | 合入当轮 |
 | 7 | 每轮 df 核验（43.3 GiB 起点）；EOF 网络抖动持续带重试 | coord2/e7 | 每轮 |
+
+## 01:25 交接段（e7，两小时轮，覆盖 23:00–01:25 两个窗口）
+
+**做了什么**：
+- 四 PR 合流重钉链走完：3058（wt-3043）三套件自证重跑全绿推送 f0659c2d0；2969（wt-2558）清误建 --check/ 目录；3074（wt-3056）merge 保指纹 6280826f 不变；2967（wt-2775）R7 批准记录如实改写（ecb8be563）+ check_frozen PASS 30 entries。
+- **#2967 终块收敛**：MM 路径集 + DS 全量四角色双谱系 P0/P1=0（同头 ecb8be563 同指纹 5c8d86d1），body 手术换块后本地 check-pr-gate PASS，CI 重跑中（等待器绿即入队）。
+- **#3015（#2043）**：CI 全绿但 draft 挡合并，ready 转正后入队成功（fix-r2 只修 P2 轮按 10-25 口径 DS 单家复核合规）。
+- **三路双谱系同撞 P1/P0 判读 + 修复轮派发（本机）**：①3074——DS boundary P0 + MM P1 同撞（check-pr-gate no-issue/异单关联旁路 → 修复轮判据整段跳过 = 假 PASS），fix-r2 派本机（_tmp/20261114-3074-fixr2/）；②3058——MM sibling P1×2（shared-runner 判据族漂移 + sdk runner 无静态分母）协调者逐条实测确认，fix-r5 派本机（_tmp/20261114-3058-fixr5/）；③2969——MM/DS boundary 双撞 P1（cfg(test) 尖括号启发式吞同列表后续生产臂 = 扫描器假 PASS），fix-r7 派本机（_tmp/20261114-2969-fixr7/）。尺子域 P1 不适用放行。
+- **#3088（#1723）**：MM concurrency P1（runtime drop 疑注销 SIGXFSZ 处置）按评审预注册判据仲裁——本机实跑 owned_rerun_stops_a_writer_that_survives_the_kernel_cap 全绿、leader 死于 group kill（signal 9 非 XFSZ）+ ubuntu-24.04 CI rust 绿 → **判伪**（待贴 PR 登记）；DS sibling/simplify/concurrency r3 三块 PASS，MM sibling 与 DS boundary r3 在飞。
+- #1642 fix-r5 收货核验全绿（4 套件 + anchors 1231/1305/1369 + fmt），待合 main 真解 #2461 账本冲突（SCRIPTS 矩阵 30→31 并集复算）后推 #2931。
+- 主仓分叉：本地 71a4df4fc 经 git cherry 判 patch 等价已进 main（e323c4c8f），reset --hard 对齐无丢失。
+- 巡场：human-comments 空；盘仓内 _build+_tmp 96 GiB 正常、**卷余仅 16 GiB 偏紧**（22:33 盘满同卷），下轮择机清闲置树 cargo-target（删前核 pgrep）。
+
+**下一步**：2967 CI 绿入队；三路修复轮收货→验证→增量双谱系→入队；3088 余两块出后 P2 三分 + P1 判伪登记 + body 手术入队；1642 合流推 2931；2944 fix-r5 开树执行。
+
+未结义务表：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 2967 CI 终态 → 入队 → 合入核邮箱 → #2775/#2776/#2777/#2789/#2153 关账 | coord2/e7 | 等待器触发即收 |
+| 2 | 3074 fix-r2 / 3058 fix-r5 / 2969 fix-r7 三路收货 → 验证 → 增量双谱系评审 → body → 入队 | coord2/e7 | 02:30 |
+| 3 | 3088 MM sibling + DS boundary r3 出块 → P1 判伪贴 PR → P2 三分 → body 手术 → gate → 入队 | coord2/e7 | 02:00 |
+| 4 | 1642 分支合 main（真解 #2461：SCRIPTS/README/anchors 计数并集复算）→ push #2931 → body 补块 → 入队 | coord2/e7 | 02:30 |
+| 5 | 2944 fix-r5（A7.2 账本补登记，#2976 承接口径核实）开树执行 | coord2/e7 | 02:30 |
+| 6 | 3015 队列终态核邮箱 → #2043 关账（P2 已有 #3126 承接） | coord2/e7 | 等待器触发即收 |
+| 7 | 盘紧：清闲置树 cargo-target（删前核 pgrep 无进程）；每轮 df/du -sk | coord2/e7 | 每轮 |
