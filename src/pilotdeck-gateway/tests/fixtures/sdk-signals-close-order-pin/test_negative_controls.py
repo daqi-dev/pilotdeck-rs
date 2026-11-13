@@ -127,6 +127,7 @@ with no summary — those run the real, unmodified script directly, because
 nothing needs patching before the guard. Run from this directory:
 ``python3 -I sdk-signals-close-order-pin/test_negative_controls.py``.
 """
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -141,6 +142,46 @@ import unittest
 FIXTURES = Path(__file__).resolve().parents[1]
 PIN_SCRIPT = FIXTURES / 'sdk-signals-close-order-pin' / 'negative_controls.py'
 CATALOG_SCRIPT = FIXTURES / 'sdk-signals' / 'negative_controls.py'
+
+# fix-r9 (MM sibling P1): make the fixtures importable regardless of the
+# working directory the suite is started from (CI runs it from ``fixtures/``
+# with ``-m unittest``, where the directory is already on ``sys.path``).
+if str(FIXTURES) not in sys.path:
+    sys.path.insert(0, str(FIXTURES))
+from negative_process import tree_lock
+
+# The tree the guarded sources live in: the same ``<root>/.negative-source.lock``
+# a real ``mutating_sources`` round flocks. The pin runner derives its own
+# ROOT from ``Path(__file__).resolve().parents[5]`` at the same fixture
+# nesting this file sits at, so the same derivation names the same lock
+# (the roster_guards twin, one level shallower at ``fixtures/`` itself, uses
+# ``parents[4]`` for the same root).
+REPO_ROOT = Path(__file__).resolve().parents[5]
+
+
+@contextlib.contextmanager
+def guarded_source_window(*, timeout=2):
+    """Read real guarded sources only inside the tree lock (fix-r9).
+
+    ``PIN_SCRIPT`` is the ``close-order-reader-failclosed`` control's own
+    mutation target and ``CATALOG_SCRIPT`` is this fixture's catalog -- both
+    carry a mutant on disk for the whole bound-test window of a sibling
+    round. Reading them unlocked can stage mutant bytes as pristine and red
+    every downstream anchor expectation (TreeLock: whoever owns the lock
+    reads the pristine bytes *after* acquisition). The wait budget is
+    explicit and short (the roster_guards ``fast_tree_lock`` precedent): a
+    holder outliving it fails closed with a holder-naming diagnostic instead
+    of TreeLock's silent 900 s default outlasting the CI step's own timeout.
+    """
+    try:
+        with tree_lock(REPO_ROOT, timeout=timeout):
+            yield
+    except TimeoutError as error:
+        raise AssertionError(
+            '#3043 the guarded source was busy: a sibling negative-control '
+            f'round holds {REPO_ROOT}/.negative-source.lock for over '
+            f'{timeout} s and mutant bytes would be read as pristine; '
+            f'refusing: {error}') from error
 
 # The first per-ID row and the first boundary row of the registered table: one
 # of each criterion family, in table order.
@@ -207,6 +248,10 @@ sys.path.insert(0, str(real_fixtures))
 import negative_process
 
 runner_path = tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals-close-order-pin/negative_controls.py'
+# fix-r9 (MM sibling P1): pin_path is a *staged* copy the parent read inside
+# the tree lock -- a live holder of <repo>/.negative-source.lock (the
+# close-order-reader control mutating the real driver) cannot leak mutant
+# bytes into this read, so no lock is needed here.
 source = pin_path.read_text(encoding='utf-8')
 
 head_pipe_write = None
@@ -437,7 +482,10 @@ class _PinDriver:
         catalog copy is taken before the run so every case can also prove the
         tree was restored whatever the abort did. ``base`` lets a caller reuse
         a tree it prepared (the busy-lock case must lock the very tree the
-        runner then runs over).
+        runner then runs over). fix-r9 (MM sibling P1): the staged catalog
+        and pin-driver bytes are both read inside the tree lock (they are
+        real guarded sources a sibling round can hold mutants on), so
+        ``catalog_before`` is HEAD-shaped by construction.
         """
         if base is None:
             base = Path(tempfile.mkdtemp(prefix='pdrs-1800-pin-'))
@@ -445,7 +493,18 @@ class _PinDriver:
         tree = (base / 'tree').resolve()
         catalog = tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py'
         catalog.parent.mkdir(parents=True)
-        catalog.write_bytes(CATALOG_SCRIPT.read_bytes())
+        # fix-r9 (MM sibling P1, the roster_guards twin's lock shape): both
+        # staged files are real guarded sources -- the catalog is this
+        # fixture's own mutation target (RESTORE_SET), and the pin driver is
+        # the close-order-reader control's -- so a sibling round can keep a
+        # mutant on disk for the whole bound-test window. The reads happen
+        # inside the tree lock, and only the staged copies travel: the
+        # harness below reads ``staged_pin`` (a private temp file), so the
+        # subprocess itself never needs the lock.
+        staged_pin = base / 'staged-pin.py'
+        with guarded_source_window():
+            staged_pin.write_bytes(PIN_SCRIPT.read_bytes())
+            catalog.write_bytes(CATALOG_SCRIPT.read_bytes())
         for ledger in ('D1-SDK-WS-CLOSE-ORDER-001.md',
                        'D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md'):
             path = tree / 'specs/gateway-parity/diffs' / ledger
@@ -461,7 +520,7 @@ class _PinDriver:
         before = catalog.read_bytes()
         env = {**os.environ, 'CARGO_TARGET_DIR': str(base / 'unused-target')}
         process = subprocess.run(
-            [sys.executable, '-I', str(harness), flow, reader, str(PIN_SCRIPT),
+            [sys.executable, '-I', str(harness), flow, reader, str(staged_pin),
              str(FIXTURES), str(tree), str(out), *names],
             capture_output=True, text=True, timeout=120, env=env)
         summary = None
@@ -1235,7 +1294,8 @@ class StaticRosterTests(unittest.TestCase):
         return result, out
 
     def test_a_renamed_row_is_refused_without_evidence(self):
-        source = PIN_SCRIPT.read_text(encoding='utf-8')
+        with guarded_source_window():
+            source = PIN_SCRIPT.read_text(encoding='utf-8')
         self.assertEqual(source.count(_TABLE_ROW), 1)
         result, out = self.run_copy(
             source.replace(_TABLE_ROW,
@@ -1251,7 +1311,8 @@ class StaticRosterTests(unittest.TestCase):
         self.assertFalse(out.exists())
 
     def test_a_reordered_row_is_refused_without_evidence(self):
-        source = PIN_SCRIPT.read_text(encoding='utf-8')
+        with guarded_source_window():
+            source = PIN_SCRIPT.read_text(encoding='utf-8')
         self.assertEqual(source.count(_TABLE_ROW), 1)
         self.assertEqual(source.count(_TABLE_ROW_MOVED), 1)
         swapped = (source
@@ -1270,7 +1331,13 @@ class StaticRosterTests(unittest.TestCase):
         # The double edit registered() alone cannot see (both sides shrink
         # together) is exactly why the EXPECTED_TOTAL count literal stays: the
         # pair is two-sided, and this cell pins the count side of it.
-        source = PIN_SCRIPT.read_text(encoding='utf-8')
+        # fix-r9 (MM sibling P1, same family as run_pin's staging): the
+        # driver text is read inside the tree lock -- a sibling round holding
+        # a mutant on the real driver would otherwise stage mutant bytes here
+        # and red the anchor-count expectations below as a product-looking
+        # failure.
+        with guarded_source_window():
+            source = PIN_SCRIPT.read_text(encoding='utf-8')
         self.assertEqual(source.count(_TABLE_ROW), 1)
         self.assertEqual(source.count(_ROSTER_ENTRY), 1)
         index = source.index(_TABLE_ROW)
@@ -1314,7 +1381,9 @@ class StaticRosterTests(unittest.TestCase):
         self.assertFalse(out.exists())
 
     def test_a_pristine_copy_reaches_the_next_refusal(self):
-        result, out = self.run_copy(PIN_SCRIPT.read_text(encoding='utf-8'))
+        with guarded_source_window():
+            pristine_source = PIN_SCRIPT.read_text(encoding='utf-8')
+        result, out = self.run_copy(pristine_source)
         self.assertEqual(result.returncode, 1,
                          f'#3043 the pristine copy must clear the roster and '
                          f'stop at the next pre-guard refusal: '

@@ -1735,13 +1735,25 @@ class SharedRunnerRosterGuard(unittest.TestCase):
         # (TreeLock: whoever owns the lock reads the pristine bytes
         # *after* acquisition). The lock is held only across the copy
         # window; the subprocess below runs staged bytes, unlocked.
-        with tree_lock(REPO_ROOT):
-            shutil.copy2(FIXTURES / 'negative_suite.py',
-                         fixtures / 'negative_suite.py')
-            shared = fixtures / '_shared'
-            shared.mkdir()
-            shutil.copy2(FIXTURES / '_shared/negative_sqlite_header.py',
-                         shared / 'negative_sqlite_header.py')
+        # fix-r9 (MM concurrency#1 ≡ DS concurrency#1, the fast_tree_lock
+        # precedent at :628): the wait budget is explicit and short, not
+        # TreeLock's silent 900 s default -- a sibling round holding
+        # ROOT/.negative-source.lock fails this copy closed in seconds
+        # with a holder-naming diagnostic instead of outlasting the CI
+        # step's own timeout.
+        try:
+            with tree_lock(REPO_ROOT, timeout=2):
+                shutil.copy2(FIXTURES / 'negative_suite.py',
+                             fixtures / 'negative_suite.py')
+                shared = fixtures / '_shared'
+                shared.mkdir()
+                shutil.copy2(FIXTURES / '_shared/negative_sqlite_header.py',
+                             shared / 'negative_sqlite_header.py')
+        except TimeoutError as error:
+            self.fail('#3043 the guarded shared sources were busy for over '
+                      '2 s: a sibling negative-control round holds '
+                      f'{REPO_ROOT}/.negative-source.lock and mutant bytes '
+                      f'would be staged as pristine; refusing: {error}')
         boot = base / 'boot.py'
         boot.write_text(
             SHARED_RUNNER_BOOT_SOURCE.replace('__REAL_FIXTURES__',

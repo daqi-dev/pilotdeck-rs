@@ -3145,6 +3145,10 @@ class EnvironmentControls(unittest.TestCase):
         # 写」的 AST 判据 —— 不登记则把它改回 `path.write_text(...)` 三家钉子
         # 依旧全绿，恰是 fix-r6 为 shared-runner 补登记时的同一条理由。
         ('sdk-signals-close-order-pin/negative_controls.py', None),
+        # #3043 fix-r9（DS sibling，同族 P1）：sdk-signals 本体是被 pin 夹具当
+        # catalog 反复变异的真源，其逐项发布/还原在 fix-r9 同样搬上共享
+        # write_source_atomic；与上两条同理由记 None 进写守卫半边。
+        ('sdk-signals/negative_controls.py', None),
     )
     # r14（zai 6 P1 + deepseek 2 P1）：r13 按「模块级 + 属性名 ∈ 保留名单」枚举，
     # 于是 setattr 调用 / Subscript 目标 / 函数体 / 接收者反向 / 写方法调用 / 别名导入
@@ -3534,6 +3538,26 @@ class EnvironmentControls(unittest.TestCase):
             ('truncating-restore-write',
              'write_source_atomic(root, path, snapshots[path])',
              'path.write_bytes(snapshots[path])'),
+            # fix-r9（DS boundary#1，b-档）：伪装接收者。旧的文本前缀判据
+            # （``receiver.lstrip('( ').startswith('out')``）对 ``out_*`` 名字
+            # 假放行——把它改回截断写仍全绿；结构判据（名字必须是 out/output
+            # 本身或以它为左端的 ``/`` 链）必须杀。
+            ('disguised-out-receiver-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'out_catalog = path\n'
+             '                        out_catalog.write_text(changed, '
+             'encoding="utf-8")'),
+        ),
+        # #3043 fix-r9（DS sibling，同族 P1）：sdk-signals 本体的两个发布点。
+        'sdk-signals/negative_controls.py': (
+            ('truncating-mutant-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'path.write_text(changed, encoding="utf-8")'),
+            ('truncating-restore-write',
+             'write_source_atomic(root, path, originals[path])',
+             'path.write_bytes(originals[path])'),
         ),
     }
 
@@ -4247,8 +4271,25 @@ class EnvironmentControls(unittest.TestCase):
                          '#1692 §9 r2 a failed publish leaves no temp behind')
         return body
 
+    @staticmethod
+    def receiver_is_output_directory(func):
+        """fix-r9（DS boundary#1，b-档）：接收者按 AST 结构判，不按源码文本前缀。
+
+        放行的只有两种形态：接收者名字本身是 ``out`` / ``output``，或以它们为
+        最左端的 ``/`` 链（``out / "summary.json.tmp"``、``output / a / b``）。
+        裸标识符一律判红——包括 ``out_path`` / ``outbox`` 这类**前缀伪装**：
+        旧判据 ``receiver.lstrip('( ').startswith('out')`` 读的是
+        ``get_source_segment`` 的源码文本，对它们假放行，把截断写藏进一个
+        ``out`` 开头的变量名就能过（正是逐词补词表必出新洞的形态）。链条的
+        最左端必须是那两个名字本身，中间一环换名（``a / out``）同样判红。
+        """
+        value = func.value
+        while isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+            value = value.left
+        return isinstance(value, ast.Name) and value.id in ('out', 'output')
+
     def sibling_write_guards(self, source, relative):
-        """#1692 §9 r2/r4：被变异源一处原地截断写都不许有，全走原子发布。
+        """#1692 §9 r2/r4/r9：被变异源一处原地截断写都不许有，全走原子发布。
 
         r4（MiniMax sibling P1 / DeepSeek boundary P2 同源）：r3 的版本按**接收者变量名**
         枚举（`path` / `case.path` / `_active["path"]`），而 `model-complete` 的第三个发布点
@@ -4257,6 +4298,10 @@ class EnvironmentControls(unittest.TestCase):
         三条断言全绿，§9 的「一处原地截断写都不许有」对该点假 PASS。
         改成 AST 判「谁在被写」：接收者必须是输出目录（`out` 派生的证据/日志）之外的一律判红，
         接收者叫什么名字都不影响覆盖类。
+        fix-r9（DS boundary#1）：r4 说的「AST 判」在白名单半边其实还是源码文本
+        前缀（`startswith('out')`）——`out_path.write_bytes(…)` 这种伪装接收者
+        照样放行。白名单收成结构判定（见 `receiver_is_output_directory`），
+        并配 `disguised-out-receiver-write` 存活变异钉住，不再往词表里逐词补。
         """
         offenders = []
         for node in ast.walk(ast.parse(source)):
@@ -4265,8 +4310,10 @@ class EnvironmentControls(unittest.TestCase):
             if node.func.attr not in ('write_text', 'write_bytes'):
                 continue
             receiver = (ast.get_source_segment(source, node.func.value) or '').strip()
-            # 证据目录（`out / …`）是唯一允许的原地写目标；被变异源一律走原子发布。
-            if receiver.lstrip('( ').startswith('out'):
+            # 证据目录是唯一允许的原地写目标：接收者必须是 `out` / `output`
+            # 名字本身或以它为最左端的 `/` 链（AST 结构判，fix-r9）。被变异源
+            # 一律走原子发布。
+            if self.receiver_is_output_directory(node.func):
                 continue
             offenders.append(f'line {node.lineno}: {receiver}.{node.func.attr}(…)')
         self.assertEqual(offenders, [],
