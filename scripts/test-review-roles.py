@@ -945,6 +945,35 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r11 P2（DS r10 simplify#1）：纯换行不是分隔符，下一行行首 #N 不并入关联集")
         if gate.pr_issues("Closes #3056,\n#3057\n") != frozenset({"3056", "3057"}):
             fails.append("fix-r11 P2：显式分隔符两侧换行容忍保留（closes #3056,\\n#3057 既有用例）")
+        # fix-r12（DS r11 boundary#1 P0 + sibling#1 + concurrency#1 + simplify#1#2 + boundary#2 P2 同簇
+        # 收口）：①非 ASCII 空白（全角空格 U+3000 / NBSP U+00A0）续写两号都进关联集——
+        # r11 的 `[ \t]+` 丢了 r10 `\s+` 本收的 Unicode 空白，中文输入法正文丢号 → 同一假 PASS 机制；
+        # ②纯换行不并的语义保留（`[^\S\r\n]` 不含换行）；③标点分支收紧为至多一个换行——
+        # 段落空行（两换行）不并入；④标点串 `[,+#]` 混排连续标点并组；⑤PAIR_SEP 字面量钉死
+        # （防未来删成员静默缩窄）；⑥关键词词表单源（ISSUE_LINK 与 ISSUE_NUM 同用 _ISSUE_KEYWORDS）。
+        for ws_ch, ws_name in [("　", "全角空格 U+3000"), (" ", "NBSP U+00A0"), (" ", "thin space U+2009")]:
+            if gate.pr_issues(f"Closes #1234{ws_ch}#5678\n") != frozenset({"1234", "5678"}):
+                fails.append(f"fix-r12 P0（DS r11 boundary#1）：{ws_name} 续写第 2 个号未进关联集"
+                             f"（得 {sorted(gate.pr_issues(f'Closes #1234{ws_ch}#5678'))}）"
+                             " → 标题并组两号而关联集缺号 → fix_round=None → fixtype/residual 跳过＝假 PASS")
+        if gate.pr_issues("Closes #1234\n#5678\n") != frozenset({"1234"}):
+            fails.append("fix-r12 负控：纯换行不是分隔符（U+3000 修法的 `[^\\S\\r\\n]+` 不得把换行也吞进来）")
+        if gate.pr_issues("Closes #3056,\n\n#3074 是另一单（不关）\n") != frozenset({"3056"}):
+            fails.append("fix-r12 P2（DS r11 boundary#2）：标点 + 段落空行（两换行）不并入——"
+                         "消除「同一条正文边界，无标点分支不并、标点分支并入」的两套口径")
+        for punct_mix in [",+", "+/", "、，", ",,"]:
+            if gate.pr_issues(f"Refs #3056{punct_mix}#3057\n") != frozenset({"3056", "3057"}):
+                fails.append(f"fix-r12 P2（DS r11 simplify#2 + boundary#3）：连续/混排标点串"
+                             f" {punct_mix!r} 应并组（与 _paired_rounds 的逐字符 PAIR_SEP 判据对齐），"
+                             f"得 {sorted(gate.pr_issues(f'Refs #3056{punct_mix}#3057'))}")
+        if gate.PAIR_SEP != frozenset("+,、，/ \t"):
+            fails.append(f"fix-r12 P2（DS r11 concurrency#1）：PAIR_SEP 字面量钉死被破坏"
+                         f"（现值 {sorted(gate.PAIR_SEP)!r}——成员变动须同步 r12 注释与本断言，"
+                         "静默删成员会让上方成员循环测试静默缩窄）")
+        if gate._ISSUE_KEYWORDS not in gate.ISSUE_LINK.pattern or gate._ISSUE_KEYWORDS not in gate.ISSUE_NUM.pattern:
+            fails.append("fix-r12 P2（DS r11 concurrency#1）：ISSUE_LINK 与 ISSUE_NUM 必须同用"
+                         " _ISSUE_KEYWORDS 单源（两份手抄漂移 → 一处增关键词另一处漏改 →"
+                         " pr_issues 空集/首段缺号 → 配对全不计 → 假 PASS）")
         # fix-r9 P2a 接线：base==head 的空标题集合＝无主信号，正文兜底开结构化回显扫描
         # （旧 echo_scan=titles is None 把空集误当 CI 形态只看首行 → 非首行回显漏判＝假 PASS）
         empty_body = ("![ci](https://example.com/b.svg)\n\n概述。\n\n"
