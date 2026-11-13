@@ -131,3 +131,12 @@ MM r14 concurrency#2：frozen-manifest 负控 `negative_controls.py:153` 用 `pa
 - **F5 采纳**：合入后撤销 `A8.3-R1:64-66` 已知缺口披露句须走冻结程序 `-R2` 更正件，独立于本单、并入冻结件流程（与 #3108 同口径，先例 be54f9ea7）。
 
 修法定向：选项 1（js_value.rs 本地补数组原型 join 投掷判定，约 60-100 行，三挂载点零改动）；选项 2（全量值级对齐，3-5 人日）不做；选项 3（账本登记）不满足登记条件（形态实测可达），仅备档。排期：mirror-prs 积压清偿后随 premise-lanes-8 派单，任务书按本卡写。
+
+## #2448 loader 链感知修法拍板（cfg 层方案选择 AI 代批待人复核；15:0x）
+
+依据探针报告 `_tmp/20261113-premise-probes/2448.md`（冻结基线真实模块实测：extra 装原型 TS 读 1234 vs Rust own-only 全链 Undefined；yaml 2.9.0 实测产出 own 可枚举 `__proto__` 数据属性，形态真实可达；cfg 层继承 token/enabled/extra TS 全可见、Rust snapshot `platform()`（snapshot.rs:1367-1396）own-only 在 snapshot 处即丢）。
+
+- **修法定向**：`loader.rs::extra_field` 内层改链感知（复用 changes.rs:303/316 现成 get_property/property_value）；**`field` 保持 own-only 是对齐不是遗漏**（TS loader 读 parse 产全新字面量 own 键），任务书写明防评审误报。
+- **cfg 层拍板：方案 1（同批修 snapshot `platform()` 五个读取位）**。理由：形态实测可达、实测证据在手，不满足账本登记条件（同 #2459 选项 3 口径）；方案 2（冻结账本登记）仅备档。
+- 验收用例抄报告 6 组实测格（含 C11 单源负例防修过头——「双源都定义 extra」前置必要）；邻接位点 `api_server/mod.rs:150-152` 第二读取源任务书顺带核对。
+- 排期：mirror-prs 积压清偿后随 premise-lanes-8 派单；文件面 loader.rs+snapshot.rs，与 #2459（js_value.rs）不同文件可同批并行。
