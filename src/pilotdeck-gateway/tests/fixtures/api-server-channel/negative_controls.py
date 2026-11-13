@@ -44,6 +44,10 @@ API_KEY_CLASSIFICATION = "channel::api_server::tests::api_key_classification_pin
 CL0_MASK = "channel::api_server::tests::only_the_registered_cells_mask_a_content_length_zero"
 ADMISSION_ORACLE = "channel::api_server::tests::parser_admission_cells_stay_justified_by_the_oracle"
 TESTS = ROOT / "src/pilotdeck-gateway/src/channel/api_server/tests.rs"
+NATIVE_HTTP = ROOT / "src/pilotdeck-gateway/src/native_http.rs"
+TRANSPORT_SHAPE = (
+    "channel::api_server::tests::parser_rejections_keep_the_registered_transport_shape"
+)
 
 mutations = [
     (
@@ -307,6 +311,27 @@ mutations = [
         '    (true || PARSER_ADMISSION_CELLS.contains(&id))\n',
         ADMISSION_ORACLE,
         "#2775 the parser-admission predicate must admit exactly the oracle's bare 400s plus the inert",
+    ),
+    (
+        # #2775 fix-r4 (review P1-1, MM boundary#1): the `missing-host` half
+        # of the pair had no product-side pin for "never carries a length
+        # line" — the mask applies to the cell, so a hyper that grew
+        # `content-length: 0` on the Host-less 400 would replay green and
+        # silently widen the exemption face to a second bare 400. Swapping the
+        # streamed empty body for the sized one is exactly that drift shape;
+        # the raw pin's missing-host leg (placed before the chunked framing
+        # assert) fails by name. The registered-direction counterpart is
+        # native-http's `native-http-parser-400-cl0-off` knob (the streamed
+        # body drops the line the registered pin requires).
+        "api-server-headless-400-cl0",
+        NATIVE_HTTP,
+        "fn headless_bad_request() -> hyper::Response<Body> {\n"
+        "    let mut response = hyper::Response::new(streamed(None));\n",
+        "fn headless_bad_request() -> hyper::Response<Body> {\n"
+        "    // mutant: the sized empty body makes hyper add `content-length: 0`\n"
+        "    let mut response = hyper::Response::new(http_proxy::empty());\n",
+        TRANSPORT_SHAPE,
+        "#2775 pin missing-host: the inert 400 carries no content-length at all",
     ),
 ]
 

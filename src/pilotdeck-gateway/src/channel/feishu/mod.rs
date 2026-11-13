@@ -251,14 +251,19 @@ struct State {
     /// `permissionAnsweringChats` + `permissionAnsweringTokens`.
     permission_answering: HashMap<String, u64>,
     /// #2055: the elicitation answer task's occupancy, the mirror of
-    /// `permission_answering` for the elicitation branch. TS needs no such
-    /// flag — `ImElicitationHelper.answer` consumes the pending entry
-    /// synchronously before its first await — but the pending entry here
-    /// lives behind the interaction port, so the check and the reservation
-    /// have to share one critical section instead (registered divergence
-    /// A8.3-CH-FEISHU-004-R2: a mid-answer event is swallowed for the one
-    /// `respondElicitation` await, like the permission branch).
-    elicitation_answering: HashSet<String>,
+    /// `permission_answering` for the elicitation branch — seat + token, the
+    /// same two halves. TS needs no such flag — `ImElicitationHelper.answer`
+    /// consumes the pending entry synchronously before its first await — but
+    /// the pending entry here lives behind the interaction port, so the check
+    /// and the reservation have to share one critical section instead
+    /// (registered divergence A8.3-CH-FEISHU-004-R2: a mid-answer event is
+    /// swallowed for the one `respondElicitation` await, like the permission
+    /// branch). #2775 fix-r4: the token is the stale-release guard — a `/new`
+    /// between two answers clears the seat, so the old answer's release must
+    /// not delete the new answer's (the permission branch's
+    /// `get == Some(&token)` shape; TS cannot double-answer because `answer`
+    /// consumes the pending entry before its first await).
+    elicitation_answering: HashMap<String, u64>,
     next_answering_token: u64,
     /// Monotonic batch identity (see [`Batch::id`]).
     next_batch_id: u64,
@@ -275,7 +280,7 @@ impl State {
             batches: HashMap::new(),
             chats: HashMap::new(),
             permission_answering: HashMap::new(),
-            elicitation_answering: HashSet::new(),
+            elicitation_answering: HashMap::new(),
             // TS starts the counter at 1.
             next_answering_token: 1,
             next_batch_id: 0,
@@ -627,13 +632,20 @@ impl Runtime {
             // lives behind the interaction port, so two webhook deliveries
             // racing across threads could both observe it pending (one
             // answer, one swallowed event; see `elicitation_answering`).
-            {
+            // #2775 fix-r4: the reservation carries a token from the same
+            // counter the permission branch uses, so the release below can
+            // tell a stale answer (its seat already cleared by a `/new`)
+            // from the current one.
+            let token = {
                 let mut state = self.lock_state();
-                if state.elicitation_answering.contains(&chat_id) {
+                if state.elicitation_answering.contains_key(&chat_id) {
                     return true;
                 }
-                state.elicitation_answering.insert(chat_id.clone());
-            }
+                let token = state.next_answering_token;
+                state.next_answering_token += 1;
+                state.elicitation_answering.insert(chat_id.clone(), token);
+                token
+            };
             let runtime = self.clone();
             let text = input.text.clone();
             tokio::spawn(async move {
@@ -656,7 +668,18 @@ impl Runtime {
                         );
                     }
                 }
-                runtime.lock_state().elicitation_answering.remove(&chat_id);
+                // #2775 fix-r4: only the seat this task reserved may be
+                // released — a `/new` in between cleared it and a newer
+                // answer re-took it, and removing that one would let the
+                // next event start a second answer task for the same
+                // pending entry (TS cannot: `answer` consumes it
+                // synchronously). The permission branch's `.finally` guards
+                // the same window with its token; this is the elicitation
+                // mirror of that shape.
+                let mut state = runtime.lock_state();
+                if state.elicitation_answering.get(&chat_id) == Some(&token) {
+                    state.elicitation_answering.remove(&chat_id);
+                }
             });
             return true;
         }

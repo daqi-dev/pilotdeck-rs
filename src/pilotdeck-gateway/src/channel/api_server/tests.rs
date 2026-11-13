@@ -988,7 +988,11 @@ const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];
 /// is registered (the #1683 pair) but its 400 is date+chunked and never
 /// carries a length line, so it is not a bare 400. Written as an explicit
 /// set so the guard's upper bound can compare `bare ∪ inert` as an equality
-/// instead of a subset.
+/// instead of a subset. fix-r4: the "never carries a length line" premise is
+/// product-pinned — `parser_rejections_keep_the_registered_transport_shape`
+/// asserts the missing-Host 400 carries no content-length at all, so a hyper
+/// that grew the line there fails the raw pin instead of silently widening
+/// the mask's exemption face.
 const INERT_PARSER_ADMISSION_CELLS: &[&str] = &["missing-host"];
 
 /// #2775 fix-r2: the predicate that grants the `content-length: 0` exemption.
@@ -1935,6 +1939,18 @@ async fn parser_rejections_keep_the_registered_transport_shape() {
     assert!(
         missing_host.headers.contains_key("date"),
         "#1683 the missing-Host 400 carries a Date, got {:?}",
+        missing_host.headers
+    );
+    // #2775 fix-r4: the inert premise — the missing-Host 400 never carries a
+    // length line — has to be pinned on the product side too (native-http
+    // pins the same direction for its unregistered cells): the mask applies
+    // to this cell, so a hyper that grew `content-length: 0` here would
+    // replay green and silently widen the exemption face to a second bare
+    // 400. Pinned before the chunked framing below so the drift fails here
+    // by name, not as a framing mismatch.
+    assert!(
+        !missing_host.headers.contains_key("content-length"),
+        "#2775 pin missing-host: the inert 400 carries no content-length at all, got {:?}",
         missing_host.headers
     );
     assert_eq!(
