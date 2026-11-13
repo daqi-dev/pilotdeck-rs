@@ -476,7 +476,7 @@ class Static:
 
     def check_snapshot_bindings(self):
         """Keep the original declaration; never resolve a read through a rebind."""
-        bindings = {name: [] for name in ('originals', 'snapshots')}
+        bindings = {name: [] for name in SNAPSHOT_NAMES}
         allowed = set()
         present = False
         for node in ast.walk(self.tree):
