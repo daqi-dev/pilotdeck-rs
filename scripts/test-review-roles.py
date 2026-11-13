@@ -927,6 +927,24 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r9 P1：sibling#2 伪 token 不抢 #3074 的就近配对")
         if gate.fix_round_from_title("fix(scripts) #3074 F#9 fix-r5：x", frozenset({"3074"})) != 5:
             fails.append("fix-r9 P1：F#9 语言前缀不抢 #3074 的就近配对")
+        # fix-r11（DS r10 sibling#1 + boundary#1 + simplify#1 三 P2 同簇，结构性修）：续写分隔符
+        # 从 PAIR_SEP 单源派生——PAIR_SEP 每个成员（含未来新增）单独作分隔符时两个号都必须
+        # 进关联集；空档（粘写 `#3056#3057`）与 _paired_rounds「空隙视为紧贴」并组口径对齐；
+        # 纯换行不是分隔符（下一行行首 #N 不并入）
+        for sep in sorted(gate.PAIR_SEP):
+            if gate.pr_issues(f"Closes #1234{sep}#5678\n") != frozenset({"1234", "5678"}):
+                fails.append(f"fix-r11 P2：PAIR_SEP 成员 {sep!r} 作分隔符时第 2 个号未进关联集"
+                             f"（单源派生被破坏——得 {sorted(gate.pr_issues(f'Closes #1234{sep}#5678'))}）")
+        if gate.pr_issues("Refs #3056#3057\n") != frozenset({"3056", "3057"}):
+            fails.append("fix-r11 P1（DS r10 boundary#1，P2-b 口径）：粘写形 `Refs #3056#3057` 只取首号"
+                         " → 标题并组两号而关联集缺 3057 → fix_round=None 假 PASS（与 r9/r10 同一机制）")
+        if gate.fix_round_from_titles(["fix(scripts) #3057 fix-r5：x"],
+                                      gate.pr_issues("Refs #3056#3057\n")) != 5:
+            fails.append("fix-r11 P1：粘写列表第 2 个号（#3057）应配到标题引用（旧实现只取首个 → None 假 PASS）")
+        if gate.pr_issues("Closes #3056\n\n#3074 是另一单（不关）\n") != frozenset({"3056"}):
+            fails.append("fix-r11 P2（DS r10 simplify#1）：纯换行不是分隔符，下一行行首 #N 不并入关联集")
+        if gate.pr_issues("Closes #3056,\n#3057\n") != frozenset({"3056", "3057"}):
+            fails.append("fix-r11 P2：显式分隔符两侧换行容忍保留（closes #3056,\\n#3057 既有用例）")
         # fix-r9 P2a 接线：base==head 的空标题集合＝无主信号，正文兜底开结构化回显扫描
         # （旧 echo_scan=titles is None 把空集误当 CI 形态只看首行 → 非首行回显漏判＝假 PASS）
         empty_body = ("![ci](https://example.com/b.svg)\n\n概述。\n\n"
