@@ -109,6 +109,15 @@ FULL_ROSTER = 36
 # :164-175): the roster count pinned independently of module.EXPECTED_NAMES,
 # the same shape as FULL_ROSTER for manager-gateway (#1666 family).
 MODE_ROSTER = 10
+# The close-order-reader table's EXPECTED_NAMES length (#3043 fix-r4 P1,
+# the same #1666-family second denominator MODE_ROSTER is): the #3043
+# fourth-cell fixture registered its roster with the shared
+# ``negative_selection.registered()`` startup check (fix-r2), but that
+# compares the runtime ROWS against the module's *own* static tuple --
+# deleting a row together with its EXPECTED_NAMES entry shrinks both sides
+# and the run still publishes a (N-1)/(N-1) all-KILLED exit 0. Only this
+# literal, which the table under test cannot influence, refuses it.
+CLOSE_ORDER_READER_ROSTER = 6
 TERMINATE_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGQUIT')
 MANAGER_SCRIPT = 'manager-gateway/negative_controls.py'
 ENTRY = FIXTURES / MANAGER_SCRIPT
@@ -1380,6 +1389,257 @@ class SessionDomainCleanupGuard(unittest.TestCase):
         self.assertTrue(installed,
                         '#2743 main() must install its terminate handler for '
                         'every TERMINATE_SIGNALS member for the whole window')
+
+
+def _probe_bound(bound, *, failure=None, skip=False, echo=None):
+    """A real ``unittest`` transcript for ``bound``: green, failing or skipped.
+
+    The bound name is mounted on a real TestCase through a probe class whose
+    ``__module__`` is ``__main__``, then run by a real TextTestRunner at
+    verbosity 2 -- so the canonical #991/#1060 judges below are exercised
+    against genuine transcripts (both description layouts, 70-char
+    separators, the ``Ran``/``OK`` tails), never a hand-crafted look-alike.
+    ``failure`` raises the bound assertion, ``skip`` produces the green
+    skip-shaped log, and ``echo`` prints the marker to stdout *outside* the
+    bound assertion block while the test still fails elsewhere.
+    """
+    owner, method = bound.rsplit('.', 1)
+
+    def probe(self):
+        if echo is not None:
+            print(echo)
+        if skip:
+            self.skipTest('bound probe skipped')
+        if failure is not None:
+            raise self.failureException(failure)
+
+    probe.__name__ = method
+    holder = type(owner, (unittest.TestCase,),
+                  {'__module__': '__main__', method: probe})
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        result = unittest.TextTestRunner(stream=stream, verbosity=2).run(
+            unittest.TestSuite([holder(method)]))
+    code = 0 if result.wasSuccessful() else 1
+    return subprocess.CompletedProcess([], code, stream.getvalue(), '')
+
+
+class CloseOrderReaderRosterGuard(unittest.TestCase):
+    """#3043 fix-r4: the close-order-reader table's own three guards.
+
+    The fourth-cell table gained its startup roster check in fix-r2
+    (``negative_selection.registered``) but had no second denominator, no
+    test case for the refusal, and judge/publish shapes that had drifted
+    from the family canonicals: ``passed``/``classify`` were local
+    approximations of the #991/#1060 judges (a skip-shaped green log passed
+    them; a marker echoed in stdout over an unrelated failure block was a
+    KILL), and the mutant publish/restore were truncating
+    ``write_text``/``write_bytes`` (#1903). fix-r4 aligned the judges
+    verbatim and moved the writes to ``write_source_atomic``; this class
+    drives the real ``main()`` with only the executor layer stubbed (the
+    snapshot window, the bound-test subprocess and the atomic writer) and
+    the real roster check, anchor walk, judges and verdict aggregation
+    running, so each guard has a machine check that goes red on a
+    regression.
+    """
+
+    def drive(self, *, shrunk=False):
+        """Run the real ``main()``; return (module, code, out, stdout, stderr, writes).
+
+        ``shrunk`` deletes the last ROWS row together with its EXPECTED_NAMES
+        entry before main() starts -- the fix-r4 P1 escape shape: both sides
+        of the registered() mirror shrink together.
+        """
+        module = load_entry('close-order-reader-failclosed/negative_controls.py')
+        base = Path(tempfile.mkdtemp(prefix='negctl-3043-cor-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        out = base / 'out'
+        writes = []
+        calls = []
+
+        def fake_write_atomic(root, path, data, *, mode=None):
+            writes.append((Path(path), bytes(data)))
+
+        def fake_run_bound(env):
+            # Three calls per row: the positive control, the mutant run
+            # (which must fail at the row's own #3043 assertion) and the
+            # restored positive control.
+            index = len(calls)
+            calls.append(index)
+            row = module.ROWS[index // 3]
+            if index % 3 == 1:
+                return _probe_bound(module.BOUND, failure=row[3])
+            return _probe_bound(module.BOUND)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(module, 'mutating_sources',
+                                             stubbed_window))
+            stack.enter_context(patch.object(module, 'write_source_atomic',
+                                             fake_write_atomic))
+            stack.enter_context(patch.object(module, 'run_bound',
+                                             fake_run_bound))
+            stack.enter_context(patch.object(module.sys, 'argv',
+                                             ['negative_controls.py',
+                                              '--output', str(out)]))
+            if shrunk:
+                stack.enter_context(patch.object(module, 'ROWS',
+                                                 module.ROWS[:-1]))
+                stack.enter_context(patch.object(module, 'EXPECTED_NAMES',
+                                                 module.EXPECTED_NAMES[:-1]))
+            stdout = stack.enter_context(contextlib.redirect_stdout(
+                io.StringIO()))
+            stderr = stack.enter_context(contextlib.redirect_stderr(
+                io.StringIO()))
+            code = _call_main(module)
+        return (module, code, out, stdout.getvalue(), stderr.getvalue(),
+                writes)
+
+    def test_full_run_publishes_and_restores_through_one_rename(self):
+        module, code, out, stdout, stderr, writes = self.drive()
+        self.assertTrue(code == 0,
+                        f'#3043 the clean full run must exit 0, got {code}; '
+                        f'stdout={stdout[-400:]!r}; stderr={stderr!r}')
+        summary = json.loads((out / 'summary.json').read_text())
+        rows = summary['controls']
+        # The second denominator, pinned to this file's literal and not to
+        # anything module.EXPECTED_NAMES can shrink (#3043 fix-r4 P1): the
+        # same-delete escape below proves registered() alone cannot keep it.
+        self.assertTrue(len(module.EXPECTED_NAMES) == CLOSE_ORDER_READER_ROSTER,
+                        '#3043 the close-order-reader roster must carry its '
+                        'literal 6 names; truncating or emptying '
+                        'EXPECTED_NAMES must fail here instead of shrinking '
+                        'the denominator')
+        self.assertTrue([row['mutation'] for row in rows]
+                        == list(module.EXPECTED_NAMES),
+                        f'#3043 the full run must record the whole roster in '
+                        f'order, got {[row["mutation"] for row in rows]}')
+        self.assertTrue(all(row['status'] == 'KILLED' for row in rows),
+                        '#3043 every probed-kill row must be recorded KILLED '
+                        'by the canonical judges')
+        self.assertTrue(summary['counts'] == {'KILLED': CLOSE_ORDER_READER_ROSTER,
+                                              'SURVIVED': 0, 'INVALID': 0},
+                        f'#3043 the clean full run must count 6/0/0, got '
+                        f'{summary["counts"]}')
+        # Every write to the guarded source must go through the atomic
+        # writer (fix-r4 a5): one mutant publish and one pristine restore
+        # per row -- exactly 2N writes, all targeting the runner, each
+        # publish carrying its own row's mutant bytes. A reintroduced
+        # truncating write_text/write_bytes drops out of this record
+        # entirely (#1903, the #3088 fix-r6 same-family shape).
+        pristine = module.RUNNER.read_bytes()
+        text = pristine.decode('utf-8')
+        self.assertTrue(len(writes) == 2 * CLOSE_ORDER_READER_ROSTER,
+                        f'#3043 each row must publish its mutant and restore '
+                        f'through the atomic writer, got {len(writes)} calls')
+        for index, (_name, before, after, _message) in enumerate(module.ROWS):
+            mutant = text.replace(before, after, 1).encode('utf-8')
+            self.assertTrue(writes[2 * index] == (module.RUNNER, mutant)
+                           and writes[2 * index + 1] == (module.RUNNER,
+                                                         pristine),
+                           f'#3043 row {index} must publish its own mutant '
+                           f'bytes then restore the pristine runner through '
+                           f'one rename each, got '
+                           f'{writes[2 * index][1][:60]!r} / '
+                           f'{writes[2 * index + 1][1][:60]!r}')
+
+    def test_a_drifted_roster_refuses_before_claiming_any_evidence(self):
+        # fix-r4 a1: the table-side startup refusal had no test case (the
+        # harness side had one since fix-r2). Dropping the last ROWS row
+        # while EXPECTED_NAMES keeps all 6 names must refuse at rc 2 with
+        # the roster diagnostic, claim no evidence directory and touch no
+        # tree byte.
+        module = load_entry('close-order-reader-failclosed/negative_controls.py')
+        base = Path(tempfile.mkdtemp(prefix='negctl-3043-cor-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        out = base / 'out'
+        before = module.RUNNER.read_bytes()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(module, 'ROWS', module.ROWS[:-1]), \
+                patch.object(module.sys, 'argv',
+                             ['negative_controls.py', '--output', str(out)]), \
+                contextlib.redirect_stdout(stdout), \
+                contextlib.redirect_stderr(stderr):
+            code = _call_main(module)
+        self.assertTrue(code == 2,
+                        f'#3043 a drifted roster must refuse at rc 2, '
+                        f'got {code}; stderr={stderr.getvalue()!r}')
+        self.assertTrue('INVALID: #3043 paired-mutation roster'
+                        in stderr.getvalue(),
+                        f'#3043 the refusal must carry the roster '
+                        f'diagnostic, got {stderr.getvalue()!r}')
+        self.assertTrue('control roster drifted'
+                        in stderr.getvalue(),
+                        '#3043 the refusal must name the drift, not a '
+                        'generic refusal')
+        self.assertTrue(not out.exists(),
+                        '#3043 the refusal must fire before the evidence '
+                        'directory is claimed')
+        self.assertTrue(module.RUNNER.read_bytes() == before,
+                        '#3043 the refusal must not touch the guarded tree')
+
+    def test_the_same_delete_escape_publishes_a_shrunk_pass(self):
+        # fix-r4 P1, the escape itself: delete the last ROWS row together
+        # with its EXPECTED_NAMES entry and registered() sees 5 == 5 -- the
+        # run publishes a 5/5 all-KILLED summary and exits 0. This test
+        # documents that only the CLOSE_ORDER_READER_ROSTER literal in this
+        # file (asserted by the full-run test above) can refuse the shrunk
+        # run; reverting this drive to the unshrunk table makes the
+        # counts mismatch the literal instead.
+        module, code, out, stdout, stderr, writes = self.drive(shrunk=True)
+        self.assertTrue(code == 0,
+                        f'#3043 the same-delete escape must still be '
+                        f'demonstrable: registered() alone lets the shrunk '
+                        f'run finish green, got {code}; stderr='
+                        f'{stderr!r}')
+        summary = json.loads((out / 'summary.json').read_text())
+        rows = summary['controls']
+        self.assertTrue(len(rows) == CLOSE_ORDER_READER_ROSTER - 1
+                        and all(row['status'] == 'KILLED' for row in rows),
+                        f'#3043 the escaped run must record the shrunk 5/5 '
+                        f'KILLED, got {len(rows)} rows')
+        self.assertTrue(len(writes) == 2 * (CLOSE_ORDER_READER_ROSTER - 1),
+                        f'#3043 the escaped run must still publish and '
+                        f'restore every row it ran, got {len(writes)} calls')
+        self.assertTrue(len(module.EXPECTED_NAMES) == CLOSE_ORDER_READER_ROSTER,
+                        '#3043 the real roster must still carry its literal 6 '
+                        'names -- the full-run test above fails on this '
+                        'literal exactly when this escape reaches the source')
+
+    def test_the_pass_judge_rejects_a_skip_shaped_green_log(self):
+        # fix-r4 a4, the drift the local judge had: a rc-0 "Ran 1 test +
+        # \nOK" log that skipped the test passed the old passed(); the
+        # canonical judge must refuse it -- and still accept the real
+        # green transcript.
+        module = load_entry('close-order-reader-failclosed/negative_controls.py')
+        skipped = _probe_bound(module.BOUND, skip=True)
+        self.assertTrue(not module.passed(skipped, module.BOUND),
+                        '#3043 a skip-shaped green log is not a pass: the '
+                        'bound test never ran its assertions')
+        green = _probe_bound(module.BOUND)
+        self.assertTrue(module.passed(green, module.BOUND),
+                        '#3043 the canonical judge must still accept the '
+                        'real green transcript of the bound test')
+
+    def test_the_kill_judge_requires_the_bound_tests_own_assertion_block(self):
+        # fix-r4 a4, the other drift: the old classify() called any log
+        # carrying the marker, a "FAIL:" line and any AssertionError a
+        # KILL, so the marker echoed to stdout over an unrelated failure
+        # block was judged KILLED. The canonical judge must call that
+        # INVALID -- and still KILL the real at-assertion failure.
+        module = load_entry('close-order-reader-failclosed/negative_controls.py')
+        message = module.ROWS[0][3]
+        echoed = _probe_bound(module.BOUND, failure='unrelated', echo=message)
+        status, _reason = module.classify(echoed, module.BOUND, message)
+        self.assertTrue(status == 'INVALID',
+                        f'#3043 the marker echoed outside the bound test\'s '
+                        f'own AssertionError block is not a kill, got '
+                        f'{status}')
+        killed = _probe_bound(module.BOUND, failure=message)
+        status, _reason = module.classify(killed, module.BOUND, message)
+        self.assertTrue(status == 'KILLED',
+                        f'#3043 the marker inside the bound test\'s own '
+                        f'AssertionError block must stay a kill, got '
+                        f'{status}')
 
 
 if __name__ == '__main__':

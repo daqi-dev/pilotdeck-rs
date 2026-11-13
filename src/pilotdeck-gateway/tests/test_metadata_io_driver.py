@@ -1646,14 +1646,31 @@ class EnvironmentControls(unittest.TestCase):
         # #1800 fix-r5（DS boundary P2a）：三态第三腿（invalid-verdict-pipe，
         # 判决路径 INVALID + counts 行管道故障）Ran 12→13，下限同步抬到
         # 13——管道分支折进 os._exit(0) 的坏改法必须红。
+        # #3043（issue #3043，前置 #1800 收口）：harness mode 拆成 flow×reader
+        # 两正交轴，补三态×读者矩阵第四格（abort×reader：cancel 中止运行经
+        # 真 head -1 子进程管道读到，中止记账 record 行中 EPIPE→fail closed
+        # 无 summary + rc 2）Ran 14→15，下限同步抬到 15——记账嵌套 handler
+        # 被吞/改码/静默三个方向的坏改法必须红（旧 11+3 用例只能复现
+        # counts 行故障，结构上到不了 record 行）。
+        # #3043 fix-r3（DS fix-r2 增量评审 P2a）：fix-r2 钉在 harness 入口
+        # 的名册守卫 96 拒绝路径此前零用例触达——补单控制用例（rc 96 +
+        # [harness-roster] + 无 summary + 树未被碰）Ran 15→16，下限同步抬
+        # 到 16——不抬则删掉该用例（守卫被删 / 96 改回屏障死等两个方向）
+        # CI 仍绿，正是 fix-r1 连环修过的下限漂移洞。
+        # #3043 fix-r4（评审 a2/a3）：harness 两轴闭合枚举拒跑（未知
+        # flow/reader → rc 1 + #1382 同族文本）两用例 + 名册守卫收窄回
+        # cancel×head 格后的两条宽度用例（killed×head 单控制跑到 rc 0、
+        # cancel×plain 单控制普通中止 rc 2）Ran 16→20，下限同步抬到
+        # 20——不抬则删掉任一新用例（枚举校验被删 / 守卫放宽回全网格
+        # 两个方向）CI 仍绿。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
             ('test_negative_run_guards', 8),
             ('network-timing/test_negative_controls.py', 10),
-            ('test_negative_roster_guards', 6),
+            ('test_negative_roster_guards', 20),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 20),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
