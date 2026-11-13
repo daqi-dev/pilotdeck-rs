@@ -119,3 +119,15 @@ r9 双谱系同撞条目（refuse_summary 缺目录噪音、陈旧注释）按�
 ## #3110 开立依据（1087 变异体截断式原地写；自决备案；12:5x）
 
 MM r14 concurrency#2：frozen-manifest 负控 `negative_controls.py:153` 用 `path.write_text(mutated)` 截断式原地写把变异体发布到共享工作树真实源文件。触发需「进程被杀 + 校验窗口重合」双条件（c 类），但同族先例已有两单（#3034、memory「worker-bg-negctl-killed」/「negctl-stale-pyc-swap-payload」），且 #1087 关单收口须逐条处置——先开单挂前置，修法（原子写助手）与 #3109 发布块提 helper 可同批做。查重过：#3108（.FROZEN-* 残留）不覆盖此项。
+
+## #2459 数组原型修法拍板（五分叉 AI 代批待人复核；14:5x）
+
+依据探针报告 `_tmp/20261113-premise-probes/2459.md`（TS 语义 21 格实测 + origin/main 缺口定位：`js_value.rs:123` validate_coercion 对象臂遇 Array 原型断链，三挂载点消费）。分叉拍板：
+
+- **F1 采纳**：len 数值化用现成 `to_number` 取值，堵死「own length 只判抛不取数值少读元素」的假 PASS 口。
+- **F2 采纳**：String 值残留（Rust 产 `"[object Object]"` vs TS join 结果如 `"1,2"`）开 P2-跟进单承载（开前查重）；不并入本单。
+- **F3 采纳**：对抗性 own 影子键（length:0、非 callable join 等两个反直觉负例）全数进单测。
+- **F4 采纳**：本单限定 `src/pilotdeck-gateway/src/js_value.rs`；与 #2464（loader own-only，另探针在飞）不同文件、可同批并行派。
+- **F5 采纳**：合入后撤销 `A8.3-R1:64-66` 已知缺口披露句须走冻结程序 `-R2` 更正件，独立于本单、并入冻结件流程（与 #3108 同口径，先例 be54f9ea7）。
+
+修法定向：选项 1（js_value.rs 本地补数组原型 join 投掷判定，约 60-100 行，三挂载点零改动）；选项 2（全量值级对齐，3-5 人日）不做；选项 3（账本登记）不满足登记条件（形态实测可达），仅备档。排期：mirror-prs 积压清偿后随 premise-lanes-8 派单，任务书按本卡写。
