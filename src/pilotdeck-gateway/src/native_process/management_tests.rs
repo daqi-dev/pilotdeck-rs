@@ -144,14 +144,22 @@ fn context(project: &Path) -> SessionContext {
     }
 }
 pub(super) fn setup() -> (Scratch, requests::Requests) {
+    // #2335: the guard must exist before the first fallible disk op, not
+    // only at the return — a panic anywhere below otherwise leaks the temp
+    // tree, because only a constructed `Scratch` unwinds through `Drop`.
+    // The canonical path is written back into the guard, never a second
+    // `Scratch(...)`, which would drop-and-delete the tree it points at.
     let root = std::env::temp_dir().join(format!("pdrs-1231-{}", uuid::Uuid::new_v4()));
+    let mut scratch = Scratch(root);
     for dir in ["home", "project/.pilotdeck/commands"] {
-        std::fs::create_dir_all(root.join(dir)).expect("#1231 scratch directory");
+        std::fs::create_dir_all(scratch.0.join(dir)).expect("#1231 scratch directory");
     }
     for file in ["token", "sidecar"] {
-        std::fs::write(root.join(file), "fixture").expect("#1231 scratch file");
+        std::fs::write(scratch.0.join(file), "fixture").expect("#1231 scratch file");
     }
-    let root = root.canonicalize().expect("#1231 canonical scratch");
+    let canonical = scratch.0.canonicalize().expect("#1231 canonical scratch");
+    scratch.0 = canonical;
+    let root = &scratch.0;
     std::fs::write(root.join("home/pilotdeck.yaml"),"schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n").expect("#1231 config");
     std::fs::write(
         root.join("project/.pilotdeck/commands/a8demo.md"),
@@ -219,7 +227,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
         )
         .expect("#1231 run registry"),
     );
-    (Scratch(root), {
+    let requests = {
         let replacement_owner = owner.clone();
         requests::Requests {
             options,
@@ -259,7 +267,8 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
         }
-    })
+    };
+    (scratch, requests)
 }
 
 /// #1600 negative control: the shared fixture must assemble the same
@@ -2875,5 +2884,148 @@ async fn pending_memory_io_does_not_block_serial_host() {
         independent.is_ok_and(|result| result.is_ok())
             && released.load(std::sync::atomic::Ordering::SeqCst),
         "#1322 pending memory IO must not block host"
+    );
+}
+
+/// #1642: `MemoryGateway::new` requires a registry, but `describe_server`
+/// never consults it — the capability gate reads `is_enabled` only — so a
+/// dormant registry is enough to witness the enabled advertisement side.
+struct AdmittingMemoryRegistry;
+impl crate::runtime::memory::ProjectMemoryRegistry for AdmittingMemoryRegistry {
+    fn resolve_project_key(
+        &self,
+        key: &JsString,
+    ) -> Result<JsString, crate::runtime::memory::MemoryProviderError> {
+        Ok(key.clone())
+    }
+    fn memory_management(
+        &self,
+        _: &JsString,
+    ) -> Result<
+        Option<Arc<dyn crate::runtime::memory::MemoryManagementService>>,
+        crate::runtime::memory::MemoryProviderError,
+    > {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn enabled_memory_gateway_advertises_the_memory_pair() {
+    // #1642: the fixture keeps the memory gateway disabled, so the enabled
+    // side of `capabilities::memory` had no exact-set witness — only the
+    // disabled side did. An enabled gateway must advertise exactly the
+    // enabled table plus the memory pair, nothing else moving.
+    let (_scratch, mut requests) = setup();
+    requests.memory = Arc::new(crate::runtime::memory::gateway::MemoryGateway::new(
+        Arc::new(AdmittingMemoryRegistry),
+        requests.options.project.clone(),
+    ));
+    let description = requests
+        .describe_server()
+        .await
+        .expect("#1642 describe_server succeeds");
+    let mut capabilities: Vec<String> = match description.get("capabilities") {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_string()
+                    .and_then(|item| item.to_utf8().ok())
+                    .expect("#1642 capability entries are strings")
+            })
+            .collect(),
+        _ => panic!("#1642 describe_server must carry a capabilities array"),
+    };
+    capabilities.sort();
+    let mut expected = expected_capabilities(true);
+    expected.extend_from_slice(&["memory_list", "memory_wipe"]);
+    expected.sort_unstable();
+    negative_assert_eq!(
+        capabilities,
+        expected,
+        "#1642 the enabled memory gateway advertises the memory pair"
+    );
+}
+
+#[tokio::test]
+async fn absent_run_registry_drops_the_run_reads() {
+    // #1642: the fixture always binds `runs: Some`, so the gated side of
+    // `capabilities::runs` had no exact-set witness in this suite. Dropping
+    // the reader must remove exactly the three run reads from describe.
+    let (_scratch, mut requests) = setup();
+    requests.runs = None;
+    let description = requests
+        .describe_server()
+        .await
+        .expect("#1642 describe_server succeeds");
+    let mut capabilities: Vec<String> = match description.get("capabilities") {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_string()
+                    .and_then(|item| item.to_utf8().ok())
+                    .expect("#1642 capability entries are strings")
+            })
+            .collect(),
+        _ => panic!("#1642 describe_server must carry a capabilities array"),
+    };
+    capabilities.sort();
+    let expected: Vec<&str> = expected_capabilities(true)
+        .into_iter()
+        .filter(|name| !matches!(*name, "run_get" | "run_events" | "run_reattach"))
+        .collect();
+    negative_assert_eq!(
+        capabilities,
+        expected,
+        "#1642 the absent run registry drops the run reads"
+    );
+}
+
+#[tokio::test]
+async fn configured_cron_runtime_advertises_the_six_names() {
+    // #1642: the fixture leaves cron unconfigured, so the enabled side of
+    // `capabilities::cron` had no exact-set witness — the always-false half
+    // of the gate survived every bound test (probed 2026-11-11: both HOST
+    // and `requests_registry_switch_gates_run_reads` stay green with the
+    // gate forced to `false`). A configured runtime must advertise exactly
+    // the enabled table plus the cron six, nothing else moving. The manager
+    // is the configured-but-unstarted shape `methods::cron::cron_tests`
+    // uses: describe only reads `requests.cron.is_some()`, never the
+    // scheduler half.
+    let (_scratch, mut requests) = setup();
+    requests.cron = Some(
+        crate::runtime::cron::CronManager::new(crate::runtime::cron::CronManagerOptions {
+            config: crate::runtime::cron::CronManagerConfig::default(),
+            pilot_home: requests.options.home.to_string_lossy().into_owned(),
+            session_overrides: None,
+            now: None,
+            uuid: None,
+            logger: None,
+            scheduler_idle_poll_ms: None,
+        })
+        .expect("#1642 fixture cron manager"),
+    );
+    let description = requests
+        .describe_server()
+        .await
+        .expect("#1642 describe_server succeeds");
+    let mut capabilities: Vec<String> = match description.get("capabilities") {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_string()
+                    .and_then(|item| item.to_utf8().ok())
+                    .expect("#1642 capability entries are strings")
+            })
+            .collect(),
+        _ => panic!("#1642 describe_server must carry a capabilities array"),
+    };
+    capabilities.sort();
+    let mut expected = expected_capabilities(true);
+    expected.extend_from_slice(&crate::runtime::cron::CRON_METHODS);
+    expected.sort_unstable();
+    negative_assert_eq!(
+        capabilities,
+        expected,
+        "#1642 the configured cron runtime advertises the six names"
     );
 }

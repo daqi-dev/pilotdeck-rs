@@ -171,16 +171,28 @@ impl crate::runtime::session::SessionFactory for NoRuntimeFactory {
 
 struct Scratch(PathBuf);
 impl Scratch {
+    // #2335: the guard must exist before the first fallible disk op — a
+    // panic inside the build loop otherwise leaks the temp tree, because
+    // only a constructed `Scratch` unwinds through `Drop`. The canonical
+    // path is written back into the guard; a second `Self(...)` would
+    // drop-and-delete the tree it still points at.
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-1432-{}", uuid::Uuid::new_v4()));
+        let mut scratch = Self(root);
         for name in ["home", "project"] {
-            std::fs::create_dir_all(root.join(name))
+            std::fs::create_dir_all(scratch.0.join(name))
                 .expect("#1432 scratch directories must be created");
         }
         for name in ["token", "sidecar"] {
-            std::fs::write(root.join(name), "fixture").expect("#1432 scratch file must be written");
+            std::fs::write(scratch.0.join(name), "fixture")
+                .expect("#1432 scratch file must be written");
         }
-        Self(root.canonicalize().expect("#1432 scratch canonical path"))
+        let canonical = scratch
+            .0
+            .canonicalize()
+            .expect("#1432 scratch canonical path");
+        scratch.0 = canonical;
+        scratch
     }
 }
 impl Drop for Scratch {

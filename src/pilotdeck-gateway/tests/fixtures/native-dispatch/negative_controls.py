@@ -9,7 +9,8 @@ import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot, write_source_atomic
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -48,6 +49,44 @@ mutations = [
     ('management-phase-swap', FAMILY, 'pub(super) const HANDLER: Handler = Handler::BeforeAdmission(|requests, method, params| {\n    Box::pin(requests.management_request(method, params))\n});', 'pub(super) const HANDLER: Handler = Handler::AfterAdmission(|requests, method, params| {\n    Box::pin(async move {\n        requests.management_request(&method, &params).await.expect("#1305 phase mutant recognized method")\n    })\n});', GATE_TEST, '#1305 registry preserves management admission phase'),
 ]
 
+# #1642 fix-r5 (review sibling P1#2): the table used to be its own
+# denominator -- delete a row and the run still printed "{n} mutation
+# anchors OK" and read green (#1538/#1666's original defect). The roster is
+# the shared negative_selection registered + refuse pair (rc 2 = "never
+# started", the exit-code four-way table in specs/negative-controls/
+# README.md), the same shape native-management:537,645 and
+# native-registry-switch:129,141 carry; import-time validation covers
+# --check and the full run alike.
+EXPECTED_NAMES = (
+    'omit-management',
+    'omit-active-turn',
+    'omit-runs',
+    'omit-metadata',
+    'omit-sop',
+    'omit-config',
+    'omit-upload',
+    'omit-history',
+    'omit-mcp',
+    'omit-tools',
+    'omit-session-dir',
+    'omit-steer',
+    'omit-permission',
+    'omit-user-dialog',
+    'omit-interaction',
+    'omit-always-on',
+    'omit-weixin-login',
+    'omit-cron',
+    'omit-settings',
+    'duplicate-method',
+    'management-gate-missing',
+    'management-gate-extra',
+    'management-phase-swap',
+)
+try:
+    registered(mutations, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(str(error))
+
 
 def mutate(case, original):
     count = original.count(case.old)
@@ -67,19 +106,31 @@ def main():
         print(f'#1305 {len(selected_rows)} mutation anchors OK')
         return 0
     if not args:
-        raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
+        refuse('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
+    # #1642 fix-r4 (review P1-B sibling#3, spec specs/negative-controls/README.md
+    # exit-code four-way table): every "never started" refusal goes through
+    # negative_selection now and lands before the evidence directory is
+    # claimed -- a presence-only `raise SystemExit(str)` check read as rc 1
+    # ("ran and not green") and let a blank / dot target claim the directory
+    # first. Target first (absent / empty / blank / dot), then the caller's
+    # selection, then the claim: an existing output directory refuses
+    # (claim_dir) instead of the #953 non-empty reuse dying on rc 1.
+    if missing_target():
+        refuse('#1305 set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse_unusable_target()
     env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#1305 CARGO_TARGET_DIR must be supplied by the caller')
     for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
         env.pop(key, None)
     selected = args[1:]
-    if (len(selected) != len(set(selected))
-            or set(selected) - {case.mutation for case in selected_rows}):
-        raise SystemExit('#1305 unknown/duplicate mutation name')
+    repeated = sorted({name for name in selected if selected.count(name) > 1})
+    if repeated:
+        refuse('#1305 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(selected) - {case.mutation for case in selected_rows})
+    if unknown:
+        refuse('#1305 unknown mutation name: ' + ', '.join(unknown))
     if selected:
         selected_rows = [case for case in selected_rows if case.mutation in selected]
-    out = new_output_directory(Path(args[0]).resolve())
+    out = claim_dir(args[0])
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
     results = []
@@ -142,12 +193,38 @@ def main():
                 record(row)
             phase = 'exit'
     except BaseException as error:
+        # #1642 fix-r3 (review a9 sibling shape, DS r2c#2): a SIGTERM
+        # deferred through the restore window re-enters as SystemExit(128+
+        # signum) and stays off the exit-code table -- swallowing it used to
+        # publish an all-INVALID summary over a restored tree and rewrite
+        # 143 to 1 (same handler shape as native-management).
+        if isinstance(error, SystemExit):
+            raise
+        # #1642 fix-r4 (review P1-B, MM concurrency#1 + DS concurrency#1): the
+        # enter half of the phase map. A guard that never started (dirty tree,
+        # busy lock) is a startup refusal, not a red run: rc 2, no summary, and
+        # the claim claim_dir made is withdrawn so the host re-running the same
+        # output path is not refused on a leftover directory that never ran
+        # (same shape as native-management:1163-1184; rmdir only removes the
+        # empty case -- a run that already wrote logs keeps them).
+        if phase == 'enter':
+            try:
+                out.rmdir()
+            except OSError:
+                pass
+            refuse(f'guard refused to start: {error!r}')
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
         for case in selected_rows[len(results):]:
             record(invalid(case, reason))
         publish_summary(out, results)
-        return 1 if phase == 'enter' and isinstance(error, Exception) else 2
+        # #1642 fix-r3 (review P1-2): the phase map was inverted here and in
+        # frozen-reinsert-guard -- a guard that failed AFTER the body ran
+        # returned 2 while its all-INVALID summary sat published in OUT, and
+        # a host reading "rc 2 = never started" dropped real failure
+        # evidence. Everything after the enter refusal above is a red run
+        # (rc 1).
+        return 1
     publish_summary(out, results)
     success = 'COMPILED' if compile_only else 'KILLED'
     return int(not results or any(row['status'] != success for row in results))

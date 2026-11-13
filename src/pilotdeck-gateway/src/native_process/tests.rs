@@ -32,15 +32,25 @@ fn json_value(value: &JsValue) -> Value {
 }
 struct Scratch(PathBuf);
 impl Scratch {
+    // #2335: guard first — a panic inside the build loop otherwise leaks
+    // the temp tree; only a constructed `Scratch` unwinds through `Drop`.
+    // The canonical path is written back into the guard, never a second
+    // `Self(...)`, which would drop-and-delete the tree it points at.
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-1071-{}", uuid::Uuid::new_v4()));
+        let mut scratch = Self(root);
         for name in ["home", "project"] {
-            std::fs::create_dir_all(root.join(name)).expect("#1071 scratch dirs");
+            std::fs::create_dir_all(scratch.0.join(name)).expect("#1071 scratch dirs");
         }
         for name in ["token", "sidecar"] {
-            std::fs::write(root.join(name), "fixture").expect("#1071 scratch file");
+            std::fs::write(scratch.0.join(name), "fixture").expect("#1071 scratch file");
         }
-        Self(root.canonicalize().expect("#1071 scratch canonical path"))
+        let canonical = scratch
+            .0
+            .canonicalize()
+            .expect("#1071 scratch canonical path");
+        scratch.0 = canonical;
+        scratch
     }
     fn args(&self) -> Vec<OsString> {
         [
@@ -1957,6 +1967,27 @@ async fn requests_registry_switch_gates_run_reads() {
                     .any(|listed| listed.as_str() == Some(capability)),
                 on,
                 "#1369 describe_server gates run capabilities"
+            );
+        }
+        // #1642: the memory pair and the cron six are gated the same way as
+        // the run reads above — `capabilities.rs` consults the bound memory
+        // gateway and the configured cron runtime, not just the static
+        // method registry. Both loop bodies keep memory disabled and cron
+        // unconfigured, so neither family may appear in either iteration.
+        for name in ["memory_list", "memory_wipe"] {
+            negative_assert!(
+                !capabilities
+                    .iter()
+                    .any(|listed| listed.as_str() == Some(name)),
+                "#1642 describe_server gates memory capabilities on the bound gateway"
+            );
+        }
+        for name in crate::runtime::cron::CRON_METHODS {
+            negative_assert!(
+                !capabilities
+                    .iter()
+                    .any(|listed| listed.as_str() == Some(name)),
+                "#1642 describe_server gates cron capabilities on the configured runtime"
             );
         }
         if on {

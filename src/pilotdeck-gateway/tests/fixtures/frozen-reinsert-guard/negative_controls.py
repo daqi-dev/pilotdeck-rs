@@ -7,13 +7,16 @@ used. Python compile is the build check. --check-anchors only reads/compiles
 candidate strings; it never claims a runtime kill. Every row is accounted for.
 """
 import argparse
+import os
 from pathlib import Path
 import re
+import shutil
 import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import claim_dir, refuse, registered
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -411,6 +414,97 @@ MUTATIONS = [
      '#1066 scripts/test-approval-provenance.py: unloaded-os must stop before os import'),
 ]
 
+# #1642 fix-r5 (review sibling P1#2): the table used to be its own
+# denominator -- delete a row and the run still reported "{n}/{n}" and read
+# green. The frozen roster is the shared negative_selection registered +
+# refuse pair (rc 2 = "never started", the exit-code four-way table in
+# specs/negative-controls/README.md), the same shape native-management,
+# native-registry-switch and every migrated sibling carries; import-time
+# validation covers --check-anchors and the full run alike.
+EXPECTED_NAMES = (
+    'gateway_parity_run_round_py_reinsert',
+    'gateway_parity_run_round_py_old_python',
+    'gateway_parity_run_round_py_unloaded_os',
+    'gateway_parity_run_round_py_identity',
+    'gateway_parity_compare_py_reinsert',
+    'gateway_parity_compare_py_old_python',
+    'gateway_parity_compare_py_unloaded_os',
+    'gateway_parity_check_frozen_py_reinsert',
+    'gateway_parity_check_frozen_py_old_python',
+    'gateway_parity_check_frozen_py_unloaded_os',
+    'gateway_parity_check_ruler_py_reinsert',
+    'gateway_parity_check_ruler_py_old_python',
+    'gateway_parity_check_ruler_py_unloaded_os',
+    'gateway_parity_build_proxy_py_reinsert',
+    'gateway_parity_build_proxy_py_old_python',
+    'gateway_parity_build_proxy_py_unloaded_os',
+    'gateway_parity_observer_py_reinsert',
+    'gateway_parity_observer_py_old_python',
+    'gateway_parity_observer_py_unloaded_os',
+    'gateway_parity_native_evidence_py_reinsert',
+    'gateway_parity_native_evidence_py_old_python',
+    'gateway_parity_native_evidence_py_unloaded_os',
+    'gateway_parity_session_domain_py_reinsert',
+    'gateway_parity_session_domain_py_old_python',
+    'gateway_parity_session_domain_py_unloaded_os',
+    'gateway_parity_test_safety_py_reinsert',
+    'gateway_parity_test_safety_py_old_python',
+    'gateway_parity_test_safety_py_unloaded_os',
+    'gateway_parity_controls_run_all_py_reinsert',
+    'gateway_parity_controls_run_all_py_old_python',
+    'gateway_parity_controls_run_all_py_unloaded_os',
+    'gateway_parity_controls_prerequisites_py_reinsert',
+    'gateway_parity_controls_prerequisites_py_old_python',
+    'gateway_parity_controls_prerequisites_py_unloaded_os',
+    'gateway_parity_controls_session_domain_py_reinsert',
+    'gateway_parity_controls_session_domain_py_old_python',
+    'gateway_parity_controls_session_domain_py_unloaded_os',
+    'parity_score_py_reinsert',
+    'parity_score_py_old_python',
+    'parity_score_py_unloaded_os',
+    'parity_score_py_identity',
+    'parity_score_py_future',
+    'parity_check_frozen_py_reinsert',
+    'parity_check_frozen_py_old_python',
+    'parity_check_frozen_py_unloaded_os',
+    'parity_check_ruler_py_reinsert',
+    'parity_check_ruler_py_old_python',
+    'parity_check_ruler_py_unloaded_os',
+    'parity_g03_compare_py_reinsert',
+    'parity_g03_compare_py_old_python',
+    'parity_g03_compare_py_unloaded_os',
+    'parity_g03_compare_py_future',
+    'parity_round_py_reinsert',
+    'parity_round_py_old_python',
+    'parity_round_py_unloaded_os',
+    'parity_self_compare_py_reinsert',
+    'parity_self_compare_py_old_python',
+    'parity_self_compare_py_unloaded_os',
+    'parity_controls_lock_release_py_reinsert',
+    'parity_controls_lock_release_py_old_python',
+    'parity_controls_lock_release_py_unloaded_os',
+    'parity_controls_run_all_py_reinsert',
+    'parity_controls_run_all_py_old_python',
+    'parity_controls_run_all_py_unloaded_os',
+    'parity_controls_multimodal_py_reinsert',
+    'parity_controls_multimodal_py_old_python',
+    'parity_controls_multimodal_py_unloaded_os',
+    'parity_controls_review_r1_py_reinsert',
+    'parity_controls_review_r1_py_old_python',
+    'parity_controls_review_r1_py_unloaded_os',
+    'check_approval_provenance_py_reinsert',
+    'check_approval_provenance_py_old_python',
+    'check_approval_provenance_py_unloaded_os',
+    'check_approval_provenance_py_identity',
+    'test_approval_provenance_py_reinsert',
+    'test_approval_provenance_py_old_python',
+    'test_approval_provenance_py_unloaded_os',
+)
+try:
+    registered(MUTATIONS, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(str(error))
+
 
 def changed(source, old, new, path):
     if source.count(old) != 1:
@@ -474,7 +568,13 @@ def main():
         return int(bool(errors))
     if args.output is None:
         parser.error('--output is required unless --check-anchors is used')
-    out = new_output_directory(args.output)
+    # #1642 fix-r5 (review sibling P1#1): claim_dir, the same admission the
+    # three migrated siblings use. The old new_output_directory raised
+    # SystemExit(str) for a non-empty / already-claimed directory, which the
+    # exit-code table reads as rc 1 ("ran and not green") while no summary
+    # exists -- and its leftover `.claim` kept refusing the path afterwards,
+    # the exact residue this round's enter refusal is meant to remove.
+    out = claim_dir(args.output)
     results = []
 
     def record(row, status, reason, compiled=False):
@@ -514,12 +614,48 @@ def main():
                 record(row, status, reason, compiled)
             phase = 'exit'
     except BaseException as error:
+        # #1642 fix-r4 (review P1-A, same shape as native-management:1160):
+        # a SIGTERM deferred through the restore window re-enters as
+        # SystemExit(128+signum) and stays off the exit-code table. This
+        # handler's own `return` would otherwise swallow it (publishing an
+        # all-INVALID summary over a restored tree and rewriting 143 to 1),
+        # and the enter refusal below exits through `refuse` -- a
+        # SystemExit raised into it is not a guard failure either.
+        if isinstance(error, SystemExit):
+            raise
+        # #1642 fix-r4 (review P1-B, same shape as native-management:1163-1184
+        # via native-dispatch): a guard that never started (dirty tree, busy
+        # lock) is a startup refusal, not a red run -- rc 2, no summary, and
+        # the claim claim_dir made is withdrawn so the host re-running the
+        # same output path is not refused on a leftover directory that never
+        # ran (rmdir only removes the empty case -- a run that already wrote
+        # logs keeps them).
+        # #1642 fix-r5 (review concurrency P1#1): the withdrawal is ONE
+        # atomic visibility step, not two destructive calls. The r4 shape
+        # unlinked `.claim` and only then rmdir'd the directory, so a
+        # concurrent run claiming the path in that window owned a directory
+        # the first runner's rmdir then deleted. The rename removes the path
+        # in a single syscall (a later claimant can only mkdir a directory
+        # the withdrawal has already let go of), and the rmtree cleans the
+        # renamed directory, never the claimable path.
+        if phase == 'enter':
+            try:
+                withdrawn = out.with_name(out.name + f'.withdrawn-{os.getpid()}')
+                os.rename(out, withdrawn)
+                shutil.rmtree(withdrawn)
+            except OSError:
+                pass
+            refuse(f'guard refused to start: {error!r}')
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
         for row in selected[len(results):]:
             record(row, 'INVALID', reason)
         publish_summary(out, results)
-        return 1 if phase == 'enter' and isinstance(error, Exception) else 2
+        # #1642 fix-r3 (review P1-2): a guard that fails AFTER the body ran is
+        # a red run (rc 1) with its all-INVALID summary published -- the old
+        # inverted map returned 2 here and a host reading "rc 2 = never
+        # started" dropped real failure evidence.
+        return 1
     publish_summary(out, results)
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
