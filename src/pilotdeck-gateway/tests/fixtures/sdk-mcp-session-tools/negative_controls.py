@@ -21,7 +21,7 @@ REGISTRY = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/sdk_mcp_session_tools.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                               write_source_atomic)
+                               tree_lock, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
@@ -262,13 +262,23 @@ def main():
         refuse_unusable_target()
         if Path(args.output).exists():
             refuse(f'#1433 output directory already exists: {Path(args.output).resolve()}')
-    stale = []
-    for name, path, old, new, test, assertion in mutations:
-        text = path.read_text()
-        body = test_body(test)
-        if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
-            stale.append(name)
+    # #2795 fix-r4（评审 sibling P1 同族跟改，fix-r3 mcp-http-encoding 先例）：
+    # 锚点预检（含 test_body 的字典推导裸读）也要持树锁读——兄弟变异运行器在
+    # 自己的 write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在
+    # 它不拥有的源上；锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与后续
+    # mutating_sources 是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            stale = []
+            for name, path, old, new, test, assertion in mutations:
+                text = path.read_text()
+                body = test_body(test)
+                if (text.count(old) != 1 or old == new or
+                        not body or f'"{assertion}"' not in body):
+                    stale.append(name)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        refuse(f'tree lock or anchor read failed: '
+               f'{type(error).__name__}: {error}')
     if stale:
         refuse('#1433 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:

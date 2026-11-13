@@ -1198,6 +1198,75 @@ async fn disable_close_seals_ingress_before_host() {
     );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_driver_panic_bounds_waiters() {
+    // #2787: the close driver task dies mid-close (panic injected at the
+    // close-prefix-wait transition) while a stop prefix is still held, so the
+    // waiters in `wait_closed` can never observe a completion value. The
+    // #2757-shaped fix gives the driver exclusive ownership of the completion
+    // sender: its death closes the watch channel and `wait_closed` resolves
+    // with the driver-dropped error instead of hanging. Two workers: one runs
+    // the disable drive task parked in the stop-claimed hook, the other runs
+    // the close driver that panics.
+    let handle = Arc::new(PrefixHandle {
+        open: false.into(),
+        reenter: Mutex::new(None),
+    });
+    let server = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    bounded(server.hot_start_channel(Arc::new(PrefixAdapter(handle))))
+        .await
+        .expect("#2787 panic setup start");
+    let (release, blocked) = std::sync::mpsc::channel();
+    let blocked = Mutex::new(blocked);
+    let (events, observed) = std::sync::mpsc::channel();
+    server.set_hook(Some(Arc::new(move |point, key| {
+        if point == "stop-claimed" && *key == ChannelKey::new("a") {
+            events
+                .send("claimed")
+                .expect("#2787 panic claim observation");
+            // Hold the stop prefix: the close driver must observe a nonzero
+            // prefix count and enter its close-prefix-wait transition.
+            blocked
+                .lock()
+                .expect("#2787 panic gate mutex")
+                .recv_timeout(Duration::from_secs(5))
+                .expect("#2787 panic gate release");
+        } else if point == "close-prefix-wait" {
+            panic!("#2787 injected close driver panic");
+        }
+    })));
+    let disable = server.reconcile_channels(ReconcileInput {
+        channels: vec![],
+        managed_channel_keys: vec![ChannelKey::new("a")],
+    });
+    assert_eq!(
+        observed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("#2787 panic claim reached"),
+        "claimed",
+        "#2787 panic target claim"
+    );
+    let close = server.close();
+    // Red without the fix: `wait_closed` parks on a watch value the dead
+    // driver can never set and the 5s `bounded` timeout fires. Green with it:
+    // the driver's dropped sender closes the channel.
+    let error = bounded(close)
+        .await
+        .expect_err("#2787 bounded close driver panic");
+    assert_eq!(
+        error.message(),
+        "channel close driver dropped",
+        "#2787 close driver panic bounds waiters"
+    );
+    release.send(()).expect("#2787 panic release sender");
+    bounded(disable)
+        .await
+        .expect("#2787 panic disable completion");
+    server.set_hook(None);
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stop_prefix_can_reenter_close() {
     let handle = Arc::new(PrefixHandle {
         open: false.into(),

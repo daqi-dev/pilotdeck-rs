@@ -26,7 +26,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_suite import Case, run_cases
 
 root = Path(__file__).resolve().parents[5]
@@ -288,12 +288,24 @@ def cases_for(names):
 
 
 def check_anchors(selected):
-    stale = []
-    for name in selected:
-        source, old = MUTATIONS[name][0], MUTATIONS[name][1]
-        count = source.read_text().count(old)
-        if count != 1:
-            stale.append((name, source.relative_to(root).as_posix(), count))
+    # #2795 fix-r4（评审 sibling P1 同族跟改）：锚点核对读在 compile_cases 的
+    # mutating_sources 取锁之前（--check-anchors / 主路径都是先读后锁），
+    # 兄弟变异运行器在自己的 write 与 restore 之间可能把变异体留在盘上，
+    # 无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2）。
+    # 本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，
+    # 锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            stale = []
+            for name in selected:
+                source, old = MUTATIONS[name][0], MUTATIONS[name][1]
+                count = source.read_text().count(old)
+                if count != 1:
+                    stale.append((name, source.relative_to(root).as_posix(), count))
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f"tree lock or anchor read failed: "
+              f"{type(error).__name__}: {error}", file=sys.stderr)
+        raise SystemExit(2)
     if stale:
         for name, path, count in stale:
             print(f"STALE ANCHOR {name}: {count} matches in {path}")

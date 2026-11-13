@@ -130,4 +130,5 @@ SIGTERM/SIGHUP/SIGQUIT 处理器，收到信号先走还原路径再退（mode-r
 `tests/fixtures/test_negative_roster_guards.py` 机检（驱动真实 `main()`，仅桩 cargo
 与源守卫窗口；CI 已接）。
 新增产品文件在提交前不在 HEAD，`mutating_sources` 会拒绝；提交后由协调者运行。
-`--audit` 只核对锚点（名册漂移与非法选择同样先拒）。
+`--audit` 只核对锚点（名册漂移与非法选择同样先拒）；#2795 fix-r2 起 `--audit` 持
+共享树锁读——锁忙 / 读失败是拒跑（rc 2），不是宿主会读成 rc 1 的裸 traceback。

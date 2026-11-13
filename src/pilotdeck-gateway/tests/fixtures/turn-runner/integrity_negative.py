@@ -8,6 +8,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
+from negative_process import tree_lock
 from negative_suite import Case, bind_module_file, declares_test, run_cases
 from _negkit import non_head
 from _negative_common import mutate
@@ -69,15 +70,26 @@ def audit():
     modules = (('runtime::turn::live::stream_tests::forwarding::', live.with_name('forward_tests.rs'), 'case!'),
                ('runtime::turn::live::stream_tests::', tests, None),
                ('runtime::turn::live::tests::', live, None))
-    sources = {path: path.read_text() for _, path, _ in modules}
-    macros = {path: macro for _, path, macro in modules}
-    for name, path, old, new, scope, test, panic in cases:
-        mutate(path.read_text(), scope, [(old, new)])
-        # #1890: one shared binding rule (this copy required the spaced
-        # `fn name(` spelling and carried the macro form inline).
-        file, short = bind_module_file(test, [(prefix, source) for prefix, source, _ in modules])
-        if not declares_test(sources[file], short, macros[file]):
-            raise ValueError('bound test not found: ' + test)
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback。audit 是 --audit 独立模式，
+    # 与下方变异轮无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            sources = {path: path.read_text() for _, path, _ in modules}
+            macros = {path: macro for _, path, macro in modules}
+            for name, path, old, new, scope, test, panic in cases:
+                mutate(path.read_text(), scope, [(old, new)])
+                # #1890: one shared binding rule (this copy required the spaced
+                # `fn name(` spelling and carried the macro form inline).
+                file, short = bind_module_file(test, [(prefix, source) for prefix, source, _ in modules])
+                if not declares_test(sources[file], short, macros[file]):
+                    raise ValueError('bound test not found: ' + test)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--audit tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     return [{'mutation': n, 'test': t, 'panic': a} for n, _, _, _, _, t, a in cases]
 
 

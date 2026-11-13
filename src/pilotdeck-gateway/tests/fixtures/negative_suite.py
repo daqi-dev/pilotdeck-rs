@@ -11,7 +11,7 @@ import subprocess
 import pending_reanchor as pending
 
 from negative_panic import named_test_failed, panic_evidence
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import anchor_read_window, mutating_sources, run_owned, wait_for_slot
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target)
 
@@ -667,19 +667,32 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         if original.count(row[2]) != 1 or row[2] == row[3] or not targets(row):
             raise ValueError(f'{row[0]}: stale/invalid anchor or empty targets')
 
-    registrations = pending.for_script(root, script)
     if args == ['--check']:
+        # #2795 fix-r5（评审 sibling P1#3 + simplify P2#1 结构性收口）：共享
+        # ``--check`` 路径此前是裸读——channel-slack 等多夹具把它当自己的锚点
+        # 预检，兄弟变异窗口中间的变异体会被核对错在它不拥有的源上；锁忙 /
+        # 读失败是拒跑（2），不是宿主读成 rc 1 的逐行 error。改走共享
+        # ``anchor_read_window`` 装置，matrix_main 的每个调用入口一次覆盖；
+        # pending 注册表本身是受守卫文件，读也移进锁窗口。
         errors = []
-        for row in rows:
-            if pending.match(registrations, row[0]) is not None:
-                errors.append(f'{row[0]}: {pending.SKIPPED}')
-                continue
-            try:
-                anchor(row, row[1].read_text())
-            except Exception as error:
-                errors.append(str(error))
+        with anchor_read_window(root, f'{Path(script).parent.name} --check'):
+            registrations = pending.for_script(root, script)
+            for row in rows:
+                if pending.match(registrations, row[0]) is not None:
+                    errors.append(f'{row[0]}: {pending.SKIPPED}')
+                    continue
+                try:
+                    anchor(row, row[1].read_text())
+                except (OSError, UnicodeDecodeError):
+                    # 读失败由装置兜成 rc 2 拒跑，不是逐行 error 计数。
+                    raise
+                except Exception as error:
+                    errors.append(str(error))
         print('\n'.join(errors) if errors else f'{len(rows)} unique anchors checked')
         return int(bool(errors))
+    # Run path keeps the family contract: the registry read is a startup
+    # precondition that refuses before the evidence directory is claimed.
+    registrations = pending.for_script(root, script)
     if not args:
         refuse('usage: script --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
     selected = [row for row in rows if not args[1:] or row[0] in args[1:]]

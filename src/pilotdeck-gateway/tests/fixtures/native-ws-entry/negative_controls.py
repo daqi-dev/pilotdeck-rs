@@ -163,25 +163,36 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--compile-only', action='store_true')
     args = parser.parse_args()
-    preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
-    # #1890: one list feeds both the binding and the file reads, so widening
-    # `modules` cannot bind one file and check another (and cannot KeyError).
-    # #1942: rows may bind a test outside `native_ws::tests` (the failed
-    # initialization teardown lives in the turn-gateway suite), so the list
-    # carries that module too and every row is audited against its own file.
-    modules = ((PREFIX, TESTS), (TURN_TESTS, TURN_TESTS_SOURCE))
-    sources = {path: path.read_text() for _, path in modules}
-    for _, _, test, assertion in switches:
-        # #1890: the same rule as the other audits -- exactly one module level
-        # under the listed prefix, and a declaration that exists in the file
-        # the binding returned. bind_module_file raises when a row names no
-        # listed module, which carries the #749 "test binding names no audited
-        # test module" guard (it also rejects an empty or extra-level short
-        # name, so the binding stays exact).
-        file, short = bind_module_file(test, modules)
-        source = sources[file]
-        if not declares_test(source, short) or '"' + assertion + '"' not in source:
-            raise RuntimeError('#749 stale test/assertion binding: ' + test)
+    # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：锚点核对
+    # （preflight / sources / 绑定循环）也要持树锁读——兄弟变异运行器在自己
+    # 的 write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它不
+    # 拥有的源上；锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与 238 行
+    # 的变异窗口是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
+            # #1890: one list feeds both the binding and the file reads, so widening
+            # `modules` cannot bind one file and check another (and cannot KeyError).
+            # #1942: rows may bind a test outside `native_ws::tests` (the failed
+            # initialization teardown lives in the turn-gateway suite), so the list
+            # carries that module too and every row is audited against its own file.
+            modules = ((PREFIX, TESTS), (TURN_TESTS, TURN_TESTS_SOURCE))
+            sources = {path: path.read_text() for _, path in modules}
+            for _, _, test, assertion in switches:
+                # #1890: the same rule as the other audits -- exactly one module level
+                # under the listed prefix, and a declaration that exists in the file
+                # the binding returned. bind_module_file raises when a row names no
+                # listed module, which carries the #749 "test binding names no audited
+                # test module" guard (it also rejects an empty or extra-level short
+                # name, so the binding stays exact).
+                file, short = bind_module_file(test, modules)
+                source = sources[file]
+                if not declares_test(source, short) or '"' + assertion + '"' not in source:
+                    raise RuntimeError('#749 stale test/assertion binding: ' + test)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     if args.check:
         print(f'#749 {len(switches)} switch bindings valid')
         return 0

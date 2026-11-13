@@ -146,7 +146,7 @@ async fn configured_assembly_advertises_and_serves_the_six_cron_names() {
 
     // A real round trip through the live WS dispatch: create succeeds,
     // lists back, and the delay-unit RangeError crosses as the last-arm
-    // envelope (GatewayWsConnection.ts:253-260).
+    // envelope (GatewayWsConnection.ts:245-255).
     let project = harness.options.project.to_string_lossy().into_owned();
     send(
         &harness,

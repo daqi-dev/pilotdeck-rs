@@ -96,3 +96,27 @@ cmp /tmp/<owned-run-1>/oracle.json src/pilotdeck-gateway/tests/fixtures/host-mod
 常规回放复用 `tests/common/baseline.rs` 的 `oracle()`；未设 `PDRS_BASELINE` 时仅检查固定
 commit 与哈希结构，不调用 Git。Rust 回放见 `tests/host_model_port.rs`（HTTP 场景在测试内
 起 `tests/common/model_mock.rs` 的 loopback mock，需要本机回环监听权限）。
+
+## 负控（#2069 / #1804）
+
+`negative_controls.py`（--check 仅验锚点与绑定；实际负控命令为
+`negative_controls.py NEW_OUTPUT [mutation ...]`，须由调用方设 CARGO_TARGET_DIR，
+共享 HEAD 守卫要求源码与夹具均已提交，落地后由协调者在宿主跑全量杀灭轮）。
+首行 `turn-abort-wiring-dropped` 把 `RouterModelPort::stream` 的
+`RouterExecuteContext` 字面量 `turn_abort` 装配替换为 `None`，绑定
+`tests/host_model_port.rs` 的
+`a_turn_abort_in_the_provider_call_stack_drops_the_event_at_the_port`
+（该测试属 `--test host_model_port` 集成目标，非 lib；runner 固定选该面，
+不经共享 matrix_main 的 `--lib` 面）。击杀证据为该测试的专属消息
+`#1804 a turn cancelled in the provider call stack yields no event`——
+中断调用栈里晚到的 provider usage 事件泄漏过端口。测试保持单线程风味是判定
+确定性的前提（多线程调度器下 forwarder 可在中止与发射之间的窗口运行，见
+测试注释与 #1785 的 `sync-abort-mid-stream` 重放案例）。
+
+第二行 `turn-abort-forwarded-to-stream`（#2795 fix-r1 条5）盖 turn_abort 的
+第二组装点：`RouterModelStream` 字面量的 `turn_abort: input.abort`（model_port.rs:291，
+16 空格缩进——与 266 行 `RouterExecuteContext` 的 `.clone()` 装配是两处独立接线）。
+`None` 化后 turn 取消不再经转发任务到达 provider 请求，绑定
+`turn_cancel_between_pulls_closes_the_provider`（消费者坐在两次 pull 之间取消的
+场景），击杀证据为 `wait_client_closed` 5 秒超时的专属消息
+`a turn cancelled between pulls must close the provider request`。

@@ -13,7 +13,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
@@ -95,13 +95,25 @@ MESSAGES = {
 }
 
 def check_anchors():
-    errors = []
-    for name, path, before, _, _ in CASES:
-        count = path.read_text().count(before)
-        if count != 1:
-            errors.append(f'{name}: anchor count={count}, expected=1')
+    # #2795 fix-r4（评审 sibling P1 同族跟改）：本入口与已修的 mcp-http-encoding
+    # / mcp-http-corrupt-body 变异同两文件，锚点核对也要持树锁读——兄弟变异
+    # 运行器在自己的 write 与 restore 之间可能把变异体留在盘上，无锁读会把
+    # 核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2）。本窗口只包只读核对
+    # 面，与后续 mutating_sources 是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            errors = []
+            for name, path, before, _, _ in CASES:
+                count = path.read_text().count(before)
+                if count != 1:
+                    errors.append(f'{name}: anchor count={count}, expected=1')
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     if errors:
         raise ValueError('; '.join(errors))
+    return 0
 
 
 def cargo(test, env, out, label, *, no_run=False):
@@ -120,10 +132,12 @@ def cargo(test, env, out, label, *, no_run=False):
 
 def main():
     try:
-        check_anchors()
+        anchor_status = check_anchors()
     except Exception as error:
         print(f'INVALID: {error}', file=sys.stderr)
         return 2
+    if anchor_status:
+        return anchor_status
     if sys.argv[1:] == ['--check-anchors']:
         print(f'#867 {len(CASES)} anchors valid')
         return 0

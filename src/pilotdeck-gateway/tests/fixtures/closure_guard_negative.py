@@ -31,7 +31,7 @@ TESTS = FIXTURES / 'test_import_closure.py'
 # imported first by the runners, would otherwise put it on the path.
 sys.path.insert(0, str(FIXTURES / '_shared'))
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, tree_lock
 
 RECORDER = FIXTURES / 'recorder/fix3-negative.py'
 RUN_REGISTRY = FIXTURES / 'run-registry/count-negative.py'
@@ -228,12 +228,24 @@ def judge(outcome, marker):
 
 
 def check_anchors():
-    """Validate every anchor and mutant without entering the tree lock."""
-    for probe, path, _test, pristine, mutant, _marker in GUARD_PROBES:
-        source = path.read_text()
-        if source.count(pristine) != 1:
-            raise SystemExit(f'#1139 stale probe anchor: {probe}')
-        ast.parse(source.replace(pristine, mutant))
+    """Validate every anchor and mutant under the shared tree lock."""
+    # #2795 fix-r3（sibling P1 同族跟改）：原 docstring 宣称「without entering
+    # the tree lock」，但读的正是兄弟 closure_guard 变异轮会改写的 runner 源
+    # （mutating_sources(REPO, [RECORDER, RUN_REGISTRY, TESTS])），无锁读同样
+    # 会把窗口内的变异体读成 stale（rc 1 假 FAIL）——豁免依据不成立，跟改
+    # 同族锁语义（manager-gateway fix-r2 先例）。--check-anchors 是独立模式，
+    # 与下方变异轮无同进程嵌套。
+    try:
+        with tree_lock(REPO, timeout=60):
+            for probe, path, _test, pristine, mutant, _marker in GUARD_PROBES:
+                source = path.read_text()
+                if source.count(pristine) != 1:
+                    raise SystemExit(f'#1139 stale probe anchor: {probe}')
+                ast.parse(source.replace(pristine, mutant))
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--check-anchors tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     print(f'PASS: {len(GUARD_PROBES)} probe anchors unique, mutants parse', flush=True)
     return 0
 

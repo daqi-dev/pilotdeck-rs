@@ -63,6 +63,27 @@ class EnvironmentControls(unittest.TestCase):
     copy_manifest_step_budget = 300
     isolation_step_budget = 900
     driver_step_budget = 1800
+    # #2795 fix-r8（评审 simplify#1）：-O 自测步的模块清单单一来源——
+    # minimums（真跑钉）与 commands（CI 接线钉）此前两处手抄同一组命令，
+    # fix-r6→fix-r7 间已实际漂移过一次（ci.yml 加了第七条而 commands 没跟，
+    # 删那条无人红）。commands 从本清单派生后漏抄由构造消除；接新模块只
+    # 改这里与 ci.yml。
+    # 本合并轮（PR #2968 合 origin/main）：#1800（PR #2979）的第七模块
+    # sdk-signals-close-order-pin/test_negative_controls.py 并入本清单
+    # （下限 14——fix-r6 三态×管道矩阵末格实测 Ran 14），本侧 fix-r6/fix-r7
+    # 的 session-domain-expectations 与 test_negative_suite 在其后，清单
+    # 与 ci.yml run 块顺序一致（九条）。
+    optimize_guards_self_tests = (
+        ('test_negative_optimize_guards', 10),
+        ('settings-gateway/test_negative_controls.py', 13),
+        ('test_negative_run_guards', 8),
+        ('network-timing/test_negative_controls.py', 10),
+        ('test_negative_roster_guards', 6),
+        ('issue-2495/test_negative_controls.py', 30),
+        ('session-domain-expectations/test_meta_controls.py', 16),
+        ('test_negative_suite', 69),
+        ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
+    )
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
     doctest_command = 'cargo test --workspace --doc'
@@ -1619,7 +1640,7 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_the_optimize_guards_self_tests_collect_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：上面 -O 步的守卫同样只钉「步存在 +
-        # 无条件 + cwd」，钉不住七条命令真的收集到测试——掏空 / skip 任一
+        # 无条件 + cwd」，钉不住各条命令真的收集到测试——掏空 / skip 任一
         # 模块，`python3 -B -m unittest -v` 退 0，#1666/#1734 的 -O 判别力
         # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
         # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
@@ -1627,34 +1648,31 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main c3100a2b7 带入 #2590 fix-r2）：-O 步新增第六模块
         # issue-2495/test_negative_controls.py（r41 实测 Ran 30、约 4 s），
         # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
-        # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：-O 步新增
-        # 第七模块 sdk-signals-close-order-pin/test_negative_controls.py
-        # （fix-r1 实测 Ran 8），同钉进下限与 commands——本 PR
-        # 复刻了 r41 修的那个洞：加了 CI 命令却没登记，删掉 CI 全绿。
-        # #1800 fix-r2（PR #2979 boundary P1）：判决路径补 invalid-verdict /
-        # summary-publish-fault 两用例（Ran 8→10，本轮实测约 2.5 s——
-        # busy-lock 用例按构造须等满 2 s flock 超时，是该模块耗时下界；
-        # 秒数按实测定，不做预算算术），下限同步抬到 10：不抬则删掉两条
-        # 判决路径用例，CI 仍绿——正是 r41/fix-r1 连环修过的下限漂移洞。
-        # #1800 fix-r3（评论追加 1）：stdout 写失败用例（Ran 10→11，本轮实测
-        # 全模块约 2.5 s 不变——新用例 0.05 s，subprocess 全走 stub），下限
-        # 同步抬到 11：不抬则删掉该用例（吞诊断 / 放行 rc 0 两个方向都无人
-        # 看见），CI 仍绿——与 fix-r2 同一个下限漂移洞。
-        # #1800 fix-r4（DS sibling#2/boundary#1 同撞）：管道分支配对用例
-        # （stdout-pipe-fault）Ran 11→12，下限同步抬到 12——两分支合并/调
-        # 序（健康 head 读法变 rc 2）同样必须红。
-        # #1800 fix-r5（DS boundary P2a）：三态第三腿（invalid-verdict-pipe，
-        # 判决路径 INVALID + counts 行管道故障）Ran 12→13，下限同步抬到
-        # 13——管道分支折进 os._exit(0) 的坏改法必须红。
-        minimums = (
-            ('test_negative_optimize_guards', 10),
-            ('settings-gateway/test_negative_controls.py', 13),
-            ('test_negative_run_guards', 8),
-            ('network-timing/test_negative_controls.py', 10),
-            ('test_negative_roster_guards', 6),
-            ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
-        )
+        # #2795 fix-r7（评审 sibling#3）：fix-r6 给本步接了第七模块
+        # session-domain-expectations/test_meta_controls.py 但两处 driver 钉
+        # 没跟上——删掉 ci.yml 那行不红、模块被掏空也不红，正是该步自身
+        # 理由的同源反例。同轮把 test_negative_suite（共享执行器
+        # negative_suite.py 的机检，69 例约 0.4 s，无 cargo）从「仅宿主
+        # 清单」接进 CI，两条新命令一并钉进 commands 与下限（改后实测
+        # Ran 16 / Ran 69）。
+        # #2795 fix-r8（评审 simplify#1）：minimums 从类常量
+        # optimize_guards_self_tests 取单一清单，不再与 commands 两处手抄。
+        # #2795 fix-r8（评审 concurrency#2）：本钉以子进程真跑
+        # session-domain-expectations/test_meta_controls.py，其 unittest.main
+        # 路径的 setUpClass 经共享装置取真 .negative-source.lock（60 s 有界
+        # 等待，忙则 SystemExit(2) 且无报告行）——锁忙时「Ran N」缺失与本
+        # 钉的「模块被掏空」判读不可区分（CI 各 job 独立 checkout 不撞；
+        # 宿主同树并发会假红）。此步不得与变异轮同树并发。
+        # 本合并轮（PR #2968 合 origin/main）：#1800（PR #2979）带来的
+        # sdk-signals-close-order-pin/test_negative_controls.py 一并入清单——
+        # fix-r1 接线时实测 Ran 8；fix-r2 判决路径补 invalid-verdict /
+        # summary-publish-fault 两用例（Ran 8→10，busy-lock 用例按构造须等满
+        # 2 s flock 超时，是该模块耗时下界）；fix-r3 stdout 写失败用例
+        # （Ran 10→11）；fix-r4 管道分支配对用例（Ran 11→12）；fix-r5 三态
+        # 第三腿（Ran 12→13）；fix-r6 三态×管道矩阵末格（Ran 13→14，下限
+        # 同步抬到 14）。不钉下限则删判决路径用例 CI 仍绿——与 r41/fix-r1
+        # 连环修过的下限漂移洞同源。
+        minimums = self.optimize_guards_self_tests
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
         # CAP_DAC_OVERRIDE 宿主读得了 mode-000 文件，#1922 的拒绝路径无法钉；
@@ -1682,9 +1700,10 @@ class EnvironmentControls(unittest.TestCase):
                 registered_conditional_skips.get(module, ()))
         self.assertLessEqual(
             time.monotonic() - started, self.optimize_guards_step_budget,
-            '#1666 the seven -O self-test modules together must fit the -O '
-            'step budget (%d s); seven near-miss modules must not outlive '
-            'the CI step they pin' % self.optimize_guards_step_budget)
+            '#1666 the %d -O self-test modules together must fit the -O '
+            'step budget (%d s); near-miss modules must not outlive '
+            'the CI step they pin'
+            % (len(minimums), self.optimize_guards_step_budget))
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：#1570 的自测步守卫同样只钉步存在，
@@ -1738,21 +1757,30 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main）：#2590 fix-r2 给本步加了第六条命令
         # （issue-2495/test_negative_controls.py），一并钉入 commands——
         # 删掉它同样必须红。
-        # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：第七条命令
-        # （sdk-signals-close-order-pin/test_negative_controls.py）同步钉入
-        # commands——子集判断下多一条不红，不钉则删掉 CI 里这行仍全绿。
-        commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
-                    'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
-                    'python3 -B -m unittest -v test_negative_run_guards',
-                    'python3 -B -m unittest -v network-timing/test_negative_controls.py',
-                    'python3 -B -m unittest -v test_negative_roster_guards',
-                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
-                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py')
+        # #2795 fix-r7（评审 sibling#3）：fix-r6 的第七条
+        # （session-domain-expectations/test_meta_controls.py）与本轮接入的
+        # 第八条（test_negative_suite）同样钉入——删掉任一条必须红。
+        # #2795 fix-r8（评审 simplify#1）：commands 从类常量
+        # optimize_guards_self_tests 的同一清单派生，不再与 minimums 两处
+        # 手抄（fix-r6→fix-r7 曾漂移过一次）；对照语义不变。
+        # #2795 fix-r9（评审 sibling#1）：对照从单向子集改集合等价——旧
+        # ``all(command in ci_run_commands(step))`` 只钉「常量 ⊆ ci.yml」：
+        # ci.yml 加第九条命令（常量不跟）时八条仍全在 → 绿，删常量任一
+        # 元组（ci.yml 不跟）也仍绿，与上面「删掉任一条必须红」的双向
+        # 宣称不符。run 块里的注释行不计入对照（同
+        # test_each_npm_job_sets_up_its_own_node 的既有惯例）。
+        # 本合并轮（PR #2968 合 origin/main）：#1800（PR #2979）的
+        # sdk-signals-close-order-pin/test_negative_controls.py 命令经类常量
+        # 一并钉入——不钉则删掉 CI 里这行仍全绿（集合等价断言下多一条
+        # 或少一条都必须红）。
+        commands = tuple('python3 -B -m unittest -v ' + module
+                         for module, _minimum in self.optimize_guards_self_tests)
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
-                    if all(command in self.ci_run_commands(step, '#1666')
-                           for command in commands)]
+                    if sorted(commands) == sorted(
+                        command for command in self.ci_run_commands(step, '#1666')
+                        if not command.lstrip().startswith('#'))]
         self.assertEqual(len(matching), 1,
                          '#1666 required CI job must run the -O invariance self-tests')
         fields = self.ci_step_fields(matching[0], '#1666')
@@ -2820,18 +2848,36 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_optimize_guards_self_test_ci_regressions_are_rejected(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性步（#1666/#1734）的变异负控，
-        # 与 #994 / #2133 同形。该步是 run 块（七条命令），删掉其中任一条
-        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部七条」的断言上；
-        # if / continue-on-error / 错 cwd 按步名锚定插入或改值。
+        # 与 #994 / #2133 同形。该步是 run 块（命令逐轮增补，本合并轮起
+        # 九条——r41 六条、#2795 fix-r6/fix-r7 两条、#1800 一条），删掉其中
+        # 任一条（以 #2309 roster-guards 为代表）必须杀在「必须跑全部
+        # 命令」的断言上；if / continue-on-error / 错 cwd 按步名锚定插入或改值。
+        # #2795 fix-r9（评审 sibling#1）：removed/commented 逐条从类常量
+        # optimize_guards_self_tests 派生（fix-r8 负控只手抄 roster/meta/
+        # suite 三条命令字面——其余五条删行无负控）；并补两个单向子集断言
+        # 下静默的方向：ci.yml 加常量外的新命令、常量删任一元组（后者
+        # 是 patch.object 原地负控，见本方法下半段）。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
-        command = 'python3 -B -m unittest -v test_negative_roster_guards'
-        cases = [(name_, workflow.replace(old, new, 1), message)
-                 for name_, old, new, message in (
-            ('optimize-self-test-removed', command + '\n', '',
-             '#1666 required CI job must run the -O invariance self-tests'),
-            ('optimize-self-test-commented', command, '# ' + command,
-             '#1666 required CI job must run the -O invariance self-tests'),
+        required = '#1666 required CI job must run the -O invariance self-tests'
+        cases = []
+        for module, _minimum in self.optimize_guards_self_tests:
+            command = 'python3 -B -m unittest -v ' + module
+            cases.append((f'optimize-self-test-removed-{module}',
+                          workflow.replace(command + '\n', '', 1), required))
+            cases.append((f'optimize-self-test-commented-{module}',
+                          workflow.replace(command, '# ' + command, 1), required))
+        # ci.yml 加常量外的新命令（常量不跟）：集合等价断言下必须红。
+        last_command = ('python3 -B -m unittest -v '
+                        + self.optimize_guards_self_tests[-1][0])
+        extra_command = 'python3 -B -m unittest -v test_negative_untracked_module'
+        cases.append(('optimize-self-test-extra-command',
+                      workflow.replace(last_command + '\n',
+                                       last_command + '\n          '
+                                       + extra_command + '\n', 1),
+                      required))
+        cases.extend((name_, workflow.replace(old, new, 1), message)
+                     for name_, old, new, message in (
             ('optimize-self-test-skipped', name_line,
              name_line + '        if: false\n',
              '#1666 the -O self-test step must be unconditional and required'),
@@ -2851,9 +2897,45 @@ class EnvironmentControls(unittest.TestCase):
              '#1666 the -O self-test step must declare timeout-minutes: 5'),
             ('optimize-self-test-timeout-inflated',
              'timeout-minutes: 5\n        run: |', 'timeout-minutes: 360\n        run: |',
-             '#1666 the -O self-test step must declare timeout-minutes: 5'))]
+             '#1666 the -O self-test step must declare timeout-minutes: 5')))
         self.check_ci_mutations(
             cases, 'test_required_job_runs_the_optimize_guards_self_tests', '#1666')
+        # #2795 fix-r9（评审 sibling#1 反向）：常量删任一元组（ci.yml 不跟）
+        # ——子集断言下命令钉与下限一起静默消失；集合等价后必须红。逐项
+        # patch.object 原地施加，全部跑完再汇总（与 check_ci_mutations 同
+        # 口径：正控先绿、变异必须杀在专属消息上、恢复后再绿；任一非
+        # KILLED 即红）。
+        constant_results = []
+        for dropped, _minimum in self.optimize_guards_self_tests:
+            trimmed = tuple(entry for entry in self.optimize_guards_self_tests
+                            if entry[0] != dropped)
+            name = f'optimize-self-test-constant-dropped-{dropped}'
+            status, reason = 'INVALID', 'positive control did not complete'
+            try:
+                self.test_required_job_runs_the_optimize_guards_self_tests()
+                with patch.object(type(self), 'optimize_guards_self_tests', trimmed):
+                    try:
+                        self.test_required_job_runs_the_optimize_guards_self_tests()
+                    except AssertionError as error:
+                        status = 'KILLED' if required in str(error) else 'INVALID'
+                        reason = str(error)
+                    else:
+                        status, reason = ('SURVIVED',
+                                          'wiring pin passed with a dropped tuple')
+                self.test_required_job_runs_the_optimize_guards_self_tests()
+            except Exception as error:  # noqa: BLE001 - recorded, never fatal
+                status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+            constant_results.append((name, status))
+            print(f'{name}: {status}: {reason}', flush=True)
+        counts = {state: sum(result == state for _, result in constant_results)
+                  for state in ('KILLED', 'SURVIVED', 'INVALID')}
+        print(f'#1666 constant-drop negative summary: {counts}', flush=True)
+        self.assertTrue(
+            constant_results
+            and all(status == 'KILLED' for _, status in constant_results),
+            '#1666 dropping any tuple from optimize_guards_self_tests must '
+            'fail the wiring pin (the ci.yml command that tuple tracked is '
+            f'still on disk): {constant_results}')
 
     def test_environment_controls_step_ci_regressions_are_rejected(self):
         # r39（DS sibling#1 P2）：driver 步（跑 EnvironmentControls 全套）的

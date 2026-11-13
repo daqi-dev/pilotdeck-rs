@@ -128,7 +128,8 @@
 先核对 verdict 名册后发布，进 `test_negative_optimize_guards.py` 拒跑矩阵；fix-r3 起硬化：
 变异写入与逐项恢复走 `write_source_atomic`、自持窗口装 SIGTERM/SIGHUP/SIGQUIT 还原处理器、
 `pending.for_script` 以入口自身路径为身份键且作为启动前置、summary 载荷记 `selected` 执行集、
-名册防线由 `test_negative_roster_guards.py` 机检并进 CI）与
+名册防线由 `test_negative_roster_guards.py` 机检并进 CI；#2795 fix-r2 起 `--audit`
+持共享树锁读，锁忙 / 读失败 rc 2）与
 `utf16-residual-sort`（#2131 起
 同形自管：`EXPECTED_NAMES` 静态名册 + 启动拒跑全走 `refuse()` + 进 `mutating_sources`
 之后的守卫失败作废已跑行、发布 INVALID 后按四分表退 1（延迟信号退 128+signum），

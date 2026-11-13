@@ -648,23 +648,34 @@ def main():
     if not os.environ.get('CARGO_TARGET_DIR'):
         parser.error('CARGO_TARGET_DIR must be supplied by the caller')
     if args.check:
-        failures = []
-        for name, path, old, new, _test, _marker in cases:
-            try:
-                candidate = changed(path.read_text(), name, old, new)
-                if path.suffix == '.py':
-                    compile(candidate, str(path), 'exec')
-                    print(f'{name}: anchor unique; Python candidate compile PASS (not executed)')
-                elif path.suffix == '.mjs':
-                    result = subprocess.run(['node', '--input-type=module', '--check'], input=candidate,
-                                            text=True, capture_output=True, timeout=30)
-                    result.check_returncode()
-                    print(f'{name}: anchor unique; Node candidate compile PASS (not executed)')
-                else:
-                    print(f'{name}: anchor unique; Rust compile requires committed HEAD on host')
-            except Exception as error:
-                failures.append(name)
-                print(f'{name}: INVALID: {error}')
+        # #2795 fix-r4（评审 sibling P1 同族跟改）：--check 的锚点读也要持树锁
+        # 读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体留在
+        # 盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2）。
+        # 本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，锁先释放
+        # 再重取，无同进程嵌套。
+        try:
+            with tree_lock(ROOT, timeout=60):
+                failures = []
+                for name, path, old, new, _test, _marker in cases:
+                    try:
+                        candidate = changed(path.read_text(), name, old, new)
+                        if path.suffix == '.py':
+                            compile(candidate, str(path), 'exec')
+                            print(f'{name}: anchor unique; Python candidate compile PASS (not executed)')
+                        elif path.suffix == '.mjs':
+                            result = subprocess.run(['node', '--input-type=module', '--check'], input=candidate,
+                                                    text=True, capture_output=True, timeout=30)
+                            result.check_returncode()
+                            print(f'{name}: anchor unique; Node candidate compile PASS (not executed)')
+                        else:
+                            print(f'{name}: anchor unique; Rust compile requires committed HEAD on host')
+                    except Exception as error:
+                        failures.append(name)
+                        print(f'{name}: INVALID: {error}')
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            print(f'tree lock or anchor read failed: '
+                  f'{type(error).__name__}: {error}', file=sys.stderr)
+            return 2
         return int(bool(failures))
     if args.output is None:
         parser.error('OUTPUT is required without --check')

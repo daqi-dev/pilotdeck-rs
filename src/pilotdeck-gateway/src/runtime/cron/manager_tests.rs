@@ -995,7 +995,7 @@ fn method_adapters_mirror_the_manager_surface() {
 }
 
 // S2: an absent `frame.params` crosses the WS layer as `undefined`
-// (GatewayWsConnection.ts:464-470), and each adapter's first property read
+// (GatewayWsConnection.ts:464-475), and each adapter's first property read
 // is V8's `Cannot read properties of undefined (reading '<field>')` —
 // except `cron_list`, whose `input = {}` default (CronManager.ts:121)
 // swallows it before the first read. The field names pin the TS read order
@@ -1095,7 +1095,7 @@ fn projection_gates_unconfigured_runtime() {
     assert_eq!(text(&error.as_json(), "name"), "TypeError");
 }
 
-// S3: the wire envelope (GatewayWsConnection.ts:187,236-253): success is
+// S3: the wire envelope (GatewayWsConnection.ts:187,223-255): success is
 // `{type, id, ok, result}`; a thrown plain Error falls back to
 // `gateway_request_failed` while a `DialogGatewayError` keeps its code.
 #[test]

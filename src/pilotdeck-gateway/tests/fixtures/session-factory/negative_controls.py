@@ -395,69 +395,85 @@ def row_name(row):
 
 
 def audit():
-    # #1210: the README's declared mutation count must match the table, so a
-    # future drift fails --audit instead of waiting for a reviewer.
-    readme = (Path(__file__).with_name('README.md')).read_text()
-    declared = re.search(r'(\d+) 项变异绑定完整', readme)
-    if declared is None or int(declared.group(1)) != len(cases):
-        raise SystemExit(f'#1210 README mutation count drift: README says '
-                         f'{declared and declared.group(1)}, table has {len(cases)}')
     rows = []
-    for case in cases:
-        name, changes, scope, test, assertion = row_parts(case)
-        try:
-            # #1210: changes on one file accumulate. Recomputing each change
-            # from the pristine original would let a later write overwrite the
-            # earlier mutation of the same file.
-            accumulated = {}
-            for path, old, new in changes:
-                current = accumulated.get(path, path.read_text())
-                changed = mutate(current, scope, [(old, new)])
-                if changed == current:
-                    raise ValueError('mutation leaves source unchanged')
-                accumulated[path] = changed
-            # #1210 / #1281 review: bind the whole module path to the single
-            # file that declares that module (factory.rs pins the three
-            # #[path] declarations). Searching one concatenation of all three
-            # files let a row pass on a test that only exists in an unrelated
-            # module, so the audit could stay CHECKED on a wrong binding.
-            # #1890: the rule itself now lives in negative_suite.bind_module_file
-            # so the six audit copies cannot drift apart again.
-            source_file, test_name = bind_module_file(
-                test, ((module_prefix, factory.with_name(file))
-                       for module_prefix, file in audited_modules))
-            source = source_file.read_text()
-            if not declares_test(source, test_name):
-                raise ValueError('bound full test not found: ' + test)
-            # Static audit checks a literal/formatted failure marker, not semantic
-            # inequality. A compiled runtime kill proves the latter. The marker
-            # is searched in the bound module's file only; binding it to the
-            # individual test body is not attempted because these tests reach
-            # their assertions through shared helpers and `impl` methods (a
-            # per-test region would be red for ~20 correct rows), and the
-            # runtime negative control is the authority on the marker anyway.
-            literals = source.split('"')[1::2]
-            def marker_matches(literal):
-                pieces = literal.split('{')
-                parts = [pieces[0]] + [piece.split('}', 1)[-1] for piece in pieces[1:]]
-                if not assertion.startswith(parts[0]) or not assertion.endswith(parts[-1]):
-                    return False
-                offset = 0
-                for part in parts:
-                    at = assertion.find(part, offset)
-                    if at < 0:
-                        return False
-                    offset = at + len(part)
-                return True
-            if not test_name.endswith('regenerates_identically') and not any(
-                marker_matches(literal) for literal in literals
-                if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
-                or '#1020 ' in literal or '#1122 ' in literal or '#1218 ' in literal
-                or '#1253 ' in literal or '#1985 ' in literal):
-                raise ValueError('bound failure message not found: ' + assertion)
-            rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
-        except Exception as error:
-            rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是整轮拒跑
+    # （2），不能折成 INVALID 行（宿主会读成 rc 1 的假 FAIL）。audit 是
+    # --audit 独立模式，与变异轮无同进程嵌套。
+    # #2795 fix-r4（清单外同形）：README 变异数核对也是树内读，一并入锁窗。
+    try:
+        with tree_lock(root, timeout=60):
+            # #1210: the README's declared mutation count must match the table,
+            # so a future drift fails --audit instead of waiting for a reviewer.
+            readme = (Path(__file__).with_name('README.md')).read_text()
+            declared = re.search(r'(\d+) 项变异绑定完整', readme)
+            if declared is None or int(declared.group(1)) != len(cases):
+                raise SystemExit(f'#1210 README mutation count drift: README '
+                                 f'says {declared and declared.group(1)}, table '
+                                 f'has {len(cases)}')
+            for case in cases:
+                name, changes, scope, test, assertion = row_parts(case)
+                try:
+                    # #1210: changes on one file accumulate. Recomputing each change
+                    # from the pristine original would let a later write overwrite the
+                    # earlier mutation of the same file.
+                    accumulated = {}
+                    for path, old, new in changes:
+                        current = accumulated.get(path, path.read_text())
+                        changed = mutate(current, scope, [(old, new)])
+                        if changed == current:
+                            raise ValueError('mutation leaves source unchanged')
+                        accumulated[path] = changed
+                    # #1210 / #1281 review: bind the whole module path to the single
+                    # file that declares that module (factory.rs pins the three
+                    # #[path] declarations). Searching one concatenation of all three
+                    # files let a row pass on a test that only exists in an unrelated
+                    # module, so the audit could stay CHECKED on a wrong binding.
+                    # #1890: the rule itself now lives in negative_suite.bind_module_file
+                    # so the six audit copies cannot drift apart again.
+                    source_file, test_name = bind_module_file(
+                        test, ((module_prefix, factory.with_name(file))
+                               for module_prefix, file in audited_modules))
+                    source = source_file.read_text()
+                    if not declares_test(source, test_name):
+                        raise ValueError('bound full test not found: ' + test)
+                    # Static audit checks a literal/formatted failure marker, not semantic
+                    # inequality. A compiled runtime kill proves the latter. The marker
+                    # is searched in the bound module's file only; binding it to the
+                    # individual test body is not attempted because these tests reach
+                    # their assertions through shared helpers and `impl` methods (a
+                    # per-test region would be red for ~20 correct rows), and the
+                    # runtime negative control is the authority on the marker anyway.
+                    literals = source.split('"')[1::2]
+                    def marker_matches(literal):
+                        pieces = literal.split('{')
+                        parts = [pieces[0]] + [piece.split('}', 1)[-1] for piece in pieces[1:]]
+                        if not assertion.startswith(parts[0]) or not assertion.endswith(parts[-1]):
+                            return False
+                        offset = 0
+                        for part in parts:
+                            at = assertion.find(part, offset)
+                            if at < 0:
+                                return False
+                            offset = at + len(part)
+                        return True
+                    if not test_name.endswith('regenerates_identically') and not any(
+                        marker_matches(literal) for literal in literals
+                        if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
+                        or '#1020 ' in literal or '#1122 ' in literal or '#1218 ' in literal
+                        or '#1253 ' in literal or '#1985 ' in literal):
+                        raise ValueError('bound failure message not found: ' + assertion)
+                    rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
+                except Exception as error:
+                    if isinstance(error, (TimeoutError, OSError, UnicodeDecodeError)):
+                        # #2795 fix-r3：锁/读失败穿透为整轮拒跑（2），不折成 INVALID 行。
+                        raise
+                    rows.append(dict(mutation=name, status='INVALID', reason=str(error)))
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--audit tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     print(json.dumps(rows, indent=2))
     return int(any(row['status'] != 'CHECKED' for row in rows))
 

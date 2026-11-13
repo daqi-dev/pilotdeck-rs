@@ -10,8 +10,9 @@ coordinator commits:
       python3 src/pilotdeck-gateway/tests/fixtures/manager-gateway/negative_controls.py \
       <out-dir> [--only name,...] [name ...]
 
-`--audit` only checks every anchor against the current source; it does not
-mutate, compile, or require a commit.
+`--audit` only checks every anchor against the current source (under the shared
+tree lock — a busy lock or an unreadable source is a refusal, not a verdict);
+it does not mutate, compile, or require a commit.
 
 The entry follows the #1666 / #1734 self-run contract on the shared
 `negative_selection` helpers: the table is pinned to the static
@@ -47,7 +48,7 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # baseline is permitted here.
 import pending_reanchor as pending
 from negative_process import (defer_signal_exit, mutating_sources, run_owned,
-                              wait_for_slot, write_source_atomic)
+                              tree_lock, wait_for_slot, write_source_atomic)
 from negative_selection import (claim_dir, missing_target,
                                  refuse_unusable_target, registered, select,
                                  verdict_exit)
@@ -459,8 +460,19 @@ def main():
         return 2
     selected_names = set(requested)
     if audit:
-        for name, path, old, new, scope, _test, _expected in selected:
-            mutate(path.read_text(), scope, [(old, new)])
+        # #2795 fix-r2（评审 sibling P2②，snapshot-projection --audit 的 fix-r1 条2
+        # 同族跟改）：锚点核对也要持树锁读——兄弟变异运行器在自己的 write 与 restore
+        # 之间可能把变异体留在盘上，无锁读会把锚点核对错在它不拥有的源上；锁忙 /
+        # 读失败是拒跑（2），不是宿主会读成 rc 1 的裸 traceback（issue-2495 的
+        # 60 s 有界等待先例）。
+        try:
+            with tree_lock(root, timeout=60):
+                for name, path, old, new, scope, _test, _expected in selected:
+                    mutate(path.read_text(), scope, [(old, new)])
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            print(f'--audit tree lock or read failed: '
+                  f'{type(error).__name__}: {error}', file=sys.stderr)
+            return 2
         print(json.dumps([
             {'mutation': name, 'test': test, 'panic': expected}
             for name, _path, _old, _new, _scope, test, expected in selected

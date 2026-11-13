@@ -23,13 +23,103 @@ from unittest.mock import MagicMock, Mock, patch
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import negative_controls as gate
+import negative_process
+
+
+class _RecordingTreeLock:
+    """#2795 fix-r4（评审建议①）：真 TreeLock 会 os.open(O_RDWR|O_CREAT) 落
+    ``.negative-source.lock``——被下面的只读审计钩子判写（#1279 standalone
+    红过），且让本套件依赖锁文件空闲。与 test_negative_roster_guards.py 的
+    ``_RecordingTreeLock`` 同形：记录锁获取/释放与读的相对顺序，只验「读面在
+    锁内」的语义，不落真锁文件。fix-r5 加 ``busy``：``__enter__`` 抛
+    TimeoutError，驱动 setUpClass 的锁忙拒跑形态（名册驱动器同形）。"""
+
+    def __init__(self, events, *, busy=False):
+        self.events = events
+        self.busy = busy
+        self.held = False
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self
+
+    def __enter__(self):
+        if self.busy:
+            raise TimeoutError('setup-class drive: lock timeout (#2795 fix-r5)')
+        self.events.append('lock-enter')
+        self.held = True
+        return self
+
+    def __exit__(self, *_exc):
+        self.held = False
+        self.events.append('lock-exit')
+        return False
+
+
+def _pinned_anchor_reads(events, lock):
+    """Patch ``Path.read_text`` so every anchor read records lock-held state.
+
+    A read outside the lock window is the race fix-r3 closed (a sibling
+    runner's mutant between its write and restore phases), so it lands in
+    ``events`` as an ``unlocked-read`` the assertions can reject.
+    """
+    real_read_text = Path.read_text
+
+    def recording_read_text(self, *args, **kwargs):
+        if not lock.held:
+            events.append(('unlocked-read', str(self)))
+        return real_read_text(self, *args, **kwargs)
+
+    return patch.object(Path, 'read_text', recording_read_text)
 
 
 class DriftTests(unittest.TestCase):
+    def setUp(self):
+        # #2795 fix-r4（评审建议①）：main() 的预检（panel_table）与 check_anchors
+        # 都取真树锁——真 TreeLock 会 os.open(O_RDWR|O_CREAT) 落锁文件，被
+        # test_list_is_read_only / test_standalone_check_anchors 的只读审计钩子
+        # 判写，也让整套件依赖 .negative-source.lock 空闲。统一换成记录桩；
+        # 「读面在锁内」由 _pinned_anchor_reads 单测钉住。
+        # #2795 fix-r6（评审 concurrency#2）：本桩只覆盖实例方法（setUp 之后）；
+        # setUpClass 的锁面见 _meta_class_setup（元控入口）与
+        # SetupClassReadSurface（真入口机检）。
+        # #2795 fix-r8（评审 concurrency#1，登记处置）：fix-r7 只把 setUpClass
+        # 的类建面收进真装置；本桩仍在，--negative 变体循环经
+        # DriftTests(method).run() 走到这里，16 个变体驱动的 gate.main() /
+        # gate.check_anchors() 读 PANEL/SESSION 因此都在无锁窗口（不是已
+        # 收口）——登记进续跑表「二（续）」行=671-707，登记不修（fix-r10
+        # 起该窗口与类建面调用行由 test_negative_roster_guards 的钉子按
+        # 代码锚运行时核对，漂移必红）。
+        # #2795 fix-r9（评审 concurrency#1 改写判定依据）：登记不修的前提
+        # 是 README「不得与同树变异轮并发跑」为规范约束——该约束被违反时
+        # KILLED 归因不独占，真 SURVIVED 变体可被兄弟 write/restore 窗口
+        # 内的变异 PANEL/SESSION 记成假 KILLED（评审五步交错序列成立；
+        # fix-r8 的「未见可达假 KILLED」撤回）；只读审计钩子对锁文件
+        # O_CREAT 的拦截仍是装置设计取舍。依据见续跑表该行。
+        self.lock_events = []
+        self.lock = _RecordingTreeLock(self.lock_events)
+        patcher = patch.object(gate, 'tree_lock', self.lock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @classmethod
     def setUpClass(cls):
-        cls.expectations = gate.panel_table('EXPECTATION_CASES')
-        cls.calibration = gate.panel_table('CALIBRATION_CASES')
+        # #2795 fix-r5（评审 concurrency P2#1 升格 + simplify P2#1 结构性收口）：
+        # setUpClass 早于 setUp 的记录桩 / 读面补丁，此前两处 panel_table 读在
+        # 锁外——gateway-entry-guard 等兄弟变异轮写 controls/session_domain.py 的
+        # write 与 restore 之间，无锁 ast.parse 会把变异体当权威表。与 main()
+        # 预检同面，改走共享 anchor_read_window 装置（锁内读 + rc 2 拒跑）；
+        # 机检见 SetupClassReadSurface。
+        # #2795 fix-r6（评审 concurrency#2）：真入口（unittest.main）保持真锁：
+        # 锁忙 → 装置 SystemExit(2)，实测（Python 3.12.3）确认 SystemExit 穿过
+        # unittest._handleClassSetUp（只捕 Exception）整进程退出 rc 2、无报告，
+        # 是既定的 fail-closed 形态；元控 --negative 入口同保真锁
+        # （fix-r7 concurrency#1），见 _meta_class_setup。
+        with negative_process.anchor_read_window(
+                gate.ROOT, 'session-domain-expectations meta-controls'):
+            cls.expectations = gate.panel_table('EXPECTATION_CASES')
+            cls.calibration = gate.panel_table('CALIBRATION_CASES')
 
     def test_binding_corruptions_are_rejected(self):
         state = 'drop-registry-state-require'
@@ -143,12 +233,18 @@ class DriftTests(unittest.TestCase):
         selected = gate.MUTATIONS[:1]
         with patch.object(sys, 'argv', ['negative_controls.py', '--list', '--check-anchors',
                                       '--only', selected[0][0]]), \
+                _pinned_anchor_reads(self.lock_events, self.lock), \
                 patch.object(gate, 'check_anchors', wraps=gate.check_anchors) as anchors, \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertTrue(gate.main() == 0,
                             '#1190 list-anchors: valid anchors and listing must pass')
         self.assertTrue(anchors.call_count == 1 and anchors.call_args.args == (selected,),
                         '#1190 list-anchors: selected anchors must execute before listing')
+        unlocked = [event for event in self.lock_events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked and 'lock-enter' in self.lock_events,
+                        '#1190 list-anchors: the anchor read must happen inside '
+                        f'the tree lock window: {self.lock_events!r}')
         report, separator, payload = output.getvalue().partition('\n')
         self.assertTrue(report == '1 anchors: ok' and bool(separator),
                         '#1190 list-anchors: anchor report must precede listing')
@@ -228,7 +324,11 @@ class DriftTests(unittest.TestCase):
             raise AssertionError(f'#1279 standalone-anchors: filesystem writes forbidden: {event}')
 
         sys.addaudithook(audit)
+        # #2795 fix-r4（评审建议①）：真 TreeLock 的 os.open(O_RDWR|O_CREAT) 会被
+        # 上面的审计钩子判写（实测红：filesystem writes forbidden: open）；setUp
+        # 已换成 _RecordingTreeLock 记录桩，只验「读面在锁内」。
         with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
+                _pinned_anchor_reads(self.lock_events, self.lock), \
                 patch.object(gate, 'check_anchors', wraps=gate.check_anchors) as anchors, \
                 contextlib.redirect_stdout(io.StringIO()) as output, \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
@@ -238,6 +338,23 @@ class DriftTests(unittest.TestCase):
                                 '#1279 standalone-anchors: rc must be 0 without --output/--source')
             finally:
                 active = False
+        unlocked = [event for event in self.lock_events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked,
+                        '#2795 every anchor read must happen with the tree lock '
+                        f'held: {unlocked!r}')
+        self.assertTrue(self.lock_events
+                        and self.lock_events[0] == 'lock-enter'
+                        and self.lock_events[-1] == 'lock-exit',
+                        f'#2795 the lock must wrap the whole anchor loop: '
+                        f'{self.lock_events!r}')
+        # 两次顺序窗口（panel_table 预检 + check_anchors），无嵌套；
+        # 每次都必须锁 fixture 根 + 60 s 有界等待。
+        self.assertTrue(len(self.lock.calls) >= 2
+                        and all(call == ((gate.ROOT,), {'timeout': 60})
+                                for call in self.lock.calls),
+                        f'#2795 the anchor preflight must lock the fixture root '
+                        f'with the 60 s bounded wait: {self.lock.calls!r}')
         self.assertGreater(len(gate.MUTATIONS), 0,
                            '#1364 empty-anchors: the shipped mutation table must not be empty')
         self.assertTrue(anchors.call_count == 1
@@ -322,8 +439,172 @@ class DriftTests(unittest.TestCase):
                         '#1190 evidence: exercise anchor and compile failures')
 
 
+class SetupClassReadSurface(unittest.TestCase):
+    """#2795 fix-r5（评审 concurrency P2#1 升格）：setUpClass 读面的机检。
+
+    fix-r4 给 main() 的预检（panel_table / check_anchors）补了树锁，但
+    setUpClass 早于 setUp 的记录桩，两处 panel_table 读仍在锁外。本类直接
+    驱动真实的 setUpClass：只把 negative_process.tree_lock 换成记录桩
+    （装置内部经 negative_process 全局查 tree_lock），读面记名判红；
+    busy 时装置必须 SystemExit(2) + 统一文案（与名册驱动的拒跑形态同形）。
+    fix-r6 曾补第三钉（评审 concurrency#2，fix-r7 concurrency#1 推翻其
+    「--negative 不依赖锁空闲」前提）：--negative 元控入口经
+    _meta_class_setup 自换记录桩——生产路径的 panel_table 读因此无锁。
+    fix-r7 起元控入口同保真装置（锁忙 = SystemExit(2) fail-closed，
+    实测 unittest 对 setUpClass 的 SystemExit 不出报告、整进程退出），
+    钉在 test_negative_entry_keeps_the_real_tree_lock /
+    test_negative_entry_refuses_when_the_tree_lock_is_busy
+    （fix-r8 勘误：两钉只覆盖类建面；变体循环读面为登记盲区，见
+    setUp 注释与续跑表「二（续）」）。
+    """
+
+    def test_setup_class_reads_panels_inside_the_tree_lock(self):
+        events = []
+        lock = _RecordingTreeLock(events)
+        with patch.object(negative_process, 'tree_lock', lock), \
+                _pinned_anchor_reads(events, lock):
+            DriftTests.setUpClass()
+        unlocked = [event for event in events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked and events[:1] == ['lock-enter']
+                        and events[-1:] == ['lock-exit'],
+                        '#2795 meta-controls: setUpClass must read the panel '
+                        f'source inside the shared anchor_read_window: {events!r}')
+        self.assertTrue(lock.calls == [((gate.ROOT,), {'timeout': 60})],
+                        '#2795 meta-controls: setUpClass must lock the repo '
+                        f'root with the 60 s bounded wait: {lock.calls!r}')
+
+    def test_setup_class_refuses_when_the_tree_lock_is_busy(self):
+        events = []
+        lock = _RecordingTreeLock(events, busy=True)
+        errors = io.StringIO()
+        with patch.object(negative_process, 'tree_lock', lock), \
+                contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                DriftTests.setUpClass()
+        self.assertTrue(caught.exception.code == 2,
+                        '#2795 meta-controls: a busy tree lock must refuse '
+                        f'setUpClass with rc 2, got {caught.exception.code!r}')
+        self.assertTrue(
+            'session-domain-expectations meta-controls: '
+            'tree lock or anchor read failed' in errors.getvalue()
+            and 'TimeoutError' in errors.getvalue(),
+            '#2795 meta-controls: the refusal must use the shared device '
+            f'message and name the lock wait: {errors.getvalue()!r}')
+        self.assertTrue(events == [],
+                        '#2795 meta-controls: a refused setUpClass must read '
+                        f'no panel bytes: {events!r}')
+
+    def test_negative_entry_keeps_the_real_tree_lock(self):
+        """#2795 fix-r7（评审 concurrency#1）：--negative 元控入口不绕真锁。
+
+        fix-r6 的 ``_meta_class_setup`` 曾在 --negative 生产路径默认把真
+        ``tree_lock`` 换成记录桩：setUpClass 的 ``panel_table`` 读 PANEL
+        （gateway-entry-guard 变异的同一 controls/session_domain.py）变无锁
+        读——兄弟 runner 的 write/restore 窗口内，16 个变体的
+        KILLED/SURVIVED/INVALID 可基于不拥有的字节。生产路径必须保真装置：
+        这里外层换成记录桩并驱动真实 ``_meta_class_setup()``——若入口又
+        在内部自换桩（fix-r6 形态），外层桩收不到调用、判读红。
+        （fix-r8 勘误，评审 concurrency#1：此钉只覆盖类建面一半；变体
+        循环的读面经 setUp 记录桩仍无锁，是登记的盲区，见 setUp 注释。）
+        """
+        events = []
+        lock = _RecordingTreeLock(events)
+        with patch.object(negative_process, 'tree_lock', lock), \
+                _pinned_anchor_reads(events, lock):
+            _meta_class_setup()
+        unlocked = [event for event in events
+                    if isinstance(event, tuple) and event[0] == 'unlocked-read']
+        self.assertTrue(not unlocked and events[:1] == ['lock-enter']
+                        and events[-1:] == ['lock-exit'],
+                        '#2795 meta-controls: the --negative entry must run '
+                        'its class setup through the real device (whatever '
+                        f'lock negative_process holds): {events!r}')
+        self.assertTrue(lock.calls == [((gate.ROOT,), {'timeout': 60})],
+                        '#2795 meta-controls: the --negative entry must lock '
+                        f'the repo root with the 60 s bounded wait: '
+                        f'{lock.calls!r}')
+
+    def test_negative_entry_refuses_when_the_tree_lock_is_busy(self):
+        """#2795 fix-r7（评审 concurrency#1 + sibling#4）：锁忙拒跑在元控入口。
+
+        生产 --negative 路径保真装置：锁忙 → ``anchor_read_window`` 的
+        SystemExit(2) + 统一拒跑文案（fail-closed 拒跑，不是 16 行变体
+        照跑，也不是逃出逐项 try 的 traceback rc 1——与「拒跑=rc 2」的
+        相位分界一致）。这里驱动真实 ``negative_checks()``（其变体循环
+        起点处对 ``_meta_class_setup`` 的调用，``--negative`` 分支本体）：
+        若 ``_meta_class_setup`` 退回内部换桩，busy 真锁被绕过、类建面
+        照常完成、无 SystemExit，判读红。
+        """
+        busy = _RecordingTreeLock([], busy=True)
+        errors = io.StringIO()
+        output = io.StringIO()
+        try:
+            with patch.object(negative_process, 'tree_lock', busy), \
+                    contextlib.redirect_stderr(errors), \
+                    contextlib.redirect_stdout(output):
+                negative_checks()
+        except SystemExit as refusal:
+            caught = refusal
+        else:
+            caught = None
+        self.assertTrue(caught is not None and caught.code == 2,
+                        '#2795 meta-controls: a busy tree lock must refuse '
+                        'the --negative entry with rc 2, got '
+                        f'{None if caught is None else caught.code!r}')
+        self.assertTrue(
+            'session-domain-expectations meta-controls: '
+            'tree lock or anchor read failed' in errors.getvalue()
+            and 'TimeoutError' in errors.getvalue(),
+            '#2795 meta-controls: the --negative refusal must use the '
+            f'shared device message and name the lock wait: '
+            f'{errors.getvalue()!r}')
+        self.assertTrue(output.getvalue() == '',
+                        '#2795 meta-controls: a refused --negative entry '
+                        'must not report any variant rows: '
+                        f'{output.getvalue()!r}')
+
+
+def _meta_class_setup():
+    """The ``--negative`` meta entry's class setup: the real device, no seam.
+
+    #2795 fix-r7（评审 concurrency#1）：fix-r6 版本在这里默认把装置内部的
+    ``negative_process.tree_lock`` 换成记录桩——生产 --negative 路径的
+    ``panel_table`` 读因此无锁：兄弟变异轮（gateway-entry-guard 写
+    ``scripts/gateway-parity/controls/session_domain.py``，PANEL 本体）的
+    write/restore 窗口内，16 个变体的判杀可基于不拥有的字节；锁忙也走
+    不到装置的 SystemExit(2)，类建面失败以 traceback rc 1 逃出，与
+    「拒跑=rc 2」的相位混淆。生产路径保真装置（锁忙即拒跑 rc 2）；
+    测试需要记录桩（不落锁文件、不依赖锁空闲）时在调用点外层 patch
+    ``negative_process.tree_lock``（SetupClassReadSurface 同形），入口
+    不得自换。fix-r8 勘误（评审 concurrency#1）：本保真只覆盖类建面
+    （setUpClass）这一半；其后变体循环经 setUp 记录桩的读面是登记的
+    盲区，见 setUp 注释与续跑表「二（续）」。
+    """
+    DriftTests.setUpClass()
+
+
 def negative_checks():
-    """Compile each function variant, run the bound test, restore, then summarize all."""
+    """Compile each function variant, run the bound test, restore, then summarize all.
+
+    #2795 fix-r8（评审 concurrency#1，登记处置）：循环里的 DriftTests
+    实例经 setUp 换记录桩，16 个变体驱动的 gate.main() / check_anchors()
+    读 PANEL/SESSION 因此无锁（fix-r7 只收 setUpClass 类建面 :669 的
+    _meta_class_setup 调用；fix-r9 concurrency#2 勘误：真正无锁的读面是
+    本函数变体循环）——登记进续跑表「二（续）」行=671-707，登记
+    不修。fix-r10（评审 sibling#1 = concurrency#1 = boundary#1，三家
+    同点）勘误：fix-r9 的行号写的是 base b13ebb591 的旧行号（第三次
+    run 与 except 段在窗口外）；本窗口与 :669 现由
+    test_negative_roster_guards 的钉子按代码锚（negative_checks 定义 +
+    ``for name, function`` 循环骨架 + DriftTests(method).run 调用）运行
+    时定位核对——上方增删行、挪节、改窗口必红。登记不修的前提
+    （#2795 fix-r9，评审 concurrency#1 改写）：README「不得与同树变异
+    轮并发跑」为规范约束——该约束被违反时 KILLED 归因不独占，真
+    SURVIVED 变体可被兄弟 write/restore 窗口内的变异 PANEL/SESSION 记
+    成假 KILLED（评审五步交错序列成立，fix-r8 的「未见可达假 KILLED」
+    撤回）；只读审计钩子对锁文件 O_CREAT 的拦截仍是装置设计取舍。
+    依据见续跑表该行。
+    """
     variants = (
         ('skip-binding-checks', 'check_bindings', '    errors = []', '    return []',
          'test_binding_corruptions_are_rejected',
@@ -385,7 +666,7 @@ def negative_checks():
          'test_check_anchors_rejects_empty_selection',
          '#1364 empty-anchors: an empty selection must not return success'),
     )
-    DriftTests.setUpClass()
+    _meta_class_setup()
     results = []
     for name, function, before, after, method, marker in variants:
         row = {'mutation': name, 'test': f'test_meta_controls.DriftTests.{method}',

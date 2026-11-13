@@ -11,7 +11,7 @@ import re
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 
 source = root / 'scripts/native-witness/witness.py'
 collector = root / 'scripts/native-witness/collect.py'
@@ -178,16 +178,29 @@ messages = {
 
 def preflight():
     # Read-only: this never executes a mutant or bypasses the HEAD guard.
-    errors = []
-    for name, path, before, after, _ in cases:
-        text = path.read_text()
-        if text.count(before) != 1:
-            errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
-        else:
-            try:
-                compile(text.replace(before, after, 1), str(path), 'exec')
-            except SyntaxError as error:
-                errors.append(f'INVALID compile {name}: {error}')
+    # #2795 fix-r4（评审 sibling P1 同族跟改）：同 fixture 的
+    # negative_authentication / negative_boundary 已按 #1519 持 tree_lock
+    # （README「#1519 起整个演练循环在 tree_lock 内执行（只读也持锁）」），
+    # 本入口的 preflight() 裸读对齐同一契约——兄弟变异运行器在自己的 write
+    # 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有的
+    # 源上；锁忙 / 读失败是拒跑（2）。本窗口只包只读预检面，与后续
+    # mutating_sources 是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            errors = []
+            for name, path, before, after, _ in cases:
+                text = path.read_text()
+                if text.count(before) != 1:
+                    errors.append(f'STALE ANCHOR {name}: {text.count(before)} matches')
+                else:
+                    try:
+                        compile(text.replace(before, after, 1), str(path), 'exec')
+                    except SyntaxError as error:
+                        errors.append(f'INVALID compile {name}: {error}')
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     if errors:
         print('\n'.join(errors), file=sys.stderr)
         raise SystemExit(2)

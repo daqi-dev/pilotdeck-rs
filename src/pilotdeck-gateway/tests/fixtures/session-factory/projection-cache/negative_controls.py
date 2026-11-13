@@ -7,7 +7,7 @@ import sys
 
 root = Path(__file__).resolve().parents[6]
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_suite import Case, bind_module_file, declares_test, run_cases, publish_summary
 
 mutations = [
@@ -190,31 +190,42 @@ def main():
     if sys.argv[1:] == ['--inputs']:
         print(json.dumps([str(p.relative_to(root)) for p in input_paths()]))
         return 0
-    for _, filename, old, new, _, _ in mutations:
-        mutate((root / filename).read_text(), None, [(old, new)])
-    if sys.argv[1:] == ['--audit']:
-        # #1210: bound test names may come from the matrix_tests! macro table,
-        # so a plain `fn <name>` scan would not find them. Accept either the
-        # direct function or the `name=>"case"` table entry; anything else
-        # fails the audit instead of silently binding a nonexistent test.
-        # #1281 review: the full module path picks the one file that declares
-        # that module (factory.rs pins the #[path] names); a concatenation of
-        # both files would accept a test that lives in the other module.
-        # #1890: the rule lives in negative_suite.bind_module_file so the six
-        # audit copies cannot drift (this one used to require `=>"`).
-        modules = (('runtime::session::factory::tests::', 'factory_tests.rs'),
-                   ('runtime::session::factory::projection_cache_tests::', 'projection_cache_tests.rs'))
-        sources = {name: (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
-                   for _, name in modules}
-        for _name, _filename, _old, _new, test, _assertion in mutations:
-            try:
-                file, short = bind_module_file(test, modules)
-            except ValueError as error:
-                raise SystemExit(f'#1210 {error}')
-            if not declares_test(sources[file], short):
-                raise SystemExit(f'#1210 bound test not found for {short}: {test}')
-        print('PASS: #1011 projection cache mutation anchors (static only)')
-        return 0
+    # #2795 fix-r3（sibling P1 同族跟改，manager-gateway fix-r2 先例）：锚点核对
+    # 也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2），
+    # 不是宿主会读成 rc 1 的裸 traceback。核对与下方变异轮是顺序关系，
+    # 锁先释放再由 mutating_sources 重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            for _, filename, old, new, _, _ in mutations:
+                mutate((root / filename).read_text(), None, [(old, new)])
+            if sys.argv[1:] == ['--audit']:
+                # #1210: bound test names may come from the matrix_tests! macro table,
+                # so a plain `fn <name>` scan would not find them. Accept either the
+                # direct function or the `name=>"case"` table entry; anything else
+                # fails the audit instead of silently binding a nonexistent test.
+                # #1281 review: the full module path picks the one file that declares
+                # that module (factory.rs pins the #[path] names); a concatenation of
+                # both files would accept a test that lives in the other module.
+                # #1890: the rule lives in negative_suite.bind_module_file so the six
+                # audit copies cannot drift (this one used to require `=>"`).
+                modules = (('runtime::session::factory::tests::', 'factory_tests.rs'),
+                           ('runtime::session::factory::projection_cache_tests::', 'projection_cache_tests.rs'))
+                sources = {name: (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
+                           for _, name in modules}
+                for _name, _filename, _old, _new, test, _assertion in mutations:
+                    try:
+                        file, short = bind_module_file(test, modules)
+                    except ValueError as error:
+                        raise SystemExit(f'#1210 {error}')
+                    if not declares_test(sources[file], short):
+                        raise SystemExit(f'#1210 bound test not found for {short}: {test}')
+                print('PASS: #1011 projection cache mutation anchors (static only)')
+                return 0
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'--audit tree lock or read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     if len(sys.argv) != 2:
         raise SystemExit('usage: negative_controls.py OUT | --audit')
     if not os.environ.get('CARGO_TARGET_DIR') or not os.environ.get('PDRS_BASELINE'):

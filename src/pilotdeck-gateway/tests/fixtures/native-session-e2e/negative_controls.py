@@ -115,19 +115,29 @@ def _test_classes():
     A prefix table drifts silently: #1510's
     `test_port_reservation_is_exclusive_across_processes` lives in
     LifecycleTests, but no prefix rule can say so, and a wrong class turns the
-    control into a loader ERROR (INVALID) instead of a verdict.  Parsed once at
-    import, before any case mutates a source.
+    control into a loader ERROR (INVALID) instead of a verdict.  Parsed once
+    per process and cached; #2795 fix-r4（机检钉「读在锁内」实测红）: the
+    parse used to run at import, outside every lock window — a sibling
+    mutation round holds its own write/restore window on this very fixture
+    (the manifest-count-minus-one row mutates it), so the first parse now
+    happens inside a lock window before any case mutates a source: the
+    mutation arm's 60 s preflight() window, or (fix-r12/r13) the --memory
+    rehearsal's 900 s window through _anchor_errors() in one().
     """
+    global TEST_CLASSES
+    if TEST_CLASSES is not None:
+        return TEST_CLASSES
     mapping = {}
     for node in ast.parse(fixture.read_text()).body:
         if isinstance(node, ast.ClassDef):
             for item in node.body:
                 if isinstance(item, ast.FunctionDef) and item.name.startswith('test_'):
                     mapping[item.name] = node.name
+    TEST_CLASSES = mapping
     return mapping
 
 
-TEST_CLASSES = _test_classes()
+TEST_CLASSES = None
 
 
 def bound(test):
@@ -136,7 +146,7 @@ def bound(test):
     # i.e. the synthetic rows NegativeRunnerTests patches in.  preflight()
     # rejects a real row whose test is not defined there, so the fallback can
     # never silently mask a wrong class.
-    classname = TEST_CLASSES.get(test)
+    classname = _test_classes().get(test)
     if classname is None:
         classname = ('LifecycleTests' if test.startswith('test_collector_profile_')
                      else 'NegativeRunnerTests' if test.startswith('test_negative_')
@@ -144,11 +154,17 @@ def bound(test):
     return classname + '.' + test
 
 
-def preflight():
-    # Read-only: this never executes a mutant or bypasses the HEAD guard.
+def _anchor_errors():
+    # #2795 fix-r12（双锁契约回归，自 preflight() 拆出）：全表锚点预检的
+    # 检查面单独成函数，供两个锁窗共用——变异臂与 --check-anchors 走
+    # preflight() 自己的 60 s 锁窗；--memory 路径折进 rehearsal 的 900 s
+    # 锁窗（one() 首个 case、任何 child 之前做一次）。调用方必须持有 tree
+    # 锁：兄弟变异运行器在自己的 write 与 restore 之间可能把变异体留在
+    # 盘上，无锁读会把核对错在它不拥有的源上（#2795 fix-r4「读在锁内」）。
     errors = []
+    test_classes = _test_classes()
     for name, path, before, after, test in cases:
-        if test not in TEST_CLASSES:
+        if test not in test_classes:
             errors.append(f'UNKNOWN TEST {name}: {test} is not defined in {fixture.name}')
         text = path.read_text()
         if text.count(before) != 1:
@@ -158,10 +174,36 @@ def preflight():
                 compile(text.replace(before, after, 1), str(path), 'exec')
             except SyntaxError as error:
                 errors.append(f'INVALID compile {name}: {error}')
+    return errors
+
+
+def _anchor_report(errors):
+    # 任何锚点错误都是响亮的拒跑（2），干净则打唯一一行汇总。
     if errors:
         print('\n'.join(errors), file=sys.stderr)
         raise SystemExit(2)
     print(f'#1140 fix-r1..fix-r3 {len(cases)} unique anchors; every Python mutant compiles')
+
+
+def preflight():
+    # Read-only: this never executes a mutant or bypasses the HEAD guard.
+    # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：本文件已给变异臂加
+    # tree_lock，唯独 preflight() 留在锁外——兄弟变异运行器在自己的 write 与
+    # restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有的源上；
+    # 锁忙 / 读失败是拒跑（2）。
+    # #2795 fix-r12（双锁契约回归）：本 60 s 锁窗只属于变异臂与
+    # --check-anchors；--memory 路径不再先取这把锁（那会把 #1398 e2e 契约
+    # 钉的「tree_lock 恰好一次、timeout=900、锁先于 child」打破成两次
+    # 取锁），其全表预检折进 rehearsal 自己的 900 s 锁窗。与下方
+    # mutating_sources 窗口仍是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            errors = _anchor_errors()
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
+    _anchor_report(errors)
 
 
 def passed(result):
@@ -213,8 +255,8 @@ def execution_environment():
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
-    preflight()
     if sys.argv[1:] == ['--check-anchors']:
+        preflight()
         return 0
     output, baseline, only, memory = None, 'HEAD', None, False
     arguments = sys.argv[1:]
@@ -238,12 +280,31 @@ def main():
     if output is None:
         raise SystemExit('usage: negative_controls.py NEW_OUTPUT [--case NAME] '
                          '[--baseline TREE] [--memory] | --check-anchors')
+    if not memory:
+        # #2795 fix-r12（双锁契约回归）：--memory 路径不先走 preflight 的
+        # 60 s 锁窗（memory rehearsal 不变异源；先取 60 再取 900 会把
+        # #1398 e2e 契约钉的「tree_lock 恰好一次、timeout=900、锁先于
+        # child」打破成两次取锁），其全表锚点预检折进 rehearsal 自己的
+        # 900 s 锁窗（one() 首行）；变异臂不变：preflight 仍先于一切 case。
+        preflight()
     env = execution_environment()
     selected = cases if only is None else [row for row in cases if row[0] == only]
     if not selected:
         raise SystemExit('unknown negative case')
     out = new_output_directory(Path(output).resolve())
     results = []
+    # #2795 fix-r12（双锁契约回归）：--memory 路径的全表锚点预检折进
+    # rehearsal 的 900 s 锁窗——one() 只在锁内的循环里被调，首个 case 的
+    # 任何 child 之前先做一次（等价 preflight() 的检查面，不另取 60 s
+    # 锁；#1398 e2e 契约钉 tree_lock 恰好一次且 timeout=900、锁先于
+    # child）。变异臂不进此分支，预检仍在 main() 里先于一切 case。
+    # #2795 fix-r13（评审修 3，两家 boundary/concurrency 四条同族收敛）：
+    # began 是 --memory 的启动期边界——预检通过才算启动完成；启动期（900 s
+    # 取锁 + 预检）的失败由 main 的拒跑分支收口（rc 2、家族文案、不发布
+    # summary、撤走 .claim 认领形状），不再是 rc 1 + 一份看起来跑完了的
+    # 全 INVALID summary。
+    table_checked = False
+    began = False
     def publish():
         # Publish only after mutating_sources has verified restoration; a
         # cancellation below re-publishes every row as INVALID before raising.
@@ -262,7 +323,16 @@ def main():
         (out / (name + '.log')).write_text(result.stdout + result.stderr)
         return result
     def one(row):
+        nonlocal table_checked, began
         name, path, before, after, test = row
+        # #2795 fix-r12（双锁契约回归）：见 table_checked 的登记注释——
+        # --memory 的全表预检在 rehearsal 锁窗内、首个 child 之前做一次。
+        if memory and not table_checked:
+            table_checked = True
+            _anchor_report(_anchor_errors())
+        # #2795 fix-r13（评审修 3）：预检通过才算启动完成（began 翻转），
+        # 此后任何守卫失败走「作废已跑行 + 发布 INVALID + rc 1」的既有形状。
+        began = True
 
         def restored():
             nonlocal status, reason
@@ -341,6 +411,30 @@ def main():
             for row in selected:
                 one(row)
     except BaseException as error:
+        # #2795 fix-r13（评审修 3，DS/MM boundary+concurrency 四条同族收敛）：
+        # --memory 启动期（900 s 取锁 + 全表锚点预检，即 began 翻转之前）的
+        # 失败是拒跑，不是红跑——rc 2、家族文案（锁忙/读失败时）、不发布
+        # summary、撤走只含 .claim 的认领目录（specs/negative-controls/
+        # README.md「从未开跑 → 2 / 不发 summary 不留认领形状」），同路径
+        # 重跑也不再撞 #953 的目录复用拒绝；stale 锚点的错误行已由
+        # _anchor_report 打到 stderr。启动期之后（began 已翻转）的守卫失败
+        # 维持既有形状：作废已跑行、发布 INVALID summary、退 1（非 Exception
+        # 重抛）。注意 run_owned 超时抛 subprocess.TimeoutExpired 而非
+        # TimeoutError，不进拒跑分支；变异臂（非 memory）不进此分支，其
+        # preflight 拒跑发生在 new_output_directory 之前，本就无目录可撤。
+        if memory and not began:
+            try:
+                (out / '.claim').unlink()
+                out.rmdir()
+            except OSError:
+                pass
+            if isinstance(error, (TimeoutError, OSError, UnicodeDecodeError)):
+                print(f'tree lock or anchor read failed: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+            elif not isinstance(error, SystemExit):
+                print(f'memory rehearsal refused to start: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+            raise SystemExit(2)
         # A guard failure or a cancellation voids every row; a swallowed
         # Ctrl-C would keep a stale green summary. The per-case with above
         # has already restored the bytes and released the lease; publish

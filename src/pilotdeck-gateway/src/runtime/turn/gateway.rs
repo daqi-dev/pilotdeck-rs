@@ -808,8 +808,18 @@ const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_millis(50);
 #[cfg(not(test))]
 const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_secs(5);
 /// Tests observe the derived bound with values short enough to time.
+/// #2482: the e2e wiring pair (`the_declared_cleanup_budget_reaches_the_
+/// initialization_teardown` and `..._does_not_outlive_the_declared_bound`)
+/// sleeps at SLACK-derived offsets around this slack, so its width *is* the
+/// pair's discrimination margin. 10 ms left only 5–10 ms of margin between
+/// the fixture sleep and the cut — a load spike flipped the boolean under
+/// observation (a false FAIL), so the test constant is a full second: each
+/// side of the window is now ~500 ms, two orders past scheduler jitter. The
+/// exact bound arithmetic stays pinned deterministically by
+/// `a_slow_refused_owner_does_not_shrink_the_cleanup_bound` (pure values,
+/// no clock); the e2e pair only needs to catch gross wiring regressions.
 #[cfg(test)]
-const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
+const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_secs(1);
 
 /// #1949: tokio turns a deadline into a timer tick by adding
 /// `Duration::from_nanos(999_999)` through the *unchecked* `Instant +

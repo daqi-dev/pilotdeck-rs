@@ -1424,6 +1424,48 @@ class MatrixMainStartupTests(unittest.TestCase):
             self.assertEqual(list(out.iterdir()), [],
                              '#1734 nothing written into a taken directory')
 
+    def test_check_mode_refuses_when_the_tree_lock_is_busy(self):
+        # #2795 fix-r6（评审 boundary#1/concurrency#3）：fix-r5 把 --check 的
+        # 读面包进 anchor_read_window，但忙锁拒跑这一半没有机检——装置将来
+        # 被改动（吞掉锁异常继续读）不会有人红。这里驱动真实 matrix_main 的
+        # --check 分支：忙锁 → SystemExit(2) + 装置统一拒跑文案 + 点名锁
+        # 等待异常。fix-r7（评审 boundary#3）：--check 分支没有 mkdir 面
+        # （连输出目录参数都不收），此前收尾的 out.exists() 断言恒真，
+        # 已删。「拒跑不占证据目录」的契约在 matrix_main run 分支由同模块
+        # test_usage_and_unknown_selection_are_never_started /
+        # test_unusable_target_is_never_started 钉（usage/unknown/
+        # missing target/unusable target 的 refuse 都发生在 claim_dir
+        # 之前）；真实会建目录的另一入口（background-panic）由
+        # test_negative_roster_guards.py 的 BackgroundPanicRunRefusal 钉
+        # （fix-r8 boundary#6 改归属：此前错归给 background-panic 一家）。
+        class BusyLock:
+            def __call__(self, *args, **kwargs):
+                return self
+
+            def __enter__(self):
+                raise TimeoutError('check drive: lock timeout (#2795 fix-r6)')
+
+            def __exit__(self, *_exc):
+                return False
+
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            source = root / 'fixture.py'
+            source.write_text('original')
+            rows = [('first', source, 'original', 'changed', ['cell'])]
+            errors = io.StringIO()
+            with patch('negative_process.tree_lock', BusyLock()), \
+                    contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as caught:
+                    suite.matrix_main(root, source, 'prefix::', rows,
+                                      passed_count=1, child_count=1,
+                                      paths=[source], args=['--check'])
+            self.assertEqual(caught.exception.code, 2,
+                             '#2795 a busy tree lock is a refusal to start, '
+                             'never an unlocked read or a red run')
+            self.assertIn('tree lock or anchor read failed', errors.getvalue())
+            self.assertIn('TimeoutError', errors.getvalue())
+
 
 class ResultRowSchemaTests(unittest.TestCase):
     """#1579 P1: `matrix_main` rows must stay inside the registered schema.

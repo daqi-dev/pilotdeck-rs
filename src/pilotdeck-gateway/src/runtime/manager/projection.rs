@@ -343,7 +343,7 @@ impl<R: ManagerProjectResolver> ManagerProjection<R> {
 /// a thrown TS error: the real `managerSessions` / `managerBrowsers` throw
 /// (`InProcessGateway.ts:2828-2834`, `createLocalGateway.ts:1259-1270`), and
 /// the WS connection answers `{ok:false,error:{code,message}}`
-/// (`GatewayWsConnection.ts:231-260`), so the entry must return a request
+/// (`GatewayWsConnection.ts:223-255`), so the entry must return a request
 /// failure rather than a successful response whose body happens to be an
 /// error object (#2309, the #1456 `MemoryDispatch` shape).
 #[derive(Clone, Debug, PartialEq)]

@@ -2200,6 +2200,52 @@ async fn snapshot_success_matches_ts() {
         .expect("#1231 snapshot registry disposal");
 }
 
+/// #2797: the snapshot family's only production consumption point maps a
+/// requires_host boundary to `CAPABILITY_UNAVAILABLE`
+/// (native_process/management.rs:236-242), like the skills (`skill_error`)
+/// and memory (`memory_dispatch`) siblings. The trigger is the production
+/// errno path — a `manifest.json` symlinked to a directory reads as `EISDIR`
+/// (the storage oracle's `manifest-read-dir` shape) and `snapshot_list`
+/// admits no errno, so the projection answers the R19 host boundary, which
+/// this route must surface as the host-dependent refusal instead of a
+/// `NODE_IO_REQUIRED` wire error.
+#[cfg(unix)]
+#[tokio::test]
+async fn snapshot_requires_host_reads_as_capability_unavailable() {
+    let (scratch, requests) = setup();
+    let manifest_dir = requests
+        .options
+        .home
+        .join("storage/workspaces/a8-main/sessions/s/snapshots/x");
+    std::fs::create_dir_all(&manifest_dir).expect("#2797 create snapshot dir");
+    std::os::unix::fs::symlink(&manifest_dir, manifest_dir.join("manifest.json"))
+        .expect("#2797 plant manifest.json symlink to a directory");
+    negative_assert_eq!(
+        call(
+            &requests,
+            &json!("snapshot_list"),
+            &json!({"projectKey": "<root>/project"}),
+            &scratch.0
+        )
+        .await,
+        json!({"error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Native gateway cannot execute this host-dependent operation."
+        }}),
+        "#2797 host-dependent snapshot read rejected"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2797 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2797 registry disposal");
+}
+
 #[tokio::test]
 async fn skill_import_success_conflict_and_overwrite_match_ts() {
     let (scratch, requests) = setup();
@@ -2760,9 +2806,11 @@ impl crate::runtime::memory::ProjectMemoryRegistry for ParkedMemoryRegistry {
 #[tokio::test]
 async fn memory_management_request_disabled_gateway_returns_unavailable() {
     // Exercises the spawn_blocking branch in management_request for memory
-    // methods: setup() uses MemoryGateway::disabled(), so memory_dispatch
-    // returns None → CAPABILITY_UNAVAILABLE. Without this test the branch
-    // had zero coverage in the #1231 suite (#1322 fix-r2 P1).
+    // methods: setup() uses MemoryGateway::disabled() (projection: None), so
+    // memory_dispatch takes the Error arm — list() throws
+    // CAPABILITY_UNAVAILABLE before any registry is consulted, and the thrown
+    // code/message reach the wire. Without this test the branch had zero
+    // coverage in the #1231 suite (#1322 fix-r2 P1).
     let (scratch, requests) = setup();
     let params = expand(&json!({"projectKey": "<root>/project"}), &scratch.0);
     let result = requests.management_request("memory_list", &params).await;
@@ -2793,6 +2841,69 @@ async fn memory_management_request_disabled_gateway_returns_unavailable() {
         String::from_utf16_lossy(error.message.units()),
         "Gateway memory provider is unavailable.",
         "#1456 the thrown DialogGatewayError message reaches the wire"
+    );
+}
+
+/// A registry whose provider hits the R19 host boundary (`requires_host`):
+/// `MemoryGateway::dispatch` answers `Forward`, and the isolated native
+/// process must answer `CAPABILITY_UNAVAILABLE` with the host-dependent
+/// message — the same boundary the snapshot family pins (#2797). This is the
+/// `MemoryDispatch::Forward` arm of `management.rs`'s `memory_dispatch`
+/// (the `Error` arm is covered by the disabled-gateway test above); without
+/// a pair the arm had no bound mutation (#2795 fix-r1 条4).
+struct HostBoundaryMemoryRegistry;
+impl crate::runtime::memory::ProjectMemoryRegistry for HostBoundaryMemoryRegistry {
+    fn resolve_project_key(
+        &self,
+        _key: &JsString,
+    ) -> Result<JsString, crate::runtime::memory::MemoryProviderError> {
+        Err(crate::runtime::memory::MemoryProviderError::host_required())
+    }
+    fn memory_management(
+        &self,
+        _key: &JsString,
+    ) -> Result<
+        Option<Arc<dyn crate::runtime::memory::MemoryManagementService>>,
+        crate::runtime::memory::MemoryProviderError,
+    > {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn memory_host_boundary_reads_as_capability_unavailable() {
+    let (scratch, mut requests) = setup();
+    requests.memory = Arc::new(crate::runtime::memory::gateway::MemoryGateway::new(
+        Arc::new(HostBoundaryMemoryRegistry),
+        requests.options.project.clone(),
+    ));
+    let params = expand(&json!({"projectKey": "<root>/project"}), &scratch.0);
+    let result = requests.management_request("memory_list", &params).await;
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2795 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2795 registry disposal");
+    // The Forward arm is the host boundary: the isolated native process has
+    // no Node host to forward to, so the answer is the CAPABILITY_UNAVAILABLE
+    // refusal, not a synthesized response body and not a code-less error.
+    let error = result
+        .expect("#2795 memory_list must be a management method")
+        .expect_err("#2795 a host-boundary memory_list must be a request failure");
+    negative_assert_eq!(
+        error.code.as_str(),
+        "CAPABILITY_UNAVAILABLE",
+        "#2795 memory_list via management_request on a host-boundary registry"
+    );
+    negative_assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Native gateway cannot execute this host-dependent operation.",
+        "#2795 the host-dependent refusal message reaches the wire"
     );
 }
 

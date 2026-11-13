@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_selection import baseline_passed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import anchor_read_window, mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = 'src/pilotdeck-gateway/src/runtime/background.rs'
@@ -113,12 +113,18 @@ def main():
     if not os.environ.get('CARGO_TARGET_DIR'):
         sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('out', type=Path)
+    parser.add_argument('out', nargs='?', type=Path,
+                        help='fresh evidence directory; not needed for --check-anchors')
     parser.add_argument('--only', action='append', default=[], help='mutant name; repeat to select more')
     parser.add_argument('--check-anchors', action='store_true', help='validate mutations without writing sources or running cargo')
     args = parser.parse_args()
-    out = args.out.resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    if args.check_anchors:
+        if args.out is not None:
+            parser.error('--check-anchors does not take an output directory')
+    else:
+        if args.out is None:
+            parser.error('out is required unless --check-anchors is used')
+    out = args.out.resolve() if args.out is not None else None
     if args.only:
         known = {mutant[0] for mutant in mutants}
         if set(args.only) - known or len(args.only) != len(set(args.only)):
@@ -129,11 +135,23 @@ def main():
         selected = mutants
 
     # Fail on stale anchors before any mutation; never classify an invalid control as SURVIVED.
-    for name, relative, pattern, replacement, _test, _anchor in selected:
-        mutate(name, (root / relative).read_text(), pattern, replacement)
+    # #2795 fix-r5（评审 sibling P1#2 + simplify P2#1 结构性收口）：锚点预检环
+    # 此前是裸读（--check-anchors 与变异轮共用）——兄弟变异窗口中间的变异体
+    # 会被核对成 stale anchor 假红；改走共享 anchor_read_window 装置（锁内读 +
+    # rc 2 拒跑，attach-followups-a fix-r4 同形：预检环两态共用一个 60 s 锁窗口，
+    # 与后续 mutating_sources 顺序取锁，无同进程嵌套）。
+    # #2795 fix-r6（评审 sibling#6/concurrency#1）：预检窗口必须在 out.mkdir
+    # 之前（run/check 共用）——锁忙拒跑（rc 2）发生在目录创建之后会留下一个
+    # 空证据目录，重跑同路径必 FileExistsError，破坏「拒跑=从未开始、不占
+    # 证据目录」契约（matrix_main test_negative_suite.py 同形明测）。
+    with anchor_read_window(root, 'background-panic anchor preflight'):
+        for name, relative, pattern, replacement, _test, _anchor in selected:
+            mutate(name, (root / relative).read_text(), pattern, replacement)
     if args.check_anchors:
         print(f'{len(selected)} mutation anchors validated; no sources changed')
         sys.exit(0)
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=False)
 
     def record(name, text):
         with (out / name).open('x') as file:

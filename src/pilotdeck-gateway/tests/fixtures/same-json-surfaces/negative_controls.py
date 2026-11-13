@@ -360,15 +360,34 @@ def main():
         registered(cases, EXPECTED_NAMES)
     except Exception as error:
         refuse('case roster drifted from the static inventory: ' + repr(error))
-    if not preflight():
-        return 2
+    arguments = sys.argv[1:]
+    memory = '--memory' in arguments
+    if not memory:
+        # #2795 fix-r4（评审 sibling P1 同族跟改，半修补齐）：preflight() 的锚点读
+        # （含 bound() 的 test_safety 读）也要持树锁读——兄弟变异运行器在自己的
+        # write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它不拥有
+        # 的源上；锁忙 / 读失败是拒跑（2）。
+        # #2795 fix-r13（评审修 1，DS/MM sibling P1 双谱系同撞）：本 60 s 锁窗只
+        # 属于 --check-anchors 与变异臂；--memory 路径不再先取这把锁（先取 60
+        # 再取 900 会把 SameJsonSurfaces.test_memory_rehearsal_holds_tree_lock
+        # 钉的「tree_lock 恰一次、timeout=900、锁先于 child」打破成两次取锁，
+        # 冻结尺子假红），其全表预检折进 rehearsal 自己的 900 s 锁窗（one() 首个
+        # case、任何 child 之前一次）。本窗口与下方 mutating_sources 窗口仍是
+        # 顺序关系，锁先释放再重取，无同进程嵌套。
+        try:
+            with tree_lock(root, timeout=60):
+                preflight_ok = preflight()
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            print(f'tree lock or anchor read failed: '
+                  f'{type(error).__name__}: {error}', file=sys.stderr)
+            return 2
+        if not preflight_ok:
+            return 2
     # Before the evidence directory is claimed: a drifted budget invariant is
     # "never started", like every other startup refusal (#2425).
     require_lease_budget_below_max_age()
     if sys.argv[1:] == ['--check-anchors']:
         return 0
-    arguments = sys.argv[1:]
-    memory = '--memory' in arguments
     arguments = [a for a in arguments if a != '--memory']
     if not arguments:
         refuse('usage: negative_controls.py NEW_OUTPUT [--memory] [NAME ...] | --check-anchors')
@@ -378,6 +397,11 @@ def main():
         refuse(str(error))
     out = claim_dir(arguments[0])
     results = []
+    # #2795 fix-r13（评审修 1）：--memory 的全表锚点预检折进 rehearsal 的
+    # 900 s 锁窗——one() 只在锁内的循环里被调，首个 case 的任何 child 之前
+    # 先做一次（preflight() 本体不再取锁，读面仍在锁内）。变异臂不进此
+    # 分支，预检仍在 main() 的 60 s 锁窗里先于一切 case。
+    table_checked = False
     def run(label, command):
         # The same constant the reserve is charged at, so a call-site timeout
         # edit cannot drift past what lease_budget_left reserved (#2425).
@@ -385,7 +409,22 @@ def main():
         (out / (label + '.log')).write_text(value.stdout + value.stderr)
         return value
     def one(row, restore=False):
+        nonlocal table_checked
         name, path, old, new, test = row
+        # #2795 fix-r13（评审修 1）：见 table_checked 的登记注释——--memory 的
+        # 全表预检在 rehearsal 锁窗内、首个 child 之前做一次。预检失败或读失败
+        # 沿用 #2431 启动拒跑形状（rc 2、撤走空认领目录、不发 summary），不是
+        # rc 1 + 一份看起来跑完了的 summary。
+        if memory and not table_checked:
+            table_checked = True
+            try:
+                preflight_ok = preflight()
+            except (TimeoutError, OSError, UnicodeDecodeError) as error:
+                print(f'tree lock or anchor read failed: '
+                      f'{type(error).__name__}: {error}', file=sys.stderr)
+                startup_refusal(error)
+            if not preflight_ok:
+                startup_refusal(ValueError('anchor table preflight failed'))
         status, reason = 'INVALID', 'not run'
         fixture, full = bound(test)
         command = [sys.executable, '-I', '-B', str(fixture), full]

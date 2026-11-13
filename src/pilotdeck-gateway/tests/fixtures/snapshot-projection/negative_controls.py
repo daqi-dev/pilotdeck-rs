@@ -13,6 +13,11 @@ worktree root, e.g.:
     CARGO_TARGET_DIR=/abs/cargo-target \
     python3 src/pilotdeck-gateway/tests/fixtures/snapshot-projection/negative_controls.py out/
 
+``--audit`` only checks the roster and every source anchor against the
+current tree; it does not mutate, compile, or require a commit
+(manager-gateway's mode, added so #2799's criterion is checkable before the
+coordinator's full run).
+
 The long table is intentionally not run inside the delivery sandbox; the
 coordinator runs it on the host after commit (see RESULT.md).
 """
@@ -28,7 +33,7 @@ from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse_unusable_target, registered,
                                 verdict_exit)  # noqa: E402
 from negative_process import (mutating_sources, node_version, run_owned,
-                              wait_for_slot)  # noqa: E402
+                              tree_lock, wait_for_slot)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / "src/pilotdeck-gateway/src"
@@ -42,6 +47,7 @@ FIXTURES = ROOT / "src/pilotdeck-gateway/tests/fixtures"
 # those literals in this file. Checked row by row by
 # fixtures/test_negative_discovery_anchors.py.
 DISCOVERY_ANCHORS = (
+    'src/dispatch.rs',
     'src/metadata.rs',
     'fixtures/negative_panic.py',
     'fixtures/negative_process.py',
@@ -249,6 +255,19 @@ mutations = [
         "storage::workspace_snapshot::provider_not_found_keeps_raw_snapshot_units",
         "#888 raw units survive",
     ),
+    # #2799: the #2308 fix-r3 executed-denominator positive control
+    # (`snapshot_methods_stay_outside_default_dispatch`) had no paired
+    # verdict row — the same LOCAL_METHODS-leak shape the manager-gateway
+    # family registers as `dispatch-registration`.
+    (
+        "dispatch-registration",
+        SOURCE / "dispatch.rs",
+        '    "native_archive_artifact",\n];',
+        '    "native_archive_artifact",\n    "snapshot_list",\n];',
+        "lib",
+        "runtime::snapshot::tests::snapshot_methods_stay_outside_default_dispatch",
+        "#888 snapshot_list must not join LOCAL_METHODS in this package",
+    ),
 ]
 
 # The full roster, in table order, ending with the two data mutations. A run
@@ -275,6 +294,7 @@ EXPECTED_NAMES = (
     "workspace-filter-dropped",
     "restore-target-fallback-undefined",
     "provider-not-found-lossy",
+    "dispatch-registration",
     "workspace-snapshot-oracle-truncated",
     "generator-guard-bypassed",
 )
@@ -321,7 +341,19 @@ def run_test(target, test, env):
 
 
 def main():
-    requested = sys.argv[2:]
+    # `--audit` strips itself from the positional arguments; with it the run
+    # stops after the roster and anchor checks, before any output directory is
+    # claimed.
+    positional = [arg for arg in sys.argv[1:] if arg != "--audit"]
+    audit = len(positional) != len(sys.argv[1:])
+    if not positional and not audit:
+        print(
+            "usage: negative_controls.py [--audit] OUT_DIR [mutation ...]",
+            file=sys.stderr,
+        )
+        return 2
+    out_arg = positional[0] if positional else None
+    requested = positional[1:]
     # A repeated name is a caller-side typo (`a a` for `a b`), not a subset;
     # folding it into a set turns a mistyped selection into a green run over a
     # smaller scope, the same class of false green as an unknown name (#1734).
@@ -344,10 +376,48 @@ def main():
     except ValueError as error:
         print(f"mutation roster drifted: {error}", file=sys.stderr)
         return 2
+    # Unknown names are refused before any branch can print a green summary:
+    # with a typo'd selection the old order reached the --audit print with
+    # `rows == []`, said `#888 anchors: 0/0` and exited 0 -- the zero
+    # denominator false green that select()/verdict_exit refuse everywhere
+    # else in the family (#1666 / #1734, #2795 fix-r1 条2).
     unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
+    if audit:
+        # A data-only selection (oracle truncation, generator bypass) has no
+        # source anchor; an empty rows list is not an anchors-green.
+        if not rows:
+            print(
+                "no source mutations selected: --audit has no anchors to check",
+                file=sys.stderr,
+            )
+            return 2
+        # Anchors only: no mutation, no compile, no committed-tree requirement
+        # (manager-gateway's mode; a stale anchor is an error, never a
+        # SURVIVED verdict that would only surface in the coordinator's run).
+        # Hold the tree lock while reading (utf16-residual-sort's --check-
+        # anchors precedent): a sibling mutating runner may have a mutant on
+        # disk between its write and restore phases, which would make this
+        # read-only check count `0` and report a spurious stale anchor.
+        try:
+            with tree_lock(ROOT, timeout=60):
+                for name, path, before, _after, _target, _test, _marker in rows:
+                    count = path.read_text(encoding="utf-8").count(before)
+                    if count != 1:
+                        print(
+                            f"stale anchor {name}: expected 1 occurrence, found {count}",
+                            file=sys.stderr,
+                        )
+                        return 1
+        except (OSError, UnicodeDecodeError) as error:
+            # TimeoutError is an OSError subclass: a busy lock or an unreadable
+            # anchor source is a refusal (2), not a miscounted verdict.
+            print(f"--audit tree lock or read failed: {error}", file=sys.stderr)
+            return 2
+        print(f"#888 anchors: {len(rows)}/{len(rows)} unique")
+        return 0
     # The family contract, not a local copy: absent/empty/blank targets and the
     # dot/root/src values are refused by the shared rule, and an already
     # existing directory is a "never started" (2) rather than a bare traceback
@@ -356,7 +426,7 @@ def main():
         print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
         return 2
     refuse_unusable_target()
-    out = claim_dir(sys.argv[1])
+    out = claim_dir(out_arg)
     env = os.environ.copy()
     paths = sorted({row[1] for row in rows} | {ORACLE, GENERATOR})
     # Verdicts and baseline diagnostics are kept apart by an explicit flag, not

@@ -46,7 +46,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (mutating_sources, new_output_directory, run_owned,
+                              tree_lock)
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -190,11 +191,24 @@ def mutant_ok(code, verdict, case):
 
 
 def check_anchors(selected):
-    for name, source, old, _new in selected:
-        count = source.read_text().count(old)
-        if count != 1:
-            print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(ROOT)}')
-            return 2
+    # #2795 fix-r4（评审 sibling P1 同族跟改）：本入口与已修的
+    # session-domain-expectations / session-domain-lock-release 变异同一批
+    # gateway-parity 源，锚点核对也要持树锁读——兄弟变异运行器在自己的
+    # write 与 restore 之间可能把变异体留在盘上，无锁读会把核对错在它不
+    # 拥有的源上；锁忙 / 读失败是拒跑（2），不是宿主会读成 rc 1 的裸
+    # traceback。本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，
+    # 锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            for name, source, old, _new in selected:
+                count = source.read_text().count(old)
+                if count != 1:
+                    print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(ROOT)}')
+                    return 2
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        return 2
     print(f'{len(selected)} anchors: ok')
     return 0
 

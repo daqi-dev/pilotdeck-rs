@@ -104,6 +104,15 @@ SCRIPTS = (
     # refuse_unusable_target + verdict_exit); its startup refusals join the
     # machine-checked matrix here, and its --check is also wired into CI.
     ('issue-2495/negative_controls.py', (), ()),
+    # #2795 fix-r1（MM sibling#3）: the #2069 host-model-port fixture was born
+    # off the SCRIPTS matrix (snapshot-era gap); its main() already speaks the
+    # full contract (registered + select + claim_dir + missing_target/
+    # refuse_unusable_target + verdict_exit), so its startup refusals join the
+    # machine-checked matrix here. The target modes never reach cargo —
+    # select() with no names returns the whole roster, then missing_target()/
+    # refuse_unusable_target() refuse before any build -- no exemption
+    # needed (the review's timeout caveat does not apply).
+    ('host-model-port/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

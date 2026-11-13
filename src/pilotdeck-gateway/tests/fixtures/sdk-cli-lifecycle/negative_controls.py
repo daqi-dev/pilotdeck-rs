@@ -13,7 +13,8 @@ sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[5]
 shared = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path.insert(0, str(shared))
-from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               tree_lock, write_source_atomic)
 from negative_suite import ReceiptRun, judge, passed
 run_tests = root / 'src/pilotdeck-cli/tests/sdk_run_exit.rs'
 settings = root / 'src/pilotdeck-cli/tests/sdk_settings_exit.rs'
@@ -128,12 +129,24 @@ def main():
         if not mutations:
             # #1364: an empty manifest must fail closed, not "0/0 valid".
             raise SystemExit('#1136 anchors: empty mutation manifest; refusing to pass')
-        errors = []
-        for row in mutations:
-            try:
-                check(row)
-            except Exception as error:
-                errors.append(str(error))
+        # #2795 fix-r4（评审 sibling P1 同族跟改）：sdk 族互变异同一批源
+        # （common/sdk_exit.rs、sdk/turn.rs、sdk/transport.rs 等），锚点核对要持
+        # 树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+        # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑
+        # （2）。本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，
+        # 锁先释放再重取，无同进程嵌套。
+        try:
+            with tree_lock(root, timeout=60):
+                errors = []
+                for row in mutations:
+                    try:
+                        check(row)
+                    except Exception as error:
+                        errors.append(str(error))
+        except (TimeoutError, OSError, UnicodeDecodeError) as error:
+            print(f'tree lock or anchor read failed: '
+                  f'{type(error).__name__}: {error}', file=sys.stderr)
+            raise SystemExit(2)
         for error in errors:
             print('INVALID ' + error)
         print(f'#1136 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid')

@@ -13,7 +13,7 @@ import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
-                               write_source_atomic)
+                               tree_lock, write_source_atomic)
 from negative_selection import registered, refuse
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
@@ -263,18 +263,30 @@ def check_anchors(rows=None, stdout=None, stderr=None):
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
     errors = []
-    # #2170 P3: the count is genuinely deduplicated per (path, old) anchor —
-    # the old "N unique anchors" wording counted table rows.
-    seen, duplicates = set(), []
-    for name, path, old, new, test, marker in rows:
-        key = (str(path), old)
-        if key in seen:
-            duplicates.append(name)
-        seen.add(key)
-        error = row_error(name, path.read_text(encoding='utf-8').count(old),
-                          old, new, test, marker)
-        if error:
-            errors.append(error)
+    # #2795 fix-r4（评审 sibling P1 同族跟改；MM boundary#2 指认 CI 已接线）：
+    # 锚点核对真实读 8 个产品源（dispatch.rs 是 ≥6 个 runner 的共享变异目标），
+    # 要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能把变异体
+    # 留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是拒跑（2）。
+    # 本窗口只包只读核对面，与后续 mutating_sources 是顺序关系，锁先释放
+    # 再重取，无同进程嵌套。
+    try:
+        with tree_lock(root, timeout=60):
+            # #2170 P3: the count is genuinely deduplicated per (path, old) anchor —
+            # the old "N unique anchors" wording counted table rows.
+            seen, duplicates = set(), []
+            for name, path, old, new, test, marker in rows:
+                key = (str(path), old)
+                if key in seen:
+                    duplicates.append(name)
+                seen.add(key)
+                error = row_error(name, path.read_text(encoding='utf-8').count(old),
+                                  old, new, test, marker)
+                if error:
+                    errors.append(error)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=stderr)
+        return 2
     for error in errors:
         print(error, file=stdout)
     if not rows:

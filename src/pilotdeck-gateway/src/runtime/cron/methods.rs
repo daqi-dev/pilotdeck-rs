@@ -10,7 +10,7 @@
 //! has to reach into the manager's internals.
 //!
 //! `frame.params` crosses here exactly as the WS layer passes it
-//! (GatewayWsConnection.ts:464-470: `frame.params as never`): an absent
+//! (GatewayWsConnection.ts:464-475: `frame.params as never`): an absent
 //! `params` is `undefined`, and the adapter's property reads then throw
 //! V8's `Cannot read properties of undefined (reading '<field>')` — the one
 //! exception is `cron_list`, whose `input = {}` default (CronRuntime.ts:281)

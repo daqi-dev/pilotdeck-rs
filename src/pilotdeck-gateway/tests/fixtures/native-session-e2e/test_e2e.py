@@ -796,8 +796,12 @@ class E2ETests(unittest.TestCase):
                 os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
             try:
                 with tempfile.TemporaryDirectory(prefix='pdrs-1398-e2e-') as folder:
+                    # #2795 fix-r15（MM sibling#2，孪生同步 plan:429 的 r14 改动）：
+                    # tree_lock 已被桩成空操作，真 _anchor_errors 读会发生在假锁
+                    # 之下——本用例只断言锁序，真锚点读交给 preflights/stale 两条。
                     with mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
                             mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch.object(runner, '_anchor_errors', return_value=[]), \
                             mock.patch('sys.stdout', new_callable=io.StringIO), \
                             mock.patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
                                                            '--case', 'memory-rehearsal-without-lock']):
@@ -807,6 +811,246 @@ class E2ETests(unittest.TestCase):
                     del os.environ['CARGO_TARGET_DIR']
             self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
                             and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_preflights_anchors_inside_the_lock(self):
+        # #2795 fix-r13（评审修 4）：--memory 的全表锚点预检（fix-r12 折进
+        # rehearsal 锁窗的那一块）此前零钉子——删掉 one() 里的预检块，锁窗/
+        # 取锁次数契约不红，预检被挪出锁窗（回到 #2795 fix-r4 的缺陷形状）
+        # 三重机检都抓不到。本测试给预检加可观测事件，断言「恰一次、在锁
+        # 内、先于任何 child」。
+        marker = '#2795 memory rehearsal preflights the whole anchor table inside the lock, before any child'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_memory_precheck', path)
+            runner = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), runner.__dict__)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_errors():
+                order.append('precheck')
+                return []
+
+            def fake_report(errors):
+                order.append('report')
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-e2e-precheck-') as folder:
+                    with mock.patch.object(runner, 'tree_lock', recording_tree_lock), \
+                            mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch.object(runner, '_anchor_errors', fake_errors), \
+                            mock.patch.object(runner, '_anchor_report', fake_report), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory']):
+                        runner.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((runner.root,), {'timeout': 900})]
+                            and order[:3] == ['lock', 'precheck', 'report']
+                            and order.count('precheck') == 1
+                            and order.index('precheck') < order.index('child'), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_refuses_stale_anchor_table(self):
+        # #2795 fix-r13（评审修 3②/③ + 修 4「删块即红」负控）：--memory 启动期
+        # 撞上过期锚点表是拒跑（rc 2、锚点错误行上 stderr、不发布 summary、
+        # 撤走 .claim 认领目录、任何 child 未起），不是 rc 1 + 一份看起来跑完
+        # 了的全 INVALID summary。删掉 one() 的预检块或撤掉 main 的拒跑分支
+        # 后本测试转红。
+        marker = '#2795 memory rehearsal refuses a stale anchor table before any child runs'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_memory_stale', path)
+            runner = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), runner.__dict__)
+            # The stale bytes are built by concatenation so the literal never
+            # appears in this file (a self-anchoring row would count 1 and the
+            # precheck would pass); the target is the native evidence script,
+            # never this test file itself.
+            stale = [('stale-anchor-probe', runner.native,
+                      'r13 stale anchor probe bytes ' + 'that appear nowhere', 'x',
+                      'test_memory_rehearsal_holds_tree_lock')]
+            launched = []
+
+            class recording_lock:
+                def __enter__(self):
+                    pass
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def fake_run_owned(command, **_keywords):
+                launched.append(list(command))
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-e2e-stale-') as folder:
+                    out = Path(folder) / 'out'
+                    with mock.patch.object(runner, 'tree_lock',
+                                           lambda *_a, **_k: recording_lock()), \
+                            mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch.object(runner, 'cases', stale), \
+                            mock.patch.object(runner, 'messages',
+                                               {'stale-anchor-probe': 'unused'}), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                            mock.patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                           '--case', 'stale-anchor-probe']):
+                        try:
+                            runner.main()
+                            raised = None
+                        except SystemExit as exit_code:
+                            raised = exit_code
+                    self.assertTrue(raised is not None and raised.code == 2
+                                    and not launched
+                                    and 'STALE ANCHOR stale-anchor-probe' in stderr.getvalue()
+                                    and not (out / 'summary.json').exists()
+                                    and not out.exists(), marker)
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_refuses_a_busy_tree_lock(self):
+        # #2795 fix-r13（评审修 3①）：兄弟变异运行器持锁窗口（cargo no-run
+        # ≤900 + bound 300 + restored 300 ≈ 1500 s）长于 900 s 取锁上限时，
+        # 忙锁是拒跑（rc 2 + 家族文案 + 不发布 summary + 撤走认领目录），
+        # 不是 rc 1 + 全 INVALID summary（#2431 家族形状）。
+        marker = '#2795 memory rehearsal refuses a busy tree lock with rc 2 and no evidence'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_memory_busy', path)
+            runner = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), runner.__dict__)
+            launched = []
+
+            class refusing_lock:
+                def __enter__(self):
+                    raise TimeoutError('probe: source lock busy')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def fake_run_owned(command, **_keywords):
+                launched.append(list(command))
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-e2e-busy-') as folder:
+                    out = Path(folder) / 'out'
+                    with mock.patch.object(runner, 'tree_lock',
+                                           lambda *_a, **_k: refusing_lock()), \
+                            mock.patch.object(runner, 'run_owned', fake_run_owned), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                            mock.patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                           '--case', 'memory-rehearsal-without-lock']):
+                        try:
+                            runner.main()
+                            raised = None
+                        except SystemExit as exit_code:
+                            raised = exit_code
+                    self.assertTrue(raised is not None and raised.code == 2
+                                    and not launched
+                                    and 'tree lock or anchor read failed: TimeoutError' in stderr.getvalue()
+                                    and not (out / 'summary.json').exists()
+                                    and not out.exists(), marker)
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_memory_rehearsal_publishes_invalid_after_began(self):
+        # #2795 fix-r14（DS sibling#2「配对缺一半」，与 plan 同形）：启动期拒跑
+        # （忙锁/stale 锚点 → rc 2、不发布 summary）只钉了「未开始」一侧；本条
+        # 钉 began 翻转之后的守卫失败仍是既有形状——作废行 + 发布 INVALID
+        # summary，不冒充拒跑。
+        # #2795 fix-r15（DS boundary#1 + MM sibling#3/concurrency#1 四撞）：r14
+        # 的桩抛 RuntimeError，被 one() 自己的 except Exception 吞成
+        # status='INVALID'，main 的拒跑分支一次都没求值——把「if memory and
+        # not began」放宽成「if memory」该测试不红。现在桩抛 KeyboardInterrupt
+        # （BaseException，越过 one() 的 except Exception），e2e 的 main 在
+        # began 之后作废行、发布 INVALID summary、重抛非 Exception（保持响
+        # 亮），测试接住 BaseException 后断言 summary 已发布且行 INVALID。若
+        # 把 main 的拒跑分支放宽到 began 之后（把「if memory and not began」
+        # 改成「if memory」），该失败会走拒跑：撤目录、SystemExit(2)、无
+        # summary——本测试转红。
+        marker = '#2795 memory rehearsal publishes an INVALID summary when the guard fails after it began'
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_memory_began', path)
+            runner = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), runner.__dict__)
+
+            class recording_lock:
+                def __enter__(self):
+                    pass
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def failing_run_owned(command, **_keywords):
+                raise KeyboardInterrupt('probe: guard failure after began')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(Path(__file__).resolve().parents[5] / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2795-e2e-began-') as folder:
+                    out = Path(folder) / 'out'
+                    with mock.patch.object(runner, 'tree_lock',
+                                           lambda *_a, **_k: recording_lock()), \
+                            mock.patch.object(runner, 'run_owned', failing_run_owned), \
+                            mock.patch.object(runner, '_anchor_errors', return_value=[]), \
+                            mock.patch('sys.stdout', new_callable=io.StringIO), \
+                            mock.patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                            mock.patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                           '--case', 'memory-rehearsal-without-lock']):
+                        try:
+                            runner.main()
+                            raised = None
+                        except BaseException as error:
+                            raised = error
+                    summary = json.loads((out / 'summary.json').read_text())
+                    rows = summary['controls'] if isinstance(summary, dict) else summary
+                    self.assertTrue(raised is not None
+                                    and isinstance(raised, KeyboardInterrupt)
+                                    and 'probe: guard failure after began' in str(raised)
+                                    and len(rows) == 1 and rows[0]['status'] == 'INVALID'
+                                    and 'refused to start' not in stderr.getvalue()
+                                    and 'tree lock or anchor read failed' not in stderr.getvalue(), marker)
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

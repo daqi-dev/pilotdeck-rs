@@ -25,7 +25,7 @@ TESTS = ROOT / 'src/pilotdeck-gateway/src/storage/stimulus_tests.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_storage_stimulus.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 # The entry-tick receipt write, and the lazy variant of it that defers the
@@ -324,13 +324,24 @@ def main():
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
     check_binding_scope()
-    stale = []
-    for name, path, old, new, test, assertion in mutations:
-        text = path.read_text()
-        body = test_body(test)
-        if (text.count(old) != 1 or old == new or
-                not body or f'"{assertion}"' not in body):
-            stale.append(name)
+    # #2795 fix-r4（评审 sibling P1 同族跟改，fix-r3 mcp-http-encoding 先例）：
+    # 锚点预检也要持树锁读——兄弟变异运行器在自己的 write 与 restore 之间可能
+    # 把变异体留在盘上，无锁读会把核对错在它不拥有的源上；锁忙 / 读失败是
+    # 拒跑（2），不是宿主会读成 rc 1 的裸 traceback。本窗口只包只读预检面，
+    # 与后续 mutating_sources 是顺序关系，锁先释放再重取，无同进程嵌套。
+    try:
+        with tree_lock(ROOT, timeout=60):
+            stale = []
+            for name, path, old, new, test, assertion in mutations:
+                text = path.read_text()
+                body = test_body(test)
+                if (text.count(old) != 1 or old == new or
+                        not body or f'"{assertion}"' not in body):
+                    stale.append(name)
+    except (TimeoutError, OSError, UnicodeDecodeError) as error:
+        print(f'tree lock or anchor read failed: '
+              f'{type(error).__name__}: {error}', file=sys.stderr)
+        raise SystemExit(2)
     if stale:
         raise SystemExit('#1370 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:

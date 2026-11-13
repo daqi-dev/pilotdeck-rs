@@ -27,8 +27,11 @@ source-patch`). Both stages take the fixtures tree lock, so they cannot
 overlap; either stage failing fails the run, and a name selects into the
 table that declares it. `--check` and `--check-anchors` are one check
 covering both surfaces — the compiled switch sites and bindings, and the
-source-patch anchors. The full matrix run is post-merge (matrix_main refuses
-uncommitted product files); the authoring session verifies each row by hand:
+source-patch anchors — and both read surfaces now run inside the shared
+`anchor_read_window` device: a busy tree lock or a failed read is a refusal
+to start (rc 2), never an unlocked read of a sibling runner's mutant. The
+full matrix run is post-merge (matrix_main refuses uncommitted product
+files); the authoring session verifies each row by hand:
 apply, `cargo test --no-run`, run the bound test, observe the red,
 byte-restore.
 """
@@ -38,6 +41,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared import mutant_switch
+from negative_process import anchor_read_window
 from negative_suite import matrix_main
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
@@ -182,14 +186,30 @@ def main():
                        if name not in {row[0] for row in switches} | {row[0] for row in MUTATIONS}]
             raise ValueError(f'unknown control name(s): {", ".join(unknown)}')
         chosen = mutant_switch.selected(rows, switch_names)
-        mutant_switch.preflight(rows)
         if args.check or args.check_anchors:
             if args.output or args.names:
                 raise ValueError('--check does not take output or names')
+            # #2795 fix-r5（评审 sibling P1#3 + simplify P2#1 结构性收口）：
+            # --check 的读面此前是裸读——mutant_switch.preflight 逐行读 SLACK
+            # 源、matrix_main 的 --check 分支逐行读锚点源，兄弟变异窗口中间的
+            # 变异体会被核对错在它不拥有的源上。两段都改走共享
+            # anchor_read_window 装置（两个顺序锁窗口，无嵌套），锁忙 / 读失败
+            # 是拒跑（2）。run 模式的 preflight 保持原样：后续
+            # mutant_switch.run 自持树锁并做 pristine 校验。
+            with anchor_read_window(ROOT, 'channel-slack --check'):
+                mutant_switch.preflight(rows)
             print(f'{len(rows)} switch anchors and bindings checked')
             return matrix_main(ROOT, __file__, 'channel::', MUTATIONS,
                                passed_count=1, child_count=0, paths=GUARDED,
                                exact=True, args=['--check'])
+        # #2795 fix-r6（评审 sibling#2）：run 分支的 preflight 此前保持裸读——
+        # mutant_switch.run 的 pristine 校验在 run 内部（取锁之后），preflight
+        # 先读仍可能被兄弟变异 write/restore 窗口打成假拒跑（stale ValueError
+        # → 外层 catch → rc 2 `preflight:`，合法实跑被误归因）。与 --check 分支
+        # 同形包进共享装置：锁忙/读失败是拒跑（SystemExit(2) 不进外层
+        # ValueError/OSError catch），与后续 mutant_switch.run 顺序取锁、无嵌套。
+        with anchor_read_window(ROOT, 'channel-slack preflight'):
+            mutant_switch.preflight(rows)
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
             raise ValueError('NEW_OUTPUT_DIR and caller CARGO_TARGET_DIR are required')
         output = Path(args.output).resolve()

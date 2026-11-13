@@ -36,6 +36,9 @@ struct Reports {
 }
 #[cfg(test)]
 type TransitionHook = Arc<dyn Fn(&str, &ChannelKey) + Send + Sync>;
+/// Close completion: the close driver's exclusive sender publishes the final
+/// `close()` outcome to every waiter (#2787).
+type CloseDriver = watch::Sender<Option<Result<(), ChannelError>>>;
 struct Inner {
     state: Mutex<State>,
     prefix_changed: watch::Sender<()>,
@@ -45,7 +48,11 @@ struct Inner {
     deps: ChannelStartDeps,
     reports: Mutex<Reports>,
     close_host: CloseHost,
-    closed: watch::Sender<Option<Result<(), ChannelError>>>,
+    closed: watch::Receiver<Option<Result<(), ChannelError>>>,
+    // #2787: the completion sender is owned exclusively by the close driver
+    // (#2757 shape): a driver panic drops it, which closes the watch channel
+    // and bounds `wait_closed` instead of hanging on a retained `None`.
+    closed_driver: Mutex<Option<CloseDriver>>,
 }
 #[derive(Clone)]
 pub struct ChannelServer(Arc<Inner>);
@@ -53,6 +60,7 @@ pub struct ChannelServer(Arc<Inner>);
 impl ChannelServer {
     /// Creates an unopened component. `start_channels` performs TS background startup.
     pub fn new(deps: ChannelStartDeps, close_host: CloseHost) -> Self {
+        let (closed_driver, closed) = watch::channel(None);
         Self(Arc::new(Inner {
             state: Mutex::new(State::default()),
             prefix_changed: watch::Sender::new(()),
@@ -62,7 +70,8 @@ impl ChannelServer {
             deps,
             reports: Mutex::new(Reports::default()),
             close_host,
-            closed: watch::Sender::new(None),
+            closed,
+            closed_driver: Mutex::new(Some(closed_driver)),
         }))
     }
 
@@ -166,13 +175,22 @@ impl ChannelServer {
     pub fn close(&self) -> BoxFuture<Result<(), ChannelError>> {
         #[cfg(test)]
         self.0.transition("close-entered", &ChannelKey::new(""));
-        let claimed = {
+        let (claimed, driver) = {
             let mut state = self.0.state.lock().expect("channel state");
             if state.closing {
                 return Box::pin(wait_closed(self.0.clone()));
             }
             state.closing = true;
-            std::mem::take(&mut state.running)
+            let claimed = std::mem::take(&mut state.running);
+            // Claimed together with the closing flag under the state lock, so
+            // exactly one close call owns the completion sender.
+            let driver = self
+                .0
+                .closed_driver
+                .lock()
+                .expect("channel close driver slot")
+                .take();
+            (claimed, driver)
         };
         let mut stops = Vec::new();
         for entry in claimed {
@@ -213,7 +231,12 @@ impl ChannelServer {
                     errors,
                 })
             };
-            inner.closed.send_replace(Some(result));
+            // The driver exclusively owns this sender (#2787, #2757 shape):
+            // send then drop on every exit path, including a panic above, so
+            // waiters are bounded rather than parked on a retained `None`.
+            if let Some(driver) = driver {
+                driver.send_replace(Some(result));
+            }
         });
         Box::pin(wait_closed(self.0.clone()))
     }
@@ -316,7 +339,7 @@ async fn receive<T>(rx: oneshot::Receiver<Result<T, ChannelError>>) -> Result<T,
         .unwrap_or_else(|_| Err(ChannelError::error("channel operation driver dropped")))
 }
 async fn wait_closed(inner: Arc<Inner>) -> Result<(), ChannelError> {
-    let mut rx = inner.closed.subscribe();
+    let mut rx = inner.closed.clone();
     loop {
         if let Some(result) = rx.borrow_and_update().clone() {
             return result;

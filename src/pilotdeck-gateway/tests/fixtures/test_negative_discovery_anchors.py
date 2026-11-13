@@ -124,6 +124,9 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #2795 fix-r1（条3）：#2069 的 turn_abort 接线夹具落地后是盲表（3 条键，
+    # 每条同时由 guarded 名单的裸文件名拼接和顶部 import 产生），按 #2133 登记。
+    'host-model-port/negative_controls.py',
 )
 
 
@@ -4937,7 +4940,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
-            'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
+            'registered table count': r'本闸门当前登记 (\d+) 张表',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

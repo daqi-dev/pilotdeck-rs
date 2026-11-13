@@ -150,6 +150,17 @@ jobs:
           # 取得阶段拒跑（锁超时 / 树脏）撤目录、还原窗口超时退 1、取得段裸异常
           # 仍按失败关闭退 1 的相位分界用例，不需要 cargo。
           python3 -B -m unittest -v issue-2495/test_negative_controls.py
+          # #2795 fix-r6（评审 boundary#3）：session-domain-expectations 的
+          # SetupClassReadSurface（--negative 元控入口的类级 setUp 读面，
+          # fix-r3 收口）此前不在 CI——设备被改动没人红。同形接入本步
+          # （issue-2495 同款，纯 Python 不需要 cargo 名额，fix-r7 后 16 例
+          # 实测 < 1 s，含真实 tree_lock 驱动与 setUpClass 记录桩接缝）。
+          python3 -B -m unittest -v session-domain-expectations/test_meta_controls.py
+          # #2795 fix-r7（评审 sibling#3）：共享执行器 negative_suite.py 的
+          # 机检（含 fix-r6 的 matrix_main --check 忙锁拒跑用例）此前仅靠
+          # 宿主清单，仓内 CI/scripts 无引用。接入本步（纯故障注入，无
+          # cargo 名额，69 例实测约 0.4 s）。
+          python3 -B -m unittest -v test_negative_suite
           # #1800：close-order pin 自管循环的手写 abort 记账（撤销已记 KILLED、
           # 未跑行补 INVALID、summary 仍落盘、rc 2）此前无任何仓内测试。此自测
           # 钉三态退出契约两侧：中止侧（外部真持锁 / 恢复失败 / 取消）全 INVALID
@@ -392,6 +403,17 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/anchor_selfcheck.py --anchors-only
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check-controls
+      # #2795 fix-r1（评审条1，CI 接线）：GatewayWsConnection.ts 行号锚点机检进
+      # negative-controls 作业。此前该脚本只在宿主链人工跑，CI 上一条都不跑——仓内
+      # Rust 注释引用的行号静默漂移没有机检兜底。本作业没有 resources/ 基线树
+      # （.gitignore），所以只跑第 1 层（引用名册对账）+ --self-check（机检自身的
+      # 变异负控 NC1–NC7，含「同形收尾行挪走必须判红」）；第 2 层对冻结基线
+      # cc7c4e65 的实读在 a51-coverage 作业（那边已浅克隆该 commit）。
+      - name: TS 行号锚点机检（#2795）
+        shell: bash
+        run: |
+          python3 -I scripts/check-ts-anchors.py
+          python3 -I scripts/check-ts-anchors.py --self-check
       # #1989：绑定自身的漂移自检。native 入口的 --check 只由宿主链执行，CI 此前一条
       # 都不跑；这三组是纯 Python（不碰 cargo），逐条变异绑定的源码再要求对应 needle
       # 报错——「把断言改成 assert!(true) / 删掉上限断言 / 改掉换行守卫的返回动作」
@@ -426,6 +448,10 @@ jobs:
           # 名册闭集（名字+顺序+条数+夹具字节 SHA）另由 always_on 模块自己的
           # negative_controls_manifest Rust 测试钉死（随 rust job 跑）。
           python3 -I src/pilotdeck-gateway/tests/fixtures/always-on-2294/negative_controls.py --check
+          # #2069（同 #1433/#1354/#2391 先例）：host-model-port 的 turn_abort 接线负控
+          # --check 也进 CI——该行变异此前只在 #1804 评审期人工跑过，锚点/绑定/静态名册
+          # 任一漂移即本步非零退出；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/host-model-port/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零
@@ -894,6 +920,15 @@ jobs:
           git -C pilotdeck-baseline remote add origin https://github.com/OpenBMB/PilotDeck.git
           git -C pilotdeck-baseline fetch --depth 1 origin "$PILOTDECK_BASELINE_REF"
           git -C pilotdeck-baseline checkout FETCH_HEAD
+      # #2795 fix-r1（评审条1，CI 接线）：本作业已浅克隆冻结基线 cc7c4e65（与
+      # gateway-schema-baseline 同一 commit，schema-FROZEN.md），正好承接
+      # check-ts-anchors.py 的第 2 层——TS_ANCHORS 逐锚点对基线 GatewayWsConnection.ts
+      # 实读核对（含 `=);` / `=},` 整行判的短签名）。路径失效 / 读不了 / 指错文件都
+      # fail-closed 退 2。negative-controls 作业那边只跑第 1 层 + --self-check。
+      - name: TS 锚点对冻结基线实读（#2795）
+        working-directory: .
+        shell: bash
+        run: python3 -I scripts/check-ts-anchors.py --ts-baseline "${{ github.workspace }}/pilotdeck-baseline"
       - name: A5.1 覆盖账本/清单（严格比较，默认带负例）
         working-directory: .
         env:
