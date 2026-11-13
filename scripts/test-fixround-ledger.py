@@ -252,6 +252,18 @@ def main() -> int:
         cp = run("judge", str(led13))
         if not any(ln.startswith("#21/ds/r1:") and "suspended" in ln for ln in cp.stdout.splitlines()):
             fails.append(f"judge：首登非争抢失败应判 suspended（{cp.stdout}）")
+        # fix-r6（DS r5 P2a）：contention_first（首次争抢排除段）与 suspended 同为「须补跑」的
+        # 悬置形态——只含首次争抢的台账也要在 count 输出「待补跑」可见性（旧码只打印
+        # suspended，首次争抢的补跑义务被藏进台账＝卡面判据 5 的运营面缺口）
+        led13b = tmp / "cont-first" / "ledger.jsonl"
+        run("register", str(led13b), "#31/zai/r7", "--status", "ERROR", "--contention", "--note", "首次 429")
+        cp = run("count", str(led13b))
+        if (cp.returncode != 0 or "#31/zai" in cp.stdout or "悬置 1 键" not in cp.stdout
+                or "首次争抢未补跑 1" not in cp.stdout or "首登失败未补跑 0" not in cp.stdout):
+            fails.append(f"count：只含 contention_first 时也应输出悬置可见性（rc={cp.returncode}、{cp.stdout}）")
+        cp = run("judge", str(led13b))
+        if not any(ln.startswith("#31/zai/r7:") and "contention_first" in ln for ln in cp.stdout.splitlines()):
+            fails.append(f"judge：首次争抢应判 contention_first（{cp.stdout}）")
         # 悬置轮补跑 PASS → available（有效块）：round 结束即不悬置
         led14 = tmp / "susp2" / "ledger.jsonl"
         run("register", str(led14), "#22/mm/r1", "--status", "ERROR", "--note", "首登失败悬置")

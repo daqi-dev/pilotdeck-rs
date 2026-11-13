@@ -402,10 +402,15 @@ def count(path: str) -> int:
             rc = 1
     # 悬置可见性（fix-r5 修 5）：悬置键不进停手计数，但运营上要知道有几个轮在等补跑、
     # 逾期即记 1 次——不打印会把「须补跑」变成只有翻台账才能发现的静默义务
-    pending = [rec for rec in merged if classify(rec) == "suspended"]
+    # fix-r6（DS r5 P2a）：contention_first（首次争抢，排除段）与 suspended 同为「须补跑」的
+    # 悬置形态——卡面判据 5 两类都不进停手计数，运营上都须可见，只打印 suspended 会把首次
+    # 争抢的补跑义务藏进台账里
+    pending = [rec for rec in merged if classify(rec) in ("suspended", "contention_first")]
     if pending:
-        emit(f"fixround-ledger: 悬置 {len(pending)} 键未计入（首登失败未补跑，不计入亦不排除）："
-             f"最迟须在下一次派轮前补跑，逾期未补即记 1 次（--overdue）")
+        n_susp = sum(classify(rec) == "suspended" for rec in pending)
+        n_cont = len(pending) - n_susp
+        emit(f"fixround-ledger: 悬置 {len(pending)} 键未计入（首登失败未补跑 {n_susp}，首次争抢未补跑 {n_cont}，"
+             f"不计入亦不排除）：最迟须在下一次派轮前补跑，逾期未补即记 1 次（--overdue）")
     # 判据 5 口径（fix-r5 修 6，sibling#2）：本行与 docstring / README 同一口径——
     # 判据 5（通道兜底）：同一条修复链（#<issue>）内，任一非作者评审谱系累计 2 个修复轮
     # 不可用（三前提排除后）即停手转人拍板（2026-11-12 落卡，正本
