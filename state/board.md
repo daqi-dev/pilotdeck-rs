@@ -1,9 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-13 13:30（12:55 交接段见文末；13:30 增：红灯 8 十二张重判登记完毕、1087 六张 P2 处置登记、macmini disk5 重格中）：**三条修复车道 gate PASS 等镜像守卫解锁**——#3042/#3074/#3088 均待 #3078 合入后 merge main 转绿入队；_build+_tmp 49 GiB · human-comments 空
+updated: 2026-11-13 14:45（13:30 增记见文末；14:45 巡场：#3078 此前 12 小时未真正入队（autoMerge=NONE，rc=0 假象）已于 14:4x 重入队、merge-group CI 在跑 ~15:15 窗；#3071 已 MERGED 邮箱已核）：三条修复车道 gate PASS 等 #3078 合入后合流入队；_build+_tmp 49 GiB · human-comments 空
 
-- #3078 | impl | doing | 镜像守卫修复已入合并队列第 1 位（AWAITING_CHECKS，merge-group CI ~31 min）；MERGED 后核邮箱并触发四分支合流
+- #3078 | impl | doing | 镜像守卫修复 14:4x 重入队成功（此前 12:55 入队为 rc=0 假象从未入队，上轮 merge-group 12:29 失败在聚合 check——竞态先例，同因复发再深挖）；merge-group run 43380354551 在跑；MERGED 后核邮箱并触发四分支合流（#3071 已 MERGED 08:09，邮箱 noreply 形态无暴露）
 - #3042 | impl | doing | 1087 r15+MM r14 判读闭环：DS r15 块（head b20f9ad34）已贴、MM r14 六条 P2 已逐条处置登记（_tmp/20261113-sweep-verdicts/verdicts.md A 节）、gate PASS；等 3078 合入 merge main → CI 绿入队；合入后 #3001 条1/#3100 条2/3 生效可关、批件见 1087-p2-batch
 - #3074 | impl | doing | 3056 r17 收货+DS 增量四角色全 PASS（head c8bd2d5e3，P2=7 判定不修备案进 decisions-20261113）；gate PASS；等 3078 合流入队
 - #3088 | impl | doing | 1723 r6 整类收口（head 2c75de686，DS6 四角色 P0/P1/P2 全 0）body 补齐、gate PASS；等 3078 合流入队；收尾自查未做（Refs #1723 不 Closes）
@@ -6609,5 +6609,24 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 1. **macmini-01 disk5 重格与 pdrs-host 恢复闭环（人令 13:0x，04:45 段义务 7 销账）**：人授权「macmini-01 硬盘数据可全部清掉然后格式化，之后统一使用」→ detach pdrs-host 映像（零占用）→ `diskutil eraseDisk APFS pdrs-ssd GPT disk5`（HDD027_7TB 7.7 TB，941 GiB 旧 exFAT 数据全清，13:09–13:27）→ 内盘正本核验后拷回新卷（13:28–13:31）→ 核验全过（6598/6598 文件、55,298,290,664 字节双侧一致、Info.plist cmp、bands/0+50 sha256 与基准吻合）→ attach 恢复 `/Volumes/pdrs-host`（挂载点名不变、卷内 build/pdrs-cold 完整）→ 核验后删内盘副本（铁律 8，释放 52 GiB，内盘 164 GiB avail）。统一使用布局：pdrs-host 工作卷照旧；pdrs-ssd 剩余 ~6.9 Ti 作冷存储/归档区，编译缓存不迁。日志 `macmini-01:~/pdrs-copy-verify.log`；disk4「飞书 Feishu」用户盘未动。
 2. **红灯 8 十二张重判登记 + 1087 六张 P2 处置登记**（判定正本 `_tmp/20261113-sweep-verdicts/verdicts.md`，AI 代批备案待人复核；分诊报告 premise-rejudge-1302.md 与 20261113-1087-p2-disposal/report.md）：八张开车道重开（#2447/#2448/#2459/#2464/#2474/#2475/#2555/#2605，READY 已列 premise-lanes-8）、两张误灯（#2461/#2463 由 #3102 承载）、两张可关维持（#2476/#2693）；#3001 条1+#3100 条2/3 已修随 #3042 生效、#3100 条1 判定不修、其余值得修（1087-p2-batch 合批 ≈6-10h，#3108 单独走冻结程序）；#1908 备案旧登记更正。16 张评论全部落上（`<!-- coord -->` 标记，子代理机械执行无失败）。
+
+## 14:45 交接段（coord2/e7，两小时交接 + 巡场）
+
+1. **本段主线：macmini-01 disk5 重格与 pdrs-host 恢复（人令闭环，13:3x 增记详）**——941 GiB 旧数据清除、exFAT→APFS（pdrs-ssd）、sparsebundle 拷回核验全过（6598 文件/55,298,290,664 字节/Info.plist/bands sha256 双侧一致）、`/Volumes/pdrs-host` 重挂（挂载点名不变）、内盘副本删后释放 52 GiB（内盘 164→165 GiB avail）；统一使用布局：pdrs-host 工作卷照旧 + pdrs-ssd 剩余 ~6.9 Ti 冷存储/归档区，编译缓存不迁。04:45 段义务 7 销账。
+2. **巡场（PATROL-1445.md）**：唯一实质红灯 = **#3078 十二小时未真正入队**（autoMerge=NONE；12:55 的入队是 rc=0 假象；上轮 merge-group 43365870354 12:29 local 失败在 3 秒聚合 check，竞态先例）——14:4x 重入队成功，merge-group run 43380354551 在跑（~15:15 窗，bohgf5njw 等待器在挂）。#3071 已 MERGED（08:09），origin/main 近 8 提交邮箱全为队列 squash noreply 形态（补核，无暴露）。红灯 9 两张 exit=97 维持陈旧误报判定；graphql EOF 全天间歇（网络抖动），红灯 7 数据缺口下轮补查。fleet 四机全空载、盘三台绿、车道无死体、human-comments 空。ready-pending-2100.md 为 11-07 旧档已全部入库，无新增待办。
+3. **本段登记**：红灯 8 十二张重判与 1087 六张 P2 处置全部落跟踪单评论（13:3x 增记详）；decisions-20261113.md 十张卡随 #3105 在飞。
+
+### 未结义务表（下一步动作 / 唯一责任人 / 最迟复查）
+| # | 下一步动作 | 责任人 | 最迟复查 |
+|---|---|---|---|
+| 1 | #3078 MERGED（预计 ~15:15）→ `git fetch` + 核邮箱 → 逐分支 merge origin/main 推送（wt-1087→#3042、wt-1723→#3088、wt-3056→#3074、主仓 claude/decisions-20261113→#3105）→ CI 绿后逐张入队（入队前核「待人批」与在队同路径）；若 merge-group 再失败在聚合 check，深挖竞态根因（同一失败 3 次挂起） | coord2/e7 | 15:30 |
+| 2 | #3078 合入后：mirror-prs 38 张逐张 Re-run/换块入队；legacy-batches 按重判重写 | coord2/e7 | 3078 合入后当轮 |
+| 3 | premise-lanes-8 前置探针：#2448 修法须先 Node 实测 TS loader 语义、#2459 修法决策卡（探针子代理在飞）→ 判定后排入 mirror-prs 清偿后派单 | coord2/e7 | 16:45 |
+| 4 | #3042 合入后：#3001 条1/#3100 条2/3 生效可关；1087-p2-batch 批件开单（#3001 条2/3+#3094+#3109+#3110）+ #3108 走冻结程序；#1723 收尾自查后关单 | coord2/e7 | #3042 合入后当轮 |
+| 5 | 等待器群收：3078/3071 终态（bohgf5njw）、3088 CI（bk4b1nbb1）、3105 CI（bndebuaqd） | coord2/e7 | 完成即收 |
+| 6 | 每轮 df 核验（本机 49/200 GiB、worktree 56/60）；graphql EOF 网络抖动留意，红灯 7 下轮补查 | coord2/e7 | 每轮 |
+
+### 下一步
+按未结义务表序推进，不空等；下一个交接点 ~16:45。
 
 
