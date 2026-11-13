@@ -114,9 +114,19 @@ HASH_REF = re.compile(r"(?<![A-Za-z_#])#(\d+)(?![A-Za-z0-9_])")
 # PAIR_SEP（+:、，/ 空白制表）口径对齐——board 真实形态 `Closes #382 #387 #452`、
 # `Refs #1696 #1684`、`Refs #1985+#2053` 此前仍只取首号，同一假 PASS 面换分隔符复现；
 # `\s+` 分隔不会把 `Closes #3056 and #3058` 的连词并进（`and` 不匹配 `#\d+` 前缀）。
-ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+"
-                       r"#(?P<nums>\d+(?:(?:\s*[,，、/+]\s*|\s+)#\d+)*)(?![A-Za-z0-9_])", re.I)
+# fix-r11（DS r10 sibling#1 + boundary#1 + simplify#1 三 P2 同簇，结构性修）：续写分隔符
+# 从 PAIR_SEP **单源派生**——标点类不再手抄第二份字面量（r9 补 `[,，、/]`、r10 再补 `+` 与
+# 空白正是两份定义漂移的产物，同一词汇位逐轮补词必出新洞，memory「词汇枚举式修判读不
+# 收敛」：PAIR_SEP 早含 `+` 而 ISSUE_NUM 到 r10 才跟上）；纯空白续写收紧为 `[ \t]+`（`\s`
+# 含换行，会把下一行行首 `#N` 并进关联集——过严方向、board 0 实例，收紧后
+# `Closes #3056\n\n#3074` 不再并入，DS r10 simplify#1）；**空档＝粘写**（`Refs #3056#3057`）
+# 与 `_paired_rounds` 的「空隙视为紧贴」并组口径对齐（DS r10 boundary#1：粘写下
+# pr_issues 只取首号 → 同一假 PASS 机制换分隔符）；显式分隔符两侧 `\s*` 保留换行容忍
+# （`closes #3056,\n#3057` 既有用例）。
 PAIR_SEP = frozenset("+,、，/ \t")
+_ISSUE_GAP_PUNCT = "".join(re.escape(c) for c in sorted(PAIR_SEP - {" ", "\t"}))
+ISSUE_NUM = re.compile(r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+"
+                       rf"#(?P<nums>\d+(?:(?:\s*[{_ISSUE_GAP_PUNCT}]\s*|[ \t]+|)#\d+)*)(?![A-Za-z0-9_])", re.I)
 # 修 4（fix-r5，boundary#4 P2）本地回显扫描的判据：只认「结构化回显」——类型词 + (scope) +
 # 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
 # 报告证明「类型词开头的散文」与真实标题在行内没有判别量（「test 覆盖了 fix-r5 的场景」
