@@ -869,6 +869,43 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.fix_round_from_titles([board_t, "fix(scripts) #1 fix-r21：c"], frozenset({"1"})) != 21:
             fails.append("fix-r5 修2 配对：跨标题 max 保留（board 引用轮 2 不遮真实 fix-r21）")
 
+        # fix-r6（DS r5 boundary P0）多单关联列表：pr_issues 取续写列表的全部号——只取首个会让
+        # 「标题引用 #3057 的修复轮」配不到本 PR 单号（fix_round=None → fixtype/residual 假 PASS）
+        for body, want in [("Closes #3056、#3057\n", frozenset({"3056", "3057"})),
+                           ("Refs #3056/#3057\n", frozenset({"3056", "3057"})),
+                           ("Fixes #3056, #3057\n", frozenset({"3056", "3057"})),
+                           ("closes #3056,\n#3057\n", frozenset({"3056", "3057"})),
+                           ("Closes #3056、#3057：说明文字\n", frozenset({"3056", "3057"})),
+                           ("Closes #3056 and #3058\n", frozenset({"3056"})),
+                           ("boundary#1 不是关键词引用\n", frozenset())]:
+            if gate.pr_issues(body) != want:
+                fails.append(f"fix-r6 P0：pr_issues({body!r}) 应得 {sorted(want)}，"
+                             f"得 {sorted(gate.pr_issues(body))}")
+        if gate.fix_round_from_titles(["fix(scripts) #3057 fix-r5：x"],
+                                      gate.pr_issues("Refs #3056、#3057\n")) != 5:
+            fails.append("fix-r6 P0：续写列表第 2 个号（#3057）应进关联集合并配到标题引用（旧实现只取首个 → None 假 PASS）")
+        # fix-r6（DS r5 boundary P1）HASH_REF 词界：boundary#N / C#N 里的 #N 不算就近配对 #N。
+        # 旧 HASH_REF 无词界时 #2 会抢走 fix-r5 的就近配对（链 {2} ∩ {3074} = ∅ → 不计入 →
+        # N≥4 residual 跳过＝假 PASS）；词界后整条只剩 #3074，正常配对计 5
+        if gate.fix_round_from_title("fix(scripts) #3074 boundary#2 fix-r5：x", frozenset({"3074"})) != 5:
+            fails.append("fix-r6 P1：boundary#2 的 #2 无词界不抢 #3074 的就近配对（旧实现判 None＝假 PASS）")
+        if gate.fix_round_from_title("fix(scripts) #3074 C#1234 fix-r5：x", frozenset({"3074"})) != 5:
+            fails.append("fix-r6 P1：C#1234 的 #1234 无词界不抢 #3074 的就近配对")
+        # 尾部词界：#3056abc 不是 #3056（字母并进号的引用不冒充本单配对——若算 #3056，就近
+        # 配对会被它抢走，链 {3056} ∩ {999} = ∅ → 不计 fix-r5）
+        if gate.fix_round_from_title("fix(scripts) #999 #3056abc fix-r5：x", frozenset({"999"})) != 5:
+            fails.append("fix-r6 P1：#3056abc 不是 #3056，就近配对仍是 #999（计 5）")
+        # 前置数字保留（P1 修法的边界）：#3074#3057 紧贴链（空隙视为紧贴）仍并成一组
+        if gate.fix_round_from_title("fix(scripts) #3074#3057 fix-r3：x", frozenset({"3057"})) != 3:
+            fails.append("fix-r6 P1：前置数字保留，#3074#3057 紧贴链仍并成一组（#3057 配到本单 → 3）")
+        # fix-r6 P2a 接线：base==head 的空标题集合＝无主信号，正文兜底开结构化回显扫描
+        # （旧 echo_scan=titles is None 把空集误当 CI 形态只看首行 → 非首行回显漏判＝假 PASS）
+        empty_body = ("![ci](https://example.com/b.svg)\n\n概述。\n\n"
+                      "fix(scripts): #3074 fix-r5：修闸门\n\n" + blk_t.format(h=h_plain2) + "Refs #3074\n")
+        errs = gate2(empty_body, h_plain2, h_plain2)
+        if not any("fix-r5" in e and "fixtype" in e for e in errs):
+            fails.append(f"fix-r6 P2a：base==head 空集合应走回显兜底判修复轮 5（缺 fixtype 拒收）：{errs}")
+
         # fix-r5 双撞 P0 的最小复现转抓（任务书验 5，DS boundary#1 静态场景；fix-r7 夹具换真实
         # board 形态）：head=board 尾提交（引用 #2691 fix-r2/#2692 fix-r8）、正文标准 `## 概述`、
         # 更早提交带 fix-r5 → 集合判修复轮 5（真实修复提交的最大轮，非引用轮）→ 缺 fixtype 拒收。
