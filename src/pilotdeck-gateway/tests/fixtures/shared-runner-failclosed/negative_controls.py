@@ -469,21 +469,29 @@ def apply_mutation(name, original, before, after):
     return mutant
 
 
-def run_test(test, env):
-    # #3043 fix-r5: the canonical judges below accept only the script-run
-    # ``__main__`` description layout, so the bound test runs as the script it
-    # lives in (``python -B test_negative_suite.py Class.method -v``) instead
-    # of ``-m unittest test_negative_suite.Class.method``. The suite prefix is
-    # stripped and cwd stays on FIXTURES so the script-dir import of
-    # ``negative_suite`` keeps resolving to the (possibly mutated) module.
-    # No ``-I``: isolated mode drops the script directory from ``sys.path``
-    # and would break that import.
+def bound_test(test):
+    # #3043 fix-r5: the canonical judges' ``descriptions()`` accepts only the
+    # script-run id shape ('Class.method'); the rows keep the historical
+    # fully-qualified form for the summary, so the module prefix is stripped
+    # exactly here -- and a row that escapes the suite script is refused
+    # instead of silently producing a judge layout nothing matches.
     prefix = 'test_negative_suite.'
     if not test.startswith(prefix):
         raise ValueError(f'#1076 bound test outside the suite script: {test}')
+    return test[len(prefix):]
+
+
+def run_test(test, env):
+    # #3043 fix-r5: the bound test runs as the script it lives in
+    # (``python -B test_negative_suite.py Class.method -v``) instead of
+    # ``-m unittest test_negative_suite.Class.method``, so the canonical
+    # ``__main__`` description layout below is the one produced. cwd stays on
+    # FIXTURES so the script-dir import of ``negative_suite`` keeps resolving
+    # to the (possibly mutated) module. No ``-I``: isolated mode drops the
+    # script directory from ``sys.path`` and would break that import.
     return run_owned([sys.executable, '-B',
                       str(FIXTURES / 'test_negative_suite.py'),
-                      test[len(prefix):], '-v'],
+                      bound_test(test), '-v'],
                      cwd=FIXTURES, env=env, timeout=180)
 
 
@@ -591,9 +599,10 @@ def main():
             for name, path, before, after, _test, _message in selected:
                 apply_mutation(name, texts[path], before, after)
             for name, path, before, after, test, message in selected:
+                bound = bound_test(test)
                 status, reason = 'INVALID', 'not executed'
                 try:
-                    if not passed(run_test(test, env), test):
+                    if not passed(run_test(test, env), bound):
                         reason = 'positive control did not pass'
                     else:
                         # fix-r5 (a5-shaped): publish goes through
@@ -604,7 +613,7 @@ def main():
                         write_source_atomic(
                             ROOT, path,
                             texts[path].replace(before, after, 1).encode('utf-8'))
-                        status, reason = classify(run_test(test, env), test, message)
+                        status, reason = classify(run_test(test, env), bound, message)
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
@@ -612,7 +621,7 @@ def main():
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError(f'#1076 byte restoration failed: {path}')
                 try:
-                    if not passed(run_test(test, env), test):
+                    if not passed(run_test(test, env), bound):
                         status, reason = 'INVALID', reason + '; restored bound test did not pass'
                 except Exception as error:
                     status, reason = (
