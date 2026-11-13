@@ -1358,6 +1358,117 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.fix_round_from_body("## 概述\n\ntest 覆盖了 fix-r5 的场景\n") is not None:
             fails.append("fix-r4 修3.5 边界钉：同一散文行在非首行位置不应判修复轮")
 
+        # —— #3056 fix-r3（MM concurrency P0 + 双撞 P1 + 两单家 P1）：修复轮识别盲与题头区
+        # 结构性修——rN 简写形 / 非类型词开头 / CI 回显扫描 / 枚举型标题 / 板尾裸号 /
+        # waiver fixtype 至多一次 / b 后缀词表单源 / 位界 fail-closed ——
+        # P0 四形正控（任务书验 3：协调者仲裁输入作为测试断言逐字钉死）：
+        for t, iv, want in [
+            # ① 仓内真实简写惯例：wt-3056 分支 4 条 `#3056 r1[4-7]` 形、main 的
+            # `fix(gateway) #2461 r5：…` 同形（RSHORT：题头区内 + 与前方 #N 链紧邻）
+            ("fix(scripts) #3056 r14：题头区判定修正", {"3056"}, 14),
+            ("fix(gateway) #2461 r7：raw_request 界随判据走共享有界探针", {"2461"}, 7),
+            # ② 非类型词开头 + 行内 fix-r<N>（去类型词化：allow_unpaired=False 走配对分支）
+            ("#3056 fix-r3：四角色重钉评审逐条修", {"3056"}, 3),
+            # ④ 纯 docs 形判出（判出后只触发 fixtype 义务、不触发代码域检查——行为对齐既有语义，
+            #    义务触发面的分流在 check() 的 fixtype/residual 字段而非标题判据）
+            ("docs(state) #2692 r13 停轮决策卡：记录", {"2692"}, 13),
+        ]:
+            if gate.fix_round_from_title(t, frozenset(iv)) != want:
+                fails.append(f"fix-r3 P0 四形：head 标题应判修复轮 {want}：{t[:56]!r}")
+        # P0 负控：rN 简写只在题头区 + 紧邻 #N 链时计入——题头区外（评审轮引用，语料 423 条，
+        # probe-corpus.txt §1b）与不紧邻（评审者署名 `MM r16` 的字母断开）都不计
+        if gate.fix_round_from_title("fix(scripts) #1 fix-r3：r2 评审修正", frozenset({"1"})) != 3:
+            fails.append("fix-r3 P0 负控：题头区外的 r2 是评审轮引用，不计（fix-r3 本体照常计 3）")
+        if gate.fix_round_from_title("chore(state) #1231 决策卡：停轮（r4 记录）", frozenset({"1231"})) is not None:
+            fails.append("fix-r3 P0 负控：题头区外括注里的 r4（决策卡注记）不应判修复轮")
+        if gate.fix_round_from_title("fix(scripts) #3056 MM r16 评审意见修正", frozenset({"3056"})) is not None:
+            fails.append("fix-r3 P0 负控：rN 与 #N 链之间有字母（MM/DS 署名）不紧邻，不计")
+        if gate.fix_round_from_title("chore(state) 交接段：#9999 复盘 r8 现场", frozenset({"9999"})) is not None:
+            fails.append("fix-r3 P0 负控：题头区外的 rN（交接段板尾）不计")
+        # P0② 负控：去类型词化不放开散文——无 #N 配对的 non-TITLE_HEAD token 不计
+        # （`fix-r2 #2516 收尾` 负控见上；这里钉「无 #N 的散文形」与「#N 在前的配对形」对照）
+        if gate.fix_round_from_title("temp: fix-r2 说明", frozenset({"3056"})) is not None:
+            fails.append("fix-r3 P0② 负控：非 TITLE_HEAD 且无 #N 配对的散文标题不应判修复轮")
+        # P0② 正控的 foreign 半边：去类型词化后异单旁路不得从新门溜进
+        if len(gate.foreign_fixround_pairs(["#9999 fix-r5：异单"], frozenset({"3074"}))) != 1:
+            fails.append("fix-r3 P0②：非 TITLE_HEAD 的异单标题（#9999 fix-r5）也应进 foreign 拒收")
+        if len(gate.foreign_fixround_pairs(["fix(scripts) #9999 r5：异单"], frozenset({"3074"}))) != 1:
+            fails.append("fix-r3 P0①：rN 简写形的异单标题（#9999 r5）也应进 foreign 拒收")
+        # P0③ CI 形态（titles 非空但全不命中）正文兜底走结构化回显扫描：范围只含普通状态提交、
+        # 正文 `## 概述` 开头 + 非首行结构化回显（#3074 配到本 PR 单）→ 判修复轮 5、要求 fixtype
+        # ——旧「只看首行」会把 `#N rM` 简写标题 + 概述开头的正文整单判非修复轮（四项义务全跳）
+        rshort_body = ("## 概述\n\n正文以概述开头的修复轮不再漏判。\n\n"
+                       "fix(scripts): #3074 fix-r5：修闸门\n\n" + blk_t.format(h=h_plain2) + "Refs #3074\n")
+        errs = gate2(rshort_body, h_plain2, h_sync)
+        if not any("fix-r5" in e and "fixtype" in e for e in errs):
+            fails.append(f"fix-r3 P0③：CI 形态（范围全不命中）概述开头 + 非首行结构化回显应判修复轮 5：{errs}")
+        # P1-1 面 A（MM boundary#1 + DS boundary#1 双撞，协调者仲裁输入写进测试注释）：
+        # `_scan_pairs('chore(state) 01:45 #1305 fix-r3 P0=0 P1=0 两家收敛；#1318 缺第二家标缺口',
+        # {'1318'})` 旧得 `([], [(3, {'1305'})])`＝异单假 FAIL 实证；枚举型标题（≥2 条互不相交
+        # #N 链）整条不作 foreign 判定，计入分支不受影响
+        c1 = "chore(state) 01:45 #1305 fix-r3 P0=0 P1=0 两家收敛；#1318 缺第二家标缺口"
+        if gate._scan_pairs(c1, frozenset({"1318"})) != ([], []):
+            fails.append(f"fix-r3 P1-1 面 A：仲裁 case1 应得 ([], [])（旧 ([], [(3, {{'1305'}})] 假 FAIL），"
+                         f"得 {gate._scan_pairs(c1, frozenset({'1318'}))}")
+        # 面 A 负控：枚举抑制只压 foreign——单链异单照旧拒收（两链有交集不构成枚举）
+        if not gate.foreign_fixround_pairs(["fix(scripts) #3056+#3074 fix-r5：x"], frozenset({"999"})):
+            fails.append("fix-r3 P1-1 面 A 负控：单条 #N 链（+ 并组）的异单照旧进 foreign（枚举抑制不得放宽计数面）")
+        if not gate.foreign_fixround_pairs(["fix(scripts) #9999 fix-r5；#9999 补记 x"], frozenset({"3074"})):
+            fails.append("fix-r3 P1-1 面 A 负控：两条链有交集（共享 #9999）不构成枚举，异单照旧拒收")
+        # P1-1 面 B（仲裁输入）：`_scan_pairs('docs(state) 22:51 补落（2558 fix-r5 派 macmini）',
+        # {'3129'})` 旧得 `([5], [])`＝板尾裸号被计入实证；无全角冒号时 token 前紧邻裸数字串
+        # 视为 board 枚举引用，不计轮（docstring「板尾裸号不计」从「：后」扩到无冒号形）
+        c4 = "docs(state) 22:51 补落（2558 fix-r5 派 macmini）"
+        if gate._scan_pairs(c4, frozenset({"3129"})) != ([], []):
+            fails.append(f"fix-r3 P1-1 面 B：仲裁 case4 应得 ([], [])（旧 ([5], []) 裸号误计），"
+                         f"得 {gate._scan_pairs(c4, frozenset({'3129'}))}")
+        if gate.fix_round_from_title(c4, frozenset({"3129"})) is not None:
+            fails.append("fix-r3 P1-1 面 B：板尾裸号（2558 fix-r5）不应把纯文档 PR 判成修复轮")
+        # 面 B 负控：守卫只认「裸数字紧邻 token」——`PR#3074`（# 前缀）与无裸号的形态照常计入
+        if gate.fix_round_from_title("fix(scripts) PR#3074 fix-r5：x", frozenset({"3074"})) != 5:
+            fails.append("fix-r3 P1-1 面 B 负控：PR#3074（# 前缀）不是裸号，免配对兜底照常计 5")
+        if gate.fix_round_from_title("chore: retrigger CI for the fix-r1 probe", frozenset()) != 1:
+            fails.append("fix-r3 P1-1 面 B 负控：无裸号的免配对兜底照常计 1（守卫不得误伤）")
+        if gate.fix_round_from_title("chore(state) 22:51 补落（fix-r5 派 macmini，无裸号）", frozenset()) != 5:
+            fails.append("fix-r3 P1-1 面 B 负控：裸号不紧邻 token（22:51 与 fix-r5 间隔中文）时守卫不触发，"
+                         "免配对兜底照常计 5（宁高勿低不变）")
+        # P1-2（MM sibling#1）：豁免理由 fixtype= 载体至多一次——双载体（第二个 不适用 不被校验、
+        # 不触发 check_na_path）必须拒收并说明「至多一次」，且第二个 不适用 仍触发 na 路径检查
+        w_dup = ("fix(gateway) #1 fix-r5：纯文档改动\n\n"
+                 "<!-- pr-gate:waiver 纯文档轮豁免 fixtype=结构性 fixtype=不适用 说明文字足够长 -->\n"
+                 f"{residual}Refs #1\n")
+        errs = gate.check(w_dup, head)
+        if not any("至多一次" in e for e in errs):
+            fails.append(f"fix-r3 P1-2：豁免理由双 fixtype= 载体应拒收并说明「至多一次」：{errs}")
+        if not any("无法按 ci_scope 语义复算" in e for e in errs):
+            fails.append(f"fix-r3 P1-2：双载体里的 fixtype=不适用 仍须触发 check_na_path（无 --base 拒收）：{errs}")
+        # P1-3（MM boundary#2）：接续轮 b 后缀——fix-r11b 算第 11 轮；fix-r5x 不是修复轮（既有
+        # 负控 :637 处 fix_round_from_body 同词表钉死，这里补标题侧）；b 后缀算 N≥4 residual 门槛轮
+        if gate.fix_round_from_title("fix(scripts) #1 fix-r11b：接续轮收尾", frozenset({"1"})) != 11:
+            fails.append("fix-r3 P1-3 正控：fix-r11b 接续轮应算第 11 轮")
+        if gate.fix_round_from_title("fix(scripts) #1 fix-r5x：x", frozenset({"1"})) is not None:
+            fails.append("fix-r3 P1-3 负控：fix-r5x（x 非 b）不是修复轮")
+        if gate.fix_round_from_body("fix-r11b 接续轮说明\n") != 11:
+            fails.append("fix-r3 P1-3 正控：正文首行 fix-r11b 应判修复轮 11")
+        if gate.fix_round_from_body("fix-r5b2 多级后缀\n") is not None:
+            fails.append("fix-r3 P1-3 负控：fix-r5b2（b 后又跟数字）词尾不闭合，不是修复轮")
+        # P2a（DS boundary#2）：位界 {1,18} 外的超长数字串 fail-closed 干净报错，不进 traceback
+        # ——直接调 check()（正文路径 `Refs #<19+位>` 旧会走到 sorted(issues, key=int) 的
+        # ValueError）；标题路径用 wt2 夹具提交一条 19 位形
+        over_errs = gate.check("## 概述\n\nRefs #" + "1" * 19 + "\n" + blk_t.format(h=""), "")
+        if len(over_errs) != 1 or "超长数字串" not in over_errs[0] or "fail-closed" not in over_errs[0]:
+            fails.append(f"fix-r3 P2a：正文 19 位 #N 应单条 fail-closed 拒收（无 traceback）：{over_errs}")
+        if gate._overflow_err("fix-r" + "9" * 19 + "：x", "t") is None or \
+           gate._overflow_err("r" + "9" * 19 + " x", "t") is None or \
+           gate._overflow_err("fix-r5：#3056 正常", "t") is not None:
+            fails.append("fix-r3 P2a：_overflow_err 三个 token 形（fix-r/#/r）与正常形判据漂移")
+        subprocess.run([*g2, "checkout", "-q", "-b", "fixr3-overflow"], check=True)
+        h_over = titled2("fix(scripts) #" + "1" * 19 + " fix-r5：超长单号")
+        subprocess.run([*g2, "checkout", "-q", "-"], check=True)
+        errs = gate.check(blk_t.format(h=h_over) + "Refs #3056\n", h_over, "", c_base, str(wt2))
+        if len(errs) != 1 or "超长数字串" not in errs[0]:
+            fails.append(f"fix-r3 P2a：19 位单号的提交标题应单条 fail-closed 拒收（旧实现 int() 崩溃）：{errs}")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):

@@ -1182,9 +1182,14 @@ def check_segments(text):
 
 
 # ---- 修复轮字段（#3056 长尾收口卡「机检落点」） ------------------------------
-# 修复轮信号 = 路径段全匹配 fix-r<N>（ops dispatch-fix 生成于 _tmp/<日期>-issue-<N>/fix-r<M>/task.md）。
+# 修复轮信号 = 路径段全匹配 fix-r<N>（含接续轮 b 后缀，ops dispatch-fix 生成于
+# _tmp/<日期>-issue-<N>/fix-r<M>[/b]/task.md）。
 # 内容识别不可靠：任务书正文经常引用 fix-rN 字样（如本检查器的文档），不能当轮次信号。
-FIX_ROUND_PART = re.compile(r"fix-r(\d+)")
+# 轮号词表单源（#3056 fix-r3 P1-3，MM boundary#2）：旧本文件手抄 `fix-r(\d+)` 与 PR 侧
+# FIXROUND_RE 是两份定义——b 后缀（fix-r11b，board.md:1660/:1642/:1981/:1984 在案）在
+# 任务书侧 fullmatch 失败、PR 侧词尾环视不认，两侧同时静默跳过该轮族的字段义务＝假 PASS。
+# 派生 check-pr-gate.py 的 FIXROUND_RE（b 算第 N 轮、只认 b、位界 {1,18}；fix-r5x 仍是
+# 非修复轮——PR 侧负控钉死），fullmatch 于路径段等价于词边界匹配。
 
 
 def _gate_module():
@@ -1206,6 +1211,9 @@ def _gate_module():
 # 修法类型只接受字面三值（卡「收口证明义务」节）；「结构派生/自动派生」等子类字样一律写 结构性。
 # 常量不复制：就是 check-pr-gate.py 的同一对象（见 _gate_module；配对测试断言 is 同一）。
 FIXTYPE_VALUES = _gate_module().FIXTYPE_VALUES
+# 轮号词表不复制：PR 侧 check-pr-gate.py 的 FIXROUND_RE 是源（fix-r3 P1-3，见上方段落注释；
+# fix_round_from_path 用 fullmatch，环视在串首/尾恒真，等价词边界匹配）。
+FIX_ROUND_PART = _gate_module().FIXROUND_RE
 # 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明
 FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
 # residual 标记正则不复制：PR 侧 check-pr-gate.py 的 RESIDUAL_MARKER 是源（#3056 fix-r2 修 7，
