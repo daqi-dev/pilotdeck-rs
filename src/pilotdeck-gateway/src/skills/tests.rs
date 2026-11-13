@@ -71,13 +71,15 @@ fn permission_not_run(reason: &str) {
     // #1525 / #1263: a privileged host cannot exercise the denial, so the
     // comparison never ran. Print the reason first (the shared handle writer
     // stays visible under libtest's default output capture), then turn the
-    // skip into a failure when the switch is on.
-    crate::test_skip_line::stderr_skip_line(&format!("NOT_RUN: {reason}\n"));
-    assert!(
-        !crate::test_permission_faults::require_permission_faults(),
-        "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the permission probe still \
-         succeeded (root or CAP_DAC_OVERRIDE); the permission-denied contract \
-         ({reason}) needs an unprivileged host (需要非特权宿主)"
+    // skip into a failure when the switch is on — the #1937 shared pair,
+    // with both texts verbatim as before.
+    crate::test_permission_faults::skip_or_require(
+        &format!("NOT_RUN: {reason}\n"),
+        &format!(
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the permission probe still \
+             succeeded (root or CAP_DAC_OVERRIDE); the permission-denied contract \
+             ({reason}) needs an unprivileged host (需要非特权宿主)"
+        ),
     );
 }
 

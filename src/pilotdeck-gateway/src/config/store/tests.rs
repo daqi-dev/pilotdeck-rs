@@ -83,6 +83,14 @@ async fn settle() {
 /// cleanly stopped watcher would be reported as a timeout on that path.
 const STOP_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// #1920: pin that relation at compile time, so a future ceiling change
+/// cannot silently invert it and turn every clean stop into a timeout
+/// report on the slowest-poll path. `Duration`'s `PartialOrd` is not a
+/// `const fn`, so the pin compares whole seconds — both constants are whole
+/// seconds — and can only fire conservatively (a sub-second relation it
+/// cannot resolve fails loudly rather than passing silently).
+const _: () = assert!(STOP_TIMEOUT.as_secs() > MAX_POLL_INTERVAL.as_secs());
+
 /// #1899: wait for the detached watcher task and report how it ended.
 async fn watcher_stop(task: Option<JoinHandle<()>>) -> Result<(), String> {
     let Some(task) = task else {
@@ -299,6 +307,103 @@ async fn failures_keep_snapshot_version_and_only_config_error_diagnostics() {
     assert_eq!(version(&next), 2.0);
     assert!(codes(&store).is_empty());
     assert_eq!(*lock(&events), vec![(1.0, 2.0)]);
+}
+
+/// #1833 A1/A2, the rationale end to end: a binding failure must not report
+/// the loader's `PilotConfigError` class, because only that name replaces the
+/// retained reload diagnostics. TS propagates the raw `YAMLParseError`
+/// (yaml's `parse` throws `doc.errors[0]`), the `TypeError` from
+/// `path.join(bindingId)` and the fs `Error` from the sops read race — the
+/// baseline therefore keeps the previous reload's diagnostics; a Rust-side
+/// default name would clear them.
+#[tokio::test]
+async fn binding_error_classes_keep_the_retained_reload_diagnostics() {
+    fn codes(store: &ConfigStore) -> Vec<String> {
+        store
+            .diagnostics()
+            .iter()
+            .map(|d| {
+                d.get("code")
+                    .and_then(JsValue::as_string)
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap()
+            })
+            .collect()
+    }
+    let root = Root::new();
+    root.write(BASE);
+    let mut options = StoreOptions::new(
+        &root.0,
+        &root.0,
+        Env::from([
+            (
+                "PILOT_HOME".to_owned(),
+                root.0.to_string_lossy().into_owned(),
+            ),
+            (
+                "STAFFDECK_PROJECT_BINDING_ENABLED".to_owned(),
+                "true".to_owned(),
+            ),
+            (
+                "STAFFDECK_FORMAL_API_ORIGIN".to_owned(),
+                "https://staffdeck.invalid".to_owned(),
+            ),
+            ("STAFFDECK_COPY_TENANT_ID".to_owned(), "tenant".to_owned()),
+        ]),
+    );
+    options.project = Some(root.0.to_string_lossy().into_owned());
+    options.loaded_at = Arc::new(|| "1970-01-01T00:00:00.000Z".to_owned());
+    let store = ConfigStore::new(options).expect("#1833 initial load");
+    // Establish the retained diagnostics with a plain config failure first.
+    root.write(&BASE.replace("schemaVersion: 1", "schemaVersion: 2"));
+    let error = store.reload("manual").await.unwrap_err();
+    assert_eq!(
+        error.name, "PilotConfigError",
+        "#1833 the setup failure must be a config diagnostic failure"
+    );
+    assert_eq!(
+        codes(&store),
+        ["CONFIG_SCHEMA_VERSION_UNSUPPORTED"],
+        "#1833 the retained diagnostics start non-empty"
+    );
+    // The binding store enables the bound project; its sops.json is invalid.
+    let staffdeck = root.0.join("staffdeck");
+    std::fs::create_dir_all(staffdeck.join("binding-1")).expect("#1833 binding dirs");
+    let binding_store = format!(
+        r#"{{"version":1,"installationId":"installation","projects":[{{"projectRoot":{},"bindingId":"binding-1","agentId":"agent","status":"bound","origin":"https://staffdeck.invalid","tenantId":"tenant"}}]}}"#,
+        serde_json::to_string(&root.0.to_string_lossy().into_owned()).unwrap()
+    );
+    std::fs::write(staffdeck.join("project-bindings.json"), &binding_store)
+        .expect("#1833 binding store");
+    std::fs::write(staffdeck.join("binding-1/sops.json"), "sops: [unclosed\n")
+        .expect("#1833 sops bundle");
+    let error = store.reload("manual").await.unwrap_err();
+    assert_eq!(
+        error.name, "YAMLParseError",
+        "#1833 the sops yaml failure must keep yaml's own class"
+    );
+    assert_eq!(
+        codes(&store),
+        ["CONFIG_SCHEMA_VERSION_UNSUPPORTED"],
+        "#1833 a YAMLParseError reload keeps the retained diagnostics"
+    );
+    // A non-string bindingId: `path.join`'s TypeError, same rule.
+    std::fs::write(
+        staffdeck.join("project-bindings.json"),
+        binding_store.replace("\"bindingId\":\"binding-1\"", "\"bindingId\":5"),
+    )
+    .expect("#1833 rewrite the binding store");
+    let error = store.reload("manual").await.unwrap_err();
+    assert_eq!(
+        error.name, "TypeError",
+        "#1833 the path.join failure must keep Node's class"
+    );
+    assert_eq!(
+        codes(&store),
+        ["CONFIG_SCHEMA_VERSION_UNSUPPORTED"],
+        "#1833 a TypeError reload keeps the retained diagnostics"
+    );
 }
 
 #[tokio::test]
@@ -571,10 +676,12 @@ fn two_hour_debounce_is_clamped_to_the_one_hour_ceiling() {
 
 /// #1736: `Instant + Duration` panics once `debounce` stops being
 /// representable, and the panic happens inside the detached watcher task —
-/// `WatchHandle::stop` swallows the `JoinError` and `Drop` only aborts, so
-/// hot reload dies with the handle still "alive" (the same silent death as
-/// #1650's zero period). The clamp keeps the deadline representable, and
-/// `deadline_after` is the second line of defence.
+/// `Drop` only aborts and a `stop` that has not been called yet cannot report
+/// a death it has not joined (its report, #1920's [`WatchStop::Panicked`],
+/// arrives only if someone stops the watcher afterwards), so hot reload dies
+/// with the handle still "alive" (the same silent death as #1650's zero
+/// period). The clamp keeps the deadline representable, and `deadline_after`
+/// is the second line of defence.
 #[tokio::test(start_paused = true)]
 async fn overflowing_debounce_does_not_kill_the_watcher() {
     let root = Root::new();
@@ -707,10 +814,9 @@ async fn stop_cancels_pending_reload_and_leaves_no_task() {
     watch.notify_change();
     settle().await;
     advance(100).await;
-    // #1899: `WatchHandle::stop` aborts and then swallows the `JoinError`; a
-    // watcher that died before the stop would leave the same `weak_count == 0`
-    // and "no reload", so prove it was still running (and had already ticked)
-    // before the stop.
+    // #1899: `weak_count == 0` and "no reload" are also true for a watcher that
+    // died before the stop, so prove it was still running (and had already
+    // ticked) before the stop.
     assert!(
         !watch
             .task
@@ -719,19 +825,176 @@ async fn stop_cancels_pending_reload_and_leaves_no_task() {
             .is_finished(),
         "#1899 the watcher must still be running before stop"
     );
-    watch.stop().await;
+    // #1920: the stop's own report is the "stopped" evidence. A watcher that
+    // died by panic before the abort joins `Err(JoinError::Panic)` and comes
+    // back `Panicked` (and one that returned on its own, `Finished`), so the
+    // release and "no reload" below can no longer be produced by a dead
+    // watcher alone — they are corroboration, not the proof.
+    assert_eq!(
+        watch.stop().await,
+        WatchStop::Cancelled,
+        "#1920 stop must report the watcher alive until its own abort"
+    );
     assert_eq!(
         Arc::weak_count(&store.inner),
         0,
-        "watcher task released the store"
+        "#1920 the stopped watcher task released the store"
     );
     root.write(&other_model());
     tokio::time::sleep(Duration::from_millis(2000)).await;
-    assert_eq!(loads.load(Ordering::SeqCst), 1, "no reload after stop");
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 no reload after stop"
+    );
 }
 
+/// #1920: `WatchHandle::stop`'s panic arm needs a watcher that really died by
+/// panic; the hook makes exactly this store's watcher panic on its first poll
+/// (no public input does that anymore — #1650/#1736 clamp every option that
+/// used to). The stop must report the panic, not swallow it the way
+/// `let _ = task.await` did — #1650's silent hot-reload death. The two
+/// assertions after it pin why the old evidence was false green: a dead
+/// watcher releases the store and never reloads exactly like a stopped one.
 #[tokio::test(start_paused = true)]
-async fn dropping_the_handle_or_the_store_ends_the_task() {
+async fn stop_reports_a_watcher_that_died_by_panic() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    arm_watch_loop_panic(&store.inner);
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
+    // The watcher's first poll runs the gate's panic.
+    settle().await;
+    assert_eq!(
+        watch.stop().await,
+        WatchStop::Panicked,
+        "#1920 stop must report a watcher that died by panic, not a clean stop"
+    );
+    assert_eq!(
+        Arc::weak_count(&store.inner),
+        0,
+        "#1920 a panicked watcher releases the store too"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 a panicked watcher does not reload either"
+    );
+}
+
+/// #1920 fix-r1: the third stop shape's positive control — the loop had
+/// already returned on its own (the store was dropped, the next tick's
+/// owner check ended it) before `stop` was called, so the abort lands on a
+/// finished task and the join reports the loop's own `Ok(())`. r0 claimed
+/// this could not be constructed on the current_thread runtime; measured:
+/// the missing ingredient is one poll interval of time, not a scheduler
+/// turn — settle alone never fires the ticker (the stop's abort wins,
+/// `Cancelled`), while one interval of clock lets the owner check end the
+/// loop first (`Finished`). The paused clock makes that interval
+/// deterministic.
+#[tokio::test(start_paused = true)]
+async fn stop_reports_finished_after_loop_returns() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    advance(100).await;
+    // #1899: the `Finished` below must not be reachable by a watcher that
+    // died early — all three of #1899's death shapes pre-decease this check.
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before the store is dropped"
+    );
+    drop(store);
+    // One poll interval of (paused) clock: the loop's owner check ends it on
+    // its own, before `stop` is ever called.
+    advance(100).await;
+    settle().await;
+    assert_eq!(
+        watch.stop().await,
+        WatchStop::Finished,
+        "#1920 stop must report a watcher that returned on its own as Finished"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 the self-returning watcher reloaded nothing"
+    );
+}
+
+/// #1920 fix-r1: `stop`'s else arm — the task was already taken out of the
+/// handle (the store-half drop test's move; the field is private, so only
+/// this crate's tests can do it). The arm used to return `Finished`, an
+/// unobserved death labeled as a clean self-return; it now fails a debug
+/// assertion instead. The misuse is driven through a spawned task so the
+/// panic arrives as a `JoinError` the test can assert on.
+#[tokio::test(start_paused = true)]
+async fn stop_after_the_task_was_taken_fails_loudly() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, _loads) = store(&root);
+    let mut watch = store
+        .start_watching(WatchOptions::default())
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    advance(100).await;
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before the store is dropped"
+    );
+    drop(store);
+    // The store-half move: the task is taken out and joined by the test
+    // itself (it returns `Ok(())` once the owner is gone).
+    watcher_stop(watch.task.take())
+        .await
+        .expect("#1899 the watcher returns on its own after the store is dropped");
+    // The handle now has no task left; this `stop` never observed the
+    // watcher's death and must not paper over that with a shape.
+    let misuse = tokio::spawn(async move { watch.stop().await })
+        .await
+        .expect_err("#1920 stop after the task was taken must not return normally");
+    assert!(
+        misuse.is_panic(),
+        "#1920 the unclassifiable stop must die by panic, not return a shape"
+    );
+    // A `debug_assert!` with a literal message panics with a `&'static str`
+    // payload; accept both that and a formatted `String`.
+    let message = match misuse.into_panic().downcast::<&'static str>() {
+        Ok(message) => (*message).to_owned(),
+        Err(payload) => match payload.downcast::<String>() {
+            Ok(message) => *message,
+            Err(payload) => format!("{payload:?}"),
+        },
+    };
+    assert!(
+        message.contains("#1920 stop after the task was already taken"),
+        "#1920 the misuse failure must carry the #1920 marker: {message}"
+    );
+}
+
+/// #1899/#1920: the handle half of the old two-in-one drop test. Dropping the
+/// handle aborts the task and detaches it, so the terminal shape cannot be
+/// joined here — the evidence chain is the liveness precondition above plus
+/// the release below, and the window between them is what keeps a panic from
+/// slipping through: the precondition, `notify_change` and the drop are all
+/// synchronous, with no await — no scheduler turn — in between on this
+/// single-threaded runtime, so a watcher that was alive at the check cannot
+/// die before the abort lands.
+#[tokio::test(start_paused = true)]
+async fn dropping_the_handle_ends_the_task() {
     let root = Root::new();
     root.write(BASE);
     let (store, loads) = store(&root);
@@ -755,14 +1018,33 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
     drop(watch);
     settle().await;
     tokio::time::sleep(Duration::from_millis(1000)).await;
-    assert_eq!(loads.load(Ordering::SeqCst), 1);
-    assert_eq!(Arc::weak_count(&store.inner), 0);
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 no reload after the handle is dropped"
+    );
+    assert_eq!(
+        Arc::weak_count(&store.inner),
+        0,
+        "#1920 the aborted watcher released the store"
+    );
+}
 
+/// #1899/#1920: the store half of the old two-in-one drop test. Here the
+/// terminal shape *is* observable — the handle's task is joined directly —
+/// so the clean return is asserted, not inferred from `weak_count`.
+#[tokio::test(start_paused = true)]
+async fn dropping_the_store_ends_the_task() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
     let mut watch = store
         .start_watching(WatchOptions::default())
         .expect("#879 healthy watcher paths");
     settle().await;
     advance(100).await;
+    // #1899: prove the watcher was running (past its first in-loop tick)
+    // before the store is dropped.
     assert!(
         !watch
             .task
@@ -777,7 +1059,11 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
         Ok(()),
         "#1899 dropping the store must stop the watcher cleanly"
     );
-    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1920 no reload after the store is gone"
+    );
 }
 
 #[test]
@@ -971,9 +1257,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     let big = vec![b'#'; CONTENT_SAMPLE_LIMIT as usize + 1];
     std::fs::write(&path, &big).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, None, true);
+    hash_entry(&path, &mut with_content, None, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, None, false);
+    hash_entry(&path, &mut metadata_only, None, None, false);
     assert_eq!(with_content.finish(), metadata_only.finish());
     let mut watched = WatchedPath::new(path.clone()).expect("file watched");
     std::fs::write(&path, &big).unwrap();
@@ -981,9 +1267,9 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     // Negative control: at the limit the content is part of the sample.
     std::fs::write(&path, &big[..CONTENT_SAMPLE_LIMIT as usize]).unwrap();
     let mut with_content = DefaultHasher::new();
-    hash_entry(&path, &mut with_content, None, true);
+    hash_entry(&path, &mut with_content, None, None, true);
     let mut metadata_only = DefaultHasher::new();
-    hash_entry(&path, &mut metadata_only, None, false);
+    hash_entry(&path, &mut metadata_only, None, None, false);
     assert_ne!(with_content.finish(), metadata_only.finish());
 }
 
@@ -1706,13 +1992,19 @@ fn a_write_between_the_startup_samples_is_reported() {
     // startup window can swallow.
     *lock(&STARTUP_SAMPLE_WRITE) = Some((path.clone(), other_model().into_bytes()));
     let mut watched = WatchedPath::new(path.clone()).expect("#1987 A2 file watched");
-    assert!(
-        watched.changed(),
-        "#1987 A2 a write between the startup samples is reported"
-    );
+    // #2122 F2: this must be asserted *before* the first `changed()`. D11
+    // forces `metadata_fingerprint` back to `None` on every tick that
+    // reports a change, so placed after the reporting `changed()` below the
+    // assertion could not fail and pinned nothing — the startup's own commit
+    // is what this line owns, and it is observable only until something
+    // reports.
     assert_eq!(
         watched.metadata_fingerprint, None,
         "#1987 A2 the startup sample commits no metadata shortcut"
+    );
+    assert!(
+        watched.changed(),
+        "#1987 A2 a write between the startup samples is reported"
     );
     // Back on the short-circuit: quiet, and the next tick commits.
     assert!(
@@ -1837,9 +2129,13 @@ fn read_dir_iteration_failure_obscures_the_sample() {
         watched.fingerprint.is_some(),
         "#1987 B6 the startup sample is complete"
     );
-    // Both entries are swallowed before either sample of either of two ticks
-    // reaches them: the whole listing is poisoned per sample.
-    arm_read_failures(&dir, ReadOp::ReadDirEntry, 4);
+    // Each obscured tick consumes four armed entry steps — the two entries
+    // of both of its samples, the metadata-only one and the folded one — so
+    // covering two obscured ticks takes eight. #2122 F1: the previous budget
+    // of four ran out after the first tick, so the "second obscured tick"
+    // assertion below actually ran on a complete sample and the folded chain
+    // comparison was never exercised by it.
+    arm_read_failures(&dir, ReadOp::ReadDirEntry, 8);
     assert!(
         !watched.changed(),
         "#1987 B6 an obscured sample reports nothing"
@@ -1869,6 +2165,311 @@ fn read_dir_iteration_failure_obscures_the_sample() {
     );
 }
 
+/// #2122 F5: a mixed tick whose folded sample is *not* fully observed — the
+/// metadata sample was obscured and the folded sample's content read failed
+/// (`ContentUnknown`) — is no complete observation. The A4 guard used to
+/// accept any non-obscured folded status, so the `read = None` fold fell
+/// through to the complete path, was committed into `fingerprint`, and an
+/// untouched config false-reported once on the mixed tick and once more at
+/// recovery. Gated by the unknown-read twin instead, both ticks are quiet
+/// and the complete baseline is never polluted.
+#[test]
+fn a_mixed_tick_whose_folded_content_read_fails_reports_nothing() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 F5 file watched");
+    let complete = watched.fingerprint;
+    assert!(
+        complete.is_some(),
+        "#2122 F5 the startup sample is complete"
+    );
+    // The mixed tick: the metadata sample is obscured (a file watch stats
+    // itself three times per tick, D15 — the two armed failures land on the
+    // type probe's and the metadata sample's stats), while the folded
+    // sample's stat succeeds and its content read fails. Nothing changes.
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 F5 a mixed tick with an unknown fold reports nothing"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#2122 F5 the mixed tick commits no metadata shortcut"
+    );
+    assert_eq!(
+        watched.fingerprint, complete,
+        "#2122 F5 the mixed tick commits no complete fingerprint"
+    );
+    // Recovery with no change in between: quiet against the untouched
+    // baseline (D9), not a second report.
+    assert!(
+        !watched.changed(),
+        "#2122 F5 an unchanged recovery after the mixed tick reports nothing"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 F5 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1 (review P1): the uncovered grid cell — the first tick after
+/// startup with a failing content read and an untouched disk. #1987 A2
+/// guarantees the startup sample commits no metadata shortcut, so the first
+/// tick re-samples in full; a transient content-read failure (EMFILE-class)
+/// there used to fall through the between-samples guard (`== Obscured`),
+/// commit its `read = None` fold into `fingerprint` — differing from the
+/// startup's complete fold — and false-report the untouched config once, then
+/// once more at recovery (F5's shape on the other path).
+#[test]
+fn an_untouched_config_with_a_failing_first_content_read_reports_nothing() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    let complete = watched.fingerprint;
+    assert!(
+        complete.is_some(),
+        "#2122 fix-r1 the startup sample is complete"
+    );
+    let before = content_reads(&path);
+    // Nothing changes on disk; only the content read fails, once.
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the first content-unknown tick with no change reports nothing"
+    );
+    assert_eq!(
+        watched.fingerprint, complete,
+        "#2122 fix-r1 the content-unknown tick commits no fingerprint"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#2122 fix-r1 the content-unknown tick commits no metadata shortcut"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before,
+        "#2122 fix-r1 the failed read is not counted as a successful read"
+    );
+    // Recovery with no change in between: quiet against the untouched
+    // baseline, not a second false report.
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 an unchanged recovery after the content-unknown tick reports nothing"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before + 1,
+        "#2122 fix-r1 the read is retried after recovery"
+    );
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1 (review concurrency#2): the obscured chain must never mix
+/// fold shapes. An obscured fold hashes a failed stat as `false`; a
+/// content-unknown fold hashes the observed metadata plus `read = None` —
+/// the two are never equal, so routing a content-unknown tick into the
+/// obscured handling (what the first F5 cut did by widening the mixed-tick
+/// guard to `!= Complete`) false-reports on every shape flip in the chain.
+#[test]
+fn an_obscured_chain_never_compares_content_unknown_folds() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    assert!(
+        watched.fingerprint.is_some(),
+        "#2122 fix-r1 the startup sample is complete"
+    );
+    // Tick 1: obscured — the type probe's, the metadata sample's and the
+    // folded sample's stat each fail, so the folded sample is obscured and
+    // seeds the chain (a file watch stats itself three times per tick).
+    arm_read_failures(&path, ReadOp::Stat, 3);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the obscured tick reports nothing"
+    );
+    // Tick 2: a mixed tick whose folded sample is content-unknown — the
+    // type probe's and the metadata sample's stat fail while the folded
+    // sample's stat succeeds and its content read fails. Disk unchanged:
+    // the shape flip alone must not report.
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 a content-unknown fold is not compared against the obscured chain"
+    );
+    // Recovery with no change in between stays quiet against the untouched
+    // complete baseline.
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 an unchanged recovery reports nothing"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1: the unknown-read twin is committed by every complete
+/// sample, a reported one included — not only by the startup sample. A
+/// content-unknown tick after a reported rewrite, with nothing further
+/// changing, must stay quiet against the twin of the new state.
+#[test]
+fn a_content_unknown_tick_after_a_reported_change_stays_quiet() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    // A real change, reported by a complete tick — which also commits the
+    // unknown-read twin of the new state.
+    root.write(&other_model());
+    assert!(watched.changed(), "#2122 fix-r1 the rewrite is reported");
+    // Nothing further changes; only the content read fails.
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the content-unknown tick after the reported change reports nothing"
+    );
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 an unchanged recovery after the content-unknown tick reports nothing"
+    );
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(BASE);
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 fix-r1: a quiet content-unknown tick clears the metadata shortcut —
+/// the sample was incomplete, so the next tick must retry the read instead
+/// of short-circuiting on identical metadata (#1792's retry contract, which
+/// the obscured handling keeps by the same rule).
+#[test]
+fn a_content_unknown_tick_clears_the_shortcut_so_the_read_is_retried() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 fix-r1 file watched");
+    // One quiet complete tick commits the metadata shortcut (#1739).
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the first tick after startup is quiet"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#2122 fix-r1 the quiet tick commits the metadata shortcut"
+    );
+    let committed = content_reads(&path);
+    // A mixed tick whose folded sample is content-unknown: the metadata
+    // sample is obscured (the type probe's and its stat fail) while the
+    // folded sample's stat succeeds and its content read fails. Nothing
+    // changes on disk.
+    arm_read_failures(&path, ReadOp::Stat, 2);
+    arm_content_read_failures(&path, 1);
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the content-unknown mixed tick reports nothing"
+    );
+    // The next tick's metadata matches the committed shortcut — the
+    // content-unknown tick must have cleared it, so the read is retried
+    // despite the identical metadata.
+    assert!(
+        !watched.changed(),
+        "#2122 fix-r1 the retry tick after the content-unknown tick is quiet"
+    );
+    assert_eq!(
+        content_reads(&path),
+        committed + 1,
+        "#2122 fix-r1 the retry tick re-reads the content despite identical metadata"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+    clear_content_read_failures(&path);
+    // Liveness: a real change is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#2122 fix-r1 a rewrite after recovery is still seen"
+    );
+}
+
+/// #2122 F4: a truncated listing that never reaches the watched target is
+/// *no observation of the target at all* — `target_sample` is `None` on that
+/// tick, so the transition comparison must not fire. The arm this pins is
+/// the unobserved one in `fingerprint`'s target fold: mis-written as "the
+/// absence hash" (or any constant), the transition tick would read
+/// "unobserved" as "vanished" and false-report a reload for an untouched
+/// config. The only other `ReadDirEntry` test watches a directory with no
+/// target, where the two are indistinguishable.
+#[test]
+fn a_truncated_listing_that_misses_the_target_reports_nothing() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let path = dir.join("pilotdeck.yaml");
+    std::fs::create_dir(&dir).expect("#2122 F4 watch directory");
+    std::fs::write(dir.join("a.yaml"), "a: 1\n").expect("#2122 F4 sibling entry");
+    // The config file is missing at startup: the parent directory is watched
+    // with the file as its target, and the startup sample observes its
+    // absence (a complete observation, D17).
+    let mut watched = WatchedPath::new(path.clone()).expect("#2122 F4 parent watched");
+    assert!(
+        watched.fingerprint.is_some(),
+        "#2122 F4 the startup sample is complete"
+    );
+    // The target appears — a real change, reported by a complete tick, which
+    // also seeds the last complete target fingerprint with the file's own.
+    std::fs::write(&path, BASE).expect("#2122 F4 the target appears");
+    assert!(
+        watched.changed(),
+        "#2122 F4 the target's appearance is reported"
+    );
+    // Two obscured ticks, both listings truncated before any entry (two
+    // entries × two samples × two ticks of armed `ReadDirEntry` steps): the
+    // target is never reached, so nothing about it was observed — not its
+    // absence, not its presence.
+    arm_read_failures(&dir, ReadOp::ReadDirEntry, 8);
+    assert!(
+        !watched.changed(),
+        "#2122 F4 a transition tick that never reached the target reports nothing"
+    );
+    assert!(
+        !watched.changed(),
+        "#2122 F4 the second truncated tick stays quiet"
+    );
+    // Recovery: nothing changed while the listings were truncated, so the
+    // complete sample is quiet against the last complete one.
+    clear_read_failures(&dir, ReadOp::ReadDirEntry);
+    assert!(
+        !watched.changed(),
+        "#2122 F4 an unchanged recovery after the truncated ticks reports nothing"
+    );
+    // Liveness: a real change is still seen.
+    std::fs::write(dir.join("c.yaml"), "c: 1\n").expect("#2122 F4 late entry");
+    assert!(
+        watched.changed(),
+        "#2122 F4 an entry created after recovery is still seen"
+    );
+}
+
 /// #1987 A3 (registration only): a startup probe failure on the *parent* of a
 /// missing config file keeps watching that parent (the `existsSync` ->
 /// `dirname` fallback's target) instead of dropping the path — the mode stays
@@ -1887,9 +2488,13 @@ fn startup_parent_probe_failure_watches_the_parent_dir() {
     let dir = root.0.join("watched");
     let path = dir.join("pilotdeck.yaml");
     std::fs::create_dir(&dir).expect("#1987 A3 watch directory");
-    // The config file is missing and its parent's stat fails (three armed
-    // failures: the startup probe plus the first two `changed()` re-probes).
-    arm_read_failures(&dir, ReadOp::Stat, 3);
+    // The config file is missing and its parent's stat fails. #2122 P3: the
+    // comment used to claim three armed failures ("the startup probe plus the
+    // first two `changed()` re-probes") but only two are ever consumed — the
+    // probe inside `new()` (which takes the `probing` shape, no sample) and
+    // the one re-probe of the mid-test `changed()`; the recovery `changed()`
+    // below happens after the clear. The budget is now exactly that.
+    arm_read_failures(&dir, ReadOp::Stat, 2);
     let mut watched = WatchedPath::new(path.clone()).expect("#1987 A3 the parent is kept");
     assert_eq!(
         watched.path, dir,

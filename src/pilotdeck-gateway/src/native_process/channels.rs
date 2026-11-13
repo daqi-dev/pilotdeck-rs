@@ -230,6 +230,30 @@ impl TurnGateway for FeishuTurnGateway {
 }
 
 impl NativeChannels {
+    /// The `ChannelStartDeps` this assembly's channel server (and through it
+    /// every adapter it starts) is constructed with — TS's `baseDeps`
+    /// (pilotdeckServer.ts:72-83) collected into the one explicit injection
+    /// face instead of an inline literal: the config snapshot, the one status
+    /// sink the lifecycle reporter and the adapters' own login reports share,
+    /// the channel log, and the A7 turn-gateway handle. The weixin gateway
+    /// port is the one startup dependency that cannot ride here: the native
+    /// submitter only exists after the host builder ran, so weixin takes it
+    /// through `WeixinChannelOptions.gateway` (`set_gateway_port`) — the same
+    /// late-publish shape the `FeishuTurnGateway` handle below gives feishu.
+    fn start_deps(
+        config: Arc<JsValue>,
+        report_status: StatusReporter,
+        log: Option<ChannelLog>,
+        turn_gateway: Arc<dyn TurnGateway>,
+    ) -> ChannelStartDeps {
+        ChannelStartDeps {
+            config: Some(config),
+            report_status: Some(report_status),
+            log,
+            turn_gateway: Some(turn_gateway),
+        }
+    }
+
     pub fn new(options: NativeChannelsOptions) -> Self {
         let runtime = options
             .report_status
@@ -250,16 +274,12 @@ impl NativeChannels {
         let turn_gateway: Arc<dyn TurnGateway> = feishu_gateway.clone();
         Self {
             server: ChannelServer::new(
-                ChannelStartDeps {
-                    config: Some(options.config.clone()),
-                    report_status: Some(report_status),
-                    log: options.log,
-                    // weixin submits through its own `WeixinChannelOptions.gateway`
-                    // port (`set_gateway_port`); feishu uses the shared
-                    // channel-server port, which the `FeishuTurnGateway` handle
-                    // fills in once the native submitter exists.
-                    turn_gateway: Some(turn_gateway),
-                },
+                Self::start_deps(
+                    options.config.clone(),
+                    report_status,
+                    options.log,
+                    turn_gateway,
+                ),
                 options.close_host.unwrap_or_else(noop_close_host),
             ),
             state,
@@ -425,10 +445,17 @@ impl NativeChannels {
 
     /// ChannelAdapterBundle.reload: reconcile the desired set against the
     /// managed keys (an enabled weixin replaces, a disabled one stops with
-    /// `config-disabled`). No caller in the native process yet — the config
-    /// hot-reload event source lands with the pr2 channel cluster — so the
-    /// reconcile semantics are pinned by the assembly tests for now.
-    #[allow(dead_code)]
+    /// `config-disabled`). Not wired in the native process (#1725 item 10,
+    /// caller inventory verified repo-wide): TS wires this through
+    /// `configStore.subscribe` on `adapters.*` changes (pilotdeck.ts:148-172),
+    /// and the native process has no config hot-reload event source yet — the
+    /// same gap that leaves `ProjectAutomationBundle::reload` unwired — so
+    /// wiring it here would be a one-off event source this closure round
+    /// cannot feed. The reconcile semantics stay pinned by the callers below
+    /// (channels_tests.rs and weixin replay_tests.rs), so the attribute is
+    /// test-scoped like the automation sibling's, and any future wiring is a
+    /// coordinator decision on the shared event source, not a weixin change.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn reload(&self, config: &JsValue) -> Result<ReconcileResult, ChannelError> {
         let mut input = ReconcileInput {
             managed_channel_keys: vec![feishu_key(), weixin_key()],

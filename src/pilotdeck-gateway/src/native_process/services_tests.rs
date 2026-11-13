@@ -3359,15 +3359,12 @@ fn direct_content_with_an_unopenable_path_stays_silent() {
     // under PDRS_REQUIRE_PERMISSION_FAULTS=1 (probe-only shape, as
     // tests/write_tools.rs).
     if std::fs::read(&path).is_ok() {
-        assert!(
-            !crate::test_permission_faults::require_permission_faults(),
-            "#1460 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the open \
-             (root or a permission-blind runner); this arm needs a host that enforces mode bits \
-             (需要强制 mode 位的宿主)"
-        );
-        crate::test_skip_line::stderr_skip_line(
+        crate::test_permission_faults::skip_or_require(
             "#1460 skip: direct_content_with_an_unopenable_path_stays_silent: \
              running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+            "#1460 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the open \
+             (root or a permission-blind runner); this arm needs a host that enforces mode bits \
+             (需要强制 mode 位的宿主)",
         );
         return;
     }

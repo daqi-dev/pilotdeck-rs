@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# anchor-selfcheck: unsupported meta-test of the roster verify-before-publish guard, drives every registered entry's main() with a stubbed cargo
-"""#2804: the verify-before-publish roster check needs a denominator per entry.
+# anchor-selfcheck: unsupported meta-test of the roster verify-before-publish guard and the #2425 mutation-window mirror pins, drives every registered entry's main() with a stubbed cargo
+"""#2804: the verify-before-publish roster check needs a denominator per entry. #2743 adds the mode-routing / session-domain-cleanup mutation-window mirror pins.
 
 #2309 fix-r3 machine-checked one entry only: ``manager-gateway`` re-checks
 the recorded verdicts against the static ``EXPECTED_NAMES`` roster *before*
@@ -66,6 +66,23 @@ the rename case must exit 1), and weakening it to a sorted or set
 comparison (the reorder case above survives it, so the reorder case must
 exit 1).
 
+#2743: the same two #2425 mutation-window pins (every source byte goes out
+through the atomic writer; the self-held window runs under terminate
+handlers) had landed for same-json-surfaces in the frozen
+``scripts/gateway-parity/test_safety.py`` and for manager-gateway here, but
+``mode-routing`` and ``session-domain-cleanup`` -- the two same-shape
+guarded runners the #1355 r20 anthropic sibling#1 review named -- had no
+mirror. ``ModeRoutingGuard`` and ``SessionDomainCleanupGuard`` below close
+that gap with the same stubbed-executor drive; the session-domain-cleanup
+fixture itself also had to *adopt* ``write_source_atomic`` first (its
+publish/restore were still truncating ``write_text``/``write_bytes``, the
+exact #1903 SIGKILL half-file hazard #2425 pinned, in the one guarded
+runner that mutates frozen ``scripts/gateway-parity`` bytes under the
+parity lease). The session-domain-cleanup count has one extra term: its
+window-exit backstop rewrites every guarded source once more after the
+loop, so a clean full run records two atomic writes per mutation plus one
+per guarded source.
+
 Run from this directory: ``python3 -m unittest test_negative_roster_guards``.
 """
 import contextlib
@@ -88,9 +105,32 @@ import pending_reanchor as pending
 
 FIXTURES = Path(__file__).resolve().parent
 FULL_ROSTER = 36
+# mode-routing's EXPECTED_NAMES literal (that fixture's negative_controls
+# :164-175): the roster count pinned independently of module.EXPECTED_NAMES,
+# the same shape as FULL_ROSTER for manager-gateway (#1666 family).
+MODE_ROSTER = 10
 TERMINATE_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGQUIT')
 MANAGER_SCRIPT = 'manager-gateway/negative_controls.py'
 ENTRY = FIXTURES / MANAGER_SCRIPT
+
+# Every register row's full ``EXPECTED_NAMES`` length, pinned to a literal
+# the module under test cannot influence (fix-r10, DS r9 + MM r9 sibling P1
+# -- the same #1666 family shape MODE_ROSTER and the session-domain 331 pin
+# closed in r9). The full-run mirror used to compare ``run.module.
+# EXPECTED_NAMES`` to itself: deleting a mutations row together with its
+# EXPECTED_NAMES entry shrinks both sides of the mirror and keeps it green.
+# These are the full roster lengths -- ``registered`` compares the whole
+# list, it never tail-cuts sentinel names -- measured against the source
+# literals, so a register row must not drift its roster without failing
+# here. A new register row joins this table in the same change (the
+# existence test below enforces the coverage in both directions).
+ROSTER_SIZE = {
+    MANAGER_SCRIPT: FULL_ROSTER,
+    'memory-gateway/negative_controls.py': 18,
+    'snapshot-projection/negative_controls.py': 20,
+    'sdk-mcp-session-tools/negative_controls.py': 9,
+    'issue-2495/negative_controls.py': 7,
+}
 
 # The defence's own signature in an entry's source: a mismatched run
 # publishes a file named roster-mismatch.json and nothing else. Matching
@@ -261,6 +301,34 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
     # test interpreter must keep its own dispositions afterwards.
     saved_handlers = {name: signal.getsignal(getattr(signal, name))
                       for name in TERMINATE_SIGNALS if hasattr(signal, name)}
+    window_entry = {}
+    window_exit = {}
+
+    @contextlib.contextmanager
+    def recording_window(root, paths, **kwargs):
+        # The strong shape the two new classes in this change already pin
+        # (#2425, frozen test_safety.py:2862-2900): record the live
+        # dispositions when the window opens, and require every
+        # TERMINATE_SIGNALS member to be bound. A late install -- after the
+        # window entry -- leaves the batch unprotected while a post-return
+        # sample would still see the handler; the SIGTERM-only shape was
+        # judged P1 on the frozen side once already (DS rebase review of
+        # this PR, sibling#1). Sample again when the window closes: a
+        # mid-window restore to the default dispositions must stay red
+        # even though the entry sample was clean (DS r5 sibling#1 /
+        # boundary#1 -- two reviewers independently hit the entry-only
+        # hole; entry+exit together catch both the late install and the
+        # early restore).
+        window_entry.update({name: signal.getsignal(getattr(signal, name))
+                             for name in TERMINATE_SIGNALS
+                             if hasattr(signal, name)})
+        try:
+            yield {path: path.read_bytes() for path in paths}
+        finally:
+            window_exit.update({name: signal.getsignal(getattr(signal, name))
+                                for name in TERMINATE_SIGNALS
+                                if hasattr(signal, name)})
+
     installed = False
     stdout, stderr = io.StringIO(), io.StringIO()
     # A launcher identity that is NOT the entry path (a wrapper or symlink
@@ -269,7 +337,7 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
     wrapper = base / 'wrapper-launch.py'
     try:
         with patch.dict(os.environ, _environment(base)), \
-             patch.object(module, 'mutating_sources', stubbed_window), \
+             patch.object(module, 'mutating_sources', recording_window), \
              patch.object(module, 'write_source_atomic', fake_write_atomic), \
              patch.object(module, 'wait_for_slot', fake_slot), \
              patch.object(module, 'run_owned', fake_run_owned), \
@@ -292,12 +360,22 @@ def _drive_manager(testcase, argv, *, drop_last=False, renamed=False,
                     code = module.main()
             except ValueError as error:
                 code = f'uncaught ValueError: {error}'
-        # Sampled before the restore below puts the interpreter's own
-        # dispositions back.
-        installed = signal.getsignal(signal.SIGTERM) is module.terminate_cleanly
+        # Judged from the window-entry AND window-exit recordings above,
+        # before the restore below puts the interpreter's own dispositions
+        # back: the handlers must be in place when the batch starts and
+        # still be in place when the window closes.
+        installed = bool(window_entry) and bool(window_exit) and all(
+            handler is module.terminate_cleanly
+            for handler in window_entry.values()) and all(
+            handler is module.terminate_cleanly
+            for handler in window_exit.values())
     finally:
         for name, handler in saved_handlers.items():
-            signal.signal(getattr(signal, name), handler)
+            # getsignal returns None when a non-Python handler held the
+            # signal; signal.signal refuses None (frozen side fixed this in
+            # test_safety.py:2834-2840; DS concurrency #3).
+            signal.signal(getattr(signal, name),
+                          handler if handler is not None else signal.SIG_DFL)
     return Drive(module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed)
 
 
@@ -637,6 +715,13 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                         '#2804 SUCCESS_LINE must cover exactly the register '
                         f'(extra={sorted(set(SUCCESS_LINE) - set(ROSTER_GUARDED))} '
                         f'missing={sorted(set(ROSTER_GUARDED) - set(SUCCESS_LINE))})')
+        # fix-r10: the roster-size literals must cover the register the same
+        # way, so a row cannot join without its denominator pin and a stale
+        # pin cannot outlive its row.
+        self.assertTrue(set(ROSTER_SIZE) == set(ROSTER_GUARDED),
+                        '#2804 ROSTER_SIZE must cover exactly the register '
+                        f'(extra={sorted(set(ROSTER_SIZE) - set(ROSTER_GUARDED))} '
+                        f'missing={sorted(set(ROSTER_GUARDED) - set(ROSTER_SIZE))})')
         for script, markers in SUCCESS_LINE.items():
             with self.subTest(script=script):
                 self.assertTrue(len(markers) > 0,
@@ -666,6 +751,17 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                 summary = json.loads((run.out / 'summary.json').read_text())
                 rows = summary['controls'] if isinstance(summary, dict) else summary
                 key = 'mutation' if script == MANAGER_SCRIPT else 'name'
+                # Denominator pinned to the source literal first (fix-r10,
+                # DS r9 + MM r9 sibling P1, #1666 family): the mirror below
+                # compares run.module.EXPECTED_NAMES to itself, so a row
+                # deleted from the table and the roster together shrinks
+                # both sides and stays green. The literal must fail first.
+                self.assertTrue(len(run.module.EXPECTED_NAMES)
+                                == ROSTER_SIZE[script],
+                                f'#2804 {script}: the entry must carry its '
+                                f'literal {ROSTER_SIZE[script]}-name roster; '
+                                'truncating or emptying EXPECTED_NAMES must '
+                                'fail here instead of shrinking the mirror')
                 # Order-sensitive, like the production predicate: a run that
                 # records the right names in the wrong order is a mismatch
                 # the entries' ``recorded != expected`` would refuse.
@@ -844,12 +940,32 @@ class ManagerRosterGuard(unittest.TestCase):
         self.assertTrue(all(path.is_relative_to(run.module.root)
                             for path, _data in run.writes),
                         '#2309 the atomic writes must target the guarded tree only')
+        # Payload roles, not just counts (DS r3 sibling #3, fix-r4): per guarded
+        # source the atomic writes must alternate publish (mutant bytes)
+        # then restore (pristine bytes) -- a swapped pair publishes nothing
+        # and leaves a mutant on the tree, which the two asserts above
+        # cannot see. Manager-gateway has no window-external backstop, so
+        # the sequence must be strictly publish-restore pairs. The stub
+        # never writes, so the disk bytes stay pristine for the whole run.
+        pristine = {path: path.read_bytes() for path, _data in run.writes}
+        order = {}
+        for path, data in run.writes:
+            order.setdefault(path, []).append(data == pristine[path])
+        for path, sequence in order.items():
+            self.assertTrue(len(sequence) % 2 == 0
+                            and sequence == [False, True] * (len(sequence) // 2),
+                            f'#2309 atomic writes for {path.name} must alternate '
+                            f'mutant publish then pristine restore with no '
+                            f'dangling publish, got {sequence}')
         # The self-held window must hold terminate handlers for the whole
         # run, not only inside the shared guard's own restore window
-        # (#2309 fix-r3, the mode-routing precedent).
+        # (#2309 fix-r3, the mode-routing precedent). Judged at the window
+        # entry, for every TERMINATE_SIGNALS member -- the same strong
+        # shape the two new classes in this change pin (#2425).
         self.assertTrue(run.installed,
                         '#2309 main() must install its terminate handler for '
-                        'SIGTERM while the window is self-held')
+                        'every TERMINATE_SIGNALS member before the window '
+                        'is self-held')
 
     def test_a_shrunken_run_publishes_no_green_summary(self):
         run = self.drive([], drop_last=True)
@@ -942,6 +1058,328 @@ class UnusableRegistry:
     @staticmethod
     def for_script(root, script=None):
         raise ValueError('pending-reanchor requires a fixture script identity')
+
+
+class ModeRoutingGuard(unittest.TestCase):
+    """#2743: mode-routing's guarded window keeps the #2425 two mirror pins.
+
+    ``mode-routing/negative_controls.py`` already publishes and restores its
+    Rust mutants through ``write_source_atomic`` and installs its terminate
+    handlers before the self-held window -- but only same-json-surfaces
+    (frozen ``test_safety.py``, #2425) and manager-gateway (this file,
+    #2309 fix-r3) had a machine check that would go red on a regression.
+    The drive mirrors ``ManagerRosterGuard``: the real ``main()`` runs with
+    the cargo trio (slot gate, ``run_owned``, the pass/kill judges) and the
+    snapshot window stubbed, so the real anchor walk, roster check, publish
+    and verdict aggregation all execute.
+    """
+
+    def drive(self):
+        """Run the real ``main()``; return (module, code, out, stdout, stderr, writes, installed)."""
+        module = load_entry('mode-routing/negative_controls.py')
+        base = Path(tempfile.mkdtemp(prefix='negctl-2743-mode-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        out = base / 'out'
+        writes = []
+
+        def fake_write_atomic(root, path, data, *, mode=None):
+            writes.append((Path(path), bytes(data)))
+
+        def fake_slot(script, **kwargs):
+            return subprocess.CompletedProcess([], 0, '', '')
+
+        def fake_run_owned(command, **kwargs):
+            return subprocess.CompletedProcess(
+                command, 0,
+                'test mode_config_routes_the_native_entry ... ok\n'
+                'test result: ok. 1 passed; 0 failed;\n', '')
+
+        # main() installs its terminate handlers on this very process; the
+        # test interpreter must keep its own dispositions afterwards.
+        saved_handlers = {name: signal.getsignal(getattr(signal, name))
+                          for name in TERMINATE_SIGNALS if hasattr(signal, name)}
+        window_entry = {}
+        window_exit = {}
+
+        @contextlib.contextmanager
+        def recording_window(root, paths, **kwargs):
+            # #2425's strong shape (frozen test_safety.py:2862-2900, DS
+            # concurrency #1/#2): record the live dispositions when the
+            # window opens. A late install -- after the window entry --
+            # leaves the batch unprotected while a post-return sample would
+            # still see the handler; and every TERMINATE_SIGNALS member must
+            # be bound, not just SIGTERM (the SIGTERM-only shape was judged
+            # P1 on the frozen side once already). Sample again when the
+            # window closes (DS r5 sibling#1 / boundary#1): a mid-window
+            # restore to the default dispositions must stay red.
+            window_entry.update({name: signal.getsignal(getattr(signal, name))
+                                 for name in TERMINATE_SIGNALS
+                                 if hasattr(signal, name)})
+            try:
+                yield {path: path.read_bytes() for path in paths}
+            finally:
+                window_exit.update({name: signal.getsignal(getattr(signal, name))
+                                    for name in TERMINATE_SIGNALS
+                                    if hasattr(signal, name)})
+
+        installed = False
+        stdout, stderr = io.StringIO(), io.StringIO()
+        wrapper = base / 'wrapper-launch.py'
+        environment = {**os.environ,
+                       'CARGO_TARGET_DIR': str(base / 'cargo-target'),
+                       'LANG': 'en_US.UTF-8'}
+        try:
+            with patch.dict(os.environ, environment), \
+                 patch.object(module, 'mutating_sources', recording_window), \
+                 patch.object(module, 'write_source_atomic', fake_write_atomic), \
+                 patch.object(module, 'wait_for_slot', fake_slot), \
+                 patch.object(module, 'run_owned', fake_run_owned), \
+                 patch.object(module, 'passed', lambda result, test: True), \
+                 patch.object(module, 'classify',
+                              lambda result, case: ('KILLED',
+                                                    'bound test failed at its assertion')), \
+                 patch('sys.argv', [str(wrapper), str(out)]), \
+                 contextlib.redirect_stdout(stdout), \
+                 contextlib.redirect_stderr(stderr):
+                code = module.main()
+            # Judged from the window-entry AND window-exit recordings
+            # above, before the restore below puts the interpreter's own
+            # dispositions back: bound when the batch starts and still
+            # bound when the window closes.
+            installed = bool(window_entry) and bool(window_exit) and all(
+                handler is module.terminate_cleanly
+                for handler in window_entry.values()) and all(
+                handler is module.terminate_cleanly
+                for handler in window_exit.values())
+        finally:
+            for name, handler in saved_handlers.items():
+                # getsignal returns None when a non-Python handler held the
+                # signal; signal.signal refuses None (frozen side fixed this
+                # in test_safety.py:2834-2840; DS concurrency #3).
+                signal.signal(getattr(signal, name),
+                              handler if handler is not None else signal.SIG_DFL)
+        return module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed
+
+    def test_full_run_publishes_and_restores_through_one_rename(self):
+        module, code, out, stdout, stderr, writes, installed = self.drive()
+        self.assertTrue(code == 0,
+                        f'#2743 the clean full run must exit 0, got {code}; '
+                        f'stderr={stderr!r}')
+        summary = json.loads((out / 'summary.json').read_text())
+        rows = summary['controls']
+        # Denominator pinned to the source literal, not derived from
+        # module.EXPECTED_NAMES (DS r8 + MM r8 sibling P1, hit independently
+        # by both families -- #1666 family): deleting a mutations row
+        # together with its EXPECTED_NAMES entry would otherwise shrink
+        # every count below while the run publishes a (N-1)/(N-1) PASS.
+        self.assertTrue(len(module.EXPECTED_NAMES) == MODE_ROSTER,
+                        '#2743 the mode-routing roster must carry its '
+                        'literal 10 names; truncating or emptying '
+                        'EXPECTED_NAMES must fail here instead of '
+                        'shrinking the denominator')
+        self.assertTrue(len(rows) == len(module.EXPECTED_NAMES),
+                        f'#2743 the full run must record every row, got '
+                        f'{len(rows)}')
+        self.assertTrue(all(row['status'] == 'KILLED' for row in rows),
+                        '#2743 every stubbed-kill row must be recorded KILLED')
+        # Every write to a shared product source must go through the atomic
+        # writer -- a truncating write_text/write_bytes mutant publish or
+        # restore is the #1903 SIGKILL half-file hazard #2425 pinned. The
+        # stub records every call: a clean full run makes exactly one mutant
+        # write and one restore per case, so a reintroduced in-place write
+        # drops the count (the mode-routing mirror of the #2309 fix-r3 leg).
+        self.assertTrue(len(writes) == 2 * len(module.EXPECTED_NAMES),
+                        f'#2743 each case must publish its mutant and restore '
+                        f'through the atomic writer, got {len(writes)} calls')
+        self.assertTrue(all(path.is_relative_to(module.ROOT)
+                            for path, _data in writes),
+                        '#2743 the atomic writes must target the guarded tree only')
+        # Payload roles, not just counts (DS concurrency #4): per guarded
+        # source the atomic writes must alternate publish (mutant bytes) then
+        # restore (pristine bytes) -- a swapped pair publishes nothing and
+        # restores a mutant, which the count above cannot see. The stub
+        # never writes, so the disk bytes stay pristine for the whole run.
+        pristine = {path: path.read_bytes() for path, _data in writes}
+        order = {}
+        for path, data in writes:
+            order.setdefault(path, []).append(data == pristine[path])
+        for path, sequence in order.items():
+            expected = ([False, True] * (len(sequence) // 2)
+                        + ([True] if len(sequence) % 2 else []))
+            self.assertTrue(sequence == expected,
+                            f'#2743 atomic writes for {path.name} must alternate '
+                            f'mutant publish then pristine restore, got {sequence}')
+        # The self-held window must hold terminate handlers for the whole
+        # run (#2425's install-and-bind pin; the handler bodies themselves
+        # are pinned by the shared restore window's own defer contract).
+        # Judged at both window edges, for every TERMINATE_SIGNALS member --
+        # a late install, a dropped SIGHUP/SIGQUIT line, or a mid-window
+        # restore to the default dispositions stays red (DS r6 P1: the exit
+        # sample the third drive recorded was dead code until this fix).
+        self.assertTrue(installed,
+                        '#2743 main() must install its terminate handler for '
+                        'every TERMINATE_SIGNALS member for the whole window')
+
+
+class SessionDomainCleanupGuard(unittest.TestCase):
+    """#2743: session-domain-cleanup's guarded window keeps the two pins.
+
+    The fixture is the family's *origin* for both patterns (the
+    ``terminate_cleanly`` mirror chain in specs/negative-controls/README.md
+    starts at its #892 r23; the lease budget same-json-surfaces mirrors from
+    it), yet its own publish/restore were still truncating writes -- the
+    #1903 hazard, in the one guarded runner that mutates frozen
+    ``scripts/gateway-parity`` bytes while holding the parity lease. #2743
+    switched those three sites to ``write_source_atomic``; this class pins
+    the result with the same stubbed-executor drive (``run_check`` children,
+    the summary reader, the kill judge and the snapshot window are stubbed;
+    the real anchor walk, budget check, digest bookkeeping, restored
+    positive aggregation and every publish run for real). No cargo, no
+    lease, no tree mutation.
+    """
+
+    def drive(self):
+        """Run the real ``main()``; return (module, code, out, stdout, stderr, writes, installed)."""
+        from types import SimpleNamespace
+        module = load_entry('session-domain-cleanup/negative_controls.py')
+        base = Path(tempfile.mkdtemp(prefix='negctl-2743-session-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        out = base / 'out'
+        writes = []
+
+        def fake_write_atomic(root, path, data, *, mode=None):
+            writes.append((Path(path), bytes(data)))
+
+        restored = SimpleNamespace(returncode=0, stdout='', stderr='')
+        summary = {'status': 'PASS', 'results': [
+            {'mode': 'wiring', 'passed': True, 'status': 'PASS_WITH_CLEANUP_UNVERIFIED'}]}
+        # main() installs its terminate handlers on this very process; the
+        # test interpreter must keep its own dispositions afterwards.
+        saved_handlers = {name: signal.getsignal(getattr(signal, name))
+                          for name in TERMINATE_SIGNALS if hasattr(signal, name)}
+        window_entry = {}
+        window_exit = {}
+
+        @contextlib.contextmanager
+        def recording_window(root, paths, **kwargs):
+            # #2425's strong shape (frozen test_safety.py:2862-2900, DS
+            # concurrency #1/#2): record the live dispositions when the
+            # window opens, for every TERMINATE_SIGNALS member -- not a
+            # post-return SIGTERM-only sample (both weaker shapes were
+            # judged insufficient on the frozen side already). Sample again
+            # when the window closes (DS r5 sibling#1 / boundary#1): a
+            # mid-window restore to the default dispositions must stay red.
+            window_entry.update({name: signal.getsignal(getattr(signal, name))
+                                 for name in TERMINATE_SIGNALS
+                                 if hasattr(signal, name)})
+            try:
+                yield {path: path.read_bytes() for path in paths}
+            finally:
+                window_exit.update({name: signal.getsignal(getattr(signal, name))
+                                    for name in TERMINATE_SIGNALS
+                                    if hasattr(signal, name)})
+
+        installed = False
+        stdout, stderr = io.StringIO(), io.StringIO()
+        try:
+            with patch.object(module, 'mutating_sources', recording_window), \
+                    patch.object(module, 'write_source_atomic', fake_write_atomic), \
+                    patch.object(module, 'pgrep_launcher', return_value=''), \
+                    patch.object(module, 'run_check', return_value=restored), \
+                    patch.object(module, 'read_summary', return_value=(summary, None)), \
+                    patch.object(module, 'classify',
+                                 lambda name, judge_spec, result, case:
+                                 ('KILLED', 'stubbed judge for the window pin')), \
+                    patch.object(module.sys, 'argv',
+                                 ['negative_controls.py', '--output', str(out)]), \
+                    patch.object(module.sys, 'platform', 'darwin'), \
+                    contextlib.redirect_stdout(stdout), \
+                    contextlib.redirect_stderr(stderr):
+                code = module.main()
+            installed = bool(window_entry) and bool(window_exit) and all(
+                handler is module.terminate_cleanly
+                for handler in window_entry.values()) and all(
+                handler is module.terminate_cleanly
+                for handler in window_exit.values())
+        finally:
+            for name, handler in saved_handlers.items():
+                # getsignal returns None when a non-Python handler held the
+                # signal; signal.signal refuses None (frozen side fixed this
+                # in test_safety.py:2834-2840; DS concurrency #3).
+                signal.signal(getattr(signal, name),
+                              handler if handler is not None else signal.SIG_DFL)
+        return module, code, out, stdout.getvalue(), stderr.getvalue(), writes, installed
+
+    def test_full_run_publishes_and_restores_through_one_rename(self):
+        module, code, out, stdout, stderr, writes, installed = self.drive()
+        self.assertTrue(code == 0,
+                        f'#2743 the clean full run must exit 0, got {code}; '
+                        f'stdout tail={stdout[-400:]!r}; stderr={stderr!r}')
+        report = json.loads((out / 'summary.json').read_text())
+        # Denominator pinned to the source literal, not derived from
+        # module.MUTATIONS (MM boundary P1, #1666 family): an emptied or
+        # row-deleted table would otherwise make every assertion below
+        # vacuously green while the run publishes a 0/0 PASS.
+        names = [row[0] for row in module.MUTATIONS]
+        self.assertTrue(len(set(names)) == len(names) == 331,
+                        '#2743 the session-domain table must carry its '
+                        'literal 331 distinct rows; truncating, emptying, '
+                        'or duplicating MUTATIONS must fail here instead '
+                        'of shrinking or faking the denominator')
+        self.assertTrue(len(report['mutations']) > 0,
+                        '#2743 the full run must record a non-empty batch')
+        selected = [row['mutation'] for row in report['mutations']]
+        self.assertTrue(selected == [row[0] for row in module.MUTATIONS],
+                        '#2743 the full run must record the whole table in order')
+        self.assertTrue(all(row['verdict'] == 'KILLED' for row in report['mutations']),
+                        '#2743 every stubbed-kill row must be recorded KILLED')
+        self.assertTrue(report['restoredPass'],
+                        '#2743 the restored positive must be recorded separately')
+        # Every write to a guarded source must go through the atomic writer:
+        # one mutant publish and one per-case restore per mutation, plus the
+        # window-exit backstop's one rewrite per guarded source -- the same
+        # #1903 SIGKILL half-file hazard #2425 pinned, at its worst site
+        # (frozen scripts/gateway-parity bytes under the parity lease).
+        expected_sources = sorted({module.COMMON_SOURCE,
+                                    *(Path(row[1]) for row in module.MUTATIONS)},
+                                   key=str)
+        self.assertTrue(len(writes)
+                        == 2 * len(module.MUTATIONS) + len(expected_sources),
+                        f'#2743 each case must publish and restore through the '
+                        f'atomic writer plus one backstop per guarded source, '
+                        f'got {len(writes)} calls for {len(module.MUTATIONS)} '
+                        f'mutations over {len(expected_sources)} sources')
+        self.assertTrue(all(path.is_relative_to(module.ROOT)
+                            for path, _data in writes),
+                        '#2743 the atomic writes must target the guarded tree only')
+        self.assertTrue(all(path in expected_sources for path, _data in writes),
+                        '#2743 the atomic writes must target guarded sources only')
+        # Payload roles, not just counts (DS concurrency #4): per guarded
+        # source the writes must alternate publish (mutant bytes) then
+        # restore (pristine bytes), with the window-exit backstop's one
+        # pristine rewrite allowed at the tail. A swapped pair publishes
+        # nothing and restores a mutant, which the count above cannot see.
+        pristine = {path: path.read_bytes() for path, _data in writes}
+        order = {}
+        for path, data in writes:
+            order.setdefault(path, []).append(data == pristine[path])
+        for path, sequence in order.items():
+            expected = ([False, True] * (len(sequence) // 2)
+                        + ([True] if len(sequence) % 2 else []))
+            self.assertTrue(sequence == expected,
+                            f'#2743 atomic writes for {path.name} must alternate '
+                            f'mutant publish then pristine restore (plus one '
+                            f'backstop), got {sequence}')
+        # The batch loop must run under terminate handlers: an interrupted
+        # batch unwinds through the finally blocks instead of leaving a
+        # mutant behind under the parity lease (#892 r23 origin, #2425 pin).
+        # Judged at both window edges, for every TERMINATE_SIGNALS member --
+        # a late install, a dropped SIGHUP/SIGQUIT line, or a mid-window
+        # restore to the default dispositions stays red (DS r6 P1: the exit
+        # sample the third drive recorded was dead code until this fix).
+        self.assertTrue(installed,
+                        '#2743 main() must install its terminate handler for '
+                        'every TERMINATE_SIGNALS member for the whole window')
 
 
 if __name__ == '__main__':
