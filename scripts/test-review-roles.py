@@ -950,7 +950,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         # r11 的 `[ \t]+` 丢了 r10 `\s+` 本收的 Unicode 空白，中文输入法正文丢号 → 同一假 PASS 机制；
         # ②纯换行不并的语义保留（`[^\S\r\n]` 不含换行）；③标点分支收紧为至多一个换行——
         # 段落空行（两换行）不并入；④标点串 `[,+#]` 混排连续标点并组；⑤PAIR_SEP 字面量钉死
-        # （防未来删成员静默缩窄）；⑥关键词词表单源（ISSUE_LINK 与 ISSUE_NUM 同用 _ISSUE_KEYWORDS）。
+        # （防未来删成员静默缩窄）；⑥关键词同源断言随 fix-r13 删 ISSUE_LINK 退役（见 r13 段）。
         for ws_ch, ws_name in [("　", "全角空格 U+3000"), (" ", "NBSP U+00A0"), (" ", "thin space U+2009")]:
             if gate.pr_issues(f"Closes #1234{ws_ch}#5678\n") != frozenset({"1234", "5678"}):
                 fails.append(f"fix-r12 P0（DS r11 boundary#1）：{ws_name} 续写第 2 个号未进关联集"
@@ -970,10 +970,42 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append(f"fix-r12 P2（DS r11 concurrency#1）：PAIR_SEP 字面量钉死被破坏"
                          f"（现值 {sorted(gate.PAIR_SEP)!r}——成员变动须同步 r12 注释与本断言，"
                          "静默删成员会让上方成员循环测试静默缩窄）")
-        if gate._ISSUE_KEYWORDS not in gate.ISSUE_LINK.pattern or gate._ISSUE_KEYWORDS not in gate.ISSUE_NUM.pattern:
-            fails.append("fix-r12 P2（DS r11 concurrency#1）：ISSUE_LINK 与 ISSUE_NUM 必须同用"
-                         " _ISSUE_KEYWORDS 单源（两份手抄漂移 → 一处增关键词另一处漏改 →"
-                         " pr_issues 空集/首段缺号 → 配对全不计 → 假 PASS）")
+        # fix-r12 的「ISSUE_LINK 与 ISSUE_NUM 关键词同源」断言随 fix-r13 删除 ISSUE_LINK 一并
+        # 退役（DS r12 simplify#1 P2：ISSUE_LINK 是 ISSUE_NUM 的同前缀特化，规则 2 改用
+        # issues 布尔值；删除前等价性实测 issuelink-equivalence-probe.txt 差 0）。
+        # fix-r13（DS r12 boundary#1 + sibling#1 双谱系同撞 P1，同根因）：①标题侧 `_paired_rounds`
+        # 链 gap 与 ISSUE_NUM 空白类单源（`_is_issue_gap_char`）——U+3000/NBSP 在配对端同样
+        # 并组（r12 只放宽正文端，配对端断链 → fix_round=None → fixtype/residual 跳过＝同一
+        # 假 PASS 机制留在另一端）；②ISSUE_NUM 标点分支补左侧 ≤1 换行（`Closes #3056\n,#3057`
+        # 并组——base 本收、r12 收紧时未登记的欠收）；③标点串允许空白穿插（`, +`）；④全码位
+        # 单源锁：每个码位上「regex 并组」与「谓词」一致。
+        for ws_ch, ws_name in [("　", "全角空格 U+3000"), (" ", "NBSP U+00A0")]:
+            if gate.fix_round_from_titles([f"fix(scripts) #3056{ws_ch}#3074 fix-r12：x"],
+                                          frozenset({"3056"})) != 12:
+                fails.append(f"fix-r13 P1（DS r12 双撞）：{ws_name} 在标题侧配对端同样并组"
+                             "——r12 修了正文端丢号，配对端断链会让 fix_round=None"
+                             " → fixtype/residual 跳过＝同一假 PASS 机制留在另一端")
+        if gate.pr_issues("Closes #3056\n,#3057\n") != frozenset({"3056", "3057"}):
+            fails.append("fix-r13 P2（DS r12 boundary#2）：标点左侧至多一个换行"
+                         "（`Closes #3056\\n,#3057` base 本收、r12 收紧时未登记的欠收）")
+        if gate.pr_issues("Closes #3056, + #3057\n") != frozenset({"3056", "3057"}):
+            fails.append("fix-r13 P2（DS r12 sibling#1 尾差）：标点串允许空白穿插"
+                         "（`, +` 与标题侧逐字符 gap 判据对齐）")
+        if gate.pr_issues("Closes #3056\n\n,#3074 x\n") != frozenset({"3056"}):
+            fails.append("fix-r13 负控：段落空行（两换行）不并——左侧换行容忍同右侧"
+                         "至多一个，不因 boundary#2 修复放宽到跨段落")
+        single_src_bad = 0
+        for cp in range(0x110000):
+            if 0xD800 <= cp <= 0xDFFF:
+                continue
+            c = chr(cp)
+            if (gate.pr_issues(f"Closes #1{c}#2\n") == frozenset({"1", "2"})) != gate._is_issue_gap_char(c):
+                single_src_bad += 1
+                if single_src_bad <= 3:
+                    fails.append(f"fix-r13 单源锁：码位 U+{cp:04X} 上 ISSUE_NUM 并组与"
+                                " _is_issue_gap_char 不一致（正文端与配对端词表分裂）")
+        if single_src_bad > 3:
+            fails.append(f"fix-r13 单源锁：共 {single_src_bad} 个码位不一致（正文端与配对端词表分裂）")
         # fix-r9 P2a 接线：base==head 的空标题集合＝无主信号，正文兜底开结构化回显扫描
         # （旧 echo_scan=titles is None 把空集误当 CI 形态只看首行 → 非首行回显漏判＝假 PASS）
         empty_body = ("![ci](https://example.com/b.svg)\n\n概述。\n\n"
