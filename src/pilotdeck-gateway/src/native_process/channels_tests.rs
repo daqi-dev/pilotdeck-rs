@@ -32,8 +32,10 @@ use crate::runtime::turn::submit::{
     WorkspaceAdmissions,
 };
 use crate::storage::RunRef;
+use crate::test_fixed_port_probe::FixedPortProbe;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use std::{
+    io::Write,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -950,6 +952,109 @@ async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
     }
 }
 
+/// The closed-port judgment the fixed-port watcher and
+/// [`assert_ports_closed_after_stop`] share (#2462): of everything a
+/// connect can answer with, only `ConnectionRefused` proves the port has
+/// no listener — the kernel's own refusal (Node v22.22.0's own connect
+/// surfaces the same fact as `code: 'ECONNREFUSED', errno: -61`). Every
+/// other outcome leaves the port in an unknown state and is carried to the
+/// caller so it can fail — or keep waiting — by name: the old
+/// `connect().is_err()` read every error kind as "closed", so an
+/// fd-exhausted or timing-out probe would "prove" a live listener gone,
+/// a false PASS.
+///
+/// #2461 fix-r6: the judgment moved to the shared tests-only module
+/// [`crate::test_fixed_port_probe`] (generic over the accepted payload so
+/// the sms `raw_request` path can keep its stream) and every fixed-port
+/// criterion in the crate now routes through it; this file keeps only the
+/// watcher's synchronous poll step below.
+fn probe_fixed_port(port: u16) -> FixedPortProbe<()> {
+    crate::test_fixed_port_probe::classify_fixed_port_probe(
+        std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            Duration::from_millis(250),
+        )
+        .map(|_| ()),
+    )
+}
+
+/// #2461 fix-r7 (review MM concurrency#1): the claim-side wait for the
+/// region flock. The waiter's deadline starts when it *begins waiting*
+/// (before it can take the lock), while the watcher's cap starts when the
+/// region *drops* — the pre-r7 shape had both at the ledger's 120 seconds,
+/// so the two clocks raced: with probes reporting errors (EMFILE, the
+/// 250ms connect bound) instead of refusals, the watcher held the flock to
+/// its full cap while a sibling that had started waiting first expired and
+/// failed `#2301` by name, and the cap arm could never save it. The claim
+/// wait keeps its 120 seconds (the named `#2301` failure text keeps saying
+/// 120s); the cap below is derived from it so the alignment cannot drift.
+const FIXED_PORT_CLAIM_WAIT_SECS: u64 = 120;
+const FIXED_PORT_CLAIM_WAIT: Duration = Duration::from_secs(FIXED_PORT_CLAIM_WAIT_SECS);
+
+/// The cap the fixed-port watcher runs with in production (#2461): half the
+/// claim wait above, so a waiter that arrived before the region dropped
+/// still has its full deadline ahead of it when the cap arm releases the
+/// flock — stated once here so the control can inject a short deadline for
+/// the cap arm, and pinned by
+/// `fixed_port_claim_wait_strictly_outlives_the_watcher_cap`.
+const FIXED_PORT_WATCHER_CAP: Duration = Duration::from_secs(FIXED_PORT_CLAIM_WAIT_SECS / 2);
+
+/// The watcher body behind [`FixedPortRegion::drop`], factored out so the
+/// cap arm is observable (#2461): poll the claimed ports until every one of
+/// them refuses connections, then release the flock files. Reaching `cap`
+/// with a port still not refusing connections used to release silently — the
+/// exact arm #2461 exists for — so it reports itself through `emit` first
+/// (the detached watcher writes stderr, best-effort; the control below
+/// records the line), keeping "all closed or the watcher cap" attributable on
+/// both arms. Every wait states its termination condition: the loop ends at
+/// all-refused or at `cap`.
+fn release_fixed_port_files(
+    ports: &[u16],
+    files: Vec<std::fs::File>,
+    cap: Duration,
+    emit: &mut dyn FnMut(&str),
+) {
+    let deadline = std::time::Instant::now() + cap;
+    loop {
+        let probes: Vec<(u16, FixedPortProbe<()>)> = ports
+            .iter()
+            .map(|port| (*port, probe_fixed_port(*port)))
+            .collect();
+        if probes
+            .iter()
+            .all(|(_, probe)| matches!(probe, FixedPortProbe::Refused))
+        {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            emit(&fixed_port_timeout_diagnostic(&probes, cap));
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(files);
+}
+
+/// The named diagnostic the cap arm emits before releasing (#2461): the cap
+/// itself (half the claim wait in production — see
+/// [`FIXED_PORT_WATCHER_CAP`]) and every claimed port that is not refusing
+/// connections at the expiry, each with its probe outcome.
+fn fixed_port_timeout_diagnostic(probes: &[(u16, FixedPortProbe<()>)], cap: Duration) -> String {
+    let not_refused: Vec<String> = probes
+        .iter()
+        .filter_map(|(port, probe)| match probe {
+            FixedPortProbe::Refused => None,
+            FixedPortProbe::Accepted(_) => Some(format!("{port}: still accepting connections")),
+            FixedPortProbe::Unknown(error) => Some(format!("{port}: probe not a refusal: {error}")),
+        })
+        .collect();
+    format!(
+        "#2461 the fixed-port watcher hit its {cap:?} cap with a port still not refusing \
+         connections — releasing the flock now; not refused: [{}]",
+        not_refused.join("; ")
+    )
+}
+
 /// #2301 fix-r2 (review P0): an exclusive flock over the fixed ports a test
 /// claims, held from before the pre-probe until the after-stop assertion
 /// (the guard drops when the test does). `flock` semantics, not a mkdir+pid
@@ -970,6 +1075,16 @@ async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
 /// claimed port stopped accepting connections, and the two assembly tests
 /// hold their regions inside a re-exec'd child process, where the kernel
 /// closes the listeners and the lock in the same process teardown.
+///
+/// #2461 (codex P1#3 + DS boundary#2): the two silent arms of that watcher
+/// are observable now. Reaching the cap (half the claim wait — see
+/// [`FIXED_PORT_WATCHER_CAP`]) with a port still not refusing connections
+/// emits the named diagnostic first — best-effort stderr, a failed write is
+/// dropped, never a panic — and only then releases; and the watcher thread
+/// is a `Builder::spawn` whose failure falls back to the synchronous release
+/// instead of panicking, because this [`Drop`] also runs inside panic
+/// unwinds, where the bare `std::thread::spawn`'s panic on failure would
+/// abort the whole test binary.
 struct FixedPortRegion {
     ports: Vec<u16>,
     files: Vec<std::fs::File>,
@@ -982,26 +1097,62 @@ impl Drop for FixedPortRegion {
             return;
         }
         let ports = self.ports.clone();
-        // Bounded (120s) and detached: on the normal path the after-stop
-        // assertions already proved the ports closed, so the first check
-        // releases immediately.
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(120);
-            loop {
-                let closed = ports.iter().all(|port| {
-                    std::net::TcpStream::connect_timeout(
-                        &std::net::SocketAddr::from(([127, 0, 0, 1], *port)),
-                        Duration::from_millis(250),
-                    )
-                    .is_err()
-                });
-                if closed || std::time::Instant::now() > deadline {
-                    break;
+        // The flock files travel through a bounded hand-off (#2461) so the
+        // failure arm below can still release them explicitly: handing them
+        // straight to the closure would leave their fate to std dropping the
+        // closure that a failed `spawn` never runs. The async channel's
+        // `send` never blocks, so this adds no wait to an unwind.
+        let (hand_off, take_over) = std::sync::mpsc::channel::<Vec<std::fs::File>>();
+        // Bounded (half the claim wait, #2461 fix-r7) and detached: on the
+        // normal path the after-stop assertions already proved the ports
+        // closed, so the first check releases immediately. A `Builder`, not
+        // the bare `std::thread::spawn` (#2461, DS concurrency P3#4): this
+        // Drop also runs inside panic unwinds, where the bare spawn's panic
+        // on failure would be a second panic and abort the whole test
+        // binary.
+        let spawned = std::thread::Builder::new()
+            .name("pdrs-2461-fixed-port-watch".to_owned())
+            .spawn(move || {
+                // `recv` fails only once the dropping side is gone — it
+                // released the files itself on that path, so there is
+                // nothing left to do here.
+                if let Ok(files) = take_over.recv() {
+                    release_fixed_port_files(&ports, files, FIXED_PORT_WATCHER_CAP, &mut |line| {
+                        // Best-effort by contract (#2461): `eprintln!`
+                        // panics on a failed write, which would take the
+                        // watcher down mid-release; the line is dropped
+                        // instead.
+                        let _ = writeln!(std::io::stderr(), "{line}");
+                    });
                 }
-                std::thread::sleep(Duration::from_millis(50));
+            });
+        match spawned {
+            Ok(_watcher) => {
+                // The watcher owns the release ordering from here. `send`
+                // fails only if the watcher exited before receiving; the
+                // files then drop with the returned error, stated out loud
+                // instead of left to a discarded value.
+                if let Err(returned) = hand_off.send(files) {
+                    drop(returned.0);
+                }
             }
-            drop(files);
-        });
+            Err(not_started) => {
+                // #2461: no watcher thread (resource exhaustion is the
+                // realistic cause, plausibly mid-panic-unwind) — release
+                // synchronously here instead of panicking, and accept the
+                // degraded ordering: the claim pre-probe keeps a sibling run
+                // fail-closed on the freed-before-closed window. The third
+                // silent arm speaks too (review P2-a): the fallback is
+                // named on stderr first, best-effort like the watcher's own
+                // emit — a failed write is dropped, never a panic.
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "pdrs-2461-fixed-port-watch: watcher not started ({not_started}); \
+                     releasing the flock synchronously above a listener that may still accept"
+                );
+                drop(files);
+            }
+        }
     }
 }
 
@@ -1022,9 +1173,11 @@ async fn claim_fixed_ports(ports: &[u16]) -> FixedPortRegion {
             .write(true)
             .open(format!("/tmp/pdrs-2301-fixed-port-{port}.lock"))
             .unwrap_or_else(|error| panic!("#2301 port {port} lock file: {error}"));
-        // Every wait states its termination condition: 120 seconds on the
-        // region, polled non-blocking so the failure is a named one.
-        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        // Every wait states its termination condition: the claim wait (120
+        // seconds, strictly longer than the watcher's half-wait cap, so the
+        // cap arm can still release the flock in time) is polled
+        // non-blocking so the failure is a named one.
+        let deadline = std::time::Instant::now() + FIXED_PORT_CLAIM_WAIT;
         loop {
             // `File::try_lock` is `flock(LOCK_EX | LOCK_NB)` on Unix — the
             // stable std surface of the same kernel lock the workspace's
@@ -1064,16 +1217,244 @@ async fn claim_fixed_ports(ports: &[u16]) -> FixedPortRegion {
 /// The after-stop half of the fixed-port convention (#2301 fix-r3 review
 /// P0 ③): every listener this run built must be gone once the host stopped,
 /// or a listener that outlives the assembly would keep answering from another
-/// run's channel.
+/// run's channel. #2462: "gone" is a `ConnectionRefused` answer and nothing
+/// else — the same [`FixedPortProbe`] judgment the watcher uses — and the
+/// connect itself is bounded by the same 5 seconds `assert_health_platform`
+/// uses, so a probe that never completes fails by name instead of hanging
+/// the suite.
 async fn assert_ports_closed_after_stop(ports: &[u16]) {
     for port in ports {
-        crate::negative_assert!(
-            tokio::net::TcpStream::connect(("127.0.0.1", *port))
-                .await
-                .is_err(),
-            "#2301 the fixed-port listener on port {port} is gone after stop"
-        );
+        let probe = crate::test_fixed_port_probe::probe_fixed_port(
+            "5-second close probe",
+            ("127.0.0.1", *port),
+            Duration::from_secs(5),
+        )
+        .await;
+        if let Some(failure) =
+            crate::test_fixed_port_probe::fixed_port_probe_failure("#2462", *port, "closed", &probe)
+        {
+            crate::negative_assert!(false, "{failure}");
+        }
     }
+}
+
+/// #2461 fix-r7 (review MM concurrency#1): the claim wait and the watcher
+/// cap must never tie. The waiter's deadline starts when it begins waiting
+/// (before the lock), the watcher's cap starts when the region drops — with
+/// both at 120s the waiter always expired first, so the cap arm could never
+/// save a sibling that arrived before the drop. Pinned here so a future
+/// "align the cap back to the ledger's 120 seconds" edit fails by name
+/// instead of silently reopening that race.
+#[test]
+fn fixed_port_claim_wait_strictly_outlives_the_watcher_cap() {
+    crate::negative_assert!(
+        FIXED_PORT_CLAIM_WAIT > FIXED_PORT_WATCHER_CAP,
+        "#2461 the claim wait strictly outlives the watcher cap, so the cap arm can still save a waiter that arrived first"
+    );
+}
+
+/// #2461 control: the cap arm must be observable. A live listener plus an
+/// injected short cap can only end the watcher's loop through the cap arm,
+/// so the release must first emit exactly one named diagnostic — the cap and
+/// the not-refused port — and really release (a fresh handle can take the
+/// same flock). The listener is an ephemeral port, no fixture port claimed.
+#[test]
+fn fixed_port_watcher_cap_releases_through_the_named_diagnostic() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .expect("#2461 the cap control's probe listener binds");
+    let port = listener
+        .local_addr()
+        .expect("#2461 the cap control's listener address")
+        .port();
+    let path = std::env::temp_dir().join(format!(
+        "pdrs-2461-cap-{}-{}.lock",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .expect("#2461 the cap control's lock file opens");
+    file.try_lock()
+        .expect("#2461 the cap control's lock file locks");
+    let mut emitted = Vec::new();
+    let cap = Duration::from_millis(300);
+    release_fixed_port_files(&[port], vec![file], cap, &mut |line| {
+        emitted.push(line.to_owned());
+    });
+    crate::negative_assert_eq!(
+        emitted.len(),
+        1,
+        "#2461 the cap arm emits exactly one named diagnostic"
+    );
+    let diagnostic = &emitted[0];
+    crate::negative_assert!(
+        diagnostic.contains("#2461") && diagnostic.contains(&format!("{cap:?}")),
+        "#2461 the cap diagnostic names the watcher cap"
+    );
+    crate::negative_assert!(
+        diagnostic.contains(&port.to_string()),
+        "#2461 the cap diagnostic names the not-refused port"
+    );
+    let reclaimed = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("#2461 the cap control's lock file reopens");
+    let relocked = reclaimed.try_lock();
+    let _ = std::fs::remove_file(&path);
+    crate::negative_assert!(
+        relocked.is_ok(),
+        "#2461 the flock is released after the cap diagnostic"
+    );
+}
+
+/// #2461 control: the all-refused arm stays silent — a region whose every
+/// port refuses connections releases immediately, with no diagnostic at all
+/// (the diagnostic exists only for the cap arm). The port is a
+/// bind-then-drop ephemeral one, so nothing can be listening on it.
+#[test]
+fn fixed_port_watcher_releases_silently_once_every_port_refuses() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .expect("#2461 the silence control's probe listener binds");
+    let port = listener
+        .local_addr()
+        .expect("#2461 the silence control's listener address")
+        .port();
+    drop(listener);
+    let mut emitted = Vec::new();
+    let started = std::time::Instant::now();
+    release_fixed_port_files(&[port], Vec::new(), Duration::from_secs(10), &mut |line| {
+        emitted.push(line.to_owned());
+    });
+    crate::negative_assert!(
+        emitted.is_empty() && started.elapsed() < Duration::from_secs(2),
+        "#2461 the all-refused release is immediate and silent"
+    );
+}
+
+/// #2461 control: the release ordering itself. Dropping a region whose port
+/// still accepts connections must leave the flock held — only the watcher
+/// holds it now, and its loop cannot release while the port answers — and
+/// once the listener closes, the watcher must release within its poll
+/// cadence. Every wait states its termination condition: 10 seconds, far
+/// over the 250ms probe + 50ms cadence.
+#[test]
+fn fixed_port_region_releases_only_after_its_listener_closes() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .expect("#2461 the ordering control's listener binds");
+    let port = listener
+        .local_addr()
+        .expect("#2461 the ordering control's listener address")
+        .port();
+    let path = std::env::temp_dir().join(format!(
+        "pdrs-2461-order-{}-{}.lock",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .expect("#2461 the ordering control's lock file opens");
+    file.try_lock()
+        .expect("#2461 the ordering control's lock file locks");
+    drop(FixedPortRegion {
+        ports: vec![port],
+        files: vec![file],
+    });
+    let probe = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("#2461 the ordering control's lock file reopens");
+    crate::negative_assert!(
+        matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+        "#2461 the flock is still held while the listener accepts connections"
+    );
+    drop(probe);
+    drop(listener);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let released = loop {
+        let reclaimed = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("#2461 the ordering control's lock file reopens");
+        if reclaimed.try_lock().is_ok() {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let _ = std::fs::remove_file(&path);
+    crate::negative_assert!(
+        released,
+        "#2461 the watcher releases the flock once the listener closes"
+    );
+}
+
+/// #2462 control: only a refusal proves a port closed. Constructed error
+/// kinds — an fd-exhaustion `EMFILE` (24), the 5-second bound's own
+/// `TimedOut` — go through the same judgment the after-stop assertion and
+/// the watcher use, without exhausting real fds; each must be a named
+/// failure carrying its kind/errno, never a pass.
+#[test]
+fn only_a_refusal_proves_the_fixed_port_closed() {
+    use crate::test_fixed_port_probe::{classify_fixed_port_probe, fixed_port_probe_failure};
+    crate::negative_assert!(
+        fixed_port_probe_failure(
+            "#2462",
+            28645,
+            "closed",
+            &classify_fixed_port_probe(Err::<(), std::io::Error>(std::io::Error::from(
+                std::io::ErrorKind::ConnectionRefused
+            ))),
+        )
+        .is_none(),
+        "#2462 a refused probe is the only shape that proves the port closed"
+    );
+    let accepted = crate::test_negative_receipt::expect_some(
+        fixed_port_probe_failure("#2462", 28645, "closed", &classify_fixed_port_probe(Ok(()))),
+        "#2462 an accepted connect is a named failure",
+    );
+    crate::negative_assert!(
+        accepted.contains("#2462") && accepted.contains("still accepting connections"),
+        "#2462 an accepted connect names the still-open listener, got: {accepted}"
+    );
+    let exhausted = crate::test_negative_receipt::expect_some(
+        fixed_port_probe_failure(
+            "#2462",
+            28645,
+            "closed",
+            &classify_fixed_port_probe(Err::<(), std::io::Error>(
+                std::io::Error::from_raw_os_error(24),
+            )),
+        ),
+        "#2462 a non-refused error kind is a named failure",
+    );
+    crate::negative_assert!(
+        exhausted.contains("#2462") && exhausted.contains("24"),
+        "#2462 the fd-exhaustion shape carries its raw os error, got: {exhausted}"
+    );
+    let timed_out = crate::test_negative_receipt::expect_some(
+        fixed_port_probe_failure(
+            "#2462",
+            28645,
+            "closed",
+            &classify_fixed_port_probe(Err::<(), std::io::Error>(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "#2462 the 5-second close-probe bound elapsed",
+            ))),
+        ),
+        "#2462 a timed-out probe is a named failure",
+    );
+    crate::negative_assert!(
+        timed_out.contains("#2462") && timed_out.contains("TimedOut"),
+        "#2462 the timed-out shape carries its kind, got: {timed_out}"
+    );
 }
 
 /// #2301 fix-r3 (review P2-a #7): a named pre-check for host environment
@@ -1132,9 +1513,96 @@ fn probe_child_env(mode: &str, token: &str) -> Vec<(String, String)> {
 /// The last 4 KiB of a probe child's console, for embedding in the parent's
 /// named failure messages — the child's own panic payload lands there, so
 /// the fixture anchors stay killable through the parent's failure line.
+/// #2463: the window is cut on byte offsets, and a probe console carries
+/// multi-byte text (the readiness lines' own `— routes: …`), so the cut can
+/// land inside a character. The cut then forward-aligns to the next
+/// character boundary — at most 3 bytes away, since a UTF-8 character is at
+/// most 4 bytes — so only those continuation bytes are lost and the child's
+/// panic payload survives; a boundary always exists under `saturating_sub`,
+/// and the named fallback keeps the builder total for the impossible case
+/// instead of panicking on a non-boundary index.
 fn console_tail(console: &str) -> String {
     let start = console.len().saturating_sub(4096);
-    console[start..].to_owned()
+    match console
+        .get(start..)
+        .or_else(|| (1..=3).find_map(|delta| console.get(start + delta..)))
+    {
+        Some(tail) => tail.to_owned(),
+        None => "#2463 the 4096-byte console tail cut found no character \
+                 boundary within 3 bytes; the tail is omitted"
+            .to_owned(),
+    }
+}
+
+/// #2463 control: a console whose 4096-byte tail cut lands inside the
+/// readiness line's em dash — the multi-byte text the probe consoles really
+/// carry (`— routes: …`, U+2014, 3 bytes; Node v22.22.0 probe) — must not
+/// panic the parent's message builder, and the cut must forward-align to the
+/// next character boundary so the child's panic payload (the readiness line
+/// and everything after it) survives in the parent's failure line, instead
+/// of the whole tail being dropped for the named fallback. The sample's cut
+/// position is asserted before the call, so a drifted sample cannot
+/// silently test a boundary-aligned cut.
+#[test]
+fn console_tail_cuts_inside_a_multibyte_character_without_panicking() {
+    let readiness = "webhook: listening on http://127.0.0.1:28643 — routes: (none configured)\n";
+    let dash = readiness
+        .find('—')
+        .expect("#2463 the readiness sample carries its multi-byte separator");
+    // With the suffix sized below, the cut index lands one byte inside the
+    // em dash's UTF-8 bytes — never a char boundary.
+    let fill = 512;
+    let suffix = 4096 + dash + 1 - readiness.len();
+    let mut console = "x".repeat(fill);
+    console.push_str(readiness);
+    console.push_str(&"y".repeat(suffix));
+    let start = console.len().saturating_sub(4096);
+    crate::negative_assert!(
+        !console.is_char_boundary(start),
+        "#2463 the sample's 4 KiB cut lands inside the multi-byte separator"
+    );
+    let tail = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| console_tail(&console)));
+    let tail = match tail {
+        Ok(tail) => tail,
+        Err(_) => {
+            crate::negative_assert!(
+                false,
+                "#2463 console_tail must not panic when the 4 KiB cut lands inside a character"
+            );
+            unreachable!("negative_assert! panics");
+        }
+    };
+    // The aligned cut keeps the payload: the tail is exactly the console
+    // from the first character boundary at or after the byte offset.
+    let aligned = (0..=3)
+        .find_map(|delta| {
+            console
+                .is_char_boundary(start + delta)
+                .then_some(start + delta)
+        })
+        .expect("#2463 a character boundary exists within 3 bytes of any cut");
+    crate::negative_assert_eq!(
+        tail,
+        console[aligned..].to_owned(),
+        "#2463 the multi-byte cut forward-aligns instead of dropping the tail"
+    );
+}
+
+/// #2463 control: the boundary-aligned shapes keep the exact contract — the
+/// last 4096 bytes, and the whole console when it fits.
+#[test]
+fn console_tail_takes_the_last_4096_bytes() {
+    let console = format!("head{}", "z".repeat(4096));
+    crate::negative_assert_eq!(
+        console_tail(&console),
+        "z".repeat(4096),
+        "#2463 the tail of a boundary-aligned console is its last 4096 bytes"
+    );
+    crate::negative_assert_eq!(
+        console_tail("short console"),
+        "short console".to_owned(),
+        "#2463 a console under 4 KiB is returned whole"
+    );
 }
 
 /// Parent half of a re-exec'd startup probe (#2301 fix-r3 review P0 #1): the
