@@ -318,17 +318,25 @@ else:
     if flow == 'mid-restore':
         # The runner's own restore check: skip the last control's write-back
         # so the mutant stays on disk and the read-back comparison raises.
-        raw_write_bytes = Path.write_bytes
+        # fix-r8 (sibling#1): the runner's publish/restore moved onto
+        # write_source_atomic, so the skip hook follows it there. Only the
+        # restore is shaped -- it rewrites the pristine snapshot bytes,
+        # while the publish writes the mutant -- and the guard's own exit
+        # restore (the (len(names)+1)-th pristine write) must still go
+        # through, or the tree the runner failed to restore would stay
+        # dirty and the case's byte-for-byte assertion below would red.
+        raw_write_atomic = negative_process.write_source_atomic
+        pristine = catalog.read_bytes()
         restore_writes = {'count': 0}
 
-        def skip_last_restore(self, data):
-            if self == catalog:
+        def skip_last_restore(actual_root, path, data, **kwargs):
+            if Path(path) == catalog and data == pristine:
                 restore_writes['count'] += 1
                 if restore_writes['count'] == len(names):
-                    return len(data)
-            return raw_write_bytes(self, data)
+                    return
+            return raw_write_atomic(actual_root, path, data, **kwargs)
 
-        Path.write_bytes = skip_last_restore
+        negative_process.write_source_atomic = skip_last_restore
 
     if flow == 'summary-publish':
         # The publish step itself: the temp summary file renames onto
@@ -1187,7 +1195,23 @@ class StaticRosterTests(unittest.TestCase):
     same driver reaches the next pre-run refusal instead.
     """
 
-    def run_copy(self, source):
+    def run_copy(self, source, with_target=False):
+        """Run a staged copy of the driver; return (result, out).
+
+        ``with_target=True`` supplies a dummy ``CARGO_TARGET_DIR`` so the
+        refusal cases below stay falsifiable (fix-r8 boundary#1, the
+        shared-runner twin's fix-r6 shape): the module-level roster and
+        count refusals fire before ``main()`` ever runs, and with the
+        variable stripped the copy's next stop was the ``CARGO_TARGET_DIR``
+        refusal -- also before ``new_output_directory`` -- so no path ever
+        created ``out`` and the bare ``assertFalse(out.exists())`` held
+        vacuously. With the dummy target, a pre-run refusal that stops
+        firing lets the copy proceed to ``new_output_directory(sys.argv[1])``
+        and create ``out`` (the temp tree stages no catalog, so the run
+        then dies at its guard's baseline proof without touching any real
+        source). The pristine case keeps the strip: the next refusal it
+        pins is exactly the ``CARGO_TARGET_DIR`` check itself.
+        """
         base = Path(tempfile.mkdtemp(prefix='pdrs-3043-roster-'))
         _BASES.append(base)
         tree = base / ('src/pilotdeck-gateway/tests/'
@@ -1201,11 +1225,13 @@ class StaticRosterTests(unittest.TestCase):
                                        repr(str(FIXTURES))),
             encoding='utf-8')
         out = base / 'out'
+        env = {key: value for key, value in os.environ.items()
+               if key != 'CARGO_TARGET_DIR'}
+        if with_target:
+            env['CARGO_TARGET_DIR'] = str(base / 'unused-target')
         result = subprocess.run(
             [sys.executable, '-B', str(boot), str(copy), str(out)],
-            capture_output=True, text=True, timeout=60,
-            env={key: value for key, value in os.environ.items()
-                 if key != 'CARGO_TARGET_DIR'})
+            capture_output=True, text=True, timeout=60, env=env)
         return result, out
 
     def test_a_renamed_row_is_refused_without_evidence(self):
@@ -1213,7 +1239,8 @@ class StaticRosterTests(unittest.TestCase):
         self.assertEqual(source.count(_TABLE_ROW), 1)
         result, out = self.run_copy(
             source.replace(_TABLE_ROW,
-                           _TABLE_ROW.replace('id-renamed', 'id-renamed-x')))
+                           _TABLE_ROW.replace('id-renamed', 'id-renamed-x')),
+            with_target=True)
         self.assertEqual(result.returncode, 1,
                          f'#3043 a renamed row is a pre-guard refusal '
                          f'(rc 1): {result.stderr!r}')
@@ -1231,7 +1258,7 @@ class StaticRosterTests(unittest.TestCase):
                    .replace(_TABLE_ROW, '\n        "__swap__",\n')
                    .replace(_TABLE_ROW_MOVED, _TABLE_ROW)
                    .replace('\n        "__swap__",\n', _TABLE_ROW_MOVED))
-        result, out = self.run_copy(swapped)
+        result, out = self.run_copy(swapped, with_target=True)
         self.assertEqual(result.returncode, 1,
                          f'#3043 a reordered row is a pre-guard refusal '
                          f'(rc 1): {result.stderr!r}')
@@ -1247,12 +1274,39 @@ class StaticRosterTests(unittest.TestCase):
         self.assertEqual(source.count(_TABLE_ROW), 1)
         self.assertEqual(source.count(_ROSTER_ENTRY), 1)
         index = source.index(_TABLE_ROW)
-        start = source.rfind('    (\n', 0, index)
+        # The anchor's leading newline is also the tuple-opening line's
+        # terminator, so the row's own ``    (\n`` spans [index-4, index+1)
+        # and the rfind end must be index + 1 to include it (fix-r8
+        # boundary#2, the shared-runner twin's geometry): with end=index
+        # the search landed on the *previous* row's opening, the deletion
+        # below swallowed that row too, and the executed edit was two rows
+        # minus one roster entry -- not the double edit this cell claims.
+        start = source.rfind('    (\n', 0, index + 1)
         end = source.index('    (\n', index + 1)
+        deleted = source[start:end]
+        # Surgical, and pinned as such: exactly one tuple opening and the
+        # renamed row's own name, nothing from either neighbouring row
+        # (the pre-fix geometry also deleted the row-removed row, which
+        # these assertions go red on).
+        self.assertEqual(deleted.count('    (\n'), 1)
+        self.assertIn('\n        "unordered-close-id-renamed",\n', deleted)
+        self.assertNotIn(_TABLE_ROW_MOVED, deleted)
         without_row = source[:start] + source[end:]
         self.assertNotIn(_TABLE_ROW, without_row)
         self.assertEqual(without_row.count(_TABLE_ROW_NEXT), 1)
-        result, out = self.run_copy(without_row.replace(_ROSTER_ENTRY, ''))
+        # Both sides shrink 16 -> 15 together: one table row, one roster
+        # entry -- the shape that keeps registered() quiet and leaves the
+        # EXPECTED_TOTAL count literal as the only side that can notice.
+        # (The entry removal glues its two neighbours onto one line, so the
+        # roster side counts the block's quoted names, not line starts.)
+        edited = without_row.replace(_ROSTER_ENTRY, '')
+        self.assertEqual(without_row.count('    (\n'), 15)
+        names_at = edited.index('EXPECTED_NAMES = (')
+        self.assertEqual(
+            edited[names_at:edited.index('\n)', names_at)]
+            .count('"unordered-close-'),
+            15)
+        result, out = self.run_copy(edited, with_target=True)
         self.assertEqual(result.returncode, 1,
                          f'#3043 a double-deleted row still shrinks the '
                          f'denominator (rc 1): {result.stderr!r}')

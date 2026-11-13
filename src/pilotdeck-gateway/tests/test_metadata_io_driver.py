@@ -3139,6 +3139,12 @@ class EnvironmentControls(unittest.TestCase):
         # 函数与模块级 PUBLISH_DIR，所以 function 记 None —— sibling_atomic_
         # guards 形态半边对它跳过，写守卫半边全量跑。
         ('shared-runner-failclosed/negative_controls.py', None),
+        # #3043 fix-r8（MM sibling#1）：sdk-signals-close-order-pin 的发布/还原
+        # 搬上共享 negative_process.write_source_atomic（fix-r5 的 shared-runner
+        # 同款修法，mid-restore 挂钩随迁），同样记 None 进「被变异源零原地截断
+        # 写」的 AST 判据 —— 不登记则把它改回 `path.write_text(...)` 三家钉子
+        # 依旧全绿，恰是 fix-r6 为 shared-runner 补登记时的同一条理由。
+        ('sdk-signals-close-order-pin/negative_controls.py', None),
     )
     # r14（zai 6 P1 + deepseek 2 P1）：r13 按「模块级 + 属性名 ∈ 保留名单」枚举，
     # 于是 setattr 调用 / Subscript 目标 / 函数体 / 接收者反向 / 写方法调用 / 别名导入
@@ -3518,6 +3524,16 @@ class EnvironmentControls(unittest.TestCase):
             ('truncating-restore-write',
              'write_source_atomic(ROOT, path, originals[path])',
              'path.write_bytes(originals[path])'),
+        ),
+        # #3043 fix-r8：同上两个发布点（发布 + 还原）换成原地截断写必须红。
+        'sdk-signals-close-order-pin/negative_controls.py': (
+            ('truncating-mutant-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'path.write_text(changed, encoding="utf-8")'),
+            ('truncating-restore-write',
+             'write_source_atomic(root, path, snapshots[path])',
+             'path.write_bytes(snapshots[path])'),
         ),
     }
 

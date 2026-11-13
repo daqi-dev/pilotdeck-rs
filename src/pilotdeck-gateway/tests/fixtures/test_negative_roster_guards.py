@@ -102,8 +102,13 @@ import unittest
 from unittest.mock import patch
 
 import pending_reanchor as pending
+from negative_process import tree_lock
 
 FIXTURES = Path(__file__).resolve().parent
+# The tree the guarded drivers lock: the same ``<root>/.negative-source.lock``
+# their own ``mutating_sources`` flocks (a driver's ROOT is parents[5] from
+# its deeper fixture nesting; from this file it is parents[4]).
+REPO_ROOT = Path(__file__).resolve().parents[4]
 FULL_ROSTER = 36
 # mode-routing's EXPECTED_NAMES literal (that fixture's negative_controls
 # :164-175): the roster count pinned independently of module.EXPECTED_NAMES,
@@ -1722,12 +1727,21 @@ class SharedRunnerRosterGuard(unittest.TestCase):
         copy.write_text(source, encoding='utf-8')
         # The driver resolves SUITE/SQLITE from its own __file__ (parents[5]
         # + the fixtures suffix): stage the real guarded bytes so --check
-        # walks the true 39 anchors in the temp tree.
-        shutil.copy2(FIXTURES / 'negative_suite.py', fixtures / 'negative_suite.py')
-        shared = fixtures / '_shared'
-        shared.mkdir()
-        shutil.copy2(FIXTURES / '_shared/negative_sqlite_header.py',
-                     shared / 'negative_sqlite_header.py')
+        # walks the true 39 anchors in the temp tree. fix-r8
+        # (concurrency#1): those two files are exactly the shared-runner
+        # control's SUITE/SQLITE, and it keeps a mutant on disk for the
+        # whole bound-test window under the tree lock -- copying without
+        # the lock can land on mutant bytes and red the anchor walk below
+        # (TreeLock: whoever owns the lock reads the pristine bytes
+        # *after* acquisition). The lock is held only across the copy
+        # window; the subprocess below runs staged bytes, unlocked.
+        with tree_lock(REPO_ROOT):
+            shutil.copy2(FIXTURES / 'negative_suite.py',
+                         fixtures / 'negative_suite.py')
+            shared = fixtures / '_shared'
+            shared.mkdir()
+            shutil.copy2(FIXTURES / '_shared/negative_sqlite_header.py',
+                         shared / 'negative_sqlite_header.py')
         boot = base / 'boot.py'
         boot.write_text(
             SHARED_RUNNER_BOOT_SOURCE.replace('__REAL_FIXTURES__',

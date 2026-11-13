@@ -117,6 +117,7 @@ from negative_process import (
     mutating_sources,
     new_output_directory,
     run_owned,
+    write_source_atomic,
 )
 from negative_selection import registered
 from negative_suite import invalidate_completed
@@ -132,7 +133,7 @@ catalog = root / catalog_relative
 #
 # #1885: prove, do not write back. Every one of the 16 controls rewrites
 # `catalog` and nothing else, so the ledgers used to sit in the restore set
-# for the entry guard alone -- and `mutating_sources` writes every guarded
+# for the entry guard alone -- and `mutating_sources` wrote every guarded
 # path back on exit with a plain `write_bytes`, no atomic publish. A SIGKILL
 # inside that window truncated a frozen spec ledger, which the next run then
 # read as a baseline mismatch (false FAIL, manual `git checkout` to repair).
@@ -522,7 +523,16 @@ try:
                                 )
                             ),
                         )
-                        path.write_text(changed, encoding="utf-8")
+                        # fix-r8 (sibling#1, the fix-r5 shared-runner
+                        # shape): the publish goes through
+                        # write_source_atomic (temp file + one rename),
+                        # never a truncating in-place write -- a SIGKILL
+                        # mid-write leaves the old or the new bytes, not
+                        # half a file (#1903; this fixture's own recorded
+                        # incident: a truncated frozen registration read
+                        # back as a baseline mismatch, false FAIL).
+                        write_source_atomic(
+                            root, path, changed.encode("utf-8"))
                         result = run_check(name + "-negative")
                         log = result.stdout + result.stderr
                         markers = (
@@ -556,7 +566,11 @@ try:
                 status = "INVALID"
                 reason = f"harness: {type(error).__name__}: {error}"
             finally:
-                path.write_bytes(snapshots[path])
+                # fix-r8: same atomic shape on the way back (one rename,
+                # never a truncating write_bytes), paired with the publish
+                # above -- the restore is the half of the window a SIGKILL
+                # is most likely to land in.
+                write_source_atomic(root, path, snapshots[path])
                 if path.read_bytes() != snapshots[path]:
                     raise RuntimeError(f"#1382 restore failed: {relative}")
             try:
@@ -649,8 +663,16 @@ try:
     summary_path = out / "summary.json"
     summary_tmp = out / "summary.json.tmp"
     try:
-        summary_tmp.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-        summary_tmp.replace(summary_path)
+        # fix-r8 (the §9 registration): the temp's write keeps the inline
+        # evidence-write receiver shape (`(out / ...).write_text(...)`, the
+        # shared-runner fix-r6 form) now that this fixture is registered on
+        # the #1692 §9 write-guard side: sibling_write_guards allows an
+        # in-place write_text only on a receiver derived from the output
+        # directory, and a bare local name reads there as a truncating
+        # write of a guarded source. Same bytes, same one-rename publish.
+        (out / "summary.json.tmp").write_text(
+            json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        (out / "summary.json.tmp").replace(summary_path)
     except BaseException as error:
         # #1508 fix-r2: a second interrupt between the write and the rename, or
         # any other publish failure, must not escape with an arbitrary exit
