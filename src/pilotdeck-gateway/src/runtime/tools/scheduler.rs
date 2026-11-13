@@ -635,20 +635,13 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
             None | Some(JsValue::Null | JsValue::Undefined) => Ok(vec![]),
             Some(JsValue::Array(keys)) => keys.iter().map(js_string).collect(),
             Some(JsValue::String(s)) => {
-                // String iteration yields code points; lone surrogates stand alone.
-                let units = s.units();
-                let mut keys = vec![];
-                let mut i = 0;
-                while i < units.len() {
-                    let pair = (0xD800..0xDC00).contains(&units[i])
-                        && units
-                            .get(i + 1)
-                            .is_some_and(|u| (0xDC00..0xE000).contains(u));
-                    let width = if pair { 2 } else { 1 };
-                    keys.push(JsString::from_utf16(units[i..i + width].to_vec()));
-                    i += width;
-                }
-                Ok(keys)
+                // String iteration yields code points through the shared
+                // `js_value::code_point_chunks` walk (a surrogate pair is one
+                // key, a lone surrogate survives as its own).
+                Ok(js_value::code_point_chunks(s.units())
+                    .into_iter()
+                    .map(|chunk| JsString::from_utf16(chunk.to_vec()))
+                    .collect())
             }
             Some(other) => Err(not_iterable(other)),
         }
