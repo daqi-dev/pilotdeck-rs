@@ -582,7 +582,10 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    diff_path = out / "diff.patch"
+    # fix-r2（DS r2 boundary#2 P2）：dry-run 不落 `diff.patch`——它在上面的 originals_in()
+    # 原件清单里，dry-run 落盘后同目录实跑会被「已有评审原件」拒掉（目录里其实没有任何评审
+    # 证据；重复 dry-run 也被拒）。dry-run 的预览件改名 dryrun-diff.patch，实跑仍写 diff.patch。
+    diff_path = out / ("dryrun-diff.patch" if a.dry_run else "diff.patch")
     patch_kv = ""
     if a.diff_file:
         shutil.copyfile(a.diff_file, diff_path)

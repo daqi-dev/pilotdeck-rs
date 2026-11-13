@@ -60,9 +60,19 @@
      （`fixtype=<三值>`，值后须空格或结尾分隔），豁免理由长度不计 fixtype 词汇；标记内声明了 fixtype
      就查值（声明即查，是否必填看修复轮判定）。「围栏 / 引用块 / 缩进块里的示例不算声明」对
      结果块 / 豁免 / issue 关联 / 修复轮识别同一口径生效（同一份去围栏文本，修 8）。
+     fix-r2 P0（DS+MM boundary 同撞）：「配对集为空 / 与 issues 不相交」不再只当「不计入」——
+     修复轮标题题头区引用了本 PR 未关联的单号（no-issue 旁路 a / 异单关联旁路 b）时 fail-closed
+     拒收（foreign_fixround_pairs），不再让 fix_round 落 None 把 fixtype / 多块一致 / N≥4
+     residual 整段跳过而规则 2 照样放行。题头区外的 board 尾引用别的单仍是合法形态（fix-r5 修 2
+     的各归各单语义不变）。已知窄窗（fix-r2 登记）：`fix(scope)：#N fix-rM …`（#N 在全角冒号
+     之后）不在题头区、不进 foreign——与板尾裸号同款已知代价；`fix(scope)：fix-rM 修 #N` 形态
+     由 DS boundary#5 的「向后就近配对」计入（#N ∈ issues 时）。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
+     fix-r2（DS boundary#4 P2）：基点改用 merge-base（与补丁指纹的三点 diff 同口径）——落后分支上
+     两点 diff 会把 base 侧新增代码文件列成反向变更（实测 ds4-twopoint-threepoint-probe.txt）；
+     错误消息按 False 来源分条（git 失败 / diff 为空 / 触代码路径）。
   6. 多块一致（#3056 G）：修复轮 PR 贴多个结果块凑双谱系/分批/复跑时，全块须同一 head=，
      或全块声明同一 patch= 指纹——不同头且不同指纹的块不得拼作「末轮评审覆盖齐」。
 
@@ -103,6 +113,12 @@ FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--n
 
 # #3056 修复轮字段（长尾收点卡「机检落点」）：修法类型只接受字面三值。
 FIXTYPE_VALUES = ("枚举式", "结构性", "不适用")
+# N≥4 的 residual 必填门槛（fix-r2，DS boundary#3 P2）：此前在 check-pr-gate.py 的
+# residual_errors 与 check-taskbook-segments.py 的 check_fix_fields 两处字面量 `4`——
+# 改一侧不改另一侧会让两个闸门对同一 PR 给出相反结论（一侧要 residual、另一侧不要），
+# 且无任何测试断言同源。单源导出：任务书侧 `RESIDUAL_MIN_ROUND = _gate_module().RESIDUAL_MIN_ROUND`
+# （照 FIXTYPE_VALUES 的手法），test-check-taskbook-segments.py 有派生断言。
+RESIDUAL_MIN_ROUND = 4
 # PR 侧修复轮识别：正文第一个非空行含 fix-r<N>（词边界防 fix-r10 匹配成 fix-r1）。
 # 边界用 ASCII 字符集而不是 \w：Python 的 \w 含 CJK，中文紧贴（「修复fix-r5：」「fix-r5轮」）时
 # \w 边界把整轮判没 → fixtype/residual/N≥4 全跳、闸门假 PASS（DS boundary P0，Python 3.14 实测
@@ -225,21 +241,29 @@ RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*pdrs-residual:(.*?)-->[ \t]*$", re.
 WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) + "]+)")
 
 
-def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
+def _scan_pairs(text: str, issues: frozenset[str]) -> tuple[list[int], list[tuple[int, frozenset[str]]]]:
     """配对判定核心（fix-r5 修 2，boundary#2 P1；fix_round_from_title 与正文回显扫描共用）：
     text（提交标题或回显行）内每个 fix-r<N> 的计入判定。题头区 = 首个全角「：」之前（无则
     整条；ASCII 冒号不切——`chore(state) 01:45 #1305 …` 的时间戳与前缀冒号 `fix(scripts):`
-    都不是题头分界）。每个 token：
+    都不是题头分界）。返回 (rounds, foreign)：rounds = 计入的轮号；foreign = 题头区内
+    「#N 配对链非空且与 issues 全不相交」的 (轮号, 链)（fix-r2 P0 旁路封堵的依据，见
+    foreign_fixround_pairs）。每个 token：
       - 整条无任何 #N → 计入（宁高勿低，fail-closed：漏计轮号会跳过 N≥4 的 residual 必填）；
       - 有就近配对集（token 前方最近的 #N、由 +/,/、/空白链成的 #N 串）→ 配对集 ∩ 本 PR
         单号 ≠ ∅ 才计入——board 尾 `…#2691 fix-r2…#2692 fix-r8 在跑` 里 8 归 #2692、
         2 归 #2691，各归各的单；链 gap 判据 = `_is_issue_gap_char`（PAIR_SEP ∪ 非换行
         Unicode 空白，fix-r13 与 ISSUE_NUM 单源——标题侧 U+3000/NBSP 同样并组，不再
-        「正文端收、配对端丢」）；
+        「正文端收、配对端丢」）；配对集非空且 ∩ issues = ∅ **且 token 在题头区** → 进
+        foreign（修复轮标题引用了本 PR 未关联的单号——no-issue / 异单旁路，check() 拒收；
+        题头区外的不进：board 尾引用别的单是合法形态，fix-r5 修 2 的配对语义保持不变）；
       - 前方无 #N 且在题头区 → 计入（SELF：`fix(scope) 名 fix-rN：…（#refs 在后）` 的
-        实修形态，refs 在题头之后的括注里）。
-    题头区外的无配对 token（板尾裸号 `交接段：…1623 fix-r6`）不计。issues 为空集时
-    配对 token 全不计（正文没写关联的 PR 本就过不了规则 2，配对判据不放大该违规）。"""
+        实修形态，refs 在题头之后的括注里）；
+      - 前方无 #N 且在题头区外 → **向后看**最近的 #N 链（fix-r2，DS boundary#5 P2：
+        `fix(gateway)：fix-r5 修 #3074` 形态的 token 与 #N 都在「：」后，旧判据判不出
+        → fix_round=None → 同一假 PASS 面），链 ∩ issues ≠ ∅ 才计入（归属到本单才
+        计数；无后随 #N 的板尾裸号 `交接段：…1623 fix-r6` 仍不计）。
+    题头区外的无配对 token（板尾裸号）不计。issues 为空集时配对 token 全不计——该违规
+    （正文没写关联 / no-issue）由规则 2 与 fix-r2 的 foreign 拒收兜住，配对判据不放大。"""
     hashes = list(HASH_REF.finditer(text))
     zsplit = text.split("：", 1)
     zone_end = len(zsplit[0]) if len(zsplit) == 2 else len(text)
@@ -259,7 +283,9 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
             members.append([h.group(1)])
     chain_sets = [frozenset(g) for g in members]
     ends = [h.end() for h in hashes]
+    starts = [h.start() for h in hashes]
     rounds: list[int] = []
+    foreign: list[tuple[int, frozenset[str]]] = []
     for m in FIXROUND_RE.finditer(text):
         if not hashes:
             rounds.append(int(m.group(1)))
@@ -268,9 +294,38 @@ def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
         if i >= 0:
             if not chain_sets[heads[i]].isdisjoint(issues):
                 rounds.append(int(m.group(1)))
+            elif m.start() < zone_end:
+                foreign.append((int(m.group(1)), chain_sets[heads[i]]))
         elif m.start() < zone_end:
             rounds.append(int(m.group(1)))
-    return rounds
+        else:
+            j = bisect_right(starts, m.start())  # 后方最近 hash（DS boundary#5）
+            if j < len(hashes) and not chain_sets[heads[j]].isdisjoint(issues):
+                rounds.append(int(m.group(1)))
+    return rounds, foreign
+
+
+def _paired_rounds(text: str, issues: frozenset[str]) -> list[int]:
+    """_scan_pairs 的 rounds 半边（既有调用方只见计入轮号）。"""
+    return _scan_pairs(text, issues)[0]
+
+
+def foreign_fixround_pairs(titles: list[str], issues: frozenset[str]) -> list[tuple[str, int, frozenset[str]]]:
+    """#3056 fix-r2 P0（DS boundary#1 + MM boundary 同撞，取高 P0）的两条旁路封堵依据：
+    (a) 正文写合法旁路 `<!-- no-issue 理由 -->` → issues=∅；(b) 正文关联的是另一个单
+    （`Closes #3042`）而标题为 `fix(gateway) #3056 fix-r5：…`。两形态共同结局：标题命中
+    TITLE_HEAD+FIXROUND 但配对集 ∩ issues = ∅ → fix_round=None → fixtype 必填 / 多块
+    同头 / N≥4 residual 整段跳过，而规则 2 仍放行（no-issue 是明文出口）＝修复轮机制被
+    假 PASS。本函数收集 titles 中命中 TITLE_HEAD、且题头区内带「非空不相交配对链」的
+    (标题, 轮号, 链)；check() 对非空清单 fail-closed 拒收。题头区外的引用（board 尾）
+    不算——那是 fix-r5 修 2 保留的合法形态（引用轮各归各单）。"""
+    out: list[tuple[str, int, frozenset[str]]] = []
+    for t in titles:
+        if not TITLE_HEAD.match(t):
+            continue
+        for rnd, chain in _scan_pairs(t, issues)[1]:
+            out.append((t, rnd, chain))
+    return out
 
 
 def pr_issues(masked: str) -> frozenset[str]:
@@ -453,7 +508,7 @@ def residual_errors(masked: str, fix_round, tb) -> list[str]:
     示例不算声明（strip_fences 后再找标记），占位符不算答（placeholder_in）。masked 是 check()
     已经去围栏的正文（修 8 同一份），tb 是 check() 已加载并校验过的任务书模块——这里不再各自
     加载，同一份文本同一份正本。"""
-    if fix_round is None or fix_round < 4:
+    if fix_round is None or fix_round < RESIDUAL_MIN_ROUND:
         return []
     if tb is None or not hasattr(tb, "placeholder_in") or not hasattr(tb, "RESIDUAL_NONE"):
         return ["pdrs-residual 口径模块（check-taskbook-segments.py）加载失败（fail-closed 拒收）"]
@@ -475,14 +530,37 @@ def residual_errors(masked: str, fix_round, tb) -> list[str]:
 
 
 def check_na_path(base: str, repo: str, head: str) -> list[str]:
-    """`fixtype=不适用` 的 diff 级路径检查（#3056 义务 4）：ci_scope 语义为唯一口径，fail-closed。"""
+    """`fixtype=不适用` 的 diff 级路径检查（#3056 义务 4）：ci_scope 语义为唯一口径，fail-closed。
+
+    fix-r2（DS r2 boundary#4 P2）口径对齐补丁指纹：路径判定基点改用 `git merge-base base head`
+    （等价三点 diff）——pr-gate 传入的 --base 是「当前 base tip」（origin/<base_ref>），落后
+    分支上两点 diff 会把 base 侧新增的代码文件列成 head 的反向变更，纯 state/board.md 的 PR 被
+    误报「不限于文档白名单」（实测 _tmp/20261114-3074-fixr2/ds4-twopoint-threepoint-probe.txt：
+    两点列 src/new_code.py + state/board.md，merge-base 基点只列 state/board.md）。错误消息按
+    False 的来源分条（git 失败 / diff 为空 / 真触代码路径），不再并成一句误导定位。"""
     if not (base and head and repo):
         return ["fixtype=不适用 但缺 --base/--head/--repo，无法按 ci_scope 语义复算 diff 路径（fail-closed 拒收）"]
     mod = _load_ci_scope()
-    if mod is None or not hasattr(mod, "docs_only_for_range"):
+    if mod is None or not hasattr(mod, "docs_only_for_range") or not hasattr(mod, "diff_paths_for_range") \
+            or not hasattr(mod, "paths_are_docs_only"):
         return ["fixtype=不适用 但 ci_scope.py 加载失败（fail-closed 拒收）"]
-    if not mod.docs_only_for_range(repo, base, head):
-        return ["fixtype=不适用 与 diff 路径矛盾：改动不限于文档白名单（ci_scope 唯一口径）——触及代码路径不得写不适用"]
+    # merge-base 起不来 / 非零按 fail-closed（与 pr_commit_titles 的 git 失败同口径，不得当空集放行）
+    try:
+        mb = subprocess.run(["git", "-C", repo, "merge-base", base, head], capture_output=True)
+    except OSError as e:
+        return [f"fixtype=不适用 但 merge-base 起不来（{e}）（fail-closed 拒收）"]
+    if mb.returncode != 0 or not mb.stdout.strip():
+        return ["fixtype=不适用 但算不出 merge-base（base/head 未知提交或 repo 不可达）（fail-closed 拒收）"]
+    mb_sha = mb.stdout.decode("utf-8", "replace").strip()
+    paths = mod.diff_paths_for_range(repo, mb_sha, head)
+    if paths is None:
+        return ["fixtype=不适用 但 diff 复算失败（git diff 非零；fail-closed 拒收）"]
+    if not paths:
+        return ["fixtype=不适用 但 merge-base..head 的 diff 为空——「不适用」断言了 docs-only 改动，空 diff 无法佐证"
+                "（核对 head 是否为空提交 / 参数是否传对；fail-closed 拒收）"]
+    if not mod.paths_are_docs_only(paths):
+        return ["fixtype=不适用 与 diff 路径矛盾：改动不限于文档白名单（ci_scope 唯一口径，merge-base 基点）——"
+                "触及代码路径不得写不适用"]
     return []
 
 
@@ -622,6 +700,24 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
     # Fixes/Resolves/Refs #N（pr_issues 单一口径，fix-r13 起规则 2 也复用）；标题里引用别的
     # 单的轮号按 issue 号各归各的单，不再被当成本轮（既不「首个」低估、也不「行内 max」高估）
     issues = pr_issues(masked)
+    # fix-r2 P0（DS r2 boundary#1 + MM r2 boundary 双谱系同撞，取高 P0）：「空 / 不相交」两条
+    # 旁路 fail-closed 拒收——(a) no-issue 正文（issues=∅）+ 修复轮标题；(b) 异单关联（正文
+    # Closes #3042 而标题 `fix(gateway) #3056 fix-r5：…`）。只按「计不计入」处理时 fix_round
+    # 落 None、fixtype/residual/多块一致整段跳过，规则 2 又放行（no-issue 是明文出口）＝假 PASS。
+    # 修复轮标题的题头区引用了本 PR 未关联的单号就拒收（题头区外的 board 尾引用除外，见
+    # foreign_fixround_pairs）；拒收与 fix_round 是否判出无关（异单混入也须修关联，宁高勿低）。
+    for t, rnd, chain in foreign_fixround_pairs(titles or [], issues):
+        refs = "、".join("#" + n for n in sorted(chain, key=int))
+        if issues:
+            mine = "、".join("#" + n for n in sorted(issues, key=int))
+            errs.append(f"修复轮标题与 issue 关联矛盾（异单旁路，fail-closed）：标题「{t[:60]}」的 "
+                        f"fix-r{rnd} 题头区引用 {refs} 不在本 PR 关联单（{mine}）——配对不上会让修复轮字段"
+                        "（fixtype / residual / 多块一致）整段被跳过＝假 PASS；正文补 Refs/Closes 该单号（多单并写）"
+                        "或修正标题单号")
+        else:
+            errs.append(f"修复轮标题与 issue 关联矛盾（no-issue 旁路，fail-closed）：标题「{t[:60]}」的 "
+                        f"fix-r{rnd} 题头区引用 {refs} 而正文无任何 issue 关联——修复轮 PR 不得用 "
+                        "<!-- no-issue --> 绕过 fixtype/residual/多块一致；正文补 Closes/Refs #N")
     if titles is not None:
         fix_round = fix_round_from_titles(titles, issues)
     if fix_round is None:

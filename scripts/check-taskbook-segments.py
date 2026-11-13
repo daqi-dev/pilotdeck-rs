@@ -1212,6 +1212,10 @@ FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
 # DS simplify#1 / MM2 sibling#5）——两份同字面拷贝会在改标记语法时一侧判「缺」另一侧认声明。
 # 配对测试断言两处 pattern 一致（同 FIXTYPE_VALUES 的单源做法）。
 RESIDUAL_RE = _gate_module().RESIDUAL_MARKER
+# N≥4 门槛单源（#3056 fix-r2，DS r2 boundary#3 P2）：此前本文件与 check-pr-gate.py 各写一份
+# 字面量 4，改一侧不改另一侧会让任务书闸门与 PR 闸门对同一修复轮给出相反结论（一侧要
+# residual、另一侧不要）。派生自 check-pr-gate（同 FIXTYPE_VALUES 的手法，配对测试断言）。
+RESIDUAL_MIN_ROUND = _gate_module().RESIDUAL_MIN_ROUND
 RESIDUAL_NONE = "无上一轮"   # 字面值：没有上一轮时允许（空答不算答）
 
 
@@ -1260,10 +1264,10 @@ def check_fix_fields(body, fix_round):
                     hit = placeholder_in(arg)
                     if hit:
                         problems.append(f"修法类型「{value}」的论证还是占位符：{_clip(hit)!r}（写实际论证）")
-    if fix_round >= 4:
+    if fix_round >= RESIDUAL_MIN_ROUND:
         marks = RESIDUAL_RE.findall(body)
         if not marks:
-            problems.append(f"fix-r{fix_round}（N≥4）任务书缺上轮残差判读 `<!-- pdrs-residual: … -->`"
+            problems.append(f"fix-r{fix_round}（N≥{RESIDUAL_MIN_ROUND}）任务书缺上轮残差判读 `<!-- pdrs-residual: … -->`"
                             f"（上一轮的洞是边界暴露还是修法本身缺陷；{RESIDUAL_NONE}时写字面值「{RESIDUAL_NONE}」）")
         elif len(marks) > 1:
             problems.append(f"pdrs-residual 标记出现 {len(marks)} 次（至多一次）")
