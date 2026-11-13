@@ -69,6 +69,11 @@ WECOM_MOUNT = (
     '    );\n'
 )
 
+# #2476: the bluebubbles mount line — same dropped-mount drift as the two
+# rows below it, for the ledger chain whose wiring #2301 landed without a
+# per-key row of its own (the apiServer/wecomCallback rows do not cover it).
+BLUEBUBBLES_MOUNT = '    crate::channel::bluebubbles::register(&mut mounts);\n'
+
 # #2426: the wecomCallback arm's first extra-field forward. Pointing corpId
 # at a different source field is the silent #1853 skip in its narrowest form:
 # the channel still constructs, only with the wrong (absent) corp id.
@@ -96,6 +101,10 @@ COVERS_API = ('native_process::channels_tests::production_mounts_cover_every_non
               '#2301 loader key "apiServer" is neither rejected nor mounted in production')
 COVERS_WECOM = ('native_process::channels_tests::production_mounts_cover_every_non_rejected_loader_key',
                 '#2301 loader key "wecomCallback" is neither rejected nor mounted in production')
+# #2476: the bluebubbles twin of COVERS_API / COVERS_WECOM — the per-key loop
+# renders the loader key into the message, so each dropped mount names itself.
+COVERS_BLUEBUBBLES = ('native_process::channels_tests::production_mounts_cover_every_non_rejected_loader_key',
+                      '#2301 loader key "bluebubbles" is neither rejected nor mounted in production')
 # #2426: the mount-level cell — the captured options must carry the fixture's
 # corpId, item by item.
 WECOM_MOUNT_CELL = ('channel::wecom_callback::tests::loader_mount_builds_wecom_callback_channel',
@@ -131,6 +140,11 @@ MUTATIONS = [
     ('wecom-mount-dropped', channels, WECOM_MOUNT,
      '    // #2301 negative control: wecomCallback mount dropped\n',
      [COVERS_WECOM]),
+    # #2476: the bluebubbles mount drops out the same way; without this row
+    # the key's wiring had no dropped-mount control of its own.
+    ('bluebubbles-mount-dropped', channels, BLUEBUBBLES_MOUNT,
+     '    // #2476 negative control: the bluebubbles mount is dropped\n',
+     [COVERS_BLUEBUBBLES]),
     # #2426: the corpId forward reads a different source field; the channel
     # still loads, only with the wrong options — exactly the silent skip the
     # mount-level item-by-item assertions exist to keep dead.

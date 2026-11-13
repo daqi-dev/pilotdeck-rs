@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { baseline, root, requireUI, ownedPath, realOrigin } from './env.mjs';
 import { assertRealExecutionEnv } from './execution-env.mjs';
 import { realChromeLaunchOptions } from './real-browser.mjs';
@@ -13,7 +14,7 @@ export default requireUI('@playwright/test').defineConfig({
   metadata: { frontend: 'old', baseURL: realOrigin(mode), mode, backend: 'native-with-mock-llm', suite: 'real-D' },
   reporter: [['json', { outputFile: `${output}/old-${mode}.json` }]],
   outputDir: `${output}/test-results/old-${mode}`,
-  globalSetup: new URL('./real-setup.mjs', import.meta.url).pathname,
+  globalSetup: fileURLToPath(new URL('./real-setup.mjs', import.meta.url)),
   use: { baseURL: realOrigin(mode), storageState: `${runDir}/storage-state.json`, channel: 'chrome', headless: true,
     viewport: { width: 1440, height: 900 }, trace: 'retain-on-failure', screenshot: 'only-on-failure',
     // Video would require Playwright's separate downloaded ffmpeg. Use trace/screenshots.

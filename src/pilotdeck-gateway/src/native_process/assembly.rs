@@ -1226,7 +1226,12 @@ async fn start_assembly(
                         .map_err(|e| e.message().to_string()),
                 )
                 .await;
-                let channel_flush = cleanup_channels.flush().await;
+                // #1725 item 15: the flush rides the same observation surface
+                // as the stop it follows (the TS bundle's flushChannelState is
+                // its own observed step after closeServer), so the teardown
+                // order — and the flush's own failure — is in the `calls`
+                // trace, not only in the folded outcome.
+                let channel_flush = cleanup_observer("flush", cleanup_channels.flush().await).await;
                 // #1959: the completion flags flip before the observers run, so
                 // an observer that stalls cannot un-complete a finished
                 // resource (and the fallback below will not re-run it).

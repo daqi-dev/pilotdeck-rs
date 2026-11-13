@@ -63,23 +63,18 @@ fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, Requ
     Ok(project)
 }
 
-/// Validates that `sessionKey` is present and non-blank (TS `?.trim()` check).
-/// Delegates to the family-shared guard (#1604) so the blank test is JS trim
-/// (U+FEFF and the other WhiteSpace code points count as blank) and a
-/// non-string produces the bare `input.sessionKey?.trim is not a function`
-/// TypeError instead of the `INVALID_SESSION_KEY` domain error this file used
-/// to answer. The blank check stays
-/// lossy: TS accepts a lone surrogate in the key (`?.trim()` leaves it intact,
-/// #1455 probe4), so a `to_utf8` filter here would reject a key TS accepts.
-/// Callers that need UTF-8 bytes convert lossily at the point of use, like
-/// TS's own path encoding.
+/// Validates `sessionKey` for resume / close / delete / rename / tag:
+/// the TS `?.trim()` gate (#1604 — the blank test is JS trim, U+FEFF
+/// included, and a non-string is the bare `input.sessionKey?.trim is not a
+/// function` TypeError) plus the #1623 lone-surrogate rejection
+/// (`s\u{D800}` and `s\u{FFFD}` alias to one disk identity through
+/// `sanitize_session_id`'s lossy conversion, so the surrogate key reaches
+/// another session's transcript / file-history / tool-results / subagents
+/// files). 方案 B keeps the lossy disk identity and rejects the key —
+/// stricter than TS; see `super::require_session_key` and
+/// `A7-W5-SESSION-KEY-SURROGATE-REJECT-001`.
 fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
-    super::require_text(
-        params,
-        "sessionKey",
-        "INVALID_SESSION_KEY",
-        "sessionKey is required.",
-    )
+    super::require_session_key(params)
 }
 
 /// The `input.projectKey ? \`project=${input.projectKey}:\` : ""` read
@@ -502,6 +497,25 @@ impl Requests {
             .and_then(JsValue::as_string)
             .cloned()
             .ok_or_else(|| RequestError::new("sessionKey must be a string."))?;
+        // #1623 方案 B at the status write (fix-r5, #2998): every identity this
+        // entry hands the key to is lossy — the fence path, the cold
+        // `append_metadata_with_lease`, and the `live_recorder` lookup all
+        // render it through `sanitize_session_id`
+        // (`String::from_utf16_lossy`), so a lone-surrogate key and an
+        // explicit U+FFFD key are one transcript, the same alias the guard
+        // families refuse. TS has no gate here at all beyond the string read
+        // above (`InProcessGateway.ts:2068` forwards `input.sessionKey` raw;
+        // the cold fallback reaches the same lossy fs boundary —
+        // A7.8-INTERACTION-NONSTRING-OWNER-001-R1 keeps this entry's own
+        // `must be a string.` shape), so the rejection is the registered
+        // A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence, stricter than
+        // TS. Only the unpaired shape is refused.
+        if crate::native_process::has_unpaired_surrogate(session_key.units()) {
+            return Err(gateway_error(
+                "INVALID_SESSION_KEY",
+                crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+            ));
+        }
         let turn_id = params
             .get("turnId")
             .and_then(JsValue::as_string)
@@ -1040,16 +1054,30 @@ mod tests {
         );
     }
 
-    // #1455 r1: the same gate serves resume / close / delete / rename / tag;    // a guard-level case pins the predicate once for all five callers instead
-    // of relying on the single resume-level request test.
+    // #1623 方案 B: the guard rejects the lone-surrogate key for every caller
+    // (resume / close / delete / rename / tag share it). TS `?.trim()` accepts
+    // the key (#1455 probe4 measured the pass), but the disk identity is
+    // rendered through `String::from_utf16_lossy`, so `s\u{D800}` aliases onto
+    // `s\u{FFFD}`'s transcript / file-history / tool-results / subagents files
+    // (#1623 probes `_tmp/20261111-issue-1623/`); the rejection — stricter
+    // than TS — is registered as A7-W5-SESSION-KEY-SURROGATE-REJECT-001. The
+    // #1455 blank rejection stays.
     #[test]
-    fn require_session_key_keeps_lone_surrogates_and_rejects_blank() {
-        let surrogate = JsString::from_utf16(vec![0xd800]);
+    fn require_session_key_rejects_lone_surrogates_and_blank() {
+        let surrogate = JsString::from_utf16(vec![0x73, 0xd800]);
         let accepted = object([("sessionKey", JsValue::String(surrogate))]);
+        let err = require_session_key(&accepted).expect_err(
+            "#1623 require_session_key rejects the lone-surrogate key for every caller",
+        );
         negative_assert_eq!(
-            require_session_key(&accepted).is_ok(),
-            true,
-            "#1455 require_session_key keeps the lone-surrogate key for every caller"
+            err.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 require_session_key rejects the lone-surrogate key for every caller"
+        );
+        negative_assert_eq!(
+            key_message(&err),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 the surrogate rejection keeps the guard family's domain-error shape"
         );
         // #2207: the zero-length spelling rides the same guard-level pin, so
         // both blank spellings are covered once for all five callers instead
@@ -1063,31 +1091,193 @@ mod tests {
                 "INVALID_SESSION_KEY",
                 "#1455 require_session_key rejects the blank key for every caller"
             );
+            // #1623: the blank rejection keeps the guard family's
+            // domain-error shape for both spellings.
+            negative_assert_eq!(
+                key_message(&err),
+                BLANK_KEY_MESSAGE,
+                "#1455 the blank rejection keeps the TS provider-gate message"
+            );
         }
     }
 
-    // #1455 G7: the shared `?.trim()` gate accepts a lone-surrogate key the
-    // way TS does (probe4: `{"label":"thinking-lone-surrogate-key",
-    // "value":{"applied":"callback"}}`); the previous `to_utf8` filter
-    // rejected it with INVALID_SESSION_KEY, diverging from TS.
+    // #1623 controls: only the unpaired shape is refused. An explicit U+FFFD
+    // key is a legal (if odd) session identity, and a surrogate pair is an
+    // astral character — the gate must not become the `to_utf8` filter
+    // #1455 removed, which rejected keys TS accepts wholesale.
+    #[test]
+    fn require_session_key_keeps_fffd_and_paired_surrogates() {
+        for (label, units) in [
+            ("explicit-fffd", vec![0x73, 0xfffd]),
+            ("paired-surrogate", vec![0x73, 0xd800, 0xdc00]),
+        ] {
+            let key = JsString::from_utf16(units);
+            let accepted =
+                require_session_key(&object([("sessionKey", JsValue::String(key.clone()))]))
+                    .unwrap_or_else(|err| panic!("#1623 the {label} key passes the gate: {err:?}"));
+            negative_assert_eq!(
+                accepted.units(),
+                key.units(),
+                "#1623 the {label} key keeps its UTF-16 units through the gate"
+            );
+        }
+    }
+
+    // #1623: resume rejects the lone-surrogate key. The pre-#1623 behaviour
+    // (echoing the surrogate key, #1455 G7) is what made the alias reachable;
+    // the divergence from TS's accept is the registered 方案 B trade.
     #[tokio::test]
-    async fn resume_session_accepts_lone_surrogate_session_key() {
+    async fn resume_session_rejects_lone_surrogate_session_key() {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1310 fixture");
         let key = JsString::from_utf16(vec![0xd800]);
-        let params = object([("sessionKey", JsValue::String(key.clone()))]);
-        let result = r.session_dir_request("resume_session".into(), params).await;
-        let value = result.expect("#1455 resume_session accepts the surrogate key");
-        let echoed = value
-            .get("sessionKey")
-            .and_then(JsValue::as_string)
-            .cloned()
-            .expect("#1455 resume_session echoes the sessionKey");
+        let params = object([("sessionKey", JsValue::String(key))]);
+        let error = r
+            .session_dir_request("resume_session".into(), params)
+            .await
+            .expect_err("#1623 resume_session rejects the surrogate key");
         negative_assert_eq!(
-            echoed.units(),
-            key.units(),
-            "#1455 resume_session passes the lone-surrogate sessionKey through the trim gate"
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 resume_session rejects the lone-surrogate session key"
         );
+        negative_assert_eq!(
+            key_message(&error),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 the resume rejection is the shared guard's domain error"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1623 end-to-end: the issue's acceptance — two keys that differ only in
+    // a lone surrogate vs the replacement character must not resolve to the
+    // same file. A owns the `s\u{FFFD}` transcript (+ file-history marker);
+    // B's surrogate-spelled tag and delete — the two writes the pre-fix probes
+    // showed reaching A's files through the `sanitize_session_id` alias
+    // (`_tmp/20261111-issue-1623/probe2_rust_prefix_e2e.log`) — are now
+    // refused before any disk step, and A's data survives.
+    #[tokio::test]
+    async fn surrogate_key_cannot_reach_the_fffd_transcripts_files() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let repl = JsString::from("s\u{fffd}");
+        let lone = JsString::from_utf16(vec![0x73, 0xd800]);
+        let home = r.options.home.clone();
+        let project = r.options.project.clone();
+
+        // A seeds the `s\u{FFFD}` transcript (rename is the write path the
+        // alias hijacked) and a file-history marker.
+        r.session_dir_request(
+            "rename_session".into(),
+            object([
+                ("sessionKey", JsValue::String(repl.clone())),
+                ("value", "A-title".into()),
+            ]),
+        )
+        .await
+        .expect("#1623 A's rename seeds the s-FFFD transcript");
+        let home_for_adapter = home.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(
+                    &home_for_adapter,
+                    &k.project_root,
+                    &k.project_root.to_string_lossy(),
+                )
+            }),
+        );
+        let a_storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.clone(),
+                pilot_home: home.clone(),
+                session_id: repl.clone(),
+                now: None,
+            })
+            .expect("#1623 A's storage opens");
+        std::fs::create_dir_all(&a_storage.file_history_dir)
+            .expect("#1623 A's file-history directory");
+        std::fs::write(a_storage.file_history_dir.join("marker.txt"), "A")
+            .expect("#1623 A's file-history marker");
+        let repl_path = transcript_locks::session_transcript_path(&home, &project, &repl);
+        let a_file_history = a_storage.file_history_dir.clone();
+        negative_assert!(
+            repl_path.exists(),
+            "#1623 A's s-FFFD transcript exists before B's surrogate requests"
+        );
+
+        // B's tag with the surrogate spelling: refused, and the metadata does
+        // not land in A's transcript.
+        let error = r
+            .session_dir_request(
+                "tag_session".into(),
+                object([
+                    ("sessionKey", JsValue::String(lone.clone())),
+                    ("value", "B-tag".into()),
+                ]),
+            )
+            .await
+            .expect_err("#1623 the surrogate-spelled tag is refused");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 the surrogate-spelled tag answers the domain error"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 the surrogate-spelled tag answers the guard family's message"
+        );
+
+        // B's delete with the surrogate spelling: refused, A's transcript and
+        // file-history survive.
+        let error = r
+            .session_dir_request(
+                "delete_session".into(),
+                object([("sessionKey", JsValue::String(lone.clone()))]),
+            )
+            .await
+            .expect_err("#1623 the surrogate-spelled delete is refused");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 the surrogate-spelled delete answers the domain error"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 the surrogate-spelled delete answers the guard family's message"
+        );
+        let content = std::fs::read_to_string(&repl_path)
+            .expect("#1623 A's transcript is readable after the refused requests");
+        negative_assert!(
+            !content.contains("B-tag"),
+            "#1623 B's metadata never lands in A's transcript"
+        );
+        negative_assert!(
+            a_file_history.join("marker.txt").exists(),
+            "#1623 A's file-history marker survives the refused delete"
+        );
+
+        // Control: A's own `s\u{FFFD}` spelling still works — the rejection did
+        // not become a UTF-8 filter over A's legal identity.
+        let value = r
+            .session_dir_request(
+                "tag_session".into(),
+                object([
+                    ("sessionKey", JsValue::String(repl.clone())),
+                    ("value", "A-tag".into()),
+                ]),
+            )
+            .await
+            .expect("#1623 A's own FFFD-spelled tag still runs");
+        negative_assert_eq!(
+            value.get("updated").and_then(JsValue::as_bool),
+            Some(true),
+            "#1623 A's own FFFD-spelled tag reports updated:true"
+        );
+
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
@@ -1107,6 +1297,10 @@ mod tests {
     // divergence stays registered in
     // `specs/gateway-parity/diffs/A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R9.md`.
     const BLANK_KEY_MESSAGE: &str = "sessionKey is required.";
+    // #1623 方案 B: the lone-surrogate rejection keeps the guard family's
+    // domain-error shape (code + message, same RequestError construction as
+    // the blank case — no third error protocol).
+    const SURROGATE_KEY_MESSAGE: &str = "sessionKey must not contain an unpaired surrogate.";
     const ISOLATED_PROJECT_MESSAGE: &str =
         "The isolated native process serves only its configured project.";
 
@@ -1316,6 +1510,159 @@ mod tests {
     #[tokio::test]
     async fn delete_session_blank_key_gate_order() {
         blank_key_gate_order("delete_session").await;
+    }
+
+    // #1623: the four destructive methods each refuse the lone-surrogate key
+    // with the shared guard's domain error. The guard runs before the project
+    // resolution, so the configured project is enough (the #2090 admission
+    // ordering is pinned by the blank-key family above); rename / tag take
+    // no `value` here because the refusal happens before the value read.
+    async fn surrogate_key_gate(method: &str) {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let error = r
+            .session_dir_request(
+                method.into(),
+                object([("sessionKey", JsValue::String(key))]),
+            )
+            .await
+            .expect_err("#1623 the lone-surrogate key is refused");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 {method} refuses the lone-surrogate session key"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 {method} answers the guard family's surrogate message"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    #[tokio::test]
+    async fn close_session_surrogate_key_gate() {
+        surrogate_key_gate("close_session").await;
+    }
+
+    #[tokio::test]
+    async fn delete_session_surrogate_key_gate() {
+        surrogate_key_gate("delete_session").await;
+    }
+
+    #[tokio::test]
+    async fn rename_session_surrogate_key_gate() {
+        surrogate_key_gate("rename_session").await;
+    }
+
+    #[tokio::test]
+    async fn tag_session_surrogate_key_gate() {
+        surrogate_key_gate("tag_session").await;
+    }
+
+    // #1623 方案 B at the status write (fix-r5, #2998): this entry keeps its
+    // own `must be a string.` gate (TS has no `?.trim()` here —
+    // A7.8-INTERACTION-NONSTRING-OWNER-001-R1), and its every downstream
+    // identity is the lossy `sanitize_session_id` render — the fence path, the
+    // cold `append_metadata_with_lease`, and the `live_recorder` lookup
+    // (`assembly.rs`, alias-aware by design for `/`-vs-`-`). A surrogate
+    // spelling therefore reaches the `s\u{FFFD}` session's transcript exactly
+    // the way the pre-fix probes showed the tag/delete doing; the gate answers
+    // before any of those reads. The registered A7-W5 divergence, stricter
+    // than TS (which forwards the key raw, `InProcessGateway.ts:2068`).
+    #[tokio::test]
+    async fn record_agent_status_message_rejects_lone_surrogate_session_key() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let error = r
+            .session_dir_request(
+                "record_agent_status_message".into(),
+                object([
+                    ("sessionKey", JsValue::String(key)),
+                    ("turnId", "surrogate-status".into()),
+                    ("status", JsValue::Undefined),
+                ]),
+            )
+            .await
+            .expect_err("#1623 record_agent_status_message rejects the lone-surrogate session key");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 record_agent_status_message refuses the lone-surrogate session key"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            SURROGATE_KEY_MESSAGE,
+            "#1623 the status rejection is the shared guard family's message"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1623 controls: only the unpaired shape is refused. An explicit U+FFFD
+    // key and a surrogate pair (an astral character) pass the gate and the cold
+    // append lands in each spelling's *own* `<id>.jsonl` — the two spellings
+    // are distinct files, so a gate that over-rejected or a write that
+    // resolved both onto one file cannot pass the cross-checks.
+
+    #[tokio::test]
+    async fn record_agent_status_message_keeps_fffd_and_paired_surrogate_keys() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let home = r.options.home.clone();
+        let project = r.options.project.clone();
+        let mut transcripts: Vec<(&str, String)> = Vec::new();
+        for (label, units, turn) in [
+            ("explicit-fffd", vec![0x73, 0xfffd], "fffd-status"),
+            (
+                "paired-surrogate",
+                vec![0x73, 0xd800, 0xdc00],
+                "paired-status",
+            ),
+        ] {
+            let key = JsString::from_utf16(units);
+            let recorded = r
+                .session_dir_request(
+                    "record_agent_status_message".into(),
+                    object([
+                        ("sessionKey", JsValue::String(key.clone())),
+                        ("turnId", turn.into()),
+                        ("status", JsValue::Undefined),
+                    ]),
+                )
+                .await
+                .unwrap_or_else(|error| panic!("#1623 the {label} key passes the gate: {error:?}"));
+            negative_assert_eq!(
+                recorded.get("recorded").and_then(JsValue::as_bool),
+                Some(true),
+                "#1623 the {label} key reports recorded:true through the cold append"
+            );
+            let path = transcript_locks::session_transcript_path(&home, &project, &key);
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!("#1623 the {label} transcript is readable: {error}")
+            });
+            negative_assert!(
+                text.contains(turn),
+                "#1623 the {label} status entry lands in its own transcript"
+            );
+            transcripts.push((label, text));
+        }
+        let [(fffd_label, fffd_text), (paired_label, paired_text)] = transcripts.as_slice() else {
+            panic!("#1623 both control spellings ran")
+        };
+        negative_assert!(
+            !fffd_text.contains("paired-status"),
+            "#1623 the {fffd_label} transcript does not carry the {paired_label} entry"
+        );
+        negative_assert!(
+            !paired_text.contains("fffd-status"),
+            "#1623 the {paired_label} transcript does not carry the {fffd_label} entry"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
     }
 
     /// The session keys one `snapshot_state` table holds, as UTF-8 strings.

@@ -5,7 +5,7 @@
 //! one writer; `updatedAt` is the report wall clock and is masked in goldens.
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::weixin::stringify_pretty;
 
@@ -57,7 +57,26 @@ pub(crate) fn read_snapshot(pilot_home: &Path) -> JsObject {
 /// A write failure surfaces as the caller's warn (the TS safe reporter's
 /// catch), not a panic.
 pub fn create_channel_runtime_status_reporter(pilot_home: PathBuf) -> ChannelRuntimeStatusReporter {
+    create_channel_runtime_status_reporter_locked(pilot_home, Arc::new(Mutex::new(())))
+}
+
+/// The lock-sharing variant (#1725#1): TS's read-modify-write runs on one
+/// event loop, so concurrent reports cannot interleave; here the whole
+/// read-snapshot → merge → publish stretch must sit inside one critical
+/// section, or two threads that read the same snapshot each publish their own
+/// half and the other's update is lost. Callers that build several reporters
+/// for the same home can share one lock (and one file) through it.
+pub fn create_channel_runtime_status_reporter_locked(
+    pilot_home: PathBuf,
+    lock: Arc<Mutex<()>>,
+) -> ChannelRuntimeStatusReporter {
     Arc::new(move |channel_key, update| {
+        // #1725#1: the entire read-modify-write under one guard — the TS
+        // module's synchronous handler is atomic on its single event loop,
+        // and the two NativeChannels halves share this reporter, so one lock
+        // covers both reporters' interleavings in-process (a cross-process
+        // lost update stays possible, same as TS would have it).
+        let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = now_iso();
         let mut channels = match read_snapshot(&pilot_home)
             .get("channels")
@@ -100,10 +119,24 @@ pub fn create_channel_runtime_status_reporter(pilot_home: PathBuf) -> ChannelRun
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            // #1725#2: publish through a tmp + rename — the final bytes are
+            // the writeFileSync shape byte for byte (same stringify, same
+            // trailing newline), but a reader (or a crash) never observes a
+            // half-written file. The tmp name carries a uuid suffix, like
+            // the state-persistence lane's writes.
+            let temporary = path.with_file_name(format!(
+                ".{}.{}.tmp",
+                path.file_name()
+                    .expect("#1725 status file name")
+                    .to_string_lossy(),
+                &uuid::Uuid::new_v4().to_string()[..8]
+            ));
             std::fs::write(
-                &path,
+                &temporary,
                 format!("{}\n", stringify_pretty(&JsValue::Object(next))),
-            )
+            )?;
+            std::fs::rename(&temporary, &path)?;
+            Ok(())
         })();
         if let Err(error) = written {
             eprintln!(

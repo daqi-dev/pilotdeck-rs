@@ -504,6 +504,7 @@ fn cancelling_service_lease_wakes_paused_reader() {
         None,
         tokio::sync::watch::channel(0usize).1,
         Arc::new(AtomicUsize::new(0)),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // #1292 fix-r2: no body pending in this gate-level test — it pins
         // the lease wake path, not the mid-stream anchoring.
         Arc::new(std::sync::atomic::AtomicI64::new(0)),
@@ -883,6 +884,7 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
         None,
         tokio::sync::watch::channel(0usize).1,
         in_flight,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // The request's own body is fully read: every byte from here on is
         // the *next* head's, which the gate withholds while the response
         // streams.

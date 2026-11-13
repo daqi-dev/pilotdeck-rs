@@ -1,5 +1,7 @@
 """Toolchain starts are mocked; watchdog controls run only this Python interpreter."""
 import ast
+import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -88,7 +90,8 @@ class EnvironmentControls(unittest.TestCase):
     ci_job_level_registry = {
         'scope': ({'outputs', 'runs-on', 'steps'}, None, None),
         'metadata-observer': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
-        'negative-controls': ({'env', 'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
+        'negative-controls': ({'env', 'if', 'needs', 'outputs', 'runs-on', 'steps',
+                               'timeout-minutes'},
                               ['scope'], parsed_docs_only_if),
         'retirement-outcome-parity': ({'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
                                       ['scope'], parsed_docs_only_if),
@@ -96,7 +99,7 @@ class EnvironmentControls(unittest.TestCase):
                   ['scope', 'metadata-observer', 'rust', 'a51-coverage',
                    'negative-controls', 'retirement-outcome-parity'],
                   '${{ always() }}'),
-        'rust': ({'defaults', 'env', 'if', 'needs', 'runs-on', 'steps'},
+        'rust': ({'defaults', 'env', 'if', 'needs', 'outputs', 'runs-on', 'steps'},
                  ['scope'], parsed_docs_only_if),
         'a51-coverage': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
         # 必需检查必须无条件跑：`if` / `needs` 都不在白名单里。
@@ -140,7 +143,10 @@ class EnvironmentControls(unittest.TestCase):
         'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path) | '
         'test(=native_process::services_tests::direct_content_with_an_unopenable_path_stays_silent) | '
         'test(=test_process::an_unreadable_stat_of_a_possible_child_fails_the_child_audit) | '
-        'test(=test_process::an_unreadable_holder_of_this_user_fails_the_data_dir_audit)')
+        'test(=test_process::an_unreadable_holder_of_this_user_fails_the_data_dir_audit) | '
+        'test(=channel::sms::tests::dual_stack_probe_uses_the_assigned_port) | '
+        'test(=channel::sms::tests::port_busy_on_ipv6_preflight_fails_fast) | '
+        'test(=compiler_enforces_gateway_boundary)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -433,7 +439,11 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 6, '#904 exactly six rejection steps')
+        # #3078 fix-r4：第七步是镜像构建号比对（Require same runner image build），
+        # 不是 #904 的拒绝步——它自带 if（docs_only 放行）与 run 块，不参与上面
+        # gate_steps 的精确条件分组。
+        self.assertEqual(len(steps), 7, '#904 exactly six rejection steps '
+                         'plus the #3078 same-build comparison')
 
         def gate_steps(condition):
             return [step for step in steps
@@ -513,6 +523,48 @@ class EnvironmentControls(unittest.TestCase):
             step = {}
             for field, node in item.value:
                 step[field.value] = node
+            # #3078 fix-r4：镜像构建号比对步不是 #904 拒绝步——自带 env（两 job 的
+            # outputs）与 run 块，键集合与 env 接线单独钉死。fix-r5（DS boundary#1
+            # P1 / MM concurrency#1 / MM sibling#1 三撞）：`if:` 完整标量、两个 env
+            # 的**值**、`working-directory` 值逐字钉——`if` 反转或删失、`exit 1` 改
+            # `exit 0` 都是「真实 PR 上比对永不执行 / 失配照绿」的假通过面（该步
+            # 是 #3078 唯一新增不变量的执法点，防护强度不得低于旁边六条拒绝步；
+            # run 体的行为由 test_same_build_comparison_step_logic_self_check 真
+            # 跑五场景兜住）。
+            if (step.get('name', None) is not None
+                    and step['name'].value
+                    == 'Require same runner image build for rust and negative controls'):
+                self.assertEqual(set(step),
+                                 {'name', 'if', 'working-directory', 'shell', 'env', 'run'},
+                                 '#3078 the same-build comparison step keys are exactly '
+                                 'the registered set (parsed)')
+                self.assertEqual(step['working-directory'].value, '.',
+                                 '#3078 the comparison step runs from the repository '
+                                 'root (parsed)')
+                # fix-r6（MM boundary#2 P2）：run 标量样式钉为字面块——折成 `>`
+                # 单字符漂移可存活全部行级钉（源码行未变），生产侧整块折成一行
+                # 让 bash 吃 syntax error、比对步每次 PR 都假红。
+                self.assertEqual(step['run'].style, '|',
+                                 '#3078 the comparison step run body must stay a literal '
+                                 'block scalar (folding it onto one line breaks bash '
+                                 'parsing on every PR)')
+                self.assertEqual(step['if'].value,
+                                 "${{ always() && needs.scope.outputs.docs_only "
+                                 "!= 'true' }}",
+                                 '#3078 the comparison step keeps its parsed docs_only '
+                                 'if condition verbatim (inverting or dropping it makes '
+                                 'the same-build check never run on real PRs)')
+                env_pairs = {pair[0].value: pair[1].value
+                             for pair in step['env'].value}
+                self.assertEqual(env_pairs,
+                                 {'RUST_IMAGE_VERSION':
+                                  '${{ needs.rust.outputs.image_version }}',
+                                  'NEGCTL_IMAGE_VERSION':
+                                  '${{ needs.negative-controls.outputs.image_version }}'},
+                                 '#3078 the comparison step env wires each side to its '
+                                 'own job output verbatim (parsed); wiring both sides to '
+                                 'the same job degenerates the comparison to always-equal')
+                continue
             self.assertLessEqual(set(step), {'if', 'name', 'run', 'shell', 'working-directory'},
                                  '#2017 aggregate Require step keys are exactly the registered set')
             run = step.get('run')
@@ -1145,7 +1197,9 @@ class EnvironmentControls(unittest.TestCase):
                       '        working-directory: .\n'
                       '        shell: bash\n'
                       '        run: exit 1\n')
-        change('scope-gate-removed', scope_step, '', '#904 exactly six rejection steps')
+        change('scope-gate-removed', scope_step, '',
+               '#904 exactly six rejection steps '
+               'plus the #3078 same-build comparison')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
                "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
         change('check-needs-drops-scope',
@@ -1565,7 +1619,7 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_the_optimize_guards_self_tests_collect_real_tests(self):
         # #2136 fix-r37（MM sibling P1）：上面 -O 步的守卫同样只钉「步存在 +
-        # 无条件 + cwd」，钉不住五条命令真的收集到测试——掏空 / skip 任一
+        # 无条件 + cwd」，钉不住七条命令真的收集到测试——掏空 / skip 任一
         # 模块，`python3 -B -m unittest -v` 退 0，#1666/#1734 的 -O 判别力
         # 在 CI 静默为空。逐模块跑一遍并核「Ran N」下限与无 skip/期望失败；
         # 下限取 r37 实测（_tmp/20261110-pr2136-revival/
@@ -1573,6 +1627,25 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main c3100a2b7 带入 #2590 fix-r2）：-O 步新增第六模块
         # issue-2495/test_negative_controls.py（r41 实测 Ran 30、约 4 s），
         # 同钉进下限——不钉则该模块在 CI 掏空/整类 skip 无人看见。
+        # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：-O 步新增
+        # 第七模块 sdk-signals-close-order-pin/test_negative_controls.py
+        # （fix-r1 实测 Ran 8），同钉进下限与 commands——本 PR
+        # 复刻了 r41 修的那个洞：加了 CI 命令却没登记，删掉 CI 全绿。
+        # #1800 fix-r2（PR #2979 boundary P1）：判决路径补 invalid-verdict /
+        # summary-publish-fault 两用例（Ran 8→10，本轮实测约 2.5 s——
+        # busy-lock 用例按构造须等满 2 s flock 超时，是该模块耗时下界；
+        # 秒数按实测定，不做预算算术），下限同步抬到 10：不抬则删掉两条
+        # 判决路径用例，CI 仍绿——正是 r41/fix-r1 连环修过的下限漂移洞。
+        # #1800 fix-r3（评论追加 1）：stdout 写失败用例（Ran 10→11，本轮实测
+        # 全模块约 2.5 s 不变——新用例 0.05 s，subprocess 全走 stub），下限
+        # 同步抬到 11：不抬则删掉该用例（吞诊断 / 放行 rc 0 两个方向都无人
+        # 看见），CI 仍绿——与 fix-r2 同一个下限漂移洞。
+        # #1800 fix-r4（DS sibling#2/boundary#1 同撞）：管道分支配对用例
+        # （stdout-pipe-fault）Ran 11→12，下限同步抬到 12——两分支合并/调
+        # 序（健康 head 读法变 rc 2）同样必须红。
+        # #1800 fix-r5（DS boundary P2a）：三态第三腿（invalid-verdict-pipe，
+        # 判决路径 INVALID + counts 行管道故障）Ran 12→13，下限同步抬到
+        # 13——管道分支折进 os._exit(0) 的坏改法必须红。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
@@ -1580,6 +1653,7 @@ class EnvironmentControls(unittest.TestCase):
             ('network-timing/test_negative_controls.py', 10),
             ('test_negative_roster_guards', 6),
             ('issue-2495/test_negative_controls.py', 30),
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 14),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -1598,8 +1672,8 @@ class EnvironmentControls(unittest.TestCase):
             },
         }
         # r39（DS concurrency#2 P2）：超时失败不再包在 subTest 里——subTest 吞
-        # 异常继续下一模块，五个各挂 300 s 会把钉烧到 25 分钟；首个挂起即整条
-        # 红。总耗时一并钉在步预算上：五个各自 299 s 的「都合规」组合同样
+        # 异常继续下一模块，七个各挂 300 s 会把钉烧到 35 分钟；首个挂起即整条
+        # 红。总耗时一并钉在步预算上：七个各自 299 s 的「都合规」组合同样
         # 超出它所钉的 CI 步预算（300 s），不许守钉比步长寿。
         started = time.monotonic()
         for module, minimum in minimums:
@@ -1608,8 +1682,8 @@ class EnvironmentControls(unittest.TestCase):
                 registered_conditional_skips.get(module, ()))
         self.assertLessEqual(
             time.monotonic() - started, self.optimize_guards_step_budget,
-            '#1666 the five -O self-test modules together must fit the -O '
-            'step budget (%d s); five near-miss modules must not outlive '
+            '#1666 the seven -O self-test modules together must fit the -O '
+            'step budget (%d s); seven near-miss modules must not outlive '
             'the CI step they pin' % self.optimize_guards_step_budget)
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
@@ -1664,12 +1738,16 @@ class EnvironmentControls(unittest.TestCase):
         # r41（合并 main）：#2590 fix-r2 给本步加了第六条命令
         # （issue-2495/test_negative_controls.py），一并钉入 commands——
         # 删掉它同样必须红。
+        # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：第七条命令
+        # （sdk-signals-close-order-pin/test_negative_controls.py）同步钉入
+        # commands——子集判断下多一条不红，不钉则删掉 CI 里这行仍全绿。
         commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
                     'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_run_guards',
                     'python3 -B -m unittest -v network-timing/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_roster_guards',
-                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py')
+                    'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
+                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py')
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
@@ -2038,6 +2116,9 @@ class EnvironmentControls(unittest.TestCase):
                              '#2780 the guard sits immediately after checkout '
                              '(fail-fast before any heavy step)')
             fields = self.ci_step_fields(guards_in_job[0], '#2780')
+            self.assertEqual(fields.get('id'), ('image_guard', []),
+                             '#3078 the guard step publishes its actual build stamp '
+                             'through $GITHUB_OUTPUT for the cross-job comparison')
             self.assertEqual(fields.get('working-directory'), ('.', []),
                              '#2780 the guard reads the workflow files from the repository root')
             self.assertEqual(fields.get('shell'), ('bash', []),
@@ -2045,6 +2126,42 @@ class EnvironmentControls(unittest.TestCase):
             for key in ('if', 'continue-on-error'):
                 self.assertNotIn(key, fields,
                                  '#2780 the guard steps stay unconditional')
+        # fix-r4（#3078 MM P1）：集合放宽后「两 job 同绿 ⟺ 同一镜像构建」不再由守卫
+        # 单独成立——守卫步把实际构建号写进 $GITHUB_OUTPUT（step id: image_guard），
+        # 两个 job 经 outputs 上报，check 汇聚 job 比对两 job 的实际构建号，不一致或
+        # 缺失即红（fail-closed）。下面五件逐件机检；配对负控见
+        # rejects_registration_drift 的 fix-r4 各条。
+        self.assertEqual(script.count(
+            'echo "image_version=${image_version}" '
+            '>> "${GITHUB_OUTPUT:-/dev/null}"\n'), 1,
+            '#3078 the guard reports its actual image version to the job outputs '
+            '(unset GITHUB_OUTPUT falls back to /dev/null so the guard-logic '
+            'self-test can execute the script outside Actions)')
+        ci_text = (Path(__file__).resolve().parents[3]
+                   / '.github/workflows/ci.yml').read_text()
+        outputs_wiring = ('    outputs:\n'
+                          '      image_version: '
+                          '${{ steps.image_guard.outputs.image_version }}\n')
+        self.assertEqual(ci_text.count(outputs_wiring), 2,
+                         '#3078 both cargo jobs wire the guard build stamp to job outputs')
+        compare_step = ('      - name: Require same runner image build for rust '
+                        'and negative controls\n')
+        self.assertIn(compare_step, ci_text,
+                      '#3078 the check aggregation job carries the same-build '
+                      'comparison step')
+        self.assertIn('needs.rust.outputs.image_version', ci_text,
+                      '#3078 the comparison step reads the rust job build stamp')
+        self.assertIn('needs.negative-controls.outputs.image_version', ci_text,
+                      '#3078 the comparison step reads the negative-controls job '
+                      'build stamp')
+        self.assertIn('if [ "$RUST_IMAGE_VERSION" != "$NEGCTL_IMAGE_VERSION" ]; then',
+                      ci_text,
+                      '#3078 the comparison step fails closed on a build mismatch '
+                      '(the actual comparability invariant behind KILLED/SURVIVED)')
+        self.assertIn('if [ -z "${RUST_IMAGE_VERSION:-}" ] '
+                      '|| [ -z "${NEGCTL_IMAGE_VERSION:-}" ]; then', ci_text,
+                      '#3078 the comparison step fails closed on a missing stamp '
+                      '(absent does not mean identical)')
         # 白名单值等的机检侧：钉定标签从守卫脚本派生（单一来源），扫描面也从守卫
         # 脚本的扫描行派生（单一来源，fix-r3 P2-a 主题 1 Python 侧目录派生），并与
         # .github/workflows 目录对账：新增工作流文件不进扫描面先红在这里（shell 侧
@@ -2110,7 +2227,8 @@ class EnvironmentControls(unittest.TestCase):
         # pr-gate.yml 路由（check_ci_mutations 的按文件名路由，#1809 r9 口径）。
         workflow = self.ci_workflow_fixture()
         guards = self.runner_image_guard_scripts('#2780')
-        step = (self.runner_image_guard_anchor + '        working-directory: .\n'
+        step = (self.runner_image_guard_anchor + '        id: image_guard\n'
+                '        working-directory: .\n'
                 '        shell: bash\n        run: |\n' + guards['negative-controls'][0])
         self.assertEqual(workflow.count(step), 2, '#2780 both guard steps share one shape')
         ci_cases = [('guard-step-removed-negative-controls',
@@ -2163,7 +2281,12 @@ class EnvironmentControls(unittest.TestCase):
                              'label'))
         # fix-r3（#2780 P2-a 主题 2/3）：钉值集合与守卫 env 的配对负控。集合类变异
         # 两副本同改（保持逐字全等，让红落在绑定断言上而不是分叉断言上）。
-        pin_line = '          expected_image_versions="20261101.360.1"\n'
+        # 2026-11-12 滚动窗口加值（#3078 DS 评审 P1 三路同撞）：锚点从工作流实文本
+        # 派生（:2417 同款写法），不再手抄钉值字面量——满足 runner_image_guard_pins
+        # 「钉值的单一来源就是守卫脚本本身」约定，滚动窗口加/删成员只改 ci.yml
+        # 两副本，本测试零改动。
+        pin_line = (re.search(r'^ {10}expected_image_versions="[^"]*"$',
+                              workflow, re.M)[0] + '\n')
         self.assertEqual(workflow.count(pin_line), 2,
                          '#2780 both copies carry the image-version pin')
         for label, new, message in (
@@ -2208,15 +2331,166 @@ class EnvironmentControls(unittest.TestCase):
         # fix-r3（#2780 P2-a 主题 3 补遗 + anthropic boundary#2）：working-directory
         # 漂移、同 job 重复守卫、flow 风格 job 绕过行级白名单——各自红在绑定断言。
         self.assertEqual(workflow.count(self.runner_image_guard_anchor
+                                        + '        id: image_guard\n'
                                         + '        working-directory: .\n'), 2,
                          '#2780 both guard steps pin working-directory at repo root')
         ci_cases.append(('guard-working-directory-drift',
                          workflow.replace(self.runner_image_guard_anchor
+                                          + '        id: image_guard\n'
                                           + '        working-directory: .\n',
                                           self.runner_image_guard_anchor
+                                          + '        id: image_guard\n'
                                           + '        working-directory: src\n'),
                          '#2780 the guard reads the workflow files from the '
                          'repository root'))
+        # fix-r4（#3078 MM P1）配对负控：构建号上报链五件——echo 删除（两副本同删，
+        # 保持逐字全等，让红落在上报断言而不是分叉断言）、单副本删 id（红在 step
+        # 形状全等）、job outputs 接线拆除（单 job）、check 汇聚比对步删除、比对
+        # 方向反转（!= 改 ==，假 PASS 面）。
+        echo_line = ('          echo "image_version=${image_version}" '
+                     '>> "${GITHUB_OUTPUT:-/dev/null}"\n')
+        self.assertEqual(workflow.count(echo_line), 2,
+                         '#3078 both guard copies carry the build-stamp echo')
+        ci_cases.append(('guard-output-echo-removed',
+                         workflow.replace(echo_line, ''),
+                         '#3078 the guard reports its actual image version'))
+        ci_cases.append(('guard-id-removed-one-copy',
+                         workflow.replace(self.runner_image_guard_anchor
+                                          + '        id: image_guard\n',
+                                          self.runner_image_guard_anchor, 1),
+                         '#3078 the guard step publishes its actual build stamp '
+                         'through $GITHUB_OUTPUT for the cross-job comparison'))
+        outputs_wiring = ('    outputs:\n'
+                          '      image_version: '
+                          '${{ steps.image_guard.outputs.image_version }}\n')
+        self.assertEqual(workflow.count(outputs_wiring), 2,
+                         '#3078 both cargo jobs declare the output wiring')
+        ci_cases.append(('job-output-unwired',
+                         workflow.replace(outputs_wiring, '', 1),
+                         '#3078 both cargo jobs wire the guard build stamp to job '
+                         'outputs'))
+        compare_step = ('      - name: Require same runner image build for rust '
+                        'and negative controls\n')
+        ci_cases.append(('check-comparison-removed',
+                         workflow.replace(compare_step + '        if: '
+                                          '${{ always() && needs.scope.outputs.'
+                                          'docs_only != \'true\' }}\n', ''),
+                         '#3078 the check aggregation job carries the same-build '
+                         'comparison step'))
+        ci_cases.append(('check-comparison-inverted',
+                         workflow.replace('if [ "$RUST_IMAGE_VERSION" != '
+                                          '"$NEGCTL_IMAGE_VERSION" ]; then',
+                                          'if [ "$RUST_IMAGE_VERSION" == '
+                                          '"$NEGCTL_IMAGE_VERSION" ]; then'),
+                         '#3078 the comparison step fails closed on a build mismatch'))
+        # fix-r5（#3078 DS boundary#1 P1）：比对步的 if 与 env 值此前无机检钉——
+        # if 反转/删失让真实 PR 上比对永不执行（假通过），env 两侧接同一 job 让
+        # 比对退化成自比自（恒等）。
+        compare_if_line = ("        if: ${{ always() && needs.scope.outputs."
+                           "docs_only != 'true' }}\n")
+        ci_cases.append(('check-comparison-if-inverted',
+                         workflow.replace(compare_if_line,
+                                          compare_if_line.replace('!=', '==')),
+                         "#3078 the comparison step keeps its parsed docs_only "
+                         'if condition verbatim'))
+        ci_cases.append(('check-comparison-if-dropped',
+                         workflow.replace(compare_if_line, '', 1),
+                         '#3078 the same-build comparison step keys are exactly '
+                         'the registered set (parsed)'))
+        ci_cases.append(('check-comparison-env-both-rust',
+                         workflow.replace('          NEGCTL_IMAGE_VERSION: '
+                                          '${{ needs.negative-controls.outputs.'
+                                          'image_version }}',
+                                          '          NEGCTL_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}'),
+                         '#3078 the comparison step env wires each side to its own '
+                         'job output verbatim (parsed)'))
+        # run 体插桩 `exit 0`（set -euo pipefail 之后）：行为自测的五场景全数存活面
+        # ——钉在 test_same_build_comparison_step_logic_self_check 的红上。
+        neutered = workflow.replace(
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n'
+              '          set -euo pipefail\n',
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n'
+              '          set -euo pipefail\n'
+              '          exit 0\n')
+        ci_cases.append(('check-comparison-run-neutered', neutered,
+                         '#3078 the comparison script must behave as pinned'))
+        # fix-r5（#3078 MM sibling#1 / MM concurrency#1 P1）：两个 fail-closed 分支
+        # 的 `exit 1` 改 `exit 0`——失配/缺失照绿的直接假 PASS 面，各配一条变异，
+        # 都钉在行为自测的红上（缺失场景 / 失配场景各自变绿）。
+        missing_exit = ('fail-closed（#3078 MM P1：缺失不等于同构建）" >&2\n'
+                       '            exit 1\n')
+        self.assertIn(missing_exit, workflow)
+        ci_cases.append(('check-comparison-missing-exit-neutered',
+                         workflow.replace(missing_exit,
+                                         missing_exit.replace('exit 1', 'exit 0')),
+                         '#3078 the comparison script must behave as pinned'))
+        mismatch_exit = ('需严格同构建结论时收窄集合到实际在服值（#3078 MM P1）" >&2\n'
+                        '            exit 1\n')
+        self.assertIn(mismatch_exit, workflow)
+        ci_cases.append(('check-comparison-mismatch-exit-neutered',
+                         workflow.replace(mismatch_exit,
+                                         mismatch_exit.replace('exit 1', 'exit 0')),
+                         '#3078 the comparison script must behave as pinned'))
+        # fix-r6（DS sibling#1 P2）：working-directory 值钉配对变异（同 hunk 的
+        # if / env 钉各有配对，同类先例 guard-working-directory-drift）。
+        ci_cases.append(('check-comparison-working-directory-drift',
+                         workflow.replace('        working-directory: .\n'
+                                          '        shell: bash\n'
+                                          '        env:\n'
+                                          '          RUST_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}',
+                                          '        working-directory: src\n'
+                                          '        shell: bash\n'
+                                          '        env:\n'
+                                          '          RUST_IMAGE_VERSION: '
+                                          '${{ needs.rust.outputs.image_version }}'),
+                         '#3078 the comparison step runs from the repository root '
+                         '(parsed)'))
+        # fix-r7（DS boundary#1 / MM sibling#2 双撞 P2）：run 标量样式钉配对变异——
+        # 折成 `>` 单字符漂移在生产侧整块折一行、bash syntax error 假红（先例：
+        # B2 的 literal-form 钉配 B2-folded-run）。
+        folded = workflow.replace(
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: |\n',
+            compare_step + compare_if_line
+            + '        working-directory: .\n'
+              '        shell: bash\n'
+              '        env:\n'
+              '          RUST_IMAGE_VERSION: '
+              '${{ needs.rust.outputs.image_version }}\n'
+              '          NEGCTL_IMAGE_VERSION: '
+              '${{ needs.negative-controls.outputs.image_version }}\n'
+              '        run: >\n')
+        self.assertNotEqual(folded, workflow,
+                            '#3078 the folded-run mutation must actually apply')
+        ci_cases.append(('check-comparison-run-folded', folded,
+                         '#3078 the comparison step run body must stay a literal '
+                         'block scalar (folding it onto one line breaks bash '
+                         'parsing on every PR)'))
         ci_cases.append(('guard-duplicated',
                          workflow.replace(shift_anchor, step + shift_anchor, 1),
                          '#2780 exactly two runner image guard steps exist'))
@@ -2224,9 +2498,27 @@ class EnvironmentControls(unittest.TestCase):
         # 行式 job 声明守卫（ci_jobs 的 unsupported job declaration）会先红，构造
         # 不出只红在本断言上的 ci 变异——那层是 ci.yml 独立的既有防御，这里的牙
         # 由 pr-gate.yml 路由证明（该文件无同款行式守卫）。
-        self.check_ci_mutations(ci_cases,
-                                'test_runner_image_guard_steps_are_registered_and_identical',
-                                '#2780')
+        # fix-r5（#3078 DS boundary#1 P1）：比对步 if / env 值钉在解析测试上，
+        # run 体插桩钉在行为自测上——与守卫登记各条分开路由（不同执法点）。
+        fix_r5_parsed_cases = ('check-comparison-if-inverted',
+                               'check-comparison-if-dropped',
+                               'check-comparison-env-both-rust',
+                               'check-comparison-working-directory-drift',
+                               'check-comparison-run-folded')
+        fix_r5_behavior_cases = ('check-comparison-run-neutered',
+                                 'check-comparison-missing-exit-neutered',
+                                 'check-comparison-mismatch-exit-neutered')
+        self.check_ci_mutations(
+            [case for case in ci_cases if case[0] not in fix_r5_parsed_cases
+             and case[0] not in fix_r5_behavior_cases],
+            'test_runner_image_guard_steps_are_registered_and_identical', '#2780')
+        self.check_ci_mutations(
+            [case for case in ci_cases if case[0] in fix_r5_parsed_cases],
+            'test_ci_job_level_gates_are_pinned_by_parsed_yaml', '#3078')
+        self.check_ci_mutations(
+            [case for case in ci_cases
+             if case[0] in fix_r5_behavior_cases],
+            'test_same_build_comparison_step_logic_self_check', '#3078')
         gate_text = (Path(__file__).resolve().parents[3]
                      / '.github/workflows/pr-gate.yml').read_text()
         self.assertEqual(gate_text.count('    runs-on: ubuntu-24.04\n'), 1,
@@ -2409,6 +2701,57 @@ class EnvironmentControls(unittest.TestCase):
         print(f'#2780 guard logic negative summary: {{'
               f'"KILLED": {len(results)}}}', flush=True)
 
+    def test_same_build_comparison_step_logic_self_check(self):
+        """#3078 fix-r5（DS boundary#2 P2-a）：比对步 run 体的行为自测——等值 rc 0、
+        失配 rc 1 命中失配标记、任一侧空 rc 1 命中缺失标记。守卫脚本有整套逻辑
+        自测（上），同一 diff 新增的比对步不能只靠子串钉定（`exit 0` 插桩即存活）。
+        fix-r6（DS boundary#1 / MM boundary#1 双撞 P2）：空值边界补全五格——
+        rust 侧空、negative-controls 侧空、两侧同空（`-z` 缺失检查唯一独挡的
+        那格：两侧空时相等比较 `'' != ''` 不成立，只有缺失检查能拦）。fix-r6
+        （MM boundary#3 P2）：子进程按同文件守卫自测约定钉死 PATH 与隔离 cwd，
+        不让可执行查找落到 os.defpath 的 CWD 首查。"""
+        jobs = self.ci_jobs()
+        steps = self.ci_steps('check', jobs['check'], '#3078')
+        compare = [step for step in steps
+                   if self.ci_step_fields(step, '#3078').get('name')
+                   == ('Require same runner image build for rust and negative controls', [])]
+        self.assertEqual(len(compare), 1,
+                         '#3078 exactly one same-build comparison step in the check job')
+        script = '\n'.join(self.ci_run_commands(compare[0], '#3078')) + '\n'
+        scenarios = [
+            ('equal-stamps-green', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                    'NEGCTL_IMAGE_VERSION': '20261111.370.1'},
+             True, '同构建核验通过'),
+            ('build-mismatch-red', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                    'NEGCTL_IMAGE_VERSION': '20261111.127.1'},
+             False, '落在不同 runner 镜像构建上'),
+            ('rust-stamp-missing-red', {'RUST_IMAGE_VERSION': '',
+                                        'NEGCTL_IMAGE_VERSION': '20261111.370.1'},
+             False, '缺失'),
+            ('negctl-stamp-missing-red', {'RUST_IMAGE_VERSION': '20261111.370.1',
+                                          'NEGCTL_IMAGE_VERSION': ''},
+             False, '缺失'),
+            ('both-stamps-missing-red', {'RUST_IMAGE_VERSION': '',
+                                         'NEGCTL_IMAGE_VERSION': ''},
+             False, '缺失'),
+        ]
+        results = []
+        for name, env, expect_pass, marker in scenarios:
+            with tempfile.TemporaryDirectory() as temp:
+                completed = subprocess.run(
+                    ['bash', '-c', script], cwd=temp,
+                    env={'PATH': '/usr/bin:/bin', **env},
+                    capture_output=True, text=True, timeout=30)
+            ok = ((completed.returncode == 0 and marker in completed.stdout) if expect_pass
+                  else (completed.returncode == 1 and marker in completed.stderr))
+            results.append((name, ok, completed.returncode,
+                            completed.stdout, completed.stderr))
+            print(f'#3078 {name}: {"OK" if ok else "BAD"}: '
+                  f'rc={completed.returncode} stdout={completed.stdout!r} '
+                  f'stderr={completed.stderr!r}', flush=True)
+        self.assertTrue(results and all(ok for _, ok, *_ in results),
+                        f'#3078 the comparison script must behave as pinned: {results}')
+
     def test_isolation_ci_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
         command = 'run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
@@ -2477,8 +2820,8 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_optimize_guards_self_test_ci_regressions_are_rejected(self):
         # #2136 fix-r35（DS sibling P1）：-O 不变性步（#1666/#1734）的变异负控，
-        # 与 #994 / #2133 同形。该步是 run 块（五条命令），删掉其中任一条
-        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部五条」的断言上；
+        # 与 #994 / #2133 同形。该步是 run 块（七条命令），删掉其中任一条
+        # （以 #2309 roster-guards 为代表）必须杀在「必须跑全部七条」的断言上；
         # if / continue-on-error / 错 cwd 按步名锚定插入或改值。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控守卫 -O 不变性自测（#1666/#1734）\n'
@@ -4348,7 +4691,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '60504bfe0e2fdb643472594f3e3322307be9e8d68dbff2e8a0d8155d2a7c904c'
+    SESSION_CONTROLS_SHA256 = 'bbbdafeb1196b7cefd7b05b3cab0174b4a30faa268811aff5ada425e0982e4e4'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
@@ -6091,6 +6434,9 @@ self_check_controls_run | return | return problems
         # #1900: and the mirror — every test that prints a skip line must be
         # named by this filter, or the note it writes is captured and lost.
         self.assert_every_skip_line_reaches_nextest(self.nextest_success_output_filter)
+        # #1937: and the pairing — every skip line travels with its
+        # require_permission_faults assert, through the one shared pair.
+        self.assert_skip_lines_pair_their_requirement()
 
     def assert_success_output_filter_names_real_tests(self, filter_text):
         # fix-r3: `test(=name)` is an exact match on the name nextest reports.
@@ -6098,13 +6444,19 @@ self_check_controls_run | return | return problems
         # (`src/**`) report their module path — a bare leaf never selects them
         # (measured on nextest 0.9.150 and on CI's pinned 0.9.148: `test(=bar)`
         # misses `foo::tests::bar`, `test(=foo::tests::bar)` hits).
-        # fix-r4: derive exactly ONE name per declaring file from the module
-        # path. Taking a union of guesses let `skills::tests::tests::leaf`
-        # (which nextest never reports) pass while selecting nothing.
+        # #2115: the defining item and its module nesting are read from the
+        # proc-macro2 token inventory, not from text: a comment between `fn`
+        # and the name, an `r#` prefix or an `fn x(` inside a comment or a
+        # string are token questions the old literal regex answered wrong in
+        # both directions. fix-r4's "exactly ONE name per declaring file"
+        # becomes "one name per declaring *record*": a leaf declared both at
+        # file level and inside an inner `mod` is reported by nextest under
+        # both spellings, so both are acceptable answers here.
         entries = re.findall(r'test\(([^)]*)\)', filter_text)
         self.assertTrue(entries, '#922 the success-output filter names its tests')
         crate = Path(__file__).resolve().parents[1]
         sources = self.read_crate_sources(crate)
+        inventory = self._lex_fn_items(sources)
         for entry in entries:
             # `[^)]*` also catches a name the old `[A-Za-z0-9_:]+` regex
             # silently truncated at a `-` or a space.
@@ -6113,10 +6465,12 @@ self_check_controls_run | return | return problems
                              f'plain `test(=name)` matcher')
             name = entry[1:]
             leaf = name.rsplit('::', 1)[-1]
-            defining = [source for source, text in sources.items()
-                        if self.fn_name_exists(text, leaf)]
+            defining = [(source, record) for source, record in inventory.items()
+                        if self.fn_name_exists(record, leaf)]
             self.assertTrue(defining, f'#922 the success-output filter names the real test {name}')
-            expected = {self.nextest_visible_name(crate, source, leaf) for source in defining}
+            expected = {self.nextest_visible_name(crate, source, item['mod'], leaf)
+                        for source, record in defining
+                        for item in record['fns'] if item['name'] == leaf}
             self.assertIn(name, expected,
                           f'#922 the success-output filter must use the nextest-visible name '
                           f'for {leaf}: {sorted(expected)}, not {name}')
@@ -6126,6 +6480,240 @@ self_check_controls_run | return | return problems
         # #1900 simplify P3: both guards scan the same tree; read it once.
         return {source: source.read_text(errors='replace')
                 for source in crate.rglob('*.rs') if 'target' not in source.parts}
+
+    # #2115: inventory cache, one entry per request. The key is the sha256 of
+    # the whole stdin document, not of a single file: the example's macro join
+    # is batch-wide (a file's `macro_calls` depends on which metavariable-fn
+    # macros the *other* files in the request define), so caching one file's
+    # record could replay an answer computed against a different batch.
+    _lex_fn_inventory = {}
+
+    @classmethod
+    def _lex_fn_items(cls, texts):
+        # #2115: the token-level truth behind every Rust-name check in this
+        # driver. Counting `fn <name>` with a literal regex both missed real
+        # items (a comment between `fn` and the name, an `r#` prefix) and
+        # counted fake ones (an `fn x(` in a comment or a string literal);
+        # both are token questions, not text questions. This runs the ONE
+        # proc-macro2 lexer (`tests/common/source_inputs.rs`, the one
+        # `unsafe_boundary.rs` already uses — #449/#1166: never a hand-written
+        # Rust lexer) through the `examples/lex_fn_items.rs` entry and
+        # returns, per file key of `texts`, either
+        # `{"fns": [{"name", "mod", "macro"}…], "macro_rules": …,
+        # "macro_calls": …, "unresolved": […]}` or `{"error": …}`. The
+        # consumers decide what each field means for them; the entry itself
+        # only refuses to guess. Contents travel over stdin, not paths:
+        # the guards pass sources dicts whose text the controls below
+        # rewrote in memory.
+        request = json.dumps({'files': {str(source): text
+                                        for source, text in texts.items()}},
+                             sort_keys=True).encode()
+        key = hashlib.sha256(request).hexdigest()
+        cached = cls._lex_fn_inventory.get(key)
+        if cached is not None:
+            return cached
+        document = cls._run_lex_fn_items(request)
+        files = document.get('files')
+        if not isinstance(files, dict) or set(files) != {str(source) for source in texts}:
+            raise AssertionError('#2115 the lex entry must answer with exactly the '
+                                 'files it was given')
+        inventory = {source: files[str(source)] for source in texts}
+        cls._lex_fn_inventory[key] = inventory
+        return inventory
+
+    _lex_entry_negative_process = None
+
+    @classmethod
+    def _lex_entry_process(cls):
+        # #2115 fix-r1: the lex entry's bootstrap is a sibling of
+        # `_ensure_workspace_scanner`, so it borrows the same shared
+        # process/source machinery — `tests/fixtures/negative_process.py`,
+        # the M6-owned module (imported here, never copied: "sibling runners
+        # must not keep their own allow-lists" cuts both ways). Loaded once
+        # per process; a control that needs to intercept the lease patches
+        # the loaded module's attributes, not this file's copies.
+        if cls._lex_entry_negative_process is None:
+            path = (Path(__file__).resolve().with_name('fixtures')
+                    / 'negative_process.py')
+            spec = importlib.util.spec_from_file_location(
+                'lex_entry_negative_process', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            cls._lex_entry_negative_process = module
+        return cls._lex_entry_negative_process
+
+    # fix-r3 (DS concurrency #1): the unconditional tree-lock wait is
+    # budgeted to the caller's own 300 s — the scan's run_owned below and
+    # the control-side run_test subprocess (the gateway entry-guard and
+    # batch mutation controls both default timeout=300) agree on that
+    # figure, so a sibling mutation window longer than it can never be
+    # waited out inside any caller's budget.
+    _LEX_ENTRY_LOCK_WAIT = 300
+
+    @classmethod
+    @contextlib.contextmanager
+    def _lex_entry_tree_lock(cls, negative, root):
+        # fix-r3 (DS concurrency #1): a window longer than the budget must
+        # surface as this guard's own AssertionError — a bare TimeoutError
+        # reads as a crash in the harness log, not as a refusal. The
+        # refusal keeps the waited budget and the busy-lock source for
+        # the owner; TreeLock reentry makes nesting with a caller's own
+        # lease safe.
+        wait = cls._LEX_ENTRY_LOCK_WAIT
+        try:
+            with negative.tree_lock(root, timeout=wait):
+                yield
+        except TimeoutError as error:
+            raise AssertionError(
+                '#2115 the lex entry refused to wait out a sibling mutation '
+                f'window longer than its {wait} s tree-lock budget: '
+                f'{error}') from error
+
+    @classmethod
+    def _run_lex_fn_items(cls, request):
+        # #2115: run (and, once, bootstrap) the lexing entry. fix-r1 (DS
+        # concurrency #1): the bootstrap follows the ONE shared discipline
+        # `_ensure_workspace_scanner` uses (negative_process.py, imported —
+        # never copied): a missing binary is built under a pristine-HEAD
+        # lease (`tree_lock` + `_assert_workspace_sources` + `wait_for_slot`
+        # + `run_owned`), and an EXISTING binary is never rebuilt here. A
+        # digest mismatch means the binary was built from different rules
+        # than this tree declares — a killed negative control leaving
+        # mutated sources behind must surface as a refusal, not as a
+        # rebuild that quietly compiles the mutant into the rules the
+        # guards then trust. Rebuilding a stale entry is the owner's job.
+        # The digest follows the #1166 identity discipline the negative
+        # controls apply to `workspace_inputs`: the example source, the
+        # shared lexer, both manifests and the lockfile, in the order the
+        # example's `scanner_identity()` hashes them.
+        negative = cls._lex_entry_process()
+        root = Path(__file__).resolve().parents[3]
+        crate = root/'src/pilotdeck-gateway'
+        sources = (crate/'examples/lex_fn_items.rs',
+                   crate/'tests/common/source_inputs.rs',
+                   crate/'Cargo.toml',
+                   root/'src/Cargo.toml',
+                   root/'src/Cargo.lock')
+
+        def build_inputs_digest():
+            # fix-r2 (boundary P1): the five build-input summaries answer
+            # only under the tree lock. Read outside it, a sibling
+            # control's window (a `mutating_sources` hold in another
+            # process, which keeps the lease until its restore) can
+            # interleave the read: the digest then describes the mutant
+            # while the existing binary still reports the pristine tree,
+            # and the refusal below fires against a healthy binary — a
+            # false red. TreeLock reentry makes nesting with a caller's
+            # own lease safe, and the kernel releases the flock if this
+            # process dies mid-read.
+            return hashlib.sha256(b''.join(path.read_bytes()
+                                           for path in sources)).hexdigest()
+
+        # #1166: the target directory goes through the one shared admission
+        # (fix-r1, DS concurrency #3): the value is resolved and rejected by
+        # negative_process's own rule, not by a second local allow-list — a
+        # relative CARGO_TARGET_DIR would otherwise resolve against two
+        # different cwds on the Python and the cargo side.
+        try:
+            environment = negative.target_environment(root)
+        except RuntimeError as error:
+            raise AssertionError(f'#2115 the lex entry refuses this '
+                                 f'CARGO_TARGET_DIR: {error}') from error
+        target = Path(environment['CARGO_TARGET_DIR'])
+        executable = target/'debug/examples/lex_fn_items'
+        # fix-r2 (boundary P1): the summaries are read holding the same
+        # lease the cold bootstrap below takes — never outside it (see
+        # build_inputs_digest). A sibling's window is either closed
+        # before the lease or this read waits it out and answers on the
+        # restored bytes. fix-r3 (DS concurrency #1): the wait is
+        # budgeted to the caller's own 300 s and an overlong window
+        # surfaces as this guard's own refusal, never a bare
+        # TimeoutError (see _lex_entry_tree_lock).
+        with cls._lex_entry_tree_lock(negative, root):
+            digest = build_inputs_digest()
+        if not executable.is_file():
+            with negative.tree_lock(root):
+                # Residue → refusal: a killed predecessor can leave any
+                # product source mutated, and building from a mutated tree
+                # compiles the mutant into the binary the guards would then
+                # trust. The lease also serializes cold callers of the
+                # shared target directory.
+                try:
+                    negative._assert_workspace_sources(root, 'HEAD')
+                except Exception as error:
+                    raise AssertionError(
+                        '#2115 the lex entry bootstrap refuses a tree whose build '
+                        'inputs differ from HEAD — a killed negative control can '
+                        'leave mutated sources behind, and rebuilding here would '
+                        'quietly compile the mutant into the scan rules: '
+                        + str(error)) from error
+                # Another cold caller may have completed while this one waited.
+                if not executable.is_file():
+                    negative.wait_for_slot(root/'scripts/cargo-slots.sh',
+                                           timeout=900, interval=15).check_returncode()
+                    # --locked, not --offline: a cold registry (fresh CI
+                    # runner) must be allowed to download exactly the committed
+                    # Cargo.lock versions, while the lockfile itself stays
+                    # pinned (same rationale as `_ensure_workspace_scanner`).
+                    # cwd is the tree root so ./rust-toolchain.toml applies.
+                    try:
+                        built = negative.run_owned(
+                            ['cargo', 'build', '--locked',
+                             '--manifest-path', 'src/Cargo.toml',
+                             '-p', 'pilotdeck-gateway',
+                             '--example', 'lex_fn_items'],
+                            cwd=root, env=environment, timeout=1800, idle_timeout=600)
+                    except subprocess.TimeoutExpired as error:
+                        raise AssertionError('#2115 building the lex entry exceeded '
+                                             'its 1800 s budget (idle 600 s)') from error
+                    if built.returncode != 0:
+                        raise AssertionError('#2115 cannot build the lex entry: '
+                                             + built.stderr[-4000:])
+                    if not executable.is_file():
+                        raise AssertionError('#2115 the lex entry build produced no '
+                                             'executable under ' + str(target))
+        # The request travels over stdin (contents, not paths). run_owned
+        # takes no input, so the bytes go through a file redirect while the
+        # run itself keeps run_owned's process-group ownership; the entry
+        # spawns no children of its own.
+        with tempfile.NamedTemporaryFile() as handle:
+            handle.write(request)
+            handle.flush()
+            try:
+                result = negative.run_owned(
+                    ['bash', '-c', 'exec "$1" < "$2"', 'lex-entry',
+                     str(executable), handle.name], timeout=300)
+            except subprocess.TimeoutExpired as error:
+                raise AssertionError('#2115 the lex entry exceeded its 300 s '
+                                     'budget') from error
+        if result.returncode != 0:
+            raise AssertionError('#2115 the lex entry failed: '
+                                 + result.stderr[-4000:])
+        document = json.loads(result.stdout)
+        if document.get('scanner_sha256') != digest:
+            # fix-r2 (boundary P1): re-read the five summaries under the
+            # tree lock before refusing. The first digest can be stale by
+            # minutes at this point — the scan itself runs up to 300 s
+            # after it — and transient bytes it caught (a plain-written
+            # mutant no lease covered, residue a sibling restored
+            # mid-flight) need not still be on disk. A binary that
+            # matches the tree as it stands under the lock is not stale;
+            # a refusal that survives must quote the digest it refused
+            # against, so the owner can verify it.
+            with cls._lex_entry_tree_lock(negative, root):
+                digest = build_inputs_digest()
+            if document.get('scanner_sha256') != digest:
+                raise AssertionError(
+                    '#2115 the lex entry binary does not match this source '
+                    'tree (scanner_sha256 mismatch): the five build inputs '
+                    'hash to ' + digest + ' under the tree lock while the '
+                    'binary reports ' + str(document.get('scanner_sha256'))
+                    + "; refusing to scan Rust names with stale rules — a "
+                      "stale binary is the owner's job to rebuild. "
+                      'From the tree root run: CARGO_TARGET_DIR=' + str(target)
+                    + ' cargo build --locked --manifest-path src/Cargo.toml '
+                      '-p pilotdeck-gateway --example lex_fn_items')
+        return document
 
     @classmethod
     def call_sites(cls, text, name):
@@ -6137,20 +6725,38 @@ self_check_controls_run | return | return problems
                 for found in re.finditer(rf'\b{re.escape(name)}\s*\(', text)]
 
     @staticmethod
-    def fn_name_exists(text, leaf):
+    def fn_name_exists(record, leaf):
         # One matcher for both guards (#1900 simplify P3): the forward check and
         # the exception check must accept the same spellings, or a generic
-        # `fn foo<T>(` passes one and fails the other.
-        return re.search(rf'\bfn\s+{re.escape(leaf)}\s*[(<]', text) is not None
+        # `fn foo<T>(` passes one and fails the other. #2115: the spelling is
+        # read from the proc-macro2 item records, so `fn /* c */ leaf(` and
+        # `fn r#leaf(` count while a comment or a string literal holding the
+        # same text does not. An unlexable file reports no items — existence
+        # is not provable there, and the callers refuse.
+        return 'error' not in record and any(item['name'] == leaf for item in record['fns'])
 
     @staticmethod
-    def nextest_visible_name(crate, source, leaf):
+    def nextest_visible_name(crate, source, module, leaf):
+        # #2115: `module` is the lexical `mod` nesting of the *declaring
+        # record* (from the token inventory), replacing the text heuristics
+        # the path alone forced before. nextest reports the path-derived
+        # segments (src files) followed by the lexical segments followed by
+        # the leaf; an integration-test file reports the lexical segments
+        # followed by the leaf (measured with libtest `--list`: a `tests/*.rs`
+        # with `mod first` reports `first::duplicated`).
         relative = source.relative_to(crate)
-        if relative.parts[0] != 'src':
-            return leaf
-        parts = list(relative.relative_to('src').with_suffix('').parts)
-        if parts[-1] == 'mod':
-            parts.pop()
+        if relative.parts[0] == 'src':
+            parts = list(relative.relative_to('src').with_suffix('').parts)
+            if parts[-1] == 'mod':
+                parts.pop()
+        else:
+            # An integration-test file is its own crate: libtest reports the
+            # lexical mod nesting followed by the leaf and NO file stem
+            # (measured with `--list` on this crate's tests/live_e2e.rs and
+            # tests/workspace_snapshot.rs — sibling #4: the old code ignored
+            # the nesting and returned the bare leaf, so a file declaring
+            # `mod first` could never have its nested tests named).
+            parts = []
         # fix-r7 (gate6-anthropic boundary#1): the crate root file cannot be
         # mapped from its path. Measured on this crate (libtest `--list`, the
         # same names nextest reports) after appending two probes to
@@ -6162,31 +6768,53 @@ self_check_controls_run | return | return problems
         # exact silent-green hole this check exists to close. Fail closed and
         # make the author paste the name nextest really reports.
         # `src/mod.rs` pops to an empty list and used to raise IndexError here;
-        # it is unmappable for the same reason.
-        if not parts or (len(parts) == 1 and parts[0] in ('lib', 'main')):
+        # it is unmappable for the same reason. An integration-test file has
+        # NO path-derived segments by design (its `parts` stays empty), so the
+        # refusal must not fire there — only a `src/**` file can hit it.
+        if relative.parts[0] == 'src' and (
+                not parts or (len(parts) == 1 and parts[0] in ('lib', 'main'))):
             raise AssertionError(
                 f'#922 cannot derive the nextest-visible name for {leaf} declared in '
                 f'{relative}: a crate-root or bare-`mod` file reports a name that depends '
                 f'on the module nesting, not on the path. Run `cargo nextest list` and '
                 f'paste the exact name nextest prints.')
-        # #1461 r2: the trailing-`tests` append is only right when the file
-        # really nests its tests inside an inner `mod tests` (the mod.rs
-        # shape). A `_tests.rs` module file (services_tests.rs) declares its
-        # tests directly, so the old unconditional append derived a phantom
-        # segment nextest never reports (`native_process::services_tests::
-        # tests::<leaf>`) and the guard then demanded a name that selects
-        # nothing — the same silent hole this check exists to close. The
-        # measured names come from libtest `--exact` runs (the negctl
-        # receipts print them verbatim).
-        # #1461 r3 (DS boundary P2): only the *inline* `mod tests {` shape
-        # proves the file's own fns sit under `::tests::`. A file-level
-        # `mod tests;` declaration points at a separate tests.rs — fns in
-        # THAT file derive their own path — so a top-level test fn next to a
-        # `mod tests;` would regrow the phantom segment. Require the brace.
-        text = source.read_text(errors='replace')
-        if parts[-1] != 'tests' and re.search(r'^\s*mod tests\s*\{', text, re.M):
-            parts.append('tests')
-        return '::'.join([*parts, leaf])
+        return '::'.join([*parts, *module, leaf])
+
+    @staticmethod
+    def file_module_path(crate, source):
+        # #1943: the module path a `use` statement in `source` resolves from,
+        # as far as the file path proves it. `src/**` segments become the
+        # crate path (`src/skills/tests.rs` → `skills::tests`, `mod.rs` pops);
+        # an integration-test file is its own crate, so only its stem counts.
+        relative = source.relative_to(crate)
+        if relative.parts[0] == 'src':
+            parts = list(relative.relative_to('src').with_suffix('').parts)
+            if parts and parts[-1] == 'mod':
+                parts.pop()
+            return parts
+        return [relative.with_suffix('').parts[-1]]
+
+    @staticmethod
+    def expand_module_path(segments, base_module):
+        # #1943: expand `crate::`, `self` and `super::` chains of a use path
+        # against the module it was declared in (file path + the lexical
+        # `mod` nesting the inventory recorded for the statement). A bare
+        # first segment stays crate-root-relative, which is how the flat
+        # integration-test spellings (`use workspace_snapshot::helper;`)
+        # match their home. `None` when a `super` pops past the crate root.
+        segments = list(segments)
+        if not segments:
+            return None
+        if segments[0] == 'crate':
+            return segments[1:]
+        module = list(base_module)
+        while segments and segments[0] in ('self', 'super'):
+            if segments[0] == 'super':
+                if not module:
+                    return None
+                module = module[:-1]
+            segments = segments[1:]
+        return module + segments
 
     # #1900: the reverse direction of the check above. `stderr_skip_line` exists
     # so that a skip note survives the harness's output capture, but nextest
@@ -6202,15 +6830,16 @@ self_check_controls_run | return | return problems
     # so the `covered` list is a claim the guard keeps true rather than a list
     # of the callers the author happened to remember.
     #
-    # Known blind spots — both registered, neither excused:
-    #  * a hand-rolled writer (`tests/unsafe_boundary.rs`'s
-    #    `stderr_boundary_line`, which carries the same #448 contract);
-    #  * a skip note still written with `eprintln!` (`channel/sms/tests.rs` has
-    #    four `#1339 skipped:` macro writes; that file is in flight in five
-    #    other lanes, so the conversion is carried by #1937 — which is
-    #    registered as a precondition of #1525 closing — and #1525's own title
-    #    already lists 同形 eprintln! skip).
-    # The writers are collected by #1937. Anything new should call the shared
+    # Known blind spots — collected by #1937: the hand-rolled writer
+    # (`tests/unsafe_boundary.rs`'s `stderr_boundary_line`) now delegates to
+    # the shared writer and is registered below like any other helper, and
+    # the four `#1339 skipped:` `eprintln!` macro writes in
+    # `channel/sms/tests.rs` go through the writer too. The four `#2691
+    # skipped:` `eprintln!` writes in the same file (the IPv6/port-busy
+    # probes) are still hand-rolled — neither this scan nor the pairing
+    # walk sees them, because they never call the writer; converting them
+    # is registered follow-up work, and until then this "none left" claim
+    # is scoped to writer call sites. Anything new should call the shared
     # writer, not copy it.
     skip_line_exceptions = {
         'src/module_host/tests.rs::process_audit_is_linux_only': (
@@ -6225,22 +6854,81 @@ self_check_controls_run | return | return problems
             'where the test does run — the macOS host run is `cargo test` (libtest), and '
             '`stderr_skip_line` writes the stderr handle directly, which libtest does not '
             'capture', ()),
-        'src/skills/tests.rs::permission_not_run': (
-            '#1525 helper: the note is printed on behalf of the test that calls it',
-            ('skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore',
-             'skills::tests::real_ts_scenarios_match_outcomes_and_file_trees'),
-            # The helper is also reached through `replay`, and the walk below
-            # covers that path plus every direct caller; naming only the callers
-            # the author remembered would make the covered list a claim, not a
-            # check (#1900 boundary P2).
-            ('replay',)),
+        'tests/common/permission_faults.rs::skip_or_require': (
+            '#1937 helper: the ONE skip/require pair — the note is printed and the '
+            'requirement asserted on behalf of the test that called it', (),
+            # The pair is also reached through the skills helpers, which live
+            # beside their callers rather than beside the pair (#1937: a
+            # relay may be declared with its own file). Naming only the
+            # callers the author remembered would make the covered list a
+            # claim, not a check (#1900 boundary P2).
+            ('src/skills/tests.rs::permission_not_run',
+             'src/skills/tests.rs::replay')),
         'tests/workspace_snapshot.rs::replay_scenario': (
             '#1263 helper: the note is printed on behalf of the scenario it replays',
             ('scenarios_match_ts_outcomes_and_trees',)),
+        'tests/unsafe_boundary.rs::stderr_boundary_line': (
+            '#448 helper: the boundary note is printed on behalf of the test that '
+            'calls it — the #1937 collection, the same shared writer as every '
+            'other skip line',
+            ('compiler_enforces_gateway_boundary',),
+            ('cargo_invocation_boundary',)),
     }
     defining_function = re.compile(
         r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?'
         r'(?:extern\s+"[^"]*"\s+)?fn\s+([A-Za-z0-9_]+)\s*[<(]')
+
+    # #1937: the pairing registry. #1900's reverse guard answers "is every
+    # skip line named in the success-output filter"; the pairing check below
+    # answers the second question — "is every skip line paired with its
+    # `require_permission_faults()` assert". After the consolidation the pair
+    # is written once, in `skip_or_require`; every OTHER fn that touches one
+    # half of the pair must be registered here as not a permission-fault
+    # contract at all (an environment probe, a boundary acknowledgement, a
+    # platform gate), because a skip with no require is a silently-green
+    # privileged-host arm and a require with no skip loses its reason.
+    permission_fault_pair_exceptions = {
+        'src/channel/sms/tests.rs::dual_stack_probe_uses_the_assigned_port': (
+            '#1339 an environment-probe note (the host has no IPv6), not a '
+            'permission-fault contract — there is no unprivileged-host arm to '
+            'require'),
+        'src/channel/sms/tests.rs::port_busy_on_ipv6_preflight_fails_fast': (
+            '#1339 an environment-probe note (the port is busy), not a '
+            'permission-fault contract — there is no unprivileged-host arm to '
+            'require'),
+        'src/native_process/tests.rs::non_utf8_home_and_sidecar_are_refused': (
+            '#2036 an environment-probe note (the filesystem accepts non-UTF-8 '
+            'file names), not a permission-fault contract'),
+        'src/runtime/cron/tests.rs::migration_non_utf8_home_keeps_one_physical_key': (
+            '#1525 an environment-probe note (the filesystem accepts non-UTF-8 '
+            'file names), not a permission-fault contract'),
+        'src/runtime/tools/builtin/grep.rs::files_sort_keeps_submillisecond_mtime_precision': (
+            'an environment-probe note (the filesystem does not preserve '
+            'sub-millisecond mtimes), not a permission-fault contract'),
+        'src/module_host/tests.rs::process_audit_is_linux_only': (
+            '#1349 a platform-gate note (`#[cfg(not(target_os = "linux"))]`), not '
+            'a permission-fault contract'),
+        'src/native_process/review_tests.rs::session_writer_audit_is_linux_only': (
+            '#1316 a platform-gate note (`#[cfg(not(target_os = "linux"))]`), not '
+            'a permission-fault contract'),
+        'src/handle_path.rs::handle_path_rejects_a_non_utf8_name': (
+            '#1990 a platform-gate note (`#[cfg(target_os = "macos")]`), not a '
+            'permission-fault contract'),
+        'tests/grep_tool.rs::grep_outputs_match_real_ts': (
+            'an environment-probe note (PDRS_ALLOW_NO_RG unset, no ripgrep to '
+            'compare against), not a permission-fault contract'),
+        'tests/write_tools.rs::case_insensitive_cwd_spelling_writes_and_edits': (
+            'an environment-probe note (the volume is case-sensitive), not a '
+            'permission-fault contract'),
+        'tests/write_tools.rs::nfd_directory_with_nfc_cwd_writes_and_edits': (
+            'an environment-probe note (the volume does not distinguish '
+            'NFC/NFD), not a permission-fault contract'),
+        'tests/workspace_snapshot.rs::replay_scenario': (
+            '#1263 a scenario-replay note, not a permission-fault contract'),
+        'tests/unsafe_boundary.rs::stderr_boundary_line': (
+            '#448 a boundary-acknowledgement note, not a permission-fault '
+            'contract'),
+    }
 
     def assert_every_skip_line_reaches_nextest(self, filter_text, crate=None, sources=None):
         # #1900: forward check = every filter entry names a real test. This is
@@ -6252,6 +6940,7 @@ self_check_controls_run | return | return problems
         # fails loudly (false red) instead of passing quietly.
         crate = crate or Path(__file__).resolve().parents[1]
         sources = sources if sources is not None else self.read_crate_sources(crate)
+        inventory = self._lex_fn_items(sources)
         # Only the shared writer's own *definition* line is exempt: it declares
         # `stderr_skip_line`, so the signature line matches the scan. Excluding
         # the whole file — or every file named `skip_line.rs` — silently
@@ -6268,6 +6957,7 @@ self_check_controls_run | return | return problems
             # cannot drift on a file holding a ` `-style separator
             # (#1900 simplify P3).
             lines = text.split('\n')
+            record = inventory[source]
             for index in self.call_sites(text, 'stderr_skip_line'):
                 if source == writer and self.defining_function.match(lines[index]):
                     continue
@@ -6287,15 +6977,40 @@ self_check_controls_run | return | return problems
                     # exception without anyone registering it (measured: the
                     # guard stayed green for such a duplicate). The register
                     # excuses one call site; refuse the ambiguous file instead
-                    # of silently excusing all of them.
-                    definitions = len(re.findall(
-                        rf'\bfn\s+{re.escape(owner)}\s*[(<]', text))
+                    # of silently excusing all of them. #2115: the count is
+                    # taken from the proc-macro2 item records, so the shapes
+                    # the literal regex misread now count — a comment between
+                    # `fn` and the name, an `r#` prefix, a second definition
+                    # inside a `macro_rules!` body — while an `fn x(` inside a
+                    # comment or a string literal no longer inflates it. The
+                    # file must also be provably enumerable: a lex failure, a
+                    # real `include!` token (another file's items spliced in)
+                    # or a metavariable-fn macro invoked with this name can
+                    # add an uncounted same-named fn, and a register entry
+                    # must not be provable on such a file.
+                    self.assertNotIn('error', record,
+                                     f'#1900 the exception for {key} is keyed inside a file '
+                                     f'the lexer refuses: {record.get("error")}')
+                    definitions = [item for item in record['fns']
+                                  if item['name'] == owner]
                     self.assertEqual(
-                        definitions, 1,
+                        len(definitions), 1,
                         f'#1900 the exception for {key} is keyed by a function name that '
-                        f'occurs {definitions} times in {source.relative_to(crate)}; a '
+                        f'occurs {len(definitions)} times in {source.relative_to(crate)}; a '
                         f'duplicate would inherit the exception unregistered — key the '
                         f'exception by module path or rename the duplicate')
+                    self.assertNotIn('include!', record['unresolved'],
+                                     f'#1900 the exception for {key} is keyed inside a file '
+                                     f'that splices other items in via include!, so its fn '
+                                     f'set cannot be enumerated')
+                    instantiable = owner in {name for idents in record['macro_calls'].values()
+                                             for name in idents}
+                    self.assertFalse(
+                        instantiable,
+                        f'#1900 the exception for {key} is keyed by a name a '
+                        f'metavariable-fn macro can instantiate in '
+                        f'{source.relative_to(crate)}, so a second same-named fn can appear '
+                        f'there that no register entry covers')
                     for name in covered:
                         self.assertIn(name, named,
                                       f'#1900 the exception for {key} claims {name} covers it, '
@@ -6303,12 +7018,19 @@ self_check_controls_run | return | return problems
                         # #1900 boundary P2: a filter entry is necessary but not
                         # sufficient — the covering test has to still exist, or
                         # a rename would leave the exception excusing nothing
-                        # while the guard stays green.
+                        # while the guard stays green. #2115 (sibling #1): the
+                        # claim is stronger than existence — the covered name
+                        # has to be the nextest-visible name of one of the
+                        # file's real records, or the entry still selects
+                        # nothing.
                         leaf = name.rsplit('::', 1)[-1]
+                        visibles = {self.nextest_visible_name(crate, source, item['mod'], leaf)
+                                    for item in record['fns'] if item['name'] == leaf}
                         self.assertTrue(
-                            self.fn_name_exists(text, leaf),
+                            name in visibles,
                             f'#1900 the exception for {key} claims {name} covers it, but no '
-                            f'`fn {leaf}` exists in {source.relative_to(crate)}')
+                            f'record of {source.relative_to(crate)} is nextest-visible under '
+                            f'that name ({sorted(visibles)})')
                     # #1900 boundary P2: a helper's covered list is hand-kept, so
                     # on its own it proves nothing about the callers the author
                     # did not think of. Walk the callers — of the helper itself
@@ -6318,11 +7040,25 @@ self_check_controls_run | return | return problems
                     # is for a test, which has no callers.
                     if not self.is_test_fn(lines, self.defining_line_at(lines, index)):
                         self.assert_relay_callers_are_named(
-                            crate, text, source, key, (owner, *relays), named)
+                            crate, sources, inventory, source, key, (owner, *relays), named)
                     continue
-                visible = self.nextest_visible_name(crate, source, owner)
-                if visible not in named:
-                    unregistered.append(f'{key} (nextest-visible {visible})')
+                # #2115 (sibling #3): a same-named record is indistinguishable
+                # from the call site's owner by key, so every record of that
+                # name must be named, not just the one the line mapping found.
+                # fix-r1 (DS boundary #3): an owner the token records cannot
+                # prove (zero same-named fn records — a text-mapped ghost,
+                # e.g. an `fn` inside a raw-string fixture above the call)
+                # used to pass silently; unprovability is a demand, not an
+                # exemption by absence.
+                matching = [item for item in record['fns'] if item['name'] == owner]
+                if not matching:
+                    unregistered.append(
+                        f'{key} (no fn record of {source.relative_to(crate)} is named '
+                        f'{owner}; the line-based owner cannot be proven)')
+                for item in matching:
+                    visible = self.nextest_visible_name(crate, source, item['mod'], owner)
+                    if visible not in named:
+                        unregistered.append(f'{key} (nextest-visible {visible})')
         self.assertFalse(
             unregistered,
             '#1900 no nextest success-output entry covers these skip-line call sites, so the '
@@ -6340,42 +7076,347 @@ self_check_controls_run | return | return problems
                          'stderr_skip_line call site, so they would excuse nothing: '
                          + ', '.join(stale))
 
-    def assert_relay_callers_are_named(self, crate, text, source, key, relays, named):
+    def assert_skip_lines_pair_their_requirement(self, crate=None, sources=None):
+        # #1937: the second question the reverse guard does not answer — is
+        # every skip line paired with its `require_permission_faults()`
+        # assert? A root arm that copies only half of the pair drifts green
+        # exactly the way #1263 removed for unregistered skips: a skip with
+        # no require silently skips on a privileged host, and a require with
+        # no skip fires (or passes) with its reason lost. The consolidation
+        # leaves exactly one hand-written pair — `skip_or_require` in
+        # `tests/common/permission_faults.rs` — so every OTHER fn that calls
+        # the shared writer or asserts the requirement has to be registered
+        # in `permission_fault_pair_exceptions` as not a permission-fault
+        # contract. The scan is token-level (the same inventory the other
+        # name checks use), so a mention inside a comment or a string cannot
+        # fake either half.
+        crate = crate or Path(__file__).resolve().parents[1]
+        sources = sources if sources is not None else self.read_crate_sources(crate)
+        inventory = self._lex_fn_items(sources)
+        pair = crate/'tests'/'common'/'permission_faults.rs'
+        unpaired, lost, seen = [], [], set()
+        for source in sorted(sources):
+            record = inventory[source]
+            if 'error' in record:
+                self.fail(f'#1937 the pairing walk refuses a file that does not lex: '
+                          f'{record["error"]}')
+            # fix-r1 (DS boundary #2): `_owners_of_call` reads only the calls
+            # the lexer could attribute to a fn, so a half-pair written inside
+            # a macro body (or outside any fn) was invisible to BOTH halves —
+            # the exact "print the skip, never require" arm this guard exists
+            # to catch. Refuse the spelling itself, the same refusal
+            # `_cross_file_relay_callers` makes for a relay it cannot
+            # attribute.
+            for name in ('stderr_skip_line', 'require_permission_faults'):
+                for spelling in sorted(record['unattributed_calls']):
+                    if spelling.rsplit('::', 1)[-1] == name:
+                        self.fail(
+                            f'#1937 the pairing walk refuses {source.relative_to(crate)} '
+                            f'calling `{spelling}` where the lexer cannot attribute a '
+                            f'caller (macro input or no enclosing fn); route the arm '
+                            f'through tests/common/permission_faults.rs::skip_or_require, '
+                            f'or reshape the file so the call site is inside the fn '
+                            f'that owns it')
+            for owner in sorted(self._owners_of_call(record, 'stderr_skip_line')):
+                if source == pair and owner == 'skip_or_require':
+                    continue
+                key = f'{source.relative_to(crate)}::{owner}'
+                seen.add(key)
+                if key not in self.permission_fault_pair_exceptions:
+                    unpaired.append(key)
+            for owner in sorted(self._owners_of_call(record, 'require_permission_faults')):
+                if source == pair and owner == 'skip_or_require':
+                    continue
+                key = f'{source.relative_to(crate)}::{owner}'
+                seen.add(key)
+                if key not in self.permission_fault_pair_exceptions:
+                    lost.append(key)
+        self.assertTrue(
+            unpaired == [],
+            '#1937 these fns print a skip line with no require_permission_faults '
+            'assert, so a privileged host skips them silently green: '
+            + ', '.join(unpaired)
+            + '. Route the arm through tests/common/permission_faults.rs::'
+              'skip_or_require, or register the note as not a permission-fault '
+              'contract in permission_fault_pair_exceptions.')
+        self.assertTrue(
+            lost == [],
+            '#1937 these fns assert the permission-fault requirement without '
+            'printing a skip note, so the reason is lost: ' + ', '.join(lost)
+            + '. Route the arm through tests/common/permission_faults.rs::'
+              'skip_or_require, or register it in permission_fault_pair_exceptions.')
+        # fix-r1 (DS sibling #3): the same stale-entry refusal the reverse
+        # guard makes for skip_line_exceptions — an entry that no longer
+        # matches a call site of either half excuses nothing, and a registry
+        # that only grows is exactly the "excuse nothing" rot the stale check
+        # exists to catch. Only entries that point into the crate being
+        # scanned can go stale (the controls below patch in a synthetic one).
+        applicable = {key for key in self.permission_fault_pair_exceptions
+                      if (crate/key.split('::')[0]).exists()}
+        self.assertEqual(
+            sorted(applicable - seen), [],
+            '#1937 these permission_fault_pair_exceptions entries no longer match a '
+            'call site of either half, so they would excuse nothing: '
+            + ', '.join(sorted(applicable - seen)))
+
+    @staticmethod
+    def _owners_of_call(record, name):
+        # #1937: the fns of one file that call `name` — bare, or through any
+        # path spelling (`crate::…::name`, `module::name`). The caller set of
+        # a qualified spelling is the inventory's own answer, not a lookup of
+        # the spelling among the bare-call tables.
+        owners = set(record.get('calls', {}).get(name, ()))
+        for spelling, callers in record.get('qualified_calls', {}).items():
+            if spelling.rsplit('::', 1)[-1] == name:
+                owners |= set(callers)
+        return owners
+
+    def assert_relay_callers_are_named(self, crate, sources, inventory, source, key, relays,
+                                        named):
         # #1900 boundary P2: `key` is a helper that prints on someone else's
         # behalf. Every step in `relays` (the helper itself, plus any declared
         # relay) must still be called, and every test that reaches the note —
         # directly or through a relay — has to be in the filter, or the note is
         # silently captured when that test runs. Colour-coding the `covered`
         # list by hand is what this replaces.
+        #
+        # #1943: the walk used to stop at the helper's own file, so a caller
+        # in another file was invisible (#1263's silent skip coming back
+        # through a test nobody registered). The whole-crate scan below is
+        # token-level for the same reason every other name check here is: the
+        # text regex matches `replay (` inside doc comments, and same-named
+        # helpers of other modules (`use model_mock::*;` then a bare
+        # `replay(…)`) are not this relay. A call site in another file counts
+        # only when that file provably reaches *this* relay: it has no own
+        # `fn <relay>` item (a local definition answers bare sites; importing
+        # over one is an E0255 collision), and either a use binding that
+        # spells the home item path or a qualified call whose leading segment
+        # resolves to it. The registered limitation is the mirror image: a
+        # wildcard import (`use home::*;`) or a module-alias path call
+        # (`use home as h; h::relay(`) is not matched, and a macro-generated
+        # import is collected but its expansion site is not — those shapes
+        # stay less covered than an explicit binding, which is the shape a
+        # real cross-file caller needs anyway.
+        #
+        # #1937: a relay may live in the helper's own file (a bare name) or
+        # in another one (`'path/to/file.rs::name'`) — the pairing helper's
+        # relays sit beside their callers, not beside the pair. A discovered
+        # intermediate caller matches a declared relay only when the file it
+        # was found in is that relay's home, so a same-named helper of a
+        # foreign file is demanded rather than walked through.
         owner = key.rsplit('::', 1)[-1]
-        lines = text.split('\n')
-        pending, visited = list(relays), set()
+
+        def relay_home(spelling):
+            if '::' in spelling:
+                path, name = spelling.rsplit('::', 1)
+                home = crate/path
+                if not home.is_file():
+                    self.fail(f'#1937 the exception for {key} declares the relay '
+                              f'{spelling}, but {path} is not a file in this crate')
+                return name, home
+            return spelling, source
+
+        pending = list(dict.fromkeys([relay_home(spelling)
+                                      for spelling in (owner, *relays)]))
+        declared = {relay_home(spelling) for spelling in relays}
+        visited = set()
         while pending:
-            relay = pending.pop()
-            if relay in visited:
+            relay, home = pending.pop()
+            if (relay, home) in visited:
                 continue
-            visited.add(relay)
+            visited.add((relay, home))
+            # In-file callers: the line-based walk that also feeds
+            # `entry_point_at`.
+            text = sources[home]
+            lines = text.split('\n')
             callers = {}
             for index in self.call_sites(text, relay):
-                if self.defining_function.match(lines[index]):
+                match = self.defining_function.match(lines[index])
+                # #1943: skip only the relay's OWN definition line. The bare
+                # `defining_function.match` also skipped a single-line
+                # `fn caller() { relay(); }` — the definition line of a
+                # *caller* — hiding that caller from the walk.
+                if match and match.group(1) == relay:
                     continue
                 callers.setdefault(self.entry_point_at(lines, index), index)
+            # #1943: cross-file callers of the same relay, from the token
+            # inventory. A relay only called from other files is as called as
+            # one with in-file callers — the "nothing calls it" refusal must
+            # see both halves before it fires.
+            foreign = self._cross_file_relay_callers(crate, inventory, home, key, relay)
             self.assertTrue(
-                callers,
+                callers or foreign,
                 f'#1900 the exception for {key} expects the note to travel through '
-                f'`{relay}(`, but nothing in {source.relative_to(crate)} calls it any '
-                f'more')
+                f'`{relay}(`, but nothing in the crate calls it any more')
+            record = inventory[home]
             for caller in sorted(callers):
-                if caller in relays:
-                    pending.append(caller)
+                if (caller, home) in declared:
+                    pending.append((caller, home))
                     continue
                 via = 'directly' if relay == owner else f'through {relay}'
-                visible = self.nextest_visible_name(crate, source, caller)
-                self.assertIn(
-                    visible, named,
-                    f'#1900 the exception for {key} only holds while every caller is '
-                    f'registered too: {caller} reaches the note {via}, but '
-                    f'`{visible}` is not in the success-output filter')
+                for visible in self._visible_names_of(crate, home, record, caller):
+                    self.assertIn(
+                        visible, named,
+                        f'#1900 the exception for {key} only holds while every caller is '
+                        f'registered too: {caller} reaches the note {via}, but '
+                        f'`{visible}` is not in the success-output filter')
+            for other, others in sorted(foreign.items()):
+                other_record = inventory[other]
+                for caller in others:
+                    if (caller, other) in declared:
+                        pending.append((caller, other))
+                        continue
+                    via = 'directly' if relay == owner else f'through {relay}'
+                    for visible in self._visible_names_of(crate, other, other_record, caller):
+                        self.assertIn(
+                            visible, named,
+                            f'#1943 the exception for {key} only holds while every caller is '
+                            f'registered too: {caller} in {other.relative_to(crate)} reaches '
+                            f'the note {via}, but `{visible}` is not in the success-output '
+                            f'filter')
+
+    def _cross_file_relay_callers(self, crate, inventory, source, key, relay):
+        # #1943: every file that provably reaches *this* relay (declared in
+        # `source`) and the fns that call it there, as {file: sorted caller
+        # names}. A file that cannot be scanned at all is refused rather than
+        # skipped (fail closed on lex errors and include!) — the walk's whole
+        # job is to be complete.
+        #
+        # #1937: the home item is no longer a single path. A shared file
+        # pulled in under several module names (`mod permission_faults;` in
+        # the integration crates, `mod test_permission_faults;` at the lib
+        # root) is reachable under each of those spellings, so every
+        # candidate the crate's `mod name;` declarations prove counts. And a
+        # qualified call's leading segment can be one of those declared
+        # modules — a use binding is no longer the only way a flat
+        # `permission_faults::skip_or_require(…)` resolves.
+        home_items = {tuple(candidate) for candidate
+                      in self._home_item_candidates(crate, inventory, source, relay)}
+        foreign = {}
+        for other, other_record in sorted(inventory.items()):
+            if other == source:
+                continue
+            if 'error' in other_record:
+                self.fail(f'#1943 the exception for {key} walks the whole crate, and '
+                          f'{other.relative_to(crate)} does not lex: '
+                          f'{other_record["error"]}')
+            if 'include!' in other_record['unresolved']:
+                self.fail(f'#1943 the exception for {key} walks the whole crate, and '
+                          f'{other.relative_to(crate)} splices other items in via '
+                          f'include!, so its callers cannot be enumerated')
+            if any(marker in other_record['unresolved']
+                   for marker in ('mod path attribute', 'mod declaration in macro input')):
+                self.fail(f'#1937 the exception for {key} walks the whole crate, and '
+                          f'{other.relative_to(crate)} declares a module whose file the '
+                          f'walker cannot resolve, so its callers cannot be enumerated')
+            if any(item['name'] == relay for item in other_record['fns']):
+                # A local `fn <relay>` answers this file's bare sites.
+                continue
+            module = self.file_module_path(crate, other)
+            local_mods = {decl['name']: self._decl_module_base(crate, other, decl)
+                          for decl in other_record.get('mod_decls', ())}
+            # A use binding that imports the relay item itself: the fns that
+            # call the bound name reach the home item.
+            owners = set()
+            for binding in other_record['uses']:
+                expanded = self.expand_module_path(binding['source'],
+                                                   [*module, *binding['module']])
+                if expanded is not None and tuple(expanded) in home_items:
+                    owners |= set(other_record['calls'].get(binding['site'], ()))
+            # A qualified call resolves through a use binding or a declared
+            # module of this file (or the `crate` prefix); the spelling's own
+            # caller set — `qualified_calls` — is the demand.
+            for spelling, callers in other_record['qualified_calls'].items():
+                segments = spelling.split('::')
+                resolved = None
+                if segments[0] == 'crate':
+                    resolved = segments[1:]
+                else:
+                    for binding in other_record['uses']:
+                        if binding['site'] != segments[0]:
+                            continue
+                        expanded = self.expand_module_path(
+                            binding['source'], [*module, *binding['module']])
+                        if expanded is not None:
+                            resolved = [*expanded, *segments[1:]]
+                            break
+                    else:
+                        if segments[0] in local_mods:
+                            resolved = [*local_mods[segments[0]], *segments[1:]]
+                if resolved is not None and tuple(resolved) in home_items:
+                    owners |= set(callers)
+            if relay in other_record['unattributed_calls']:
+                self.fail(f'#1943 the exception for {key} walks the whole crate, and '
+                          f'{other.relative_to(crate)} calls `{relay}` where the walker '
+                          f'cannot attribute a caller (macro input or no enclosing fn); '
+                          f'register the caller or reshape the file')
+            if owners:
+                foreign[other] = sorted(owners)
+        return foreign
+
+    def _home_item_candidates(self, crate, inventory, source, relay):
+        # #1937: every item path this file's `relay` is reachable under. The
+        # naive one comes from the file's own location; every `mod name;`
+        # declaration in the crate whose target is this file contributes the
+        # module path of that declaration too, because a caller spelling that
+        # path reaches the same item. Over-approximating is the safe
+        # direction here — an extra candidate can only demand more callers —
+        # but an unreadable declaration is refused: a missing candidate would
+        # hide a caller.
+        candidates = [[*self.file_module_path(crate, source), relay]]
+        for other, other_record in sorted(inventory.items()):
+            if 'error' in other_record:
+                self.fail(f'#1937 the walk needs every file\'s module declarations, and '
+                          f'{other.relative_to(crate)} does not lex: '
+                          f'{other_record["error"]}')
+            if any(marker in other_record['unresolved']
+                   for marker in ('mod path attribute', 'mod declaration in macro input')):
+                self.fail(f'#1937 the walk needs every file\'s module declarations, and '
+                          f'{other.relative_to(crate)} declares a module whose file the '
+                          f'walker cannot resolve')
+            for decl in other_record.get('mod_decls', ()):
+                if self._mod_decl_target(crate, other, decl) == source:
+                    candidates.append([*self._decl_module_base(crate, other, decl), relay])
+        return candidates
+
+    def _mod_decl_target(self, crate, other, decl):
+        # The file a `mod name;` declaration loads. `#[path]` is literal and
+        # relative to the declaring file's directory; without it the module
+        # loads from the module's own directory — a sibling of the declaring
+        # file when that file is a crate root, a subdirectory of it otherwise.
+        if decl.get('path') is not None:
+            return Path(os.path.normpath(other.parent/decl['path']))
+        relative = other.relative_to(crate)
+        if relative.parts[0] == 'src':
+            root = len(relative.parts) == 2 and relative.parts[1] in ('lib.rs', 'main.rs')
+        else:
+            root = len(relative.parts) == 2
+        directory = other.parent if root or other.name == 'mod.rs' else other.parent/other.stem
+        return Path(os.path.normpath(
+            directory.joinpath(*decl['module'], decl['name'] + '.rs')))
+
+    def _decl_module_base(self, crate, other, decl):
+        # The module path a `mod name;` declaration creates — the path a
+        # caller's `crate::…` spelling or a flat integration-crate module
+        # name reaches. A crate-root file (src/lib.rs, an integration test)
+        # contributes no path segments of its own; any other file contributes
+        # its path segments plus the declaration's lexical nesting.
+        relative = other.relative_to(crate)
+        if relative.parts[0] == 'src':
+            root = len(relative.parts) == 2 and relative.parts[1] in ('lib.rs', 'main.rs')
+        else:
+            root = len(relative.parts) == 2
+        base = [] if root else self.file_module_path(crate, other)
+        return [*base, *decl['module'], decl['name']]
+
+    @classmethod
+    def _visible_names_of(cls, crate, source, record, leaf):
+        # #2115: every nextest-visible name a same-named record of `leaf` in
+        # `source` can report — the union the registration checks demand
+        # (sibling #3: same-named records are indistinguishable by key, so
+        # all of them have to be named).
+        return {cls.nextest_visible_name(crate, source, item['mod'], leaf)
+                for item in record['fns'] if item['name'] == leaf}
 
     @classmethod
     def defining_line_at(cls, lines, index):
@@ -6439,6 +7480,519 @@ self_check_controls_run | return | return problems
         match = cls.defining_function.match(lines[cls.defining_line_at(lines, index)])
         return match.group(1)
 
+    def test_lex_fn_items_reports_tokens_not_text(self):
+        # #2115 controls for the lexing entry every Rust-name check in this
+        # driver now goes through. Each shape below is one the old literal
+        # regex `\bfn\s+<name>\s*[(<]` miscounted in one direction or the
+        # other; the assertions are on the record set, never on line text.
+        inventory = self._lex_fn_items({
+            'tokens.rs': '\n'.join([
+                'fn plain() {}',
+                'fn /* a comment between the keyword and the name */ duplicated() {}',
+                'fn r#duplicated() {}',
+                '// fn commented_out() {}',
+                'const NOTE: &str = "fn in_a_string(";',
+                'mod inner { fn nested() {} }',
+            ]),
+            'macro.rs': '\n'.join([
+                'macro_rules! gen { () => { fn generated() {} } }',
+                'macro_rules! stamp { ($name:ident) => { fn $name() {} } }',
+                'gen!();',
+                'stamp!(duplicated);',
+            ]),
+            'broken.rs': 'fn broken( {',
+        })
+        # Missed by the regex: a comment between `fn` and the name, and the
+        # `r#` prefix, are both ordinary tokens — exactly two records of
+        # `duplicated`, in declaration order.
+        self.assertEqual([item['name'] for item in inventory['tokens.rs']['fns']],
+                         ['plain', 'duplicated', 'duplicated', 'nested'])
+        # False positives the regex counted: a comment and a string literal
+        # hold no tokens, so they hold no `fn` items.
+        self.assertEqual([item['macro'] for item in inventory['tokens.rs']['fns']],
+                         [False, False, False, False])
+        # The module path is lexical, so a nested item carries the segments
+        # nextest reports after the path-derived ones.
+        self.assertEqual(inventory['tokens.rs']['fns'][-1]['mod'], ['inner'])
+        # A named fn inside a macro body only exists after expansion: it is
+        # reported (conservatively, in the file that defines the macro) with
+        # the macro flag set, so consumers can require more than its count.
+        self.assertEqual([item['name'] for item in inventory['macro.rs']['fns']],
+                         ['generated'])
+        self.assertTrue(all(item['macro'] for item in inventory['macro.rs']['fns']))
+        # A metavariable name is not enumerable: the file is marked
+        # unresolved, and the invocation's argument idents are joined against
+        # the metavariable-fn macros this batch defines, so a consumer can
+        # refuse exactly the names this file can instantiate — `generated`
+        # comes from a macro body, `duplicated` from an argument ident, and
+        # only the latter says this file can gain a fn of that name.
+        self.assertIn('macro fn name', inventory['macro.rs']['unresolved'])
+        self.assertEqual(inventory['macro.rs']['macro_calls'], {'stamp': ['duplicated']})
+        # Fail closed: a file that does not lex reports an error, never a
+        # best-effort fn list.
+        self.assertIn('error', inventory['broken.rs'])
+
+    def test_lex_entry_refuses_a_stale_binary(self):
+        # fix-r1 (DS concurrency #1): an existing binary whose embedded
+        # rules do not match this tree must be refused with the rebuild
+        # command in the message. The old `for rebuild in (False, True)`
+        # loop rebuilt in the test path instead — a killed negative control
+        # leaving mutated sources behind would have had the mutant quietly
+        # compiled into the very rules the guards then trust. The fake
+        # executable answers with a foreign scanner_sha256, so no cargo is
+        # involved in either verdict.
+        with tempfile.TemporaryDirectory() as target:
+            executable = Path(target)/'debug/examples/lex_fn_items'
+            executable.parent.mkdir(parents=True)
+            executable.write_text(
+                '#!/bin/sh\n'
+                'printf \'{"scanner_sha256": "not-this-tree"}\\n\'\n')
+            executable.chmod(0o755)
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                with self.assertRaisesRegex(
+                        AssertionError,
+                        r"scanner_sha256 mismatch.*owner's job to rebuild.*"
+                        r'cargo build --locked --manifest-path src/Cargo.toml'):
+                    self._lex_fn_items({'probe.rs': 'fn probe() {}\n'})
+
+    def test_lex_entry_bootstrap_refuses_a_mutated_tree(self):
+        # fix-r1 (DS concurrency #1): a cold bootstrap on a tree whose build
+        # inputs differ from HEAD must refuse BEFORE any slot wait or cargo
+        # launch, and say why — residue is a refusal, never a
+        # rebuild-and-continue. The pristine check is the shared
+        # `_assert_workspace_sources` (intercepted here: this test process
+        # must not mutate the real tree); the end-to-end shape, real
+        # mutation and all, is the mutation control bound to this test.
+        negative = self._lex_entry_process()
+
+        def no_launch(*args, **kwargs):
+            self.fail('#2115 the lex entry bootstrap must not launch cargo or '
+                      'wait for a slot on a mutated tree')
+
+        with tempfile.TemporaryDirectory() as target:
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                with patch.object(negative, '_assert_workspace_sources',
+                                  side_effect=RuntimeError(
+                                      'src/pilotdeck-gateway/examples/lex_fn_items.rs '
+                                      'differs from HEAD')):
+                    with patch.object(negative, 'run_owned', side_effect=no_launch), \
+                         patch.object(negative, 'wait_for_slot', side_effect=no_launch):
+                        with self.assertRaisesRegex(
+                                AssertionError,
+                                'bootstrap refuses a tree whose build inputs '
+                                'differ from HEAD.*quietly compile the mutant'):
+                            self._lex_fn_items({'probe.rs': 'fn probe() {}\n'})
+
+    def test_lex_entry_admits_only_the_shared_target_rule(self):
+        # fix-r1 (DS concurrency #3): the target directory must go through
+        # negative_process's ONE shared admission, never a second local
+        # interpretation — the old code read os.environ itself and would
+        # have accepted a blank, dot, repository-root or src-inside value
+        # (and resolved a relative one against the caller's cwd, which is
+        # not the cwd cargo sees).
+        root = Path(__file__).resolve().parents[3]
+        for bad in ('', '.', 'src/target', str(root)):
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': bad}):
+                with self.assertRaisesRegex(
+                        AssertionError,
+                        '#2115 the lex entry refuses this CARGO_TARGET_DIR'):
+                    self._lex_fn_items({'probe.rs': 'fn probe() {}\n'})
+
+    def test_lex_entry_reads_build_inputs_under_the_tree_lock(self):
+        # fix-r2 (boundary P1): the five build-input summaries were read
+        # before the tree lock, so a sibling control's window (a
+        # `mutating_sources` hold in another process, which keeps the lease
+        # until its restore) could interleave the read: the digest described
+        # the mutant while the existing binary still reported the pristine
+        # tree, and the mismatch refusal fired against a healthy binary —
+        # a false red. The summaries are now read holding the same lease,
+        # so the read either beats the window or waits it out. The window
+        # is simulated at the read (this test process must not mutate the
+        # real tree; the end-to-end shape is the mutation control bound to
+        # this test): the shared lexer answers as its mutant bytes
+        # whenever the lease is not held, and as the real bytes while it
+        # is. fix-r3 (DS sibling #1 / boundary #1 / concurrency #2): the
+        # simulated window now covers the fixture's own snapshot too (it
+        # must answer under the same lease — outside it, the window it
+        # exists to simulate would corrupt its own healthy value), and
+        # every digest read is counted so a read path the probe cannot
+        # see fails loudly instead of passing silently.
+        negative = self._lex_entry_process()
+        root = Path(__file__).resolve().parents[3]
+        crate = root/'src/pilotdeck-gateway'
+        sources = (crate/'examples/lex_fn_items.rs',
+                   crate/'tests/common/source_inputs.rs',
+                   crate/'Cargo.toml', root/'src/Cargo.toml',
+                   root/'src/Cargo.lock')
+        held = []
+        served_mutant = []
+        digest_reads = []
+        fixture_ready = []
+        real_lock = negative.tree_lock
+        real_read = Path.read_bytes
+
+        @contextlib.contextmanager
+        def leased_lock(path, **kwargs):
+            with real_lock(path, **kwargs):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
+        def windowed_read(path):
+            if sources[1] == path:
+                if not held:
+                    served_mutant.append(True)
+                    return real_read(path) + b'\n// fix-r2 sibling window\n'
+                if fixture_ready:
+                    digest_reads.append(True)
+            return real_read(path)
+
+        with patch.object(negative, 'tree_lock', leased_lock), \
+                patch.object(Path, 'read_bytes', windowed_read):
+            with negative.tree_lock(root):
+                pristine = {path: path.read_bytes() for path in sources}
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the fixture must snapshot the build inputs under '
+                'the tree lock — a sibling mutation window was served to '
+                'the snapshot')
+            fixture_ready.append(True)
+            healthy = hashlib.sha256(b''.join(pristine[path]
+                                              for path in sources)).hexdigest()
+            with tempfile.TemporaryDirectory() as target:
+                executable = Path(target)/'debug/examples/lex_fn_items'
+                executable.parent.mkdir(parents=True)
+                executable.write_text(
+                    '#!/bin/sh\n'
+                    'printf \'{"scanner_sha256": "' + healthy
+                    + '", "files": {"window.rs": {"fns": '
+                      '[{"name": "window"}]}}}\\n\'\n')
+                executable.chmod(0o755)
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                    try:
+                        inventory = self._lex_fn_items(
+                            {'window.rs': 'fn window() {}\n'})
+                    except AssertionError as error:
+                        self.assertTrue(
+                            served_mutant == [],
+                            '#2115 the lex entry read its build-input '
+                            'summaries outside the tree lock — a sibling '
+                            'mutation window was served to the digest')
+                        self.fail('#2115 the lex entry must wait out a '
+                                  'sibling mutation window and admit the '
+                                  'binary that matches the tree it finds '
+                                  f'under the lock: {error}')
+            self.assertTrue(
+                digest_reads == [True],
+                '#2115 the digest reads never went through the probed '
+                'read path — the entry read its build inputs another way')
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the lex entry read its build-input summaries '
+                'outside the tree lock — a sibling mutation window was '
+                'served to the digest')
+            self.assertTrue(
+                [item['name'] for item in inventory['window.rs']['fns']]
+                == ['window'],
+                '#2115 a waited-out sibling window must leave the lex '
+                'entry answering, not refusing')
+
+    def test_lex_entry_re_reads_the_tree_before_refusing(self):
+        # fix-r2 (boundary P1): reading under the lease still only proves
+        # the first digest; the scan itself runs up to 300 s afterwards,
+        # and transient bytes the read caught (a plain-written mutant no
+        # lease covered, residue a sibling restored mid-flight) need not
+        # still be on disk at refusal time. The refusal therefore re-reads
+        # the five summaries under the lock first: a binary that matches
+        # the tree as it stands is not stale, whatever the first digest
+        # said. The transient is simulated at the read (same
+        # no-real-mutation rule as the sibling-window control above): the
+        # shared lexer answers as its mutant bytes exactly once — on the
+        # first summary read — and as the real bytes afterwards. fix-r3
+        # (DS boundary #1): the sibling window (mutant bytes whenever the
+        # lease is not held) now covers the re-read too, so a re-read
+        # outside the lease is caught here and in the refusal control
+        # below, not only the first read; fix-r3 (DS sibling #1 /
+        # concurrency #2): the fixture snapshot answers under the lease
+        # and the digest reads are counted.
+        negative = self._lex_entry_process()
+        root = Path(__file__).resolve().parents[3]
+        crate = root/'src/pilotdeck-gateway'
+        sources = (crate/'examples/lex_fn_items.rs',
+                   crate/'tests/common/source_inputs.rs',
+                   crate/'Cargo.toml', root/'src/Cargo.toml',
+                   root/'src/Cargo.lock')
+        held = []
+        served_mutant = []
+        digest_reads = []
+        fixture_ready = []
+        reads = []
+        real_lock = negative.tree_lock
+        real_read = Path.read_bytes
+
+        @contextlib.contextmanager
+        def leased_lock(path, **kwargs):
+            with real_lock(path, **kwargs):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
+        def transient_read(path):
+            if sources[1] == path:
+                if not held:
+                    served_mutant.append(True)
+                    return real_read(path) + b'\n// fix-r2 sibling window\n'
+                if fixture_ready:
+                    digest_reads.append(True)
+                    if not reads:
+                        reads.append(True)
+                        return (real_read(path)
+                                + b'\n// fix-r2 transient bytes\n')
+            return real_read(path)
+
+        with patch.object(negative, 'tree_lock', leased_lock), \
+                patch.object(Path, 'read_bytes', transient_read):
+            with negative.tree_lock(root):
+                pristine = {path: path.read_bytes() for path in sources}
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the fixture must snapshot the build inputs under '
+                'the tree lock — a sibling mutation window was served to '
+                'the snapshot')
+            fixture_ready.append(True)
+            healthy = hashlib.sha256(b''.join(pristine[path]
+                                              for path in sources)).hexdigest()
+            with tempfile.TemporaryDirectory() as target:
+                executable = Path(target)/'debug/examples/lex_fn_items'
+                executable.parent.mkdir(parents=True)
+                executable.write_text(
+                    '#!/bin/sh\n'
+                    'printf \'{"scanner_sha256": "' + healthy
+                    + '", "files": {"reread.rs": {"fns": '
+                      '[{"name": "reread"}]}}}\\n\'\n')
+                executable.chmod(0o755)
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                    try:
+                        inventory = self._lex_fn_items(
+                            {'reread.rs': 'fn reread() {}\n'})
+                    except AssertionError as error:
+                        self.assertTrue(
+                            served_mutant == [],
+                            '#2115 the lex entry read its build-input '
+                            'summaries outside the tree lock — a sibling '
+                            'mutation window was served to the digest')
+                        self.fail('#2115 the lex entry caught transient '
+                                  'bytes in its first digest; the refusal '
+                                  'must re-read under the tree lock and '
+                                  'admit the binary that matches the tree '
+                                  f'as it stands: {error}')
+            self.assertTrue(
+                digest_reads == [True, True],
+                '#2115 the digest reads never went through the probed '
+                'read path — the entry read its build inputs another way')
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the lex entry read its build-input summaries '
+                'outside the tree lock — a sibling mutation window was '
+                'served to the digest')
+            self.assertTrue(
+                [item['name'] for item in inventory['reread.rs']['fns']]
+                == ['reread'],
+                '#2115 a transient first digest must not stop the lex '
+                'entry from answering once the re-read clears it')
+
+    def test_lex_entry_refusal_cites_the_in_lock_digest(self):
+        # fix-r2 (boundary P1): when the binary really is stale, the
+        # refusal must describe the tree as it stands under the lock at
+        # refusal time — the owner verifies the rebuild against that
+        # digest, so the message may not quote the transient bytes the
+        # first digest caught. Same one-shot transient simulation as the
+        # re-read control above; the binary this time reports a foreign
+        # digest, so the refusal is genuine. fix-r3 (DS sibling #1 /
+        # boundary #1 / concurrency #2): the fixture snapshot answers
+        # under the lease, the sibling window covers the re-read, and the
+        # digest reads are counted.
+        negative = self._lex_entry_process()
+        root = Path(__file__).resolve().parents[3]
+        crate = root/'src/pilotdeck-gateway'
+        sources = (crate/'examples/lex_fn_items.rs',
+                   crate/'tests/common/source_inputs.rs',
+                   crate/'Cargo.toml', root/'src/Cargo.toml',
+                   root/'src/Cargo.lock')
+        held = []
+        served_mutant = []
+        digest_reads = []
+        fixture_ready = []
+        reads = []
+        real_lock = negative.tree_lock
+        real_read = Path.read_bytes
+
+        @contextlib.contextmanager
+        def leased_lock(path, **kwargs):
+            with real_lock(path, **kwargs):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
+        def transient_read(path):
+            if sources[1] == path:
+                if not held:
+                    served_mutant.append(True)
+                    return real_read(path) + b'\n// fix-r2 sibling window\n'
+                if fixture_ready:
+                    digest_reads.append(True)
+                    if not reads:
+                        reads.append(True)
+                        return (real_read(path)
+                                + b'\n// fix-r2 transient bytes\n')
+            return real_read(path)
+
+        with patch.object(negative, 'tree_lock', leased_lock), \
+                patch.object(Path, 'read_bytes', transient_read):
+            with negative.tree_lock(root):
+                pristine = {path: path.read_bytes() for path in sources}
+            self.assertTrue(
+                served_mutant == [],
+                '#2115 the fixture must snapshot the build inputs under '
+                'the tree lock — a sibling mutation window was served to '
+                'the snapshot')
+            fixture_ready.append(True)
+            transient = dict(pristine)
+            transient[sources[1]] = (pristine[sources[1]]
+                                     + b'\n// fix-r2 transient bytes\n')
+
+            def digest_of(tree):
+                return hashlib.sha256(b''.join(tree[path]
+                                              for path in sources)).hexdigest()
+
+            healthy = digest_of(pristine)
+            transient_digest = digest_of(transient)
+            with tempfile.TemporaryDirectory() as target:
+                executable = Path(target)/'debug/examples/lex_fn_items'
+                executable.parent.mkdir(parents=True)
+                executable.write_text(
+                    '#!/bin/sh\n'
+                    'printf \'{"scanner_sha256": "not-this-tree"}\\n\'\n')
+                executable.chmod(0o755)
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                    with self.assertRaises(AssertionError) as caught:
+                        self._lex_fn_items({'cites.rs': 'fn cites() {}\n'})
+        message = str(caught.exception)
+        self.assertTrue(
+            digest_reads == [True, True],
+            '#2115 the digest reads never went through the probed read '
+            'path — the entry read its build inputs another way')
+        self.assertTrue(
+            served_mutant == [],
+            '#2115 the lex entry read its build-input summaries outside '
+            'the tree lock — a sibling mutation window was served to the '
+            'digest')
+        self.assertTrue(healthy in message,
+                        '#2115 the refusal must cite the digest re-read '
+                        'under the tree lock')
+        self.assertTrue(transient_digest not in message,
+                        '#2115 the refusal must not cite the transient '
+                        'first digest')
+
+    def test_lex_entry_names_an_overlong_window_as_its_own_refusal(self):
+        # fix-r3 (DS concurrency #1): the unconditional tree-lock wait is
+        # budgeted to the caller's own 300 s (the scan's run_owned and the
+        # control-side run_test subprocess alike), and a window longer
+        # than the budget must surface as this guard's own AssertionError
+        # — a bare TimeoutError reads as a crash in the harness log, not
+        # as a refusal. The lease is held through a second flock on the
+        # same lock file: flock ownership is per open file description, so
+        # a second fd held by this very process conflicts exactly like
+        # another process's lease (probed at fix-r3), and closing it in
+        # the finally releases the kernel lock — no orphan process to
+        # reap.
+        negative = self._lex_entry_process()
+        root = Path(__file__).resolve().parents[3]
+        fd = os.open(root/'.negative-source.lock', os.O_RDWR | os.O_CREAT)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            with tempfile.TemporaryDirectory() as target:
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': target}):
+                    with patch.object(type(self), '_LEX_ENTRY_LOCK_WAIT',
+                                      2.0):
+                        try:
+                            self._lex_fn_items(
+                                {'lockwait.rs': 'fn lockwait() {}\n'})
+                        except AssertionError as error:
+                            message = str(error)
+                        except TimeoutError as error:
+                            self.fail('#2115 an overlong sibling window '
+                                      'must surface as the lex entry\'s '
+                                      'own AssertionError, not a raw '
+                                      f'TimeoutError: {error!r}')
+                        else:
+                            self.fail('#2115 the lex entry must refuse '
+                                      'while the tree lock is held past '
+                                      'its budget, not answer')
+        finally:
+            os.close(fd)
+        self.assertRegex(message, '#2115 the lex entry refused to wait out '
+                                  'a sibling mutation window longer than '
+                                  'its')
+        self.assertIn('2.0 s', message)
+        self.assertIn('.negative-source.lock', message)
+
+    def test_pair_exception_registry_cannot_go_stale(self):
+        # fix-r1 (DS sibling #3): permission_fault_pair_exceptions had no
+        # stale-entry check while its skip_line_exceptions twin did — an
+        # entry whose call site disappeared (a rename, a move) would excuse
+        # nothing, silently, forever. The registry is a claim the guard
+        # keeps true; the same refusal the reverse guard makes applies.
+        crate = self.root/'pairing-stale-crate'
+        (crate/'tests').mkdir(parents=True)
+        (crate/'tests'/'probe.rs').write_text(
+            'fn environment_probe_arm() {\n'
+            '    stderr_skip_line("skip: environment probe\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions',
+                          {'tests/probe.rs::environment_probe_arm':
+                           ('an environment probe, not a permission-fault '
+                            'contract',),
+                           'tests/probe.rs::renamed_away':
+                           ('an entry whose call site is gone',)}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'permission_fault_pair_exceptions entries no longer match.*'
+                    'tests/probe.rs::renamed_away'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+
+    def test_skip_line_reverse_guard_demands_a_provable_owner(self):
+        # fix-r1 (DS boundary #3): the text scan maps a call site to the
+        # nearest `fn` line above it. When that name has no token record (a
+        # raw-string fixture holding `fn ghost_test() {` above the call),
+        # the old loop iterated zero records and passed silently — an
+        # owner the inventory cannot prove must stay a demand, not an
+        # exemption by absence. Naming the real caller in the filter does
+        # not silence the ghost, so the refusal can only be the provability
+        # one.
+        crate = self.root/'ghost-owner-crate'
+        (crate/'tests').mkdir(parents=True)
+        (crate/'tests'/'fixture.rs').write_text(
+            'const SNIPPET: &str = r#"\n'
+            'fn ghost_test() {\n'
+            '    stderr_skip_line("in a raw string\\n");\n'
+            '}\n'
+            '"#;\n'
+            '\n'
+            'fn real_caller() {\n'
+            '    stderr_skip_line("skip: unregistered\\n");\n'
+            '}\n')
+        with self.assertRaisesRegex(
+                AssertionError, 'no fn record.*ghost_test'):
+            self.assert_every_skip_line_reaches_nextest('test(=real_caller)',
+                                                        crate=crate)
+
     def test_skip_line_reverse_guard_rejects_an_unregistered_call_site(self):
         # #1900 controls for the reverse guard: a skip-printing test the filter
         # does not name must fail the guard, and every exception entry must
@@ -6478,12 +8032,42 @@ self_check_controls_run | return | return problems
                 self.assert_every_skip_line_reaches_nextest(
                     'test(=registered) | test(=unregistered)', crate=crate)
         # A covered entry that merely exists in the filter text is not enough:
-        # a renamed test would leave the exception excusing nothing.
+        # a renamed test would leave the exception excusing nothing. #2115
+        # (sibling #1): the claim is now checked against the token records, so
+        # the failure message names the stronger condition — no record of this
+        # file is nextest-visible under that name (a file-local `fn ghost_test`
+        # would pass where a foreign same-leaf fn used to).
         with patch.object(self, 'skip_line_exceptions',
                           {'tests/sample.rs::unregistered': ('helper', ('ghost_test',))}):
-            with self.assertRaisesRegex(AssertionError, 'but no .fn ghost_test. exists'):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'claims ghost_test covers it, but no record of tests/sample.rs is '
+                    'nextest-visible under that name'):
                 self.assert_every_skip_line_reaches_nextest(
                     'test(=registered) | test(=unregistered) | test(=ghost_test)', crate=crate)
+        # #2115 (sibling #1), the discriminative shape: the covered leaf
+        # EXISTS in the file, but nested — its nextest-visible name is
+        # `deep::ghost_test`, so the claimed bare `ghost_test` selects
+        # nothing. Mere existence (the old check) would accept it and the
+        # note would still be captured.
+        spelling = self.root/'spelling-crate'
+        (spelling/'tests').mkdir(parents=True)
+        (spelling/'tests'/'sample.rs').write_text(
+            'fn covered() {\n'
+            '    skip_line::stderr_skip_line("skip: covered\\n");\n'
+            '}\n'
+            '\n'
+            'mod deep {\n'
+            '    pub fn ghost_test() {}\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/sample.rs::covered': ('helper', ('ghost_test',))}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'claims ghost_test covers it, but no record of tests/sample.rs is '
+                    'nextest-visible under that name'):
+                self.assert_every_skip_line_reaches_nextest('test(=ghost_test)',
+                                                            crate=spelling)
         # #1900 fix-r1 codex P2: the key is `file::leaf`, so a same-named
         # *test* in another `mod` of the same file would inherit the exception
         # without a register entry of its own (codex measured the guard green
@@ -6673,6 +8257,479 @@ self_check_controls_run | return | return problems
             self.assert_every_skip_line_reaches_nextest(
                 'test(=registered) | test(=unregistered)', crate=crate)
 
+    def test_skip_line_exception_needs_a_lexically_unique_owner(self):
+        # #2115: the exception is keyed by `file::leaf`, so a second fn of the
+        # same name in the same file would inherit it unregistered. The count
+        # comes from the proc-macro2 item records, so every shape the old
+        # literal regex misread now counts: a comment between `fn` and the
+        # name, an `r#` prefix, a definition inside a `macro_rules!` body —
+        # and, fail-closed, a file the lexer refuses or that splices items in
+        # via include! must not be provable at all. The green case at the end
+        # is the mirror: comments and string literals do not inflate the
+        # count, where the old regex saw a second definition in both.
+        base = ('fn helper_note() {\n'
+                '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+                '}\n'
+                '\n'
+                '#[test]\n'
+                'fn covered_test() {\n'
+                '    helper_note();\n'
+                '}\n')
+
+        def owner_crate(name, extra):
+            crate = self.root/name
+            (crate/'tests').mkdir(parents=True)
+            (crate/'tests'/'dup.rs').write_text(base + extra)
+            return crate
+
+        def duplicated_by(extra, crate_name):
+            crate = owner_crate(crate_name, extra)
+            with patch.object(self, 'skip_line_exceptions',
+                              {'tests/dup.rs::helper_note': ('helper', ())}):
+                with self.assertRaisesRegex(AssertionError, 'occurs 2 times'):
+                    self.assert_every_skip_line_reaches_nextest(
+                        'test(=covered_test)', crate=crate)
+
+        # A comment between `fn` and the name hides the duplicate from the
+        # literal regex `\bfn\s+<name>\s*[(<]`; the lexer sees one token
+        # stream and one more record.
+        duplicated_by('fn /* deliberately */ helper_note() {}\n',
+                      'lex-dup-comment-crate')
+        # `fn r#helper_note` is the same fn as `fn helper_note`; the raw
+        # prefix is stripped by the lexer before the name is compared.
+        duplicated_by('fn r#helper_note() {}\n', 'lex-dup-raw-crate')
+        # A named fn inside a macro body only exists after expansion, but it
+        # exists: it is reported with the macro flag, and the count includes
+        # it.
+        duplicated_by('macro_rules! gen { () => { fn helper_note() {} } }\n',
+                      'lex-dup-macro-crate')
+        # A metavariable-fn macro invoked with the owner's name can stamp out
+        # a second same-named fn the register entry never covers.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/dup.rs::helper_note': ('helper', ())}):
+            with self.assertRaisesRegex(
+                    AssertionError, 'a metavariable-fn macro can instantiate'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=covered_test)',
+                    crate=owner_crate(
+                        'lex-dup-metavar-crate',
+                        'macro_rules! stamp { ($name:ident) => { fn $name() {} } }\n'
+                        'stamp!(helper_note);\n'))
+            # A real `include!` token splices another file's items in, so the
+            # fn set of this file is not enumerable.
+            with self.assertRaisesRegex(
+                    AssertionError, 'splices other items in via include!'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=covered_test)',
+                    crate=owner_crate('lex-dup-include-crate',
+                                      'include!("spliced.rs");\n'))
+            # A file that does not lex reports no items at all — existence
+            # and uniqueness are not provable there, so the exception is
+            # refused rather than excused.
+            with self.assertRaisesRegex(
+                    AssertionError, 'keyed inside a file the lexer refuses'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=covered_test)',
+                    crate=owner_crate('lex-dup-broken-crate', 'fn broken( {\n'))
+        # The false-positive side: an `fn helper_note(` inside a comment and
+        # inside a string literal holds no tokens, so the owner stays unique
+        # and the exception stays green.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/dup.rs::helper_note': ('helper', ())}):
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=covered_test)',
+                crate=owner_crate(
+                    'lex-dup-text-crate',
+                    '// fn helper_note() {}\n'
+                    'const NOTE: &str = "fn helper_note(";\n'))
+
+    def test_relay_walk_crosses_files_and_resolves_identity(self):
+        # #1943: the walk used to stop at the helper's own file, so a caller
+        # in another file was invisible. The controls below prove the walk
+        # crosses files AND that it demands registration only of callers that
+        # provably reach *this* relay — a same-named local fn, a wildcard
+        # import and a foreign qualified call are all green without being
+        # registered, while an explicit binding and a `crate::…` path call
+        # are demanded.
+        crate = self.root/'cross-file-crate'
+        (crate/'src').mkdir(parents=True)
+        (crate/'src'/'relay_home.rs').write_text(
+            'pub fn helper_note() {\n'
+            '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+            '}\n'
+            '\n'
+            'pub fn replay() {\n'
+            '    helper_note();\n'
+            '}\n')
+        # A cross-file caller through an explicit binding: demanded.
+        (crate/'src'/'caller.rs').write_text(
+            'use crate::relay_home::replay;\n'
+            '\n'
+            '#[test]\n'
+            'fn cross_file_test() {\n'
+            '    replay();\n'
+            '}\n')
+        # A cross-file caller through the full path: demanded too.
+        (crate/'src'/'explicit.rs').write_text(
+            '#[test]\n'
+            'fn explicit_test() {\n'
+            '    crate::relay_home::replay();\n'
+            '}\n')
+        # A local `fn replay` answers this file's bare sites: NOT a caller
+        # of the home relay, so nothing here is demanded.
+        (crate/'src'/'local.rs').write_text(
+            'fn replay() {}\n'
+            '\n'
+            '#[test]\n'
+            'fn local_test() {\n'
+            '    replay();\n'
+            '}\n')
+        # A wildcard import is collected but cannot spell the item: not a
+        # caller (registered limitation, mirrored by the control staying
+        # green without an entry).
+        (crate/'src'/'wild.rs').write_text(
+            'use crate::relay_home::*;\n'
+            '\n'
+            '#[test]\n'
+            'fn wild_test() {\n'
+            '    replay();\n'
+            '}\n')
+        # A qualified call resolving through a module alias to a DIFFERENT
+        # home: not a caller of this relay.
+        (crate/'src'/'other_home.rs').write_text('pub fn replay() {}\n')
+        (crate/'src'/'qual.rs').write_text(
+            'use crate::other_home as fixture;\n'
+            '\n'
+            '#[test]\n'
+            'fn qual_test() {\n'
+            '    fixture::replay();\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'src/relay_home.rs::helper_note': ('helper', (), ('replay',))}):
+            # The binding caller is the unregistered one; the path caller is
+            # named, so the red names the file the note is reached from.
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'cross_file_test in src/caller.rs reaches the note through replay'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=explicit::explicit_test)', crate=crate)
+            # Local definition, wildcard import and foreign qualified call are
+            # all green without an entry — the walk demanded only the two
+            # provable cross-file callers.
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=caller::cross_file_test) | test(=explicit::explicit_test)',
+                crate=crate)
+        # A relay only called from another file is still called: the refusal
+        # for an uncalled relay must not fire just because the caller sits
+        # outside the home file (the home file itself has no caller of
+        # `replay` at all in this crate).
+        # A call the walker cannot attribute (no enclosing fn) is refused
+        # rather than guessed — it could be any test's note.
+        unattributed = self.root/'unattributed-crate'
+        (unattributed/'src').mkdir(parents=True)
+        (unattributed/'src'/'relay_home.rs').write_text(
+            (crate/'src'/'relay_home.rs').read_text())
+        (unattributed/'src'/'cold.rs').write_text(
+            'use crate::relay_home::replay;\n'
+            '\n'
+            'static PRELUDE: () = replay();\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'src/relay_home.rs::helper_note': ('helper', (), ('replay',))}):
+            with self.assertRaisesRegex(
+                    AssertionError, 'cannot attribute a caller'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=cold::anything)', crate=unattributed)
+        # #1943 (the `:5294` fix): the definition-line skip used to fire on
+        # ANY line `defining_function` matched, so a single-line
+        # `fn caller() { helper_note(); }` was skipped as if it were the
+        # helper's own definition. It must instead be walked and demanded.
+        inline = self.root/'inline-crate'
+        (inline/'tests').mkdir(parents=True)
+        (inline/'tests'/'inline.rs').write_text(
+            'fn helper_note() {\n'
+            '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+            '}\n'
+            '\n'
+            'fn inline_caller() { helper_note(); }\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/inline.rs::helper_note': ('helper', ())}):
+            with self.assertRaisesRegex(
+                    AssertionError, 'every caller is registered too.*inline_caller'):
+                self.assert_every_skip_line_reaches_nextest('test(=other)', crate=inline)
+            self.assert_every_skip_line_reaches_nextest('test(=inline_caller)',
+                                                        crate=inline)
+        # #2115 (sibling #3): same-named callers in two inner mods are
+        # indistinguishable by the walk's caller name, so BOTH nextest-visible
+        # names are demanded — naming one leaves the other unregistered.
+        twins = self.root/'twin-caller-crate'
+        (twins/'tests').mkdir(parents=True)
+        (twins/'tests'/'twins.rs').write_text(
+            'fn helper_note() {\n'
+            '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+            '}\n'
+            '\n'
+            'mod alpha {\n'
+            '    #[test]\n'
+            '    pub fn twin_caller() { super::helper_note(); }\n'
+            '}\n'
+            '\n'
+            'mod beta {\n'
+            '    #[test]\n'
+            '    pub fn twin_caller() { super::helper_note(); }\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/twins.rs::helper_note': ('helper', ())}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'twin_caller reaches the note directly, but .beta::twin_caller. is '
+                    'not in the success-output filter'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=alpha::twin_caller)', crate=twins)
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=alpha::twin_caller) | test(=beta::twin_caller)', crate=twins)
+        # #1937 (the walk side of the consolidation): the shared pairing
+        # helper's own shape — one file, pulled in under several module
+        # names. The lib root includes it as `test_pairing`, an integration
+        # crate includes it as `pairing`; a caller through either spelling
+        # is a caller of the ONE helper, and the flat module-name call
+        # resolves through the file's own `mod name;` declaration, not a
+        # use binding (the resolution shape the pre-#1937 walk could not
+        # see at all).
+        shared = self.root/'shared-helper-crate'
+        (shared/'src').mkdir(parents=True)
+        (shared/'src'/'lib.rs').write_text(
+            '#[path = "../tests/common/pairing.rs"]\n'
+            'mod test_pairing;\n'
+            'mod arm;\n')
+        (shared/'src'/'arm.rs').write_text(
+            'fn unregistered_through_crate_path() {\n'
+            '    crate::test_pairing::pair_note();\n'
+            '}\n')
+        (shared/'tests'/'common').mkdir(parents=True)
+        (shared/'tests'/'common'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_text: &str) {}\n')
+        (shared/'tests'/'common'/'pairing.rs').write_text(
+            '#[path = "skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'pub fn pair_note() {\n'
+            '    skip_line::stderr_skip_line("skip: paired\\n");\n'
+            '}\n')
+        (shared/'tests'/'integration.rs').write_text(
+            '#[path = "common/pairing.rs"]\n'
+            'mod pairing;\n'
+            '\n'
+            'fn unregistered_flat_module_call() {\n'
+            '    pairing::pair_note();\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/common/pairing.rs::pair_note': ('helper', ())}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'unregistered_through_crate_path in src/arm.rs reaches the note '
+                    'directly'):
+                self.assert_every_skip_line_reaches_nextest('test(=nothing)', crate=shared)
+            # The two resolutions are independent: with the crate-path caller
+            # named, the next red is the flat module-name one.
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'unregistered_flat_module_call in tests/integration.rs reaches the '
+                    'note directly'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=arm::unregistered_through_crate_path)', crate=shared)
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=arm::unregistered_through_crate_path) | '
+                'test(=unregistered_flat_module_call)', crate=shared)
+        # #1937 (the fix the consolidation forced): a qualified call's caller
+        # set is the inventory's own answer for that spelling — the pre-fix
+        # walk looked the spelling up among the BARE-call tables, found
+        # nothing, and a full-path caller was invisible. The path caller is
+        # the unregistered one here; the binding caller is named.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'src/relay_home.rs::helper_note': ('helper', (), ('replay',))}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'explicit_test in src/explicit.rs reaches the note through replay'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=caller::cross_file_test)', crate=crate)
+        # #1937 fail-closed: a `#[path]` the lexer cannot read as a plain
+        # string literal (a `cfg_attr` that can attach one) must refuse the
+        # walk, not fall back to the convention — the convention points the
+        # module at a different file, and a caller routed through such a
+        # declaration would be counted from the WRONG home.
+        unreadable = self.root/'unreadable-path-crate'
+        (unreadable/'tests').mkdir(parents=True)
+        (unreadable/'tests'/'common').mkdir(parents=True)
+        (unreadable/'tests'/'common'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_text: &str) {}\n')
+        (unreadable/'tests'/'common'/'pairing.rs').write_text(
+            'pub fn pair_note() {\n'
+            '    skip_line::stderr_skip_line("skip: paired\\n");\n'
+            '}\n')
+        (unreadable/'tests'/'caller.rs').write_text(
+            '#[cfg_attr(unix, path = "common/pairing.rs")]\n'
+            'mod pairing;\n'
+            '\n'
+            'fn cfg_attr_routed_caller() {\n'
+            '    pairing::pair_note();\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/common/pairing.rs::pair_note': ('helper', ())}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'declares a module whose file the walker cannot resolve'):
+                self.assert_every_skip_line_reaches_nextest('test(=nothing)',
+                                                            crate=unreadable)
+
+    def test_skip_lines_pair_a_requirement(self):
+        # #1937: the consolidation leaves exactly one hand-written
+        # skip/require pair, and the two drift shapes the issue names must
+        # both go red — a skip with no require (a privileged host skips it
+        # silently green) and a require with no skip (the reason is lost).
+        # Both controls are permanent, per the issue's acceptance list.
+        crate = self.root/'pairing-crate'
+        (crate/'tests'/'common').mkdir(parents=True)
+        (crate/'tests'/'common'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_text: &str) {}\n')
+        (crate/'tests'/'common'/'permission_faults.rs').write_text(
+            '#[path = "skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'pub fn skip_or_require(note: &str, requirement: &str) {\n'
+            '    skip_line::stderr_skip_line(note);\n'
+            '    assert!(!require_permission_faults(), "{requirement}");\n'
+            '}\n'
+            '\n'
+            'pub fn require_permission_faults() -> bool { false }\n')
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '#[path = "common/permission_faults.rs"]\n'
+            'mod permission_faults;\n'
+            '\n'
+            'fn skip_only_arm() {\n'
+            '    skip_line::stderr_skip_line("skip: half a pair\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'skips them silently green.*tests/arm.rs::skip_only_arm'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+        # The other drift shape, on its own so its red is not shadowed by
+        # the skip-side refusal above: the requirement is asserted but no
+        # note is printed, so the reason is lost.
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/permission_faults.rs"]\n'
+            'mod permission_faults;\n'
+            '\n'
+            'fn require_only_arm() {\n'
+            '    assert!(!permission_faults::require_permission_faults(), "#1525 arm");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'the reason is lost.*tests/arm.rs::require_only_arm'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+        # The consolidated shape stays green: the pair is written once, in
+        # the helper, and an arm routed through it touches neither half
+        # directly. A probe note that is not a permission-fault contract at
+        # all is registered, which is the reviewed decision the registry
+        # exists to hold.
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/permission_faults.rs"]\n'
+            'mod permission_faults;\n'
+            '\n'
+            'fn paired_arm() {\n'
+            '    permission_faults::skip_or_require("skip: the pair\\n", "#1525 arm");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            self.assert_skip_lines_pair_their_requirement(crate=crate)
+        (crate/'tests'/'probe.rs').write_text(
+            '#[path = "common/skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'fn environment_probe_arm() {\n'
+            '    skip_line::stderr_skip_line("skip: environment probe\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions',
+                          {'tests/probe.rs::environment_probe_arm':
+                           ('an environment probe, not a permission-fault contract',)}):
+            self.assert_skip_lines_pair_their_requirement(crate=crate)
+        with self.assertRaisesRegex(
+                AssertionError,
+                'skips them silently green.*tests/probe.rs::environment_probe_arm'):
+            self.assert_skip_lines_pair_their_requirement(crate=crate)
+
+    def test_pairing_guard_refuses_a_call_it_cannot_attribute(self):
+        # fix-r1 (DS boundary #2): a half-pair written inside a macro body
+        # lands in the lexer's `unattributed_calls` bucket, and the pairing
+        # guard used to read only `calls` / `qualified_calls` — the macro
+        # shape hid "print the skip, never require" from BOTH halves of the
+        # check (and the text-based reverse guard maps such a site to
+        # whatever fn happens to sit above the macro). The refusal must
+        # name the file and the spelling; the same call spelled inside its
+        # fn stays visible through the ordinary unpaired path, so the
+        # location, not the call, was the blind spot. A macro that only
+        # routes the pair keeps the consolidated shape green.
+        crate = self.root/'pairing-macro-crate'
+        (crate/'tests'/'common').mkdir(parents=True)
+        (crate/'tests'/'common'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_text: &str) {}\n')
+        (crate/'tests'/'common'/'permission_faults.rs').write_text(
+            '#[path = "skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'pub fn skip_or_require(note: &str, requirement: &str) {\n'
+            '    skip_line::stderr_skip_line(note);\n'
+            '    assert!(!require_permission_faults(), "{requirement}");\n'
+            '}\n'
+            '\n'
+            'pub fn require_permission_faults() -> bool { false }\n')
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'macro_rules! note {\n'
+            '    ($m:literal) => { skip_line::stderr_skip_line($m); };\n'
+            '}\n'
+            '\n'
+            'fn lazy_arm() {\n'
+            '    note!("skip: half a pair, hidden in a macro\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    r'pairing walk refuses tests/arm.rs calling '
+                    r'`skip_line::stderr_skip_line` where the lexer cannot '
+                    r'attribute a caller'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/skip_line.rs"]\n'
+            'mod skip_line;\n'
+            '\n'
+            'fn plain_arm() {\n'
+            '    skip_line::stderr_skip_line("skip: half a pair\\n");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            with self.assertRaisesRegex(
+                    AssertionError,
+                    'skips them silently green.*tests/arm.rs::plain_arm'):
+                self.assert_skip_lines_pair_their_requirement(crate=crate)
+        (crate/'tests'/'arm.rs').write_text(
+            '#[path = "common/permission_faults.rs"]\n'
+            'mod permission_faults;\n'
+            '\n'
+            'macro_rules! pair {\n'
+            '    ($m:literal, $r:literal) => '
+            '{ permission_faults::skip_or_require($m, $r) };\n'
+            '}\n'
+            '\n'
+            'fn paired_arm() {\n'
+            '    pair!("skip: the pair\\n", "#1525 arm");\n'
+            '}\n')
+        with patch.object(self, 'permission_fault_pair_exceptions', {}):
+            self.assert_skip_lines_pair_their_requirement(crate=crate)
+
     def test_success_output_filter_rejects_a_renamed_test(self):
         # The filter is a list of nextest-visible test names: a rename would
         # silently drop the success-output replay. These are the negative
@@ -6709,30 +8766,37 @@ self_check_controls_run | return | return problems
         for crates_root in ('src/lib.rs', 'src/main.rs'):
             with self.assertRaisesRegex(AssertionError,
                                         'cannot derive the nextest-visible name'):
-                self.nextest_visible_name(crate, crate / crates_root, 'leaf')
+                self.nextest_visible_name(crate, crate / crates_root, [], 'leaf')
         # `src/mod.rs` pops to an empty module list; it used to raise
         # IndexError from `parts[-1]`, which reads like a bug rather than a
         # refusal. It must now refuse with the same message.
         with self.assertRaisesRegex(AssertionError,
                                     'cannot derive the nextest-visible name'):
-            self.nextest_visible_name(crate, crate / 'src/mod.rs', 'leaf')
+            self.nextest_visible_name(crate, crate / 'src/mod.rs', [], 'leaf')
         # The fix must not swallow the normal cases.
         self.assertEqual(
-            self.nextest_visible_name(crate, crate / 'src/skills/tests.rs', 'leaf'),
+            self.nextest_visible_name(crate, crate / 'src/skills/tests.rs', [], 'leaf'),
             'skills::tests::leaf')
-        # #1461 r2: this example used a hypothetical `src/grep/mod.rs` that
-        # does not exist anywhere in the crate — it only passed because the
-        # old code appended `tests` without reading the file. The guarded
-        # append needs a real `mod tests {` carrier to prove the mapping;
-        # #1461 r3 (DS boundary P2): `src/channel/mod.rs` carries the
+        # #1461 r2/r3: this mapping used to be "proven" by scanning the file
+        # for `mod tests {` — the old example was a hypothetical `src/grep/
+        # mod.rs` that does not exist, and `src/channel/mod.rs` carries the
         # semicolon form (`mod tests;`), which does NOT nest this file's own
-        # fns — the inline-brace carrier is `src/handle_path.rs:129`
-        # (measured, `grep -n 'mod tests {'`).
+        # fns; the inline-brace carrier is `src/handle_path.rs:128` (measured,
+        # `grep -n 'mod tests {'`). #2115: the nesting is now read from the
+        # lexical record of the declaring file, so the proof runs on a real
+        # test of the real carrier end-to-end instead of a hypothetical one.
+        record = self._lex_fn_items(self.read_crate_sources(crate))[crate / 'src/handle_path.rs']
         self.assertEqual(
-            self.nextest_visible_name(crate, crate / 'src/handle_path.rs', 'leaf'),
+            [item['mod'] for item in record['fns']
+             if item['name'] == 'handle_path_rejects_a_non_utf8_name'],
+            [['tests']])
+        self.assertEqual(
+            self.nextest_visible_name(crate, crate / 'src/handle_path.rs', ['tests'], 'leaf'),
             'handle_path::tests::leaf')
+        # An integration-test file is its own crate: no stem, only the
+        # lexical nesting (measured, `--list` on tests/live_e2e.rs).
         self.assertEqual(
-            self.nextest_visible_name(crate, crate / 'tests/live_e2e.rs', 'leaf'),
+            self.nextest_visible_name(crate, crate / 'tests/live_e2e.rs', [], 'leaf'),
             'leaf')
 
     def test_ci_rejects_nextest_execution_drift(self):
@@ -7901,11 +9965,57 @@ class AggregationAudit(unittest.TestCase):
                     return raw_read(self.root / args[1].split(':', 1)[1]) if args[0] == 'show' else b''
 
                 write_text = Path.write_text
+                # #2743 (DS r3 sibling #1): every sentinel in this probe must
+                # record, not raise -- main()'s blanket `except Exception`
+                # swallows an AssertionError and resurfaces it as exactly the
+                # INVALID/BLOCKED shape this probe already asserts, so a
+                # raise can never turn the probe red. The empty-list
+                # assertions after main() are what make a busy-lock bypass
+                # visible on every write/launch path at once.
+                source_text_writes = []
+                source_byte_writes = []
+                run_calls = []
 
                 def evidence_only(path, *a, **k):
-                    self.assertTrue(path.is_relative_to(Path(temp).resolve()),
-                                    '#166 busy lock must never write source')
+                    resolved = Path(path)
+                    if not resolved.is_relative_to(Path(temp).resolve()):
+                        source_text_writes.append((resolved, a[0] if a else k.get('data')))
+                        return None
                     return write_text(path, *a, **k)
+
+                def record_bytes(path, value):
+                    source_byte_writes.append(Path(path))
+                    return len(value)
+
+                def record_run(*args, **kwargs):
+                    from types import SimpleNamespace
+                    run_calls.append(args)
+                    return SimpleNamespace(returncode=1, stdout='', stderr='')
+
+                atomic_calls = []
+                guard_atomic_calls = []
+
+                def record_guard_atomic(root, path, data, *, mode=None):
+                    # #2743 (DS r3 sibling #1): the guard-level global gets
+                    # the same record-then-assert treatment -- a raise here
+                    # is swallowed into INVALID just like the others.
+                    guard_atomic_calls.append(Path(path))
+                    return None
+
+                def record_fixture_atomic(root, path, data, *, mode=None):
+                    # #2743 (DS r2 concurrency #2 / boundary #1): fixtures
+                    # migrated to write_source_atomic bind their own global at
+                    # import, so patching the guard's attribute never
+                    # intercepts their publish/restore. Record rather than
+                    # raise -- main()'s blanket `except Exception` would
+                    # swallow an AssertionError and come back out as exactly
+                    # the BLOCKED/INVALID this probe already asserts, so a
+                    # raise cannot turn the probe red. The empty-list
+                    # assertion below is what makes a busy-lock bypass
+                    # visible; the guard-level `guard_atomic_calls` assert
+                    # stays the guard-attribute mirror of the same claim.
+                    atomic_calls.append(Path(path))
+                    return None
 
                 # #1166: the pristine admission now runs a real external
                 # scanner that needs genuine git; these #166 wiring probes
@@ -7920,13 +10030,28 @@ class AggregationAudit(unittest.TestCase):
                         patch.object(guard, '_ensure_workspace_scanner'), \
                         patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                         patch.object(Path, 'write_text', evidence_only), \
-                        patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 busy lock must not write source')), \
-                        patch.object(guard, 'write_source_atomic', side_effect=AssertionError('#166 busy lock must not publish source bytes')) as publish, \
+                        patch.object(Path, 'write_bytes', record_bytes), \
+                        patch.object(guard, 'write_source_atomic', record_guard_atomic), \
                         patch.object(module.sys, 'argv', argv), \
-                        patch.object(module, 'run_owned', side_effect=AssertionError('#166 busy lock must not launch a test')):
+                        patch.object(module, 'run_owned', record_run):
                     if hasattr(module, 'pgrep_launcher'):
                         module.pgrep_launcher = lambda: ''
+                    if hasattr(module, 'write_source_atomic'):
+                        module.write_source_atomic = record_fixture_atomic
+                    else:
+                        self.assertIn(folder, ('gateway-batch', 'gateway-entry-guard'),
+                                      '#166 only the pre-migration fixtures '
+                                      'lack the atomic publish global')
                     code = module.main()
+                self.assertEqual(atomic_calls, [],
+                                 '#166 busy lock must not publish source '
+                                 'bytes through the fixture global')
+                self.assertEqual(source_text_writes, [],
+                                 '#166 busy lock must never write source through Path.write_text')
+                self.assertEqual(source_byte_writes, [],
+                                 '#166 busy lock must never write source through Path.write_bytes')
+                self.assertEqual(run_calls, [],
+                                 '#166 busy lock must not launch a test through run_owned')
                 # #1903：还原改走 `write_source_atomic`（临时文件 + `os.replace`），不再经过
                 # `Path.write_text/bytes`；只钉那两个入口，这条「拒锁期间不得写源码」的探针
                 # 对还原路径就变成空转（r1 DeepSeek sibling / zai sibling P2）。
@@ -7935,7 +10060,7 @@ class AggregationAudit(unittest.TestCase):
                 self.assertEqual(restore_wiring_problems(guard), [],
                                  f'#166 busy lock {folder}: the restore must resolve '
                                  'write_source_atomic through the patched module global')
-                self.assertEqual(publish.call_count, 0,
+                self.assertEqual(guard_atomic_calls, [],
                                  '#166 busy lock must not publish source bytes')
                 self.assertEqual(calls, [True], '#166 both negative suites must request parity lock')
                 self.assertEqual(code, 1 if folder == 'gateway-entry-guard' else 2,
@@ -7976,9 +10101,47 @@ class AggregationAudit(unittest.TestCase):
                         return raw_read(self.root / args[1].split(':', 1)[1])
                     return b''  # clean tracked-product index fixture; no subprocess
 
+                # #2743 (DS r3 sibling #1): same record-then-assert fix as
+                # the busy-lock probe -- every raise sentinel here is
+                # swallowed by main()'s blanket `except Exception`, so each
+                # write/launch path records and the empty-list assertions
+                # below are what actually turn a bypass red.
+                source_text_writes = []
+                source_byte_writes = []
+                run_calls = []
+
                 def evidence_only(path, *args, **kwargs):
-                    self.assertTrue(path.is_relative_to(Path(temp).resolve()), '#166 dirty guard must never write source')
+                    resolved = Path(path)
+                    if not resolved.is_relative_to(Path(temp).resolve()):
+                        source_text_writes.append((resolved, args[0] if args else kwargs.get('data')))
+                        return None
                     return write_text(path, *args, **kwargs)
+
+                def record_bytes(path, value):
+                    source_byte_writes.append(Path(path))
+                    return len(value)
+
+                def record_run(*args, **kwargs):
+                    from types import SimpleNamespace
+                    run_calls.append(args)
+                    return SimpleNamespace(returncode=1, stdout='', stderr='')
+
+                atomic_calls = []
+                guard_atomic_calls = []
+
+                def record_guard_atomic(root, path, data, *, mode=None):
+                    guard_atomic_calls.append(Path(path))
+                    return None
+
+                def record_fixture_atomic(root, path, data, *, mode=None):
+                    # #2743 (DS r2 concurrency #2 / boundary #1): same blind
+                    # spot as the busy-lock probe -- the fixture's own
+                    # write_source_atomic global is invisible to the
+                    # guard-level patch above, and an AssertionError here is
+                    # swallowed into the BLOCKED shape this probe already
+                    # expects. Record and assert empty after main() instead.
+                    atomic_calls.append(Path(path))
+                    return None
 
                 with patch.object(importlib.machinery.SourceFileLoader, 'get_data', data):
                     spec = importlib.util.spec_from_file_location('negative_166_' + folder, path)
@@ -8007,22 +10170,37 @@ class AggregationAudit(unittest.TestCase):
                             patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                             patch.object(Path, 'read_bytes', lambda p: residue if p == common_path else raw_read(p)), \
                             patch.object(Path, 'write_text', evidence_only), \
-                            patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 dirty guard must never write')), \
-                            patch.object(guard, 'write_source_atomic', side_effect=AssertionError('#166 dirty guard must never publish')) as publish, \
-                            patch.object(module, 'run_owned', side_effect=AssertionError('#166 dirty guard must never run child')), \
+                            patch.object(Path, 'write_bytes', record_bytes), \
+                            patch.object(guard, 'write_source_atomic', record_guard_atomic), \
+                            patch.object(module, 'run_owned', record_run), \
                             patch.object(module.sys, 'argv', argv):
                         if hasattr(module, 'pgrep_launcher'):
                             module.pgrep_launcher = lambda: ''
+                        if hasattr(module, 'write_source_atomic'):
+                            module.write_source_atomic = record_fixture_atomic
+                        else:
+                            self.assertIn(folder, ('gateway-batch', 'gateway-entry-guard'),
+                                          '#166 only the pre-migration fixtures '
+                                          'lack the atomic publish global')
                         try:
                             code = module.main()
                         except Exception as error:
                             caught = error
+                    self.assertEqual(atomic_calls, [],
+                                     '#166 dirty guard must not publish source '
+                                     'bytes through the fixture global')
+                    self.assertEqual(source_text_writes, [],
+                                     '#166 dirty guard must never write source through Path.write_text')
+                    self.assertEqual(source_byte_writes, [],
+                                     '#166 dirty guard must never write source through Path.write_bytes')
+                    self.assertEqual(run_calls, [],
+                                     '#166 dirty guard must not launch a child through run_owned')
                     # #1903：同 busy-lock 探针 —— 还原走 `write_source_atomic`，不经过
                     # `Path.write_bytes`，只钉旧入口等于没钉还原路径。
                     self.assertEqual(restore_wiring_problems(guard), [],
                                      f'#166 dirty {folder}: the restore must resolve '
                                      'write_source_atomic through the patched module global')
-                    self.assertEqual(publish.call_count, 0,
+                    self.assertEqual(guard_atomic_calls, [],
                                      '#166 dirty guard must not publish source bytes')
                     self.assertIn(common_path, supplied, '#166 common.py must be included in guarded sources')
                     self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
@@ -8063,23 +10241,67 @@ class AggregationAudit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp).resolve() / 'out'
             write_text = Path.write_text
+            # #2743 (DS r3 sibling #2): record instead of raise -- main()'s
+            # blanket `except Exception` swallows an AssertionError and
+            # resurfaces it as the INVALID verdict this test already expects,
+            # so a pre-validation publish through the legacy write paths
+            # would stay invisible. The post-main assertions make any such
+            # write red.
+            text_writes = []
+            byte_writes = []
 
             def evidence_only(path, *a, **k):
-                self.assertTrue(path.is_relative_to(output), '#166 invalid mutants must never write source')
+                resolved = Path(path)
+                if not resolved.is_relative_to(output):
+                    text_writes.append((resolved, a[0] if a else k.get('data')))
+                    return None
                 return write_text(path, *a, **k)
+
+            def record_bytes(path, value):
+                byte_writes.append((Path(path), bytes(value)))
+                return len(value)
 
             restored = SimpleNamespace(returncode=0, stdout='', stderr='')
             summary = {'status': 'PASS', 'results': [
                 {'mode': 'wiring', 'passed': True, 'status': 'PASS_WITH_CLEANUP_UNVERIFIED'}]}
+            # #2743: the fixture publishes and restores its guarded sources
+            # through negative_process.write_source_atomic now, so the
+            # Path.write_text canary above no longer intercepts the real
+            # source-write path. Record the atomic writer's calls instead and
+            # prove the #166 invariant on them directly: an invalid mutant
+            # must never put mutated bytes on a source path -- only the
+            # per-case and backstop restores may write, and they must carry
+            # the pristine snapshot bytes.
+            atomic_writes = []
+
+            def recording_atomic(root, path, data, *, mode=None):
+                atomic_writes.append((Path(path), bytes(data)))
+
             with patch.object(module, 'mutating_sources', guard), \
                     patch.object(module, 'pgrep_launcher', return_value=''), \
                     patch.object(module, 'run_check', return_value=restored) as check, \
                     patch.object(module, 'read_summary', return_value=(summary, None)), \
+                    patch.object(module, 'write_source_atomic', recording_atomic), \
                     patch.object(module.sys, 'argv', ['negative_controls.py', '--output', str(output)]), \
                     patch.object(module.sys, 'platform', 'darwin'), \
                     patch.object(Path, 'write_text', evidence_only), \
-                    patch.object(Path, 'write_bytes', lambda path, value: len(value)):
+                    patch.object(Path, 'write_bytes', record_bytes):
                 code = module.main()
+            self.assertEqual(len(atomic_writes), len(module.MUTATIONS) + len(originals),
+                             '#2743 invalid mutants must restore every source through the '
+                             'atomic writer (one per case plus one backstop per source, '
+                             'never a publish)')
+            self.assertTrue(all(path in originals and data == originals[path]
+                                for path, data in atomic_writes),
+                            '#2743 the atomic writer must never carry mutated bytes for an '
+                            'invalid mutant')
+            self.assertEqual(text_writes, [],
+                             '#166 invalid mutants must never write outside the '
+                             'output dir through Path.write_text')
+            self.assertTrue(all(path in originals and data == originals[path]
+                                for path, data in byte_writes),
+                            '#166 Path.write_bytes may only ever carry pristine '
+                            'source bytes for these invalid mutants')
             report = json.loads((output / 'summary.json').read_text())
             self.assertEqual([row['mutation'] for row in report['mutations']], names,
                              '#166 suite must record every selected invalid mutant')

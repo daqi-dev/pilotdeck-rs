@@ -26,6 +26,7 @@ use super::{
     },
 };
 use crate::metadata::js_trim;
+use futures_util::future::FutureExt;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 mod client;
@@ -249,6 +250,15 @@ struct State {
     chats: HashMap<String, ChatEntry>,
     /// `permissionAnsweringChats` + `permissionAnsweringTokens`.
     permission_answering: HashMap<String, u64>,
+    /// #2055: the elicitation answer task's occupancy, the mirror of
+    /// `permission_answering` for the elicitation branch. TS needs no such
+    /// flag — `ImElicitationHelper.answer` consumes the pending entry
+    /// synchronously before its first await — but the pending entry here
+    /// lives behind the interaction port, so the check and the reservation
+    /// have to share one critical section instead (registered divergence
+    /// A8.3-CH-FEISHU-004-R2: a mid-answer event is swallowed for the one
+    /// `respondElicitation` await, like the permission branch).
+    elicitation_answering: HashSet<String>,
     next_answering_token: u64,
     /// Monotonic batch identity (see [`Batch::id`]).
     next_batch_id: u64,
@@ -265,6 +275,7 @@ impl State {
             batches: HashMap::new(),
             chats: HashMap::new(),
             permission_answering: HashMap::new(),
+            elicitation_answering: HashSet::new(),
             // TS starts the counter at 1.
             next_answering_token: 1,
             next_batch_id: 0,
@@ -364,6 +375,18 @@ impl Runtime {
 
     fn api(&self) -> Option<Arc<ApiClient>> {
         self.api.lock().expect("#1329 api mutex").clone()
+    }
+
+    /// The interaction-state lock, recovering from the poisoning a panic that
+    /// unwound through a guard leaves behind (#2055): this is in-memory
+    /// channel bookkeeping with no external invariant, so a poisoned lock must
+    /// not take every later state user down with it (TS has no poisoning —
+    /// its `catch`/`finally` blocks keep the channel alive; the weixin lane's
+    /// `lock_inner` made the same call for #1780).
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     // ----- lifecycle -------------------------------------------------------
@@ -482,7 +505,7 @@ impl Runtime {
                 // on its own schedule) must not both enqueue. TS does the
                 // `has`/`add` pair synchronously on one event loop.
                 let already_seen = {
-                    let mut state = self.state.lock().expect("#1329 state mutex");
+                    let mut state = self.lock_state();
                     !state.seen.remember(message.event_id.clone())
                 };
                 if already_seen {
@@ -512,7 +535,7 @@ impl Runtime {
         } else {
             0
         };
-        let mut state = self.state.lock().expect("#1329 state mutex");
+        let mut state = self.lock_state();
         if !state.batches.contains_key(&chat_id) {
             state.next_batch_id += 1;
             let id = state.next_batch_id;
@@ -546,9 +569,47 @@ impl Runtime {
         let timer_batch = batch.id;
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
-            runtime
-                .drain_inbound_batch(&timer_chat, timer_batch, timer_seq)
-                .await;
+            let mut timer_seq = timer_seq;
+            loop {
+                // TS `drainInboundBatch` is a try/finally: a panic mid-drain
+                // still resets `draining` in the `finally` and re-arms the
+                // drain while messages remain, instead of leaving the chat's
+                // batch claimed forever (#2055). The catch below is that
+                // `finally`; the retry is its re-entry — an always-panicking
+                // drain keeps retrying there too.
+                let drain = runtime.drain_inbound_batch(&timer_chat, timer_batch, timer_seq);
+                if let Err(panic) =
+                    FutureExt::catch_unwind(std::panic::AssertUnwindSafe(drain)).await
+                {
+                    runtime.log(
+                        "error",
+                        &format!("feishu: drainInboundBatch panic: {panic:?}"),
+                    );
+                    // The `finally` reset: un-claim this drainer's batch. A
+                    // message that re-armed the window during the panic owns
+                    // the newer sequence, so the retry drains with the
+                    // entry's current one; a `/new` that replaced the entry
+                    // leaves nothing to recover.
+                    let retry = {
+                        let mut state = runtime.lock_state();
+                        match state.batches.get_mut(&timer_chat) {
+                            Some(batch) if batch.id == timer_batch => {
+                                batch.draining = false;
+                                Some(batch.timer_seq)
+                            }
+                            _ => None,
+                        }
+                    };
+                    match retry {
+                        Some(seq) => {
+                            timer_seq = seq;
+                            continue;
+                        }
+                        None => return,
+                    }
+                }
+                return;
+            }
         });
     }
 
@@ -559,15 +620,43 @@ impl Runtime {
         }
         let chat_id = input.chat_id.clone();
         if self.interaction.elicitation_pending(&chat_id) {
+            // #2055: the lookup and the reservation share one critical
+            // section, the same occupancy the permission branch below
+            // established. TS needs no flag — `answer` consumes the pending
+            // entry synchronously before its first await — but the entry here
+            // lives behind the interaction port, so two webhook deliveries
+            // racing across threads could both observe it pending (one
+            // answer, one swallowed event; see `elicitation_answering`).
+            {
+                let mut state = self.lock_state();
+                if state.elicitation_answering.contains(&chat_id) {
+                    return true;
+                }
+                state.elicitation_answering.insert(chat_id.clone());
+            }
             let runtime = self.clone();
             let text = input.text.clone();
             tokio::spawn(async move {
-                if let Err(error) = runtime.answer_pending_elicitation(&chat_id, &text).await {
-                    runtime.log(
-                        "error",
-                        &format!("feishu: elicitation answer error: {error}"),
-                    );
+                let answer = runtime.answer_pending_elicitation(&chat_id, &text);
+                // TS attaches a `.catch` to the answer task; a Rust panic
+                // unwinds it instead, so the occupancy reset below is the
+                // `.finally` (#2055).
+                match FutureExt::catch_unwind(std::panic::AssertUnwindSafe(answer)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        runtime.log(
+                            "error",
+                            &format!("feishu: elicitation answer error: {error}"),
+                        );
+                    }
+                    Err(panic) => {
+                        runtime.log(
+                            "error",
+                            &format!("feishu: elicitation answer panic: {panic:?}"),
+                        );
+                    }
                 }
+                runtime.lock_state().elicitation_answering.remove(&chat_id);
             });
             return true;
         }
@@ -576,7 +665,7 @@ impl Runtime {
         // concurrent webhook deliveries for the same chat must not both start
         // an answer task (TS does this synchronously on one event loop).
         let token = {
-            let mut state = self.state.lock().expect("#1329 state mutex");
+            let mut state = self.lock_state();
             if state.permission_answering.contains_key(&chat_id) {
                 return true;
             }
@@ -591,13 +680,26 @@ impl Runtime {
         let runtime = self.clone();
         let text = input.text.clone();
         tokio::spawn(async move {
-            if let Err(error) = runtime.answer_pending_permission(&chat_id, &text).await {
-                runtime.log(
-                    "error",
-                    &format!("feishu: permission answer error: {error}"),
-                );
+            let answer = runtime.answer_pending_permission(&chat_id, &text);
+            // TS chains the release onto the answer with `.finally`, so it
+            // runs for an error and a throw alike; the catch keeps a Rust
+            // panic on the same path (#2055).
+            match FutureExt::catch_unwind(std::panic::AssertUnwindSafe(answer)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    runtime.log(
+                        "error",
+                        &format!("feishu: permission answer error: {error}"),
+                    );
+                }
+                Err(panic) => {
+                    runtime.log(
+                        "error",
+                        &format!("feishu: permission answer panic: {panic:?}"),
+                    );
+                }
             }
-            let mut state = runtime.state.lock().expect("#1329 state mutex");
+            let mut state = runtime.lock_state();
             if state.permission_answering.get(&chat_id) == Some(&token) {
                 state.permission_answering.remove(&chat_id);
             }
@@ -664,7 +766,7 @@ impl Runtime {
 
     async fn drain_inbound_batch(self: &Arc<Self>, chat_id: &str, batch_id: u64, timer_seq: u64) {
         let batch_id = {
-            let mut state = self.state.lock().expect("#1329 state mutex");
+            let mut state = self.lock_state();
             let Some(batch) = state.batches.get_mut(chat_id) else {
                 return;
             };
@@ -684,7 +786,7 @@ impl Runtime {
         loop {
             loop {
                 let messages = {
-                    let mut state = self.state.lock().expect("#1329 state mutex");
+                    let mut state = self.lock_state();
                     match state.batches.get_mut(chat_id) {
                         // A batch replaced under us (`/new` removed the entry,
                         // then a new message created a fresh one) belongs to
@@ -705,7 +807,7 @@ impl Runtime {
             // `drainInboundBatch` from a fresh microtask; looping in place
             // keeps the same single-drainer invariant without an async
             // recursion that the `Send` check cannot prove).
-            let mut state = self.state.lock().expect("#1329 state mutex");
+            let mut state = self.lock_state();
             let done = state
                 .batches
                 .get(chat_id)
@@ -771,21 +873,28 @@ impl Runtime {
             return;
         }
 
-        let mapped = {
-            let mut state = self.state.lock().expect("#1329 state mutex");
-            state.mapper.resolve(&chat_id, &message_text)
+        // #2055: TS resolves the session and reads `chatState.generation` in
+        // one synchronous block (no await between `mapper.resolve` and the
+        // queue-time read), so a concurrent `/new` can never rotate the
+        // session under a turn that then carries the new generation into the
+        // old session. Reading the generation under the same guard keeps that
+        // invariant on a multi-threaded runtime.
+        let (mapped, mut generation) = {
+            let mut state = self.lock_state();
+            let mapped = state.mapper.resolve(&chat_id, &message_text);
+            let generation = state
+                .chats
+                .get(&chat_id)
+                .map(|entry| entry.generation)
+                .unwrap_or(0);
+            (mapped, generation)
         };
 
         if mapped.command == Some(FeishuCommand::New) {
             // `this.onStateChange?.(this.mapper.snapshot())` runs before the
             // reset, so the persisted state already carries the new session.
             if let Some(on_state_change) = self.on_state_change.as_ref() {
-                let snapshot = self
-                    .state
-                    .lock()
-                    .expect("#1329 state mutex")
-                    .mapper
-                    .snapshot_js();
+                let snapshot = self.lock_state().mapper.snapshot_js();
                 on_state_change(snapshot);
             }
             // No `abortTurn` on the A7 port: the previous run keeps going
@@ -793,7 +902,12 @@ impl Runtime {
             // and the flush skip this chat's output once the generation has
             // moved; a segment whose check already passed — in flight or not
             // yet sent — is outside this gate.
-            self.reset_chat_interaction_state(&chat_id);
+            //
+            // The reset hands the new generation back from inside its own
+            // critical section (#2055): the follow-up turn must observe the
+            // pair {new session, new generation} that this `/new` produced,
+            // not a generation a racing `/new` bumped after the reset.
+            generation = self.reset_chat_interaction_state(&chat_id);
             if mapped.message.is_empty() {
                 self.send(&chat_id, "已创建新会话。").await;
                 return;
@@ -817,7 +931,7 @@ impl Runtime {
             message: mapped.message.clone(),
             project_key: mapped.project_key.clone(),
             message_id: first.message_id.clone(),
-            generation: self.generation(&chat_id),
+            generation,
         };
 
         // No separate "is the chat active?" pre-check: the admission and the
@@ -828,14 +942,19 @@ impl Runtime {
         self.run_queued_turns(&chat_id, turn).await;
     }
 
-    fn reset_chat_interaction_state(self: &Arc<Self>, chat_id: &str) {
-        {
-            let mut state = self.state.lock().expect("#1329 state mutex");
+    /// `resetChatInteractionState`, returning the post-reset generation so
+    /// the `/new` follow-up turn can carry it out of the same critical
+    /// section (#2055; TS reads it in the same synchronous block).
+    fn reset_chat_interaction_state(self: &Arc<Self>, chat_id: &str) -> u64 {
+        let generation = {
+            let mut state = self.lock_state();
             let entry = state.chats.entry(chat_id.to_owned()).or_default();
             entry.generation += 1;
             entry.queue.clear();
             entry.active_run = None;
+            let generation = entry.generation;
             state.permission_answering.remove(chat_id);
+            state.elicitation_answering.remove(chat_id);
             // `clearTimeout(batch?.timer)`: once the timer fired and the
             // drain is running, clearTimeout is a no-op in JS — the drain
             // (including this /new's own send) runs to completion. Removing
@@ -844,15 +963,15 @@ impl Runtime {
             // different id/sequence) and returns, while a running drainer
             // keeps going and only drops its claim when it re-reads.
             state.batches.remove(chat_id);
-        }
+            generation
+        };
         self.interaction.elicitation_clear(chat_id);
         self.interaction.permission_clear_after_turn(chat_id);
+        generation
     }
 
     fn generation(&self, chat_id: &str) -> u64 {
-        self.state
-            .lock()
-            .expect("#1329 state mutex")
+        self.lock_state()
             .chats
             .get(chat_id)
             .map(|entry| entry.generation)
@@ -864,9 +983,7 @@ impl Runtime {
     }
 
     fn set_active_run(&self, chat_id: &str, run: ActiveRun) {
-        self.state
-            .lock()
-            .expect("#1329 state mutex")
+        self.lock_state()
             .chats
             .entry(chat_id.to_owned())
             .or_default()
@@ -874,22 +991,14 @@ impl Runtime {
     }
 
     fn active_run(&self, chat_id: &str) -> Option<ActiveRun> {
-        self.state
-            .lock()
-            .expect("#1329 state mutex")
+        self.lock_state()
             .chats
             .get(chat_id)
             .and_then(|entry| entry.active_run.clone())
     }
 
     fn clear_active_run(&self, chat_id: &str) {
-        if let Some(entry) = self
-            .state
-            .lock()
-            .expect("#1329 state mutex")
-            .chats
-            .get_mut(chat_id)
-        {
+        if let Some(entry) = self.lock_state().chats.get_mut(chat_id) {
             entry.active_run = None;
         }
     }
@@ -912,7 +1021,7 @@ impl Runtime {
                     // state lock the holder takes to decide "queue empty and
                     // release", so the two sides cannot both conclude "the other
                     // one has it".
-                    let mut state = self.state.lock().expect("#1329 state mutex");
+                    let mut state = self.lock_state();
                     let entry = state.chats.entry(chat_id.to_owned()).or_default();
                     if pending_from_queue {
                         entry.queue.push_front(pending);
@@ -975,7 +1084,7 @@ impl Runtime {
         chat_id: &str,
         slot: &mut ActiveChat<String>,
     ) -> Option<QueuedTurn> {
-        let mut state = self.state.lock().expect("#1329 state mutex");
+        let mut state = self.lock_state();
         let next = state
             .chats
             .get_mut(chat_id)
@@ -1253,6 +1362,28 @@ impl FeishuChannel {
         uuid: mapper::Uuid,
     ) -> Self {
         Self::build(options, interaction, slot, clock, uuid, None, None)
+    }
+
+    /// The parity seams plus `options.onStateChange` — the #2055 F5 pin
+    /// plants a racing reset in the callback's window.
+    #[cfg(test)]
+    pub(crate) fn with_seams_and_state_change(
+        options: FeishuOptions,
+        interaction: Arc<dyn InteractionPort>,
+        slot: Option<Arc<FeishuWebhookSlot>>,
+        clock: Arc<dyn Clock>,
+        uuid: mapper::Uuid,
+        on_state_change: Option<StateChange>,
+    ) -> Self {
+        Self::build(
+            options,
+            interaction,
+            slot,
+            clock,
+            uuid,
+            None,
+            on_state_change,
+        )
     }
 
     fn build(

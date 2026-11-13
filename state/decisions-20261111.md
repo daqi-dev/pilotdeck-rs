@@ -55,3 +55,15 @@
 **建议**：按 ① 执行（macmini-01 GLM 实现，DeepSeek + MiniMax 双谱系评审，冻结件 PR 流程：事件文件 + `--write` 单独提交）。**AI 代批，待人复核。**
 
 **可复用原则**：枚举式环境隔离清单必须随被隔离族的每个新部署项同步登记——新增 `PILOTDECK_*`（或同族）部署配置的单要 grep 同名清理点；评审对隔离保证的默认预期即产品语义。
+
+## 决策卡四：合并队列 check_response_timeout 60→120 分钟（AI 代批，待人复核）
+
+- **卡在哪**：repo ruleset 25332925 的 merge_queue 规则 `check_response_timeout_minutes: 60`。四张 PR 同批入队时各自触发 merge_group 构建并发跑，CI 实际耗时 65+ 分钟，绿灯 PR 在 ~63 分钟被规则超时踢出（#2879 两次「组运行成功 + MERGEABLE/CLEAN 仍出队」的根因，13:0x 排查定位；11-11 15:1x 复盘 #2942 同因被踢后重入队）。
+- **谁受影响**：所有入队 PR（并发组构建时尤甚）；合并吞吐与下游解锁链。
+- **能否撤回**：可撤回（ruleset 再 PUT 回 60 即可），不影响任何已合入提交。
+- **动不动尺子**：不动冻结尺子与判分语义；属合并闸门机制参数（仓库规则配置）。
+- **意向**：给慢 CI 留容错，不再误杀绿灯 PR。
+- **选项与后果**：① 60→120（**已执行**，13:1x PUT ruleset）：容错翻倍；代价是坏 PR 占用队列窗口变长——grouping=ALLGREEN 下可接受。② 保持 60 并压并发入队：省资源但误踢继续，需人为串行排队。③ 治 CI 本身（提速）：治本但工程量大，另立单。
+- **建议**：维持 120；若 CI 常态化超 100 分钟再开 CI 提速单。
+- **执行证据**：PUT 前后 ruleset 参数（check_response_timeout_minutes 60→120，其余不动：grouping ALLGREEN / merge_method REBASE / max 5+5 / required checks check+gateway-schema-baseline / strict false）；#2879 重入队后 MERGED（8b63de4a2/85fa0840a 落 main，邮箱核平）；#2942 重入队后 MERGED（40a8fca04）。
+- **一条原则**：入队 PR 数 ≥ 3 时，队列超时上限须 ≥ 平峰 CI 时长的 1.8 倍；并发组构建按每张 ×1.15 估时。
