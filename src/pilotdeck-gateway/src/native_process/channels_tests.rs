@@ -32,6 +32,7 @@ use crate::runtime::turn::submit::{
     WorkspaceAdmissions,
 };
 use crate::storage::RunRef;
+use crate::test_fixed_port_probe::FixedPortProbe;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use std::{
     io::Write,
@@ -961,54 +962,14 @@ async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
 /// `connect().is_err()` read every error kind as "closed", so an
 /// fd-exhausted or timing-out probe would "prove" a live listener gone,
 /// a false PASS.
-enum FixedPortProbe {
-    /// The kernel refused the connection: nothing is listening.
-    Refused,
-    /// A listener accepted the connection: the port is still open.
-    Accepted,
-    /// Any other error kind, carried verbatim (kind and raw errno) for the
-    /// named failure.
-    Unknown(std::io::Error),
-}
-
-/// Classify one connect outcome for a claimed fixed port. Constructed kinds
-/// classify here too, which is how the unit control drives EMFILE and a
-/// timed-out probe without exhausting real fds (#2462).
-fn classify_fixed_port_probe(probe: Result<(), std::io::Error>) -> FixedPortProbe {
-    match probe {
-        Ok(()) => FixedPortProbe::Accepted,
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
-            FixedPortProbe::Refused
-        }
-        Err(error) => FixedPortProbe::Unknown(error),
-    }
-}
-
-/// The named failure [`assert_ports_closed_after_stop`] reports for a probe
-/// outcome that is not a refusal (#2462): a port that still accepts
-/// connections, or a probe whose error kind proves nothing — with its kind
-/// and raw errno in the message, never a pass.
-fn fixed_port_close_failure(port: u16, probe: FixedPortProbe) -> Option<String> {
-    match probe {
-        FixedPortProbe::Refused => None,
-        FixedPortProbe::Accepted => Some(format!(
-            "#2462 the fixed-port listener on port {port} is still accepting connections after stop"
-        )),
-        FixedPortProbe::Unknown(error) => Some(format!(
-            "#2462 the close probe on port {port} answered {error} (kind {:?}, raw os error \
-             {:?}) — only ConnectionRefused proves a port closed, so this is a named failure, \
-             not a pass",
-            error.kind(),
-            error.raw_os_error()
-        )),
-    }
-}
-
-/// One bounded probe of a claimed fixed port — the watcher's poll step
-/// (#2462): the sync sibling of [`assert_ports_closed_after_stop`]'s probe,
-/// through the same [`FixedPortProbe`] judgment.
-fn probe_fixed_port(port: u16) -> FixedPortProbe {
-    classify_fixed_port_probe(
+///
+/// #2461 fix-r6: the judgment moved to the shared tests-only module
+/// [`crate::test_fixed_port_probe`] (generic over the accepted payload so
+/// the sms `raw_request` path can keep its stream) and every fixed-port
+/// criterion in the crate now routes through it; this file keeps only the
+/// watcher's synchronous poll step below.
+fn probe_fixed_port(port: u16) -> FixedPortProbe<()> {
+    crate::test_fixed_port_probe::classify_fixed_port_probe(
         std::net::TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
             Duration::from_millis(250),
@@ -1039,7 +1000,7 @@ fn release_fixed_port_files(
 ) {
     let deadline = std::time::Instant::now() + cap;
     loop {
-        let probes: Vec<(u16, FixedPortProbe)> = ports
+        let probes: Vec<(u16, FixedPortProbe<()>)> = ports
             .iter()
             .map(|port| (*port, probe_fixed_port(*port)))
             .collect();
@@ -1061,12 +1022,12 @@ fn release_fixed_port_files(
 /// The named diagnostic the cap arm emits before releasing (#2461): the cap
 /// itself (120s in production) and every claimed port that is not refusing
 /// connections at the expiry, each with its probe outcome.
-fn fixed_port_timeout_diagnostic(probes: &[(u16, FixedPortProbe)], cap: Duration) -> String {
+fn fixed_port_timeout_diagnostic(probes: &[(u16, FixedPortProbe<()>)], cap: Duration) -> String {
     let not_refused: Vec<String> = probes
         .iter()
         .filter_map(|(port, probe)| match probe {
             FixedPortProbe::Refused => None,
-            FixedPortProbe::Accepted => Some(format!("{port}: still accepting connections")),
+            FixedPortProbe::Accepted(_) => Some(format!("{port}: still accepting connections")),
             FixedPortProbe::Unknown(error) => Some(format!("{port}: probe not a refusal: {error}")),
         })
         .collect();
@@ -1243,19 +1204,15 @@ async fn claim_fixed_ports(ports: &[u16]) -> FixedPortRegion {
 /// the suite.
 async fn assert_ports_closed_after_stop(ports: &[u16]) {
     for port in ports {
-        let probe = match tokio::time::timeout(
+        let probe = crate::test_fixed_port_probe::probe_fixed_port(
+            "5-second close probe",
+            ("127.0.0.1", *port),
             Duration::from_secs(5),
-            tokio::net::TcpStream::connect(("127.0.0.1", *port)),
         )
-        .await
+        .await;
+        if let Some(failure) =
+            crate::test_fixed_port_probe::fixed_port_probe_failure("#2462", *port, "closed", &probe)
         {
-            Ok(connected) => connected.map(|_| ()),
-            Err(_elapsed) => Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "#2462 the 5-second close-probe bound elapsed",
-            )),
-        };
-        if let Some(failure) = fixed_port_close_failure(*port, classify_fixed_port_probe(probe)) {
             crate::negative_assert!(false, "{failure}");
         }
     }
@@ -1411,18 +1368,21 @@ fn fixed_port_region_releases_only_after_its_listener_closes() {
 /// failure carrying its kind/errno, never a pass.
 #[test]
 fn only_a_refusal_proves_the_fixed_port_closed() {
+    use crate::test_fixed_port_probe::{classify_fixed_port_probe, fixed_port_probe_failure};
     crate::negative_assert!(
-        fixed_port_close_failure(
+        fixed_port_probe_failure(
+            "#2462",
             28645,
-            classify_fixed_port_probe(Err(std::io::Error::from(
+            "closed",
+            &classify_fixed_port_probe(Err::<(), std::io::Error>(std::io::Error::from(
                 std::io::ErrorKind::ConnectionRefused
-            )))
+            ))),
         )
         .is_none(),
         "#2462 a refused probe is the only shape that proves the port closed"
     );
     let accepted = crate::test_negative_receipt::expect_some(
-        fixed_port_close_failure(28645, classify_fixed_port_probe(Ok(()))),
+        fixed_port_probe_failure("#2462", 28645, "closed", &classify_fixed_port_probe(Ok(()))),
         "#2462 an accepted connect is a named failure",
     );
     crate::negative_assert!(
@@ -1430,9 +1390,13 @@ fn only_a_refusal_proves_the_fixed_port_closed() {
         "#2462 an accepted connect names the still-open listener, got: {accepted}"
     );
     let exhausted = crate::test_negative_receipt::expect_some(
-        fixed_port_close_failure(
+        fixed_port_probe_failure(
+            "#2462",
             28645,
-            classify_fixed_port_probe(Err(std::io::Error::from_raw_os_error(24))),
+            "closed",
+            &classify_fixed_port_probe(Err::<(), std::io::Error>(
+                std::io::Error::from_raw_os_error(24),
+            )),
         ),
         "#2462 a non-refused error kind is a named failure",
     );
@@ -1441,9 +1405,11 @@ fn only_a_refusal_proves_the_fixed_port_closed() {
         "#2462 the fd-exhaustion shape carries its raw os error, got: {exhausted}"
     );
     let timed_out = crate::test_negative_receipt::expect_some(
-        fixed_port_close_failure(
+        fixed_port_probe_failure(
+            "#2462",
             28645,
-            classify_fixed_port_probe(Err(std::io::Error::new(
+            "closed",
+            &classify_fixed_port_probe(Err::<(), std::io::Error>(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "#2462 the 5-second close-probe bound elapsed",
             ))),

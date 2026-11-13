@@ -59,6 +59,12 @@ mod dream_tail_race;
 #[cfg(test)]
 #[path = "../tests/common/exact_receipt.rs"]
 mod test_exact_receipt;
+// #2461 fix-r6: the shared connect-probe judgment for every fixed-port
+// criterion (refusal proves, everything else is a named failure). See the
+// module doc for why it lives under tests/common.
+#[cfg(test)]
+#[path = "../tests/common/fixed_port_probe.rs"]
+mod test_fixed_port_probe;
 #[cfg(test)]
 #[path = "../tests/common/native_ws_sample.rs"]
 mod test_native_ws_sample;

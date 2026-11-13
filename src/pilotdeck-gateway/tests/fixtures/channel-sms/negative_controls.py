@@ -162,6 +162,19 @@ switches = [
     ('sms-v4-probe-unknown-as-unshared', SMS / 'mod.rs',
      'classify_v4_probe_other_errors_stay_unknown',
      '#1589 v4 probe must keep unattributable errors Unknown'),
+    # #2461 fix-r6 (review P2#5 / structural #3): the replay connect arm folds
+    # every error kind into `refused: true` (the pre-#2462 shape) — a false
+    # refused passes the oracle comparison while the listener is still up.
+    # Killed by the pure classifier test, no real port held.
+    ('sms-replay-connect-unknown-as-refused', SMS / 'tests.rs',
+     'replay_connect_probe_unknown_errors_stay_named',
+     '#2462 the replay connect probe must fail by name, not as refused'),
+    # #2461 fix-r6 (review P2#5 / structural #3): the raw_request connect
+    # mapping folds every transport failure into ConnectRefused (the pre-#2462
+    # shape) — same masquerade, pinned by its own pure-function test.
+    ('sms-raw-request-connect-unknown-as-refused', SMS / 'mod.rs',
+     'raw_request_connect_mapping_keeps_unknown_errors_named',
+     '#2462 a non-refused connect stays a named raw-request failure'),
     # #1729: recording type drift must fail before replay can use defaults.
     ('sms-oracle-recorded-header-map', SMS / 'tests.rs', 'recorded_header_map_rejects_wrong_type',
      '#1339 #1729 rejects headers type drift'),

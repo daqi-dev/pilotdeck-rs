@@ -33,6 +33,9 @@ from negative_suite import matrix_main
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/native_process/channels_tests.rs'
+# #2461 fix-r6: the shared fixed-port classifier lives here now; rows 4-6
+# mutate it (see REFUSED_GUARD / ACCEPTED_ARM above).
+classifier = root / 'src/pilotdeck-gateway/tests/common/fixed_port_probe.rs'
 
 # #2461 row 1: the cap arm's emit, deleted. The release still happens, so only
 # the emission count can notice the diagnostic is gone.
@@ -53,14 +56,18 @@ SEND_BLOCK = (
 
 # #2462 rows 4+6: the ConnectionRefused guard. Row 4 collapses it into a
 # catch-all refusal; row 6 re-aims it at a kind no refusal ever carries.
+# #2461 fix-r6: the classifier moved to the shared tests-only module
+# (`tests/common/fixed_port_probe.rs`), so the anchors follow it there; the
+# kill cell stays the same nail test (it calls the shared classifier now).
 REFUSED_GUARD = (
     '        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {\n'
     '            FixedPortProbe::Refused\n'
     '        }\n'
 )
 
-# #2462 row 5: the Ok arm, reclassified as a refusal.
-ACCEPTED_ARM = '        Ok(()) => FixedPortProbe::Accepted,\n'
+# #2462 row 5: the Ok arm, reclassified as a refusal (the shared generic form
+# carries the accepted payload).
+ACCEPTED_ARM = '        Ok(value) => FixedPortProbe::Accepted(value),\n'
 
 # #2463 rows 7+8: the alignment chain — the boundary-safe `get` plus the
 # `.or_else` forward-alignment. Row 7 reverts it to the panicking byte slice;
@@ -123,16 +130,16 @@ MUTATIONS = [
      [ORDERING_HELD]),
     # Every error becomes a refusal: EMFILE stops being a named failure, which
     # is precisely the false PASS #2462 was filed for.
-    ('close-probe-reads-any-error-as-refused', source, REFUSED_GUARD,
+    ('close-probe-reads-any-error-as-refused', classifier, REFUSED_GUARD,
      '        Err(_error) => FixedPortProbe::Refused,\n',
      [PROBE_OTHER]),
     # An accepted connect becomes closed: the still-open listener passes.
-    ('close-probe-reads-accepted-as-closed', source, ACCEPTED_ARM,
-     '        Ok(()) => FixedPortProbe::Refused,\n',
+    ('close-probe-reads-accepted-as-closed', classifier, ACCEPTED_ARM,
+     '        Ok(_value) => FixedPortProbe::Refused,\n',
      [PROBE_ACCEPTED]),
     # The guard no longer matches a refusal: the only closed-port proof turns
     # into a named failure.
-    ('close-probe-refusal-never-matches', source, REFUSED_GUARD,
+    ('close-probe-refusal-never-matches', classifier, REFUSED_GUARD,
      '        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {\n'
      '            FixedPortProbe::Refused\n'
      '        }\n',
@@ -165,7 +172,7 @@ def main():
     # No `any_cell`: every mutation must fail its declared cell outright.
     # Prefix '': every cell is a full module path (see the docstring).
     return matrix_main(root, __file__, '', MUTATIONS,
-                       passed_count=1, child_count=0, paths=[source],
+                       passed_count=1, child_count=0, paths=[source, classifier],
                        exact=True, args=args)
 
 
