@@ -1374,6 +1374,16 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_RE 派生自 check-pr-gate 的 RESIDUAL_MARKER（同一正则，不复制第二份）")
         fails += 0 if ok else 1
 
+        # 14) N≥4 门槛单源（#3056 fix-r2，DS r2 boundary#3 P2）：任务书侧 RESIDUAL_MIN_ROUND 必须
+        # 派生自 check-pr-gate.py（同一数值），且赋值行不得再写字面量 4——两份字面量会在改阈值时
+        # 漂移，一个闸门要 residual、另一个不要，同一 PR 两边结论相反（假 PASS / 假 FAIL 分歧）
+        _m_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("RESIDUAL_MIN_ROUND = ")]
+        ok = (ctbs.RESIDUAL_MIN_ROUND == _gate.RESIDUAL_MIN_ROUND and len(_m_assign) == 1
+              and "_gate_module()" in _m_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_MIN_ROUND 派生自 check-pr-gate（同一门槛，不复制第二份）")
+        fails += 0 if ok else 1
+
 
     # 命令行契约
     sys.stdout = _real_stdout          # 恢复：下面的 CLI 契约与 PARSE_EST 用各自的 len() 计数

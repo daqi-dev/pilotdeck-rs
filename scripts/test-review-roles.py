@@ -1178,9 +1178,10 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append(f"fix-r6 P0 转抓：head=chore:sync board + 更早提交 fix-r5 应按修复轮 5 拒收缺 fixtype：{errs}")
         if not any("pdrs-residual" in e for e in errs):
             fails.append(f"fix-r6 P0 转抓：fix-r5（N≥4）应同时要求 pdrs-residual：{errs}")
-        # 同一范围齐字段（fixtype + residual）应过闸
+        # 同一范围齐字段（fixtype + residual）应过闸；fix-r2 起「范围含别的单的修复提交」须
+        # 在正文并写关联（Refs #3047）——不写会触发异单旁路 fail-closed（见下方 fix-r2 段）
         ok_body = (p0_body.replace("readonly=tools", "readonly=tools fixtype=结构性")
-                   + "<!-- pdrs-residual: 上轮洞是 head 单标题信号面，集合语义收口 -->\n")
+                   + "<!-- pdrs-residual: 上轮洞是 head 单标题信号面，集合语义收口 -->\nRefs #3047\n")
         errs = gate2(ok_body, h_sync, c_base)
         if errs:
             fails.append(f"fix-r6 正控：集合判修复轮 + 齐字段应过闸：{errs}")
@@ -1214,6 +1215,61 @@ def _run(gate, rrr, out_base: Path) -> int:
         errs = gate2("test: #123 fix-r5 的场景已补\n\n" + blk_t.format(h=h_plain2) + "Refs #1\n", h_plain2, h_sync)
         if not any("fix-r5" in e and "fixtype" in e for e in errs):
             fails.append(f"fix-r6 兜底不回退：范围全不命中 + 正文首行 fix-r5 应按修复轮 5 要求 fixtype：{errs}")
+
+        # —— #3056 fix-r2 P0（DS r2 boundary#1 + MM r2 boundary 同撞，取高）：「配对集为空 /
+        # 与 issues 不相交」两条旁路 fail-closed 封堵 ——
+        # 形态 (a) 正文写合法旁路 <!-- no-issue 理由 --> → issues=∅；形态 (b) 正文关联另一单
+        # （Closes #3042）而标题为 fix(gateway) #3999 fix-r5：…。两形态下旧判据把标题轮号全部
+        # 丢弃 → fix_round=None → fixtype/多块一致/N≥4 residual 整段跳过，规则 2 又放行
+        # （no-issue 是明文出口）＝修复轮机制被假 PASS。gate 对这两个形状必须红。
+        # 旁路夹具走独立分支（不叠在主线 HEAD 上，后续 h_empty 等范围测试不受它影响）
+        subprocess.run([*g2, "checkout", "-q", "-b", "fixr2-bypass"], check=True)
+        h_bypass = titled2("fix(gateway) #3999 fix-r5：停泊补 waker")
+        subprocess.run([*g2, "checkout", "-q", "-"], check=True)
+        bypass_blk = blk_t.format(h=h_bypass)
+        # 形态 (b) 负控：异单关联——标题 #3999 ∉ 正文关联 {3042}，必须红且写明「异单旁路」
+        b_body = "## 概述\n\n异单关联旁路形态。\n\n" + bypass_blk + "Closes #3042\n"
+        errs = gate2(b_body, h_bypass, h_plain2)
+        if not any("异单旁路" in e and "fail-closed" in e and "#3999" in e for e in errs):
+            fails.append(f"fix-r2 P0 形态 b：异单关联的修复轮标题应 fail-closed 拒收：{errs}")
+        # 形态 (a) 负控：no-issue 正文——标题 #3999 配对不上空关联集，必须红且写明「no-issue 旁路」
+        a_body = "## 概述\n\nno-issue 旁路形态。\n\n" + bypass_blk + "<!-- no-issue 纯文档轮豁免说明文字足够长 -->\n"
+        errs = gate2(a_body, h_bypass, h_plain2)
+        if not any("no-issue 旁路" in e and "fail-closed" in e and "#3999" in e for e in errs):
+            fails.append(f"fix-r2 P0 形态 a：no-issue 正文的修复轮标题应 fail-closed 拒收：{errs}")
+        # 正控：同一标题 + 正文补上关联（Refs #3999）+ 齐字段 → 过闸（旁路封堵不误伤正常修复轮）
+        ok2_body = ("## 概述\n\n旁路封堵正控。\n\n"
+                    + bypass_blk.replace("readonly=tools", "readonly=tools fixtype=结构性")
+                    + "<!-- pdrs-residual: 上轮洞是配对判定的空集分支，fail-closed 收口 -->\nRefs #3999\n")
+        errs = gate2(ok2_body, h_bypass, h_plain2)
+        if errs:
+            fails.append(f"fix-r2 P0 正控：标题单号入关联集 + 齐字段应过闸：{errs}")
+        # board 尾回归护栏（fix-r5 修 2 的合法形态不许被 foreign 误伤）：范围含 board 尾标题
+        # （引用 #2691/#2692 的轮号在题头区外）+ Refs #3074 → 无 foreign 拒收、轮号不被丢弃
+        # 之外也不多要（本单 fix-r2 计入 → 只要求 fixtype，不要求 residual）
+        bp_body = "## 概述\n\nboard 尾回归护栏。\n\n" + blk_t.format(h=h_sync) + "Refs #3074\n"
+        errs = gate2(bp_body, h_sync, h_r5)
+        if any("旁路" in e for e in errs) or not any("fix-r2" in e and "fixtype" in e for e in errs):
+            fails.append(f"fix-r2 P0 board 尾护栏：题头区外引用别的单不得触发 foreign 拒收（且本单 "
+                         f"fix-r2 仍要求 fixtype）：{errs}")
+        # 纯函数负控：题头区内非空不相交链 → foreign；题头区外 / 链有交集 → 不 foreign
+        if len(gate.foreign_fixround_pairs(["fix(gateway) #3056 fix-r5：x"], frozenset())) != 1:
+            fails.append("fix-r2 P0 纯函数：题头区引用 + 空关联集应列 1 条 foreign")
+        if gate.foreign_fixround_pairs(["fix(gateway) #3056 fix-r5：x"], frozenset({"3056"})):
+            fails.append("fix-r2 P0 纯函数：链 ∩ issues ≠ ∅ 不得列 foreign")
+        if gate.foreign_fixround_pairs([board_t], frozenset({"3074"})):
+            fails.append("fix-r2 P0 纯函数：board 尾（题头区外引用别的单）不得列 foreign")
+        if gate.foreign_fixround_pairs(["chore: 无轮号提交"], frozenset()):
+            fails.append("fix-r2 P0 纯函数：无 fix-rN 的标题不得列 foreign")
+        # fix-r2 DS boundary#5 P2：全角冒号后 token + 后随 #N 就近配对（`fix(gateway)：fix-r5 修
+        # #3074`）——旧判据 i=-1 且题头区外 → 判不出 → fix_round=None → 同一假 PASS 面
+        if gate.fix_round_from_title("fix(gateway)：fix-r5 修 #3074", frozenset({"3074"})) != 5:
+            fails.append("fix-r2 DS#5 正控：token 后方最近 #N ∈ issues 应按后向配对计入（5）")
+        if gate.fix_round_from_title("fix(gateway)：fix-r5 修 #3074", frozenset({"999"})) is not None:
+            fails.append("fix-r2 DS#5 负控：后方最近 #N ∉ issues 不得计入（已知窄窗在 docstring 登记）")
+        if gate.fix_round_from_title("chore(state) 交接段：#9999 记录 fix-r6 复盘（前方 #N 属别的单、无后随 #N）",
+                                     frozenset({"2691"})) is not None:
+            fails.append("fix-r2 DS#5 负控：题头区外 + 前方 #N 配不上 + 无后随 #N 的板尾裸号仍不计入")
         # 无 --head 端到端（任务书验 4 + 修 4，boundary#4 P2）：本地 --body-file 不传
         # --head/--base → 主信号缺失，兜底 = 首行宽松 + 全正文结构化回显扫描——badge 开头、
         # 非首行 `fix(scripts): #1 fix-r5：…` 是结构化回显（scope 括号 + #N + 配到本 PR 单
@@ -1384,6 +1440,22 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"rerun-clobber：崩溃残留 {leftover} 应 rc=2 拒跑（rc={cp.returncode}、{cp.stderr.strip()[:150]}）")
             if (d / leftover).read_text() != "old bytes\n":
                 fails.append(f"rerun-clobber：{leftover} 不得被改动")
+        # fix-r2（DS r2 boundary#2 P2）：同目录 dry-run → 实跑正控——dry-run 不再落 diff.patch
+        # （原件清单成员），预览件改名 dryrun-diff.patch；实跑不被「已有评审原件」误拒
+        dr = out_base / "dryrun-then-real"
+        cp1 = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                              "--worktree", str(wt), "--base", "HEAD~1", "--out", str(dr),
+                              "--roles", "simplify", "--dry-run"], capture_output=True, text=True, env=dict(os.environ))
+        if (cp1.returncode != 0 or (dr / "diff.patch").exists() or not (dr / "dryrun-diff.patch").exists()):
+            fails.append(f"fix-r2 DS#2 dry-run：应 rc=0 且落 dryrun-diff.patch（不落原件名 diff.patch）"
+                         f"（rc={cp1.returncode}，{sorted(p.name for p in dr.iterdir())}）：{cp1.stderr.strip()[:150]}")
+        cp2 = subprocess.run([sys.executable, "-I", str(RUNNER), "--claude-bin", str(fake), "--env-file", str(envfile),
+                              "--worktree", str(wt), "--base", "HEAD~1", "--out", str(dr),
+                              "--roles", "simplify"], capture_output=True, text=True, env=dict(os.environ))
+        if (cp2.returncode != 0 or "原件" in cp2.stderr or not (dr / "diff.patch").exists()
+                or not (dr / "simplify.md").exists()):
+            fails.append(f"fix-r2 DS#2 正控：同目录 dry-run 后实跑应照常出件（不被 dry-run 的预览件当原件误拒）"
+                         f"（rc={cp2.returncode}，stderr={cp2.stderr.strip()[:150]}）")
         # 修 2（DS concurrency#1 = MM2 concurrency#2）：out 目录 flock 互斥——持锁进程在跑时，
         # 第二个同 --out 的进程必须硬拒且文案与「已有原件」区分（TOCTOU 窗口内原件尚未落盘，
         # 清单扫描拦不住并发互相截断证据）
@@ -1682,6 +1754,27 @@ def _fixtype_path_tests(gate, fails: list[str]) -> None:
         errs = gate.check(w_nf_na, h_code, "", base, str(repo))
         if not any("不限于文档白名单" in e for e in errs):
             fails.append(f"fixtype-path：非修复轮 waiver + 不适用（触代码路径）应拒收：{errs}")
+
+        # fix-r2（DS r2 boundary#4 P2）：merge-base 口径正控——落后分支上 main 侧新增的代码
+        # 文件不是本分支的反向变更（实测 _tmp/20261114-3074-fixr2/ds4-twopoint-threepoint-probe.txt：
+        # 两点 diff 列 src/new_code.py + state/board.md，merge-base 基点只列 state/board.md）。
+        # 旧两点口径会把纯 docs 分支误报「不限于文档白名单」（必须 rebase 才能过＝假 FAIL）
+        git("checkout", "-q", "-b", "docs-behind", base)
+        h_behind = commit("state/board.md", "b2\n", "docs on behind branch")
+        git("checkout", "-q", "main")
+        main_tip = commit("src/late.py", "x = 1\n", "main advanced after branch")
+        if gate.check(fixbody(h_behind), h_behind, "", main_tip, str(repo)):
+            fails.append(f"fix-r2 DS#4 正控：落后分支 docs-only + 不适用 应放行（merge-base 基点不吃 main "
+                         f"侧新增代码文件）：{gate.check(fixbody(h_behind), h_behind, '', main_tip, str(repo))}")
+        # merge-base 起不来：base/head 未知提交 → fail-closed 分条报「算不出 merge-base」
+        errs = gate.check(fixbody(h_behind), h_behind, "", "f" * 40, str(repo))
+        if not any("算不出 merge-base" in e for e in errs):
+            fails.append(f"fix-r2 DS#4 负控：base 未知提交应分条报「算不出 merge-base」（fail-closed）：{errs}")
+        # diff 为空（base==head，merge-base=head → 空 diff）→ 分条报「diff 为空」，不再并进
+        # 「不限于文档白名单」误导定位
+        errs = gate.check(fixbody(main_tip), main_tip, "", main_tip, str(repo))
+        if not any("diff 为空" in e for e in errs) or any("不限于文档白名单" in e for e in errs):
+            fails.append(f"fix-r2 DS#4 负控：空 diff 应分条报「diff 为空」而非白名单矛盾：{errs}")
 
 
 if __name__ == "__main__":
