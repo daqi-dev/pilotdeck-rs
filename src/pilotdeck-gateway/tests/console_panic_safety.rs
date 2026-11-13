@@ -16,12 +16,18 @@
 //! registration lines (`channel/runtime_status.rs`,
 //! `channel/weixin/state.rs`, `switch.rs`, `lib.rs`), the model dump
 //! lines (`runtime/model/http.rs`, its stdout receipt included), and
-//! `refresh.rs`'s stdout `log` default. The lib-side probes (`http_proxy::tests`,
+//! `refresh.rs`'s stdout `log` default. fix-r3 added the TLS CA warn
+//! lines (`runtime/model/http/tls.rs`, on `client_config()`'s
+//! `OnceLock` path) and, with them, the tree scan
+//! (`production_tree_stays_eprintln_free`) that polices the whole
+//! production tree instead of only the listed files — tls.rs never named
+//! `console_log_line`, so no derived rule had pulled it into either
+//! table while it still carried eight `eprintln!` sites. The lib-side probes (`http_proxy::tests`,
 //! `upstream::tests`, `runtime::memory::maintenance::tests`, plus
 //! `native_process::channels_tests`' failing-sink unit case) drive the
 //! reachable sites in re-exec'd children with EPIPE stderr; this file owns
 //! what only the real binary can pin — the entry's own three sites — plus
-//! the lexical guard that keeps every #2558 file `eprintln!`-free for the
+//! the lexical guards that keep every #2558 file `eprintln!`-free for the
 //! branches no portable child can reach (the accept-error line has no
 //! deterministic fd-exhaustion trigger, and a panic inside the entry's
 //! spawned connection task is contained by tokio, invisible to this
@@ -48,12 +54,15 @@ use std::{
 /// re-exports it, and `native_ws.rs`, which routed its accept-error lines
 /// through the writer in #2434; fix-r2 added the assembly's own
 /// diagnostics, the default tail/debug/log sinks, and the status/dump/
-/// abort/registration lines listed in the module docs). Kept complete
-/// against new callers by `shared_writer_call_sites_stay_listed`. Scanned
-/// through the shared proc-macro2 lexer (`common/source_inputs`), never a
-/// text search: comments and string literals — including the doc comments
-/// that quote the macro — are token kinds there and cannot false-positive.
-const EPRINTLN_FREE_SOURCES: [&str; 19] = [
+/// abort/registration lines listed in the module docs; fix-r3 added the
+/// TLS CA warn lines in `runtime/model/http/tls.rs`). Kept complete
+/// against new callers by `shared_writer_call_sites_stay_listed`, and
+/// since fix-r3 every entry is also an anchor of the whole-tree scan in
+/// `production_tree_stays_eprintln_free`. Scanned through the shared
+/// proc-macro2 lexer (`common/source_inputs`), never a text search:
+/// comments and string literals — including the doc comments that quote
+/// the macro — are token kinds there and cannot false-positive.
+const EPRINTLN_FREE_SOURCES: [&str; 20] = [
     "src/main.rs",
     "src/http_proxy.rs",
     "src/upstream.rs",
@@ -73,6 +82,7 @@ const EPRINTLN_FREE_SOURCES: [&str; 19] = [
     "src/switch.rs",
     "src/runtime/model/http.rs",
     "src/lib.rs",
+    "src/runtime/model/http/tls.rs",
 ];
 
 /// Lexical guard: none of the #2558 files may write an error console line
@@ -207,13 +217,115 @@ fn assert_no_eprintln_skips_only_cfg_test_items() {
 /// — exactly how `native_ws.rs` (a #2434 caller) sat outside the table
 /// until fix-r1. Naming the writer counts a call, the definition, or a
 /// re-export; comments and doc text quote it only as non-`Ident` tokens.
-/// Test modules (`tests.rs` / `*_tests.rs`, the crate's two test-file
-/// spellings) are excluded: their diagnostics are libtest-support code,
-/// not product console lines.
+/// Test-support files (the crate's three spellings, see
+/// [`is_test_support_source`]) are excluded: their diagnostics are
+/// libtest-support code, not product console lines.
 #[test]
 fn shared_writer_call_sites_stay_listed() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut derived = Vec::new();
+    for relative in production_rust_sources(manifest) {
+        let bytes = fs::read(manifest.join(&relative))
+            .unwrap_or_else(|error| panic!("#2558 reading {relative}: {error}"));
+        let Ok(source) = String::from_utf8(bytes) else {
+            // A non-UTF-8 payload is not Rust source (rustc cannot
+            // compile it either); it cannot name the writer.
+            continue;
+        };
+        let tokens = source_inputs::lex_source(&source).unwrap_or_else(|error| {
+            panic!("#2558 {relative} is not lexable Rust; fail closed: {error}")
+        });
+        if tokens_contain_ident(&tokens, "console_log_line") {
+            derived.push(relative);
+        }
+    }
+    // The walk itself must find callers: a silently broken walk (wrong
+    // root, wrong exclusion) would pass vacuously, so anchor it on a
+    // caller every shape of this crate has had since #2558 r0 — the A4
+    // entry's own file.
+    assert!(
+        derived.iter().any(|caller| caller == "src/main.rs"),
+        "#2558 the walk found no caller in src/main.rs; the derived set is \
+         wrong: {derived:?}"
+    );
+    for caller in &derived {
+        assert!(
+            EPRINTLN_FREE_SOURCES.contains(&caller.as_str()),
+            "#2558 {caller} names the shared writer but is not in \
+             EPRINTLN_FREE_SOURCES; the eprintln-free guard never scans it"
+        );
+    }
+}
+
+/// fix-r3 (review P1): the whole production tree, not only the listed
+/// files, stays `eprintln!`-free. `runtime/model/http/tls.rs` sat outside
+/// both tables while carrying eight production `eprintln!` sites on
+/// `client_config()`'s `OnceLock` path: it never named `console_log_line`,
+/// so the derived listing rule never pulled it in, and nobody had added it
+/// to `EPRINTLN_FREE_SOURCES` — both guards were green while the crate
+/// still panicked on a failed stderr write. This scan closes that escape
+/// class: any production file under `src/` that writes the panicking
+/// `eprintln!` fails, listed or not. Items gated by `#[cfg(test)]` inside
+/// a scanned file are skipped by the same detector the listed-file scan
+/// uses; test-support file spellings are excluded by
+/// [`production_rust_sources`]. An unhandled test-gating spelling (a
+/// top-level `#[test] fn`, a `#[cfg(all(test, ...))]` module file with a
+/// production name) fails the scan rather than passing silently — extend
+/// the exclusion consciously then.
+#[test]
+fn production_tree_stays_eprintln_free() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sources = production_rust_sources(manifest);
+    // A silently broken walk (wrong root, no descent into subdirectories,
+    // an over-wide exclusion) would pass the scan vacuously; every listed
+    // #2558 file must be reached.
+    for listed in EPRINTLN_FREE_SOURCES {
+        assert!(
+            sources.iter().any(|source| source == listed),
+            "#2558 the production walk skipped the #2558 source {listed}; \
+             the tree scan would pass without scanning it: found {sources:?}"
+        );
+    }
+    for relative in &sources {
+        let bytes = fs::read(manifest.join(relative))
+            .unwrap_or_else(|error| panic!("#2558 reading {relative}: {error}"));
+        let Ok(source) = String::from_utf8(bytes) else {
+            // A non-UTF-8 payload is not Rust source (rustc cannot
+            // compile it either); it cannot hold a production line.
+            continue;
+        };
+        let tokens = source_inputs::lex_source(&source)
+            .unwrap_or_else(|error| panic!("#2558 lexing {relative}: {error}"));
+        // A lexed-to-empty file (truncated or emptied) would pass the scan
+        // vacuously; the scan is only evidence with tokens to scan.
+        assert!(
+            !tokens.is_empty(),
+            "#2558 {relative} lexed to an empty token stream; the guard would \
+             pass without scanning anything"
+        );
+        assert_no_eprintln(&tokens, relative);
+    }
+}
+
+/// The crate's three src-side test-support file spellings: the inline
+/// `mod tests` targets (`tests.rs`, `*_tests.rs`) and the `test_*` family
+/// that `lib.rs` declares under `#[cfg(test)]` (`test_process`,
+/// `test_scratch`, `test_support`, ... — gated at the declaration, so the
+/// files themselves carry no `#[cfg(test)]` items to skip). Every src/
+/// module that is test-only by declaration today is one of these names;
+/// a new spelling is not exempt, and its diagnostics fail the production
+/// scan until this predicate grows (fail-closed).
+fn is_test_support_source(name: &str) -> bool {
+    name == "tests.rs" || name.ends_with("_tests.rs") || name.starts_with("test_")
+}
+
+/// Every production Rust source under `src/`, as manifest-relative
+/// slash-separated paths, in the lexical guards' vocabulary: all `.rs`
+/// files except the test-support spellings
+/// ([`is_test_support_source`]). Deterministic order (each directory's
+/// entries sorted) so a failure names the same file on every run.
+fn production_rust_sources(manifest: &Path) -> Vec<String> {
+    let mut sources = Vec::new();
     let mut stack = vec![manifest.join("src")];
     while let Some(directory) = stack.pop() {
         let mut entries: Vec<_> = fs::read_dir(&directory)
@@ -238,52 +350,22 @@ fn shared_writer_call_sites_stay_listed() {
             if path.extension().is_none_or(|extension| extension != "rs") {
                 continue;
             }
-            let is_test_module = path
+            if path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "tests.rs" || name.ends_with("_tests.rs"));
-            if is_test_module {
+                .is_some_and(is_test_support_source)
+            {
                 continue;
             }
-            let bytes = fs::read(&path)
-                .unwrap_or_else(|error| panic!("#2558 reading {}: {error}", path.display()));
-            let Ok(source) = String::from_utf8(bytes) else {
-                // A non-UTF-8 payload is not Rust source (rustc cannot
-                // compile it either); it cannot name the writer.
-                continue;
-            };
-            let tokens = source_inputs::lex_source(&source).unwrap_or_else(|error| {
-                panic!(
-                    "#2558 {relative} is not lexable Rust; fail closed: {error}",
-                    relative = path.display()
-                )
-            });
-            if tokens_contain_ident(&tokens, "console_log_line") {
-                derived.push(
-                    path.strip_prefix(manifest)
-                        .expect("#2558 source sits under the manifest")
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                );
-            }
+            sources.push(
+                path.strip_prefix(manifest)
+                    .expect("#2558 source sits under the manifest")
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
         }
     }
-    // The walk itself must find callers: a silently broken walk (wrong
-    // root, wrong exclusion) would pass vacuously, so anchor it on a
-    // caller every shape of this crate has had since #2558 r0 — the A4
-    // entry's own file.
-    assert!(
-        derived.iter().any(|caller| caller == "src/main.rs"),
-        "#2558 the walk found no caller in src/main.rs; the derived set is \
-         wrong: {derived:?}"
-    );
-    for caller in &derived {
-        assert!(
-            EPRINTLN_FREE_SOURCES.contains(&caller.as_str()),
-            "#2558 {caller} names the shared writer but is not in \
-             EPRINTLN_FREE_SOURCES; the eprintln-free guard never scans it"
-        );
-    }
+    sources
 }
 
 fn tokens_contain_ident(tokens: &[SourceToken], word: &str) -> bool {
