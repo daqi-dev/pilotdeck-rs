@@ -79,15 +79,19 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import (claim_dir, missing_target, refuse, registered,
+                                refuse_unusable_target)
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/test_process.rs'
 # #2133: neg-for-diff.sh derives the host's negative-control list from the
 # diff and matches tables by the literal `dir/file` of every changed file.
 # `SOURCE` spells the whole path inline, so its key is already in this
-# table's text; the shared helper this table imports is not — the import
-# line spells a module name while the host keys `fixtures/negative_process.py`.
-DISCOVERY_ANCHORS = ('fixtures/negative_process.py',)
+# table's text; the shared helpers this table imports are not — the import
+# lines spell module names while the host keys `fixtures/<helper>.py`
+# (fix-r7 added the negative_selection import, so its key is registered too).
+DISCOVERY_ANCHORS = ('fixtures/negative_process.py',
+                     'fixtures/negative_selection.py')
 
 # Bound parent test -> cargo target selection for the workspace manifest.
 CARGO_TARGETS = {
@@ -196,6 +200,24 @@ MUTATIONS = [
      '#1723 the ulimit -f unit probe was still running'),
 ]
 
+# fix-r7 (MM sibling#1): the run's denominator is this literal, not
+# `len(MUTATIONS)` — a dropped, renamed, duplicated or reordered row is a
+# startup refusal (rc 2) before any mutation runs, never a silently shorter
+# run that still reports "N/N killed" for whatever survived
+# (`specs/negative-controls/README.md`; the family shape is every sibling
+# table's EXPECTED_NAMES below its mutation table).
+EXPECTED_NAMES = (
+    'kernel-cap-removed',
+    'hit-cap-not-overflow',
+    'reuse-not-flagged',
+    'stopped-not-recorded',
+    'children-only-sweeps-nothing',
+    'finished-on-its-own-merged',
+    'fsize-unit-constant-trusted',
+    'ended-its-own-merged',
+    'probe-hang-deadline',
+)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -207,16 +229,30 @@ def main():
     # against, and restored to, that recorded tree.
     parser.add_argument('--baseline', default='HEAD')
     args = parser.parse_args()
-    if not os.environ.get('CARGO_TARGET_DIR'):
-        parser.error('CARGO_TARGET_DIR must be supplied by the caller')
-    if args.mutations and not set(args.mutations) <= {row[0] for row in MUTATIONS}:
-        parser.error('unknown mutation name')
+    # fix-r7: every refusal below is a "never started" refusal (rc 2) with the
+    # cause named on stderr, before the evidence directory is claimed — the
+    # four-way exit table in `specs/negative-controls/README.md`. The old
+    # startup let a taken output directory raise FileExistsError (rc 1, which
+    # a host reads as "ran and did not come out green") and refused an
+    # unusable target only after that claim.
+    try:
+        registered(MUTATIONS, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
+    if args.mutations:
+        unknown = [name for name in args.mutations
+                   if name not in {row[0] for row in MUTATIONS}]
+        if unknown:
+            refuse(f'unknown mutation name {", ".join(unknown)}')
+    if missing_target():
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse_unusable_target()
     selected = [row for row in MUTATIONS
                 if not args.mutations or row[0] in args.mutations]
     env = os.environ.copy()
     env['CARGO_PROFILE_DEV_DEBUG'] = 'line-tables-only'
     env['CARGO_PROFILE_TEST_DEBUG'] = 'line-tables-only'
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output = claim_dir(args.output)
 
     def save(name, text):
         with (args.output / name).open('x') as stream:

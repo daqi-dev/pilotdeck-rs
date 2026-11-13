@@ -185,7 +185,12 @@ fn read_capped(path: &std::path::Path) -> String {
     if let Err(error) = file.take(RERUN_OUTPUT_LIMIT + 1).read_to_end(&mut bytes) {
         return format!("<rerun output unreadable: {error}>");
     }
-    let truncated = bytes.len() as u64 > RERUN_OUTPUT_LIMIT;
+    // fix-r7 (DS boundary r4 #2): `>=`, the same direction as the sampler's
+    // `oversized()`. A writer the kernel's `SIGXFSZ` stopped leaves the file
+    // clamped at exactly the limit, so even `take(LIMIT + 1)` reads back
+    // exactly LIMIT bytes — the strict `>` of the sampled era appended no
+    // truncation marker to a 64 MiB body that was in fact cut at the cap.
+    let truncated = bytes.len() as u64 >= RERUN_OUTPUT_LIMIT;
     let end = bytes.len().min(RERUN_OUTPUT_LIMIT as usize);
     let mut text = String::from_utf8_lossy(&bytes[..end]).into_owned();
     if truncated {
@@ -550,6 +555,17 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
             overflow = too_big;
             stopped = true;
             // The leader is still alive, so the group id is still ours.
+            // fix-r7 (arbitrated MM concurrency#1, 2026-11-14): this stop
+            // also relies on the surviving-writer mode's SIGXFSZ disposition
+            // outliving the temporary current-thread `Runtime` that
+            // registered it — `ignore_sigxfsz_like_the_gateway` drops the
+            // `Runtime` the moment `block_on` returns and keeps only the
+            // `Signal`, and the disposal here depends on that drop not
+            // unregistering the child's signal dispositions. Measured on
+            // both platforms (PR #3088 arbitration): the writer survives
+            // RLIMIT_FSIZE and is reaped by this group kill with signal 9,
+            // never SIGXFSZ — the surviving-writer test's signal assertion
+            // pins that direction.
             guard.signal(rustix::process::Signal::KILL);
             let direct = child.kill();
             let reap = reap_bounded(&mut child, test);
@@ -1208,10 +1224,23 @@ fn owned_rerun_stops_a_writer_that_survives_the_kernel_cap() {
         captured_tail(&rerun.stdout, 500),
         rerun.stderr
     );
+    // fix-r7 (arbitrated MM concurrency#1, 2026-11-14): the reverse control
+    // for the runtime-drop question. The surviving-writer disposition is
+    // registered on a temporary current-thread `Runtime` that drops the
+    // moment `block_on` returns (`ignore_sigxfsz_like_the_gateway` keeps
+    // only the `Signal`; the gateway's own shape holds the runtime for the
+    // process lifetime). The stop path relies on that drop leaving the
+    // disposition installed: were it unregistered, the writer would fall
+    // back to the default disposition and die of SIGXFSZ at the cap
+    // instead of ending under the harness's group kill. Measured on both
+    // platforms (this macOS host and the Linux CI's rust check): signal 9,
+    // the device's own stop, on both.
     assert_eq!(
         rerun.status.signal(),
         Some(rustix::process::Signal::KILL.as_raw()),
-        "#1723 the surviving writer ends under the harness's group kill:\n{}\n{}",
+        "#1723 the surviving writer ends under the harness's group kill — signal 9, \
+         this harness's stop, not the kernel's SIGXFSZ a dropped-Runtime default \
+         disposition would have delivered:\n{}\n{}",
         captured_tail(&rerun.stdout, 500),
         rerun.stderr
     );
