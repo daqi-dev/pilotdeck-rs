@@ -948,8 +948,13 @@ class EnvironmentControls(unittest.TestCase):
         text = (Path(__file__).resolve().parents[3]
                 / '.github/workflows/pr-gate.yml').read_text()
         gate_name = '      - name: 角色审计结果块与 issue 关联\n'
-        fetch_coe = ('        continue-on-error: true  # 取不到只影响「沿用」'
-                     '（指纹算不出 → 拒收旧块），不挡 head 一致的 PR\n')
+        # fix-r2（#3074 合流后红）：#3056 fix-r7（32f5bef4f）把本行的行尾注释扩写
+        # 成行注释块（pr-gate.yml:20-25，讲 fix-r6 后 PR_BASE/PR_HEAD 语义），旧锚
+        # 钉「值 + 行尾注释」整行，注释挪走后 count=0、唯一性断言假红。锚改钉裸行
+        # ——值本身没变，仍是全文件唯一一次出现；装置侧 self_check.py 的
+        # pr_gate_samples() 本就按行首前缀 `continue-on-error:` 定位（r9 先例），
+        # 两份副本口径保持同步。
+        fetch_coe = '        continue-on-error: true\n'
         cases = []
 
         def mutate(label, old, new, message):
