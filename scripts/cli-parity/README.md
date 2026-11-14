@@ -35,8 +35,8 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 `lock.json` 等）的口径见 `scripts/gateway-parity/README.md:169` 与各装置文档（双向
 指针待 #1783）。各 fixture README（如 sdk-signals 的 28999 串行前置段）与 fe-parity
 等协调者配方引用本节，不自创、不复写。持锁形态决定会不会被自动接管：带接管逻辑的装置
-接管**没有** truthy `cleanupPending` 的锁，条件是二者之一（`round.py` `:224-231`、
-`scripts/gateway-parity/common.py` `:623-632`）：owner 进程已死（`dead_pid`——
+接管**没有** truthy `cleanupPending` 的锁，条件是二者之一（`round.py` `:260-266`、
+`scripts/gateway-parity/common.py` `:662-671`）：owner 进程已死（`dead_pid`——
 **与锁龄无关，即刻接管**，被 reparent 的子进程可能仍占着 witness 端口）或锁龄超
 2400 s（`expired`；gateway 系 `MAX_AGE`（`common.py` `:27`）/ parity 系
 `LOCK_MAX_AGE`（`round.py` `:74`））——后者的活 owner 也一样被接管（判据只看 pid
@@ -56,7 +56,7 @@ fe-parity 的协调者配方，`run.mjs` 无墙钟上限）一律发布。
 parity/gateway 读侧只校验 `pid`（正整数）与 `timestamp`（有限数），不符判 `damaged`；
 `ui-server-parity/calibrate.sh` 读侧校验 `pid` 与 `token`（字符串）、不校验
 `timestamp`；`cleanupPending` 各读侧只做**真值**判断——`true` 或**非空 pgid 列表**
-（gateway 系装置正常收尾失败时发布的正是 pgid 列表，`common.py` `:660-664`）都阻止
+（gateway 系装置正常收尾失败时发布的正是 pgid 列表，`common.py` `:712-718`）都阻止
 接管，`false`/空列表/缺键不阻止（`dead_pid` 即刻、`expired` 2400 s 后照常接管）；
 `token` 在 parity/gateway 读侧不参与校验（写小写 uuid hex 仅为与装置形态一致）：
 
@@ -244,7 +244,7 @@ node 被 SIGKILL/OOM 时无人收尸）**时用 SIGKILL 中止持锁 shell**—�
    目录里没有 `owner.json` 的空锁才会在 `MAX_AGE` 后按 mtime 被**带接管逻辑**的装置回收（见下节）。
 3. **持 guard 互斥后再删**：用 `flock(1)` 或任意 `fcntl.flock(LOCK_EX)` 包装在 `/tmp/pdrs-parity.lock.guard` 上取独占锁
    （macOS 无 `flock(1)` 时用后者；装置自身的建锁、接管、释放都在同一 guard 下：`scripts/parity/round.py:199-207`、
-   `scripts/gateway-parity/common.py:594-600`）。持锁期间**重新读一遍** `owner.json` 的 `pid` / `token` / `cleanupPending`，
+   `scripts/gateway-parity/common.py:604-611`）。持锁期间**重新读一遍** `owner.json` 的 `pid` / `token` / `cleanupPending`，
    确认还是第 1 步那个已停止的 owner（不是接管者刚发布的新 owner；`pid` 指持锁脚本/交互
    shell 自身，见第 1 步口径），再删 `owner.json` 并 `rmdir /tmp/pdrs-parity.lock`，
    删完才放开 guard。`owner.json` 缺失/不可解析时没有可比对的 owner，确认第 1、2 步的进程组都停干净后再删。
@@ -270,26 +270,29 @@ node 被 SIGKILL/OOM 时无人收尸）**时用 SIGKILL 中止持锁 shell**—�
 
 | 装置 | 等待上限 | 抢不到锁的形态 | 源码 |
 |---|---|---|---|
-| `scripts/parity/round.py`（宿主 vs sidecar，53 场景） | **无限等**（`sleep 2` 轮询，没有 timeout 形参） | 不超时、不写 `run.json`，在 stderr 打 `waiting for /tmp/pdrs-parity.lock`；**别当死锁去删锁** | `parity_lock` `:211-267` |
+| `scripts/parity/round.py`（宿主 vs sidecar，53 场景） | **无限等**（`sleep 2` 轮询，没有 timeout 形参；仅活 owner——**残留租约**（owner pid 已死且未被复用、cleanupPending 未清）秒级快速失败，#2929 fix-r3） | 不超时、不写 `run.json`，在 stderr 打 `waiting for /tmp/pdrs-parity.lock`；**别当死锁去删锁** | `parity_lock` `:221-309` |
 | `scripts/native-witness/collect.py`（原生采集） | **1 s** | 抛 `Blocked` → **BLOCKED / exit 2** | `parity_lock` `:41`（调用 `:262`） |
 | `scripts/gateway-parity/session_domain.py`（E1 校准 / 原生判分） | **30 s** | 同 BLOCKED / exit 2（`TimeoutError` 走顶层 BLOCKED 分支） | `parity_lock(timeout=30)` `:2957` |
 | `src/pilotdeck-gateway/tests/fixtures/native-topology/run.py`（4 案 × 5 轮） | **默认 600 s**（`common.parity_lock` 默认值） | `TimeoutError` 未被 main 捕获 → **traceback / exit 1**（与它自己的 `run()` 退出码不同，判成败看 `report.json`） | `parity_lock()` `:609` |
-| `scripts/gateway-parity/run_round.py`（模块对拍） | **默认 600 s**（`--lock-timeout`） | `_guard.run_entry` 捕获 → 打印 `{"status":"BLOCKED",...}` 后 **exit 1**（策略 `round` 取 FAIL 码），**没有 traceback** | `parity_lock` `common.py:604`；`_guard.py:106-110`、`:136-144` |
-| `scripts/gateway-parity/check_ruler.py`（冻结清单核验） | **默认 600 s**（`--lock-timeout`） | 同样被捕获 → `BLOCKED` JSON 后 **exit 2**（策略 `ruler` 把 `TimeoutError` 归 BLOCKED），**没有 traceback** | `parity_lock` `common.py:604`；`_guard.py:113-116`、`:136-144` |
+| `scripts/gateway-parity/run_round.py`（模块对拍） | **默认 600 s**（`--lock-timeout`） | `_guard.run_entry` 捕获 → 打印 `{"status":"BLOCKED",...}` 后 **exit 1**（策略 `round` 取 FAIL 码），**没有 traceback** | `parity_lock` `common.py:615`；`_guard.py:106-110`、`:136-144` |
+| `scripts/gateway-parity/check_ruler.py`（冻结清单核验） | **默认 600 s**（`--lock-timeout`） | 同样被捕获 → `BLOCKED` JSON 后 **exit 2**（策略 `ruler` 把 `TimeoutError` 归 BLOCKED），**没有 traceback** | `parity_lock` `common.py:615`；`_guard.py:113-116`、`:136-144` |
+| fixtures 负控 runner（15 个，`src/pilotdeck-gateway/tests/fixtures/*/negative*_controls*.py`，闭集名册见 `test_lease_acquire_budgets.py`） | **63000–66600 s**（#2929 fix-r2：各自 `LEASE_ACQUIRE(_BUDGET)_SECONDS` = 家族最大整轮持有上界 FAMILY_MAX + 自身恢复尾巴 + 一段交接余量，按 900 s 家族单位取整，名册活推导） | 经 `mutating_sources(lock_timeout=...)` 转发；`TimeoutError` → 该 case **INVALID**（带诊断、恢复源字节），继续后续 case | `negative_process.py` `:946` |
 | `scripts/ui-server-parity/calibrate.sh`（UI↔server 定标） | 锁目录 **0**；guard 上**阻塞等**（不设上限） | 目录已存在 → `FileExistsError` 立即退出；guard 被占时会一直等（期间信号被挂起） | `acquire()` `:76-88` |
 | `scripts/cli-parity` 自己的装置（`run_round.py` 等） | 锁目录 **0**；guard 最多 **60 s**（`GUARD_TIMEOUT`） | 目录已存在 → `Blocked` → **BLOCKED / exit 2**；guard 超时同样 `Blocked` | `common.py` `:287`、`:366-385` |
 
-`waiting for /tmp/pdrs-parity.lock` 这行由上表的 `parity/round.py`（`parity_lock`，`:250`）与 gateway 系
-（`common.parity_lock`，`:649`）打印；看到它先按上表对号（无限轮询 vs 有上限），再决定等还是查。
-cli-parity 自己的装置与 `calibrate.sh` 不打这句。
+`waiting for /tmp/pdrs-parity.lock` 这行由上表的 `parity/round.py`（`parity_lock`，`:280`）与 gateway 系
+（`common.parity_lock`，`:687`；超时 `TimeoutError` 在 `:685` 抛出）打印；看到它先按上表对号（无限轮询 vs 有上限），再决定等还是查。
+cli-parity 自己的装置与 `calibrate.sh` 不打这句。**这两族在等待期间每 60 s 向 stderr 打一行
+`still waiting for <lock>: owner pid=<N> alive=True/False, age=<M>s, waited=<K>s[, budget left=<B>s]`**（budget 字段仅
+gateway 系有；#2929 fix-r3），看这行即可分辨「活 owner 长窗」与「无 owner 的超龄空目录」。
 
 **上表的等待上限只管锁目录，不管 `.guard`**：`.guard` 是另一把锁，下列装置都在它上面**阻塞 flock、没有超时**，
 超时判定在拿到 guard **之后**才执行。所以前一个持锁者若在临界区内被 `SIGSTOP` 或卡在磁盘 I/O，等待方会
 **静默挂在 guard 上**，「到上限就报错」不会发生。等待期间能否被信号打断，两族不同：
-- `parity/round.py`（`parity_lock`，`:220`）与 `calibrate.sh`（`acquire()`，`:79`）是 `deferred_signals(), lock_guard(lock)`，
+- `parity/round.py`（`parity_lock`，`:233`）与 `calibrate.sh`（`acquire()`，`:79`）是 `deferred_signals(), lock_guard(lock)`，
   阻塞在 guard 上时 **SIGINT/SIGTERM 被屏蔽**，要中断只能 SIGKILL；
-- gateway 系是 `with guard(lock), deferred_signals():`（`common.py:621`）——先取 guard 再屏蔽，挂在 flock 上时
-  mask 还没生效；`install_shutdown`（`common.py:769-774`）把 SIGTERM 映射成 `KeyboardInterrupt`，所以 SIGTERM 能打断它。
+- gateway 系是 `with guard(lock), deferred_signals():`（`common.py:640`）——先取 guard 再屏蔽，挂在 flock 上时
+  mask 还没生效；`install_shutdown`（`common.py:823`）把 SIGTERM 映射成 `KeyboardInterrupt`，所以 SIGTERM 能打断它。
   SIGINT 能否打断取决于 CPython 对 `flock` 的 EINTR 处理，**未实测**，别按「一定延迟」推断。
 
 唯一有界的是 `scripts/cli-parity` 自己：`LOCK_NB` + 50 ms 轮询 + 60 s 上限（#1064），guard 卡住也只 `Blocked`，
@@ -299,9 +302,14 @@ cli-parity 自己的装置与 `calibrate.sh` 不打这句。
 `cleanupPending` 为假。`parity/round.py`、gateway 系（`session_domain.py` / `collect.py` / `native-topology/run.py` /
 `run_round.py` / `check_ruler.py`）、`ui-server-parity/calibrate.sh` 获取时都先发 `cleanupPending: true`，
 所以这些装置被 SIGKILL 后留下的锁
-**不会自愈**，按上一节人工回收。两个例外：
-- **SIGKILL 落在 `mkdir` 与 `owner.json` 发布之间**时没有 `owner.json`（原子发布的 `parity/round.py:239-242` 与
-  `calibrate.sh:48-52` 只留 `owner.json.tmp.*`，`gateway-parity/common.py:637-641` 是直接 `write_text`，可能留空目录
+**不会自愈**，按上一节人工回收（#2929 fix-r3 起，`parity/round.py` 与 gateway 系的 `common.parity_lock`
+遇到这类**已发布且 owner pid 已死（未被复用）**的残留租约会**秒级快速失败**抛 `ResidualLeaseError`
+（`TimeoutError` 子类，带 pid/age/cleanupPending 诊断与本节指针），不再把预算等满——快速失败只影响
+等待形态，**不改变互斥与人工回收契约**；pid 判死靠存活探测，若残留 pid 恰被新的活进程复用，探测按
+活 owner 对待、快速失败不触发、照常等满预算——既有语义边界，处置仍走本节人工回收）。
+两个例外：
+- **SIGKILL 落在 `mkdir` 与 `owner.json` 发布之间**时没有 `owner.json`（原子发布的 `parity/round.py:267-274` 与
+  `calibrate.sh:48-52` 只留 `owner.json.tmp.*`，`gateway-parity/common.py:673-681` 是直接 `write_text`，可能留空目录
   或**截断的已发布 owner**）；「从未发布」的空目录/临时文件会按 mtime 在 `MAX_AGE` 后被接管，**不是永不自愈**；
   但 gateway 系留下的**截断 owner 属于 `damaged`，永不接管**，只能人工回收。
 - **`scripts/cli-parity` 自己的装置与 Rust CLI 测试的 `ParityLock`** 的 `owner.json` 没有 `cleanupPending` 键

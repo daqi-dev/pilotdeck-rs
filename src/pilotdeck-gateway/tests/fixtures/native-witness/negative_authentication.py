@@ -467,6 +467,23 @@ def memory_run(name):
     return 0 if result.wasSuccessful() else 1
 
 
+# #2929 fix-r2: the parity-lease acquire budget for the one mutating_sources
+# window this runner holds: FAMILY_MAX -- the family roster's largest
+# whole-round hold bound (gateway-batch; the live value is the roster's FAMILY_MAX) -- plus this runner's own
+# restore tail and one stage of handoff margin, rounded up to the 900 s
+# family unit.  One derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.  A live holder always carries
+# cleanupPending and no taker takes such an owner over, so the budget
+# deliberately exceeds common.MAX_AGE -- MAX_AGE only ages out
+# never-published stale locks; a published owner, dead pid included, keeps
+# the cleanupPending protection and is never taken over automatically
+# (fix-r3: such a residual now fails the acquire fast with a diagnostic
+# instead of waiting the budget out) -- and just has to cover the family's
+# largest live hold (#1528/#1529).
+LEASE_ACQUIRE_BUDGET_SECONDS = 66600
+
+
 def classify(result, test, marker):
     log = result.stdout + result.stderr
     if result.returncode == 0 and re.search(r'^OK$', log, re.M):
@@ -544,7 +561,8 @@ def main():
                      parity_g03, parity_score, parity_controls, parity_multimodal, b1_comparison, b1_run,
                      ui_comparison, ui_snapshot, ui_run, ui_coverage, Path(__file__).with_name('test_r11.py'),
                      Path(__file__).with_name('test_authentication.py'), Path(__file__).with_name('test_chain.py')]
-            with mutating_sources(root, paths) as originals:
+            with mutating_sources(root, paths,
+                                  lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
                 for row in selected:
                     one(row, True)
     except Exception as error:

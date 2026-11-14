@@ -47,15 +47,25 @@ test_safety = root / 'scripts/gateway-parity/test_safety.py'
 common = root / 'scripts/gateway-parity/common.py'
 
 # #2425 (DS concurrency #2): the guarded window holds the shared parity lease
-# (/tmp/pdrs-parity.lock) while product bytes are mutated, and common.MAX_AGE
-# is the age at which another apparatus may take that lease over -- fe-parity
-# is a bare mkdir taker, so it would read mutated bytes.  Without a whole-run
+# (/tmp/pdrs-parity.lock) while product bytes are mutated.  common.MAX_AGE is
+# the age at which a never-published stale lease gets taken over; a
+# published owner, dead pid included, carries the cleanupPending protection
+# and is never taken over automatically (fix-r3: such a residual fails the
+# acquire fast with a diagnostic instead of waiting a budget out). No
+# current taker steals (verified #2929 fix-r2/fix-r3: gateway common.py and
+# scripts/parity/round.py refuse the flag and fast-fail its dead residual,
+# cli-parity blocks on an existing lock, calibrate.sh raises FileExistsError;
+# no fe-parity script takes this lease -- the coordinator's host shell holds
+# it via the cli-parity README fence snippet and publishes cleanupPending
+# too, so fe-parity itself is not a taker -- and the old "bare mkdir
+# taker" claim here was wrong).  Without a whole-run
 # deadline the worst case is the whole table times 3 bound commands each
 # charged ``timeout + twice the kill grace`` -- the 10 cases the r2 review
 # counted already summed to exactly MAX_AGE, and the table has since grown to
-# 18.  The budget bounds the window below that age instead: it is checked
-# before every case and a spent budget marks the rest INVALID (never KILLED,
-# never silently skipped), so the run fails closed instead of outliving the
+# 18.  The budget bounds the window below that age as defense in depth: it
+# is checked before every case and a spent budget marks the rest INVALID
+# (never KILLED, never silently skipped), so the run fails closed instead of
+# outliving the
 # lease.
 LEASE_BUDGET_SECONDS = 1800
 RUN_TIMEOUT_SECONDS = 60
@@ -79,6 +89,20 @@ GUARDED_PATHS = (session, native, common, Path(__file__).resolve())
 FSYNC_AND_LEASE_SLACK_SECONDS = 20
 TAIL_OVERHEAD_SECONDS = (len(GUARDED_PATHS) * (GIT_TIMEOUT + 2 * KILL_GRACE_SECONDS)
                          + FSYNC_AND_LEASE_SLACK_SECONDS)
+# #2929 fix-r2: the acquire side is a different quantity from the hold budget
+# above -- LEASE_BUDGET_SECONDS stays the fail-closed hold cap this loop
+# enforces (with its below-MAX_AGE startup gate, a hold-side self-check), while
+# the acquire wait for the one mutating_sources window is FAMILY_MAX -- the
+# family roster's largest whole-round hold bound --
+# plus this runner's own restore tail and one stage of handoff margin,
+# rounded up to the 900 s family unit.  One derivation for the whole family,
+# recomputed live in test_lease_acquire_budgets.py; its closed roster keeps a
+# new global-lease runner from silently missing a budget.  A live holder
+# always carries cleanupPending and no taker takes such an owner over (fix-r3:
+# a dead cleanupPending residual fails the acquire fast with a diagnostic),
+# so the acquire budget deliberately exceeds common.MAX_AGE and just has to
+# cover the family's largest live hold (#1528/#1529).
+LEASE_ACQUIRE_BUDGET_SECONDS = 63000
 
 
 def lease_budget_left(started, now):
@@ -449,12 +473,13 @@ def main():
         else:
             # The fixture guards its own bytes too: the memory-rehearsal case
             # mutates this file, so it must be snapshotted for restore.
-            # lock_timeout bounds the acquire wait by the same budget the loop
-            # below enforces, so the guard itself cannot outlive the lease
-            # window it is about to hold (#2425, DS concurrency #2).
+            # lock_timeout is the acquire wait (#2929 fix-r2): the family-max
+            # budget, a different quantity from the hold budget the loop below
+            # enforces -- the guard cannot outlive the lease window it is
+            # about to hold (#2425, DS concurrency #2 / sibling#6).
             install_terminate_handlers()
             with mutating_sources(root, GUARDED_PATHS,
-                                  lock_timeout=LEASE_BUDGET_SECONDS) as originals:
+                                  lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
                 started = True
                 # The clock starts when the lease is held, not when main()
                 # started: the budget bounds how long this apparatus can be

@@ -455,6 +455,20 @@ jobs:
           # 钉 P1-A/P1-B 的冻结侧相位。
           python3 -I src/pilotdeck-gateway/tests/fixtures/native-dispatch/negative_controls.py --check
           python3 -I src/pilotdeck-gateway/tests/fixtures/native-dispatch/test_protocol.py
+          # #2929 fix-r2（同 #1433/#1354 先例）：全家族十五个守护 runner 的
+          # mutating_sources 显式获取预算钉进 CI——名册闭集从树内扫描
+          # mutating_sources + gateway-parity 路径反推（新增取全局租约的
+          # runner 不注册即红）；每个调用点必须传各自的预算常量（默认 900
+          # 回退、外名、字面量三种损伤形状必须被拒）且常量 ≥ 家族最大
+          # 整轮持有上界（FAMILY_MAX）+ 自身尾巴 + 一档 stage；纯静态 +
+          # 内存加载，不碰 cargo 与树锁。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/test_lease_acquire_budgets.py
+          # #2929 fix-r3：残留租约（已发布 owner 死亡且 cleanupPending 未清）
+          # 快速失败的运行时探针——common.py / parity/round.py 秒级抛
+          # ResidualLeaseError 且不删锁、活 owner 照旧等满预算、
+          # parity-lock-release 非共享分支遇现存锁目录立即失败；全部用
+          # 临时目录锁，不碰真 /tmp/pdrs-parity.lock。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/test_residual_lease_fast_fail.py
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

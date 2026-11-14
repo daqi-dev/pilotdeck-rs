@@ -11,7 +11,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 
 root = Path(__file__).resolve().parents[5]
 mutations = [
@@ -92,10 +92,94 @@ mutations = [
 ]
 
 
+# #2929 fix-r2: the parity-lease acquire budget for every window's
+# mutating_sources call (only the gateway-parity rows take the host-wide
+# lease): FAMILY_MAX -- the family roster's largest whole-round hold bound,
+# derived live in test_lease_acquire_budgets.py -- plus this window shape's
+# restore tail and one stage of handoff margin, rounded up to the 900 s
+# family unit.  Its closed roster keeps a new global-lease runner from
+# silently missing a budget.  A live holder always carries cleanupPending
+# and no taker takes such an owner over, so the budget deliberately exceeds
+# common.MAX_AGE -- MAX_AGE only ages out never-published stale locks; a
+# published owner, dead pid included, keeps the cleanupPending protection
+# and is never taken over automatically (fix-r3: such a residual fails the
+# acquire fast with a diagnostic instead of waiting the budget out) -- and
+# just has to cover the family's largest live hold (#1528/#1529).
+# #2929 fix-r3: the gateway-parity rows no longer open one window each --
+# they all guard the same file pair, so ten windows behind an ungettable
+# lease used to multiply one acquire budget into ten; they now share one
+# window (window_paths below feeds it) with a per-row restore between rows.
+LEASE_ACQUIRE_BUDGET_SECONDS = 63000
+
+
 def save(out, name, result):
     for suffix, value in (('stdout', result.stdout), ('stderr', result.stderr),
                           ('exit', str(result.returncode) + '\n')):
         (out / (name + '.' + suffix)).write_text(value)
+
+
+def window_paths(rows):
+    """The guarded set for one ``mutating_sources`` window (#2929 fix-r3).
+
+    The gateway-parity rows guard the same file pair (their check_frozen.py
+    plus common.py), so they share ONE window: behaviorally equivalent to the
+    old one-window-per-row loop while an ungettable lease costs a single
+    acquire instead of one per row.  anchor_selfcheck requires the
+    ``mutating_sources`` with-as at the call site itself, so this helper only
+    computes the list.
+    """
+    return sorted({row[1] for row in rows}
+                  | ({root / 'scripts/gateway-parity/common.py'}
+                     if any(row[1].parent.name == 'gateway-parity' for row in rows)
+                     else set()))
+
+
+def judge_row(row, original, out):
+    """Judge one mutation row inside an already-open lease window.
+
+    Runs the bound positive control, the mutant, and classifies the result;
+    the restored control runs outside the window, after the caller's window
+    exits.  The source is restored before returning, so the next row of the
+    shared window starts from pristine bytes.  (``original`` is this row's
+    snapshot bytes -- anchor_selfcheck pins ``originals`` itself to one
+    declaration and modeled reads only.)
+    """
+    name, path, before, after, test, assertion = row
+    command = [sys.executable, '-I', str(Path(__file__).with_name('test_manifest.py')),
+               path.parent.name, '-v', 'Manifest.' + test]
+    marker = f'{test} (__main__.Manifest.{test}) ... ok'
+    status, reason, compiled = 'INVALID', 'not run', False
+    try:
+        text = original.decode()
+        if text.count(before) != 1:
+            raise RuntimeError(f'#1089 stale anchor {name}: expected 1, found {text.count(before)}')
+        positive = run_owned(command, cwd=root, timeout=60)
+        save(out, name + '-positive', positive)
+        if positive.returncode != 0 or marker not in positive.stdout + positive.stderr:
+            raise RuntimeError('#1089 bound positive did not pass')
+        mutated = text.replace(before, after, 1)
+        compile(mutated, str(path), 'exec')
+        compiled = True
+        write_source_atomic(root, path, mutated.encode())
+        negative = run_owned(command, cwd=root, timeout=60)
+        save(out, name + '-negative', negative)
+        log = negative.stdout + negative.stderr
+        if negative.returncode == 0 and marker in log:
+            status, reason = 'SURVIVED', 'bound unittest still passed'
+        elif (negative.returncode == 1 and f'FAIL: {test} (__main__.Manifest.{test})' in log
+              and 'AssertionError' in log and assertion in log
+              and 'FAILED (failures=' in log and 'ERROR:' not in log):
+            status, reason = 'KILLED', 'bound #1089 assertion failed'
+        else:
+            reason = 'wrong failure, missing test, or setup failure'
+    except Exception as error:
+        status, reason = 'INVALID', str(error)
+    finally:
+        # Restore inside the shared window: the next row's positive control
+        # must read pristine bytes, and a row that raised must not leak its
+        # mutant past this row either.
+        write_source_atomic(root, path, original)
+    return status, reason, compiled
 
 
 def main():
@@ -106,44 +190,38 @@ def main():
     if selected and set(selected) != {item[0] for item in chosen}:
         raise SystemExit('#1089 unknown mutation name')
     results = []
-    for name, path, before, after, test, assertion in chosen:
-        command = [sys.executable, '-I', str(Path(__file__).with_name('test_manifest.py')),
-                   path.parent.name, '-v', 'Manifest.' + test]
-        marker = f'{test} (__main__.Manifest.{test}) ... ok'
-        status, reason, compiled = 'INVALID', 'not run', False
+    # #2929 fix-r3: the gateway-parity rows share one lease window (same
+    # guarded file pair); every other row keeps its own window exactly as
+    # before.  A window that cannot be acquired (residual fast-fail or budget
+    # exhaustion) marks every row of its group INVALID for that one reason.
+    gateway_rows = [row for row in chosen if row[1].parent.name == 'gateway-parity']
+    groups = ([gateway_rows] if gateway_rows else []) + [[row] for row in chosen
+                                                        if row[1].parent.name != 'gateway-parity']
+    verdicts = {}
+    for group in groups:
         try:
-            guarded = [path]
-            if path.parent.name == 'gateway-parity':
-                guarded.append(root / 'scripts/gateway-parity/common.py')
-            with mutating_sources(root, guarded) as originals:
-                text = originals[path].decode()
-                if text.count(before) != 1:
-                    raise RuntimeError(f'#1089 stale anchor {name}: expected 1, found {text.count(before)}')
-                positive = run_owned(command, cwd=root, timeout=60)
-                save(out, name + '-positive', positive)
-                if positive.returncode != 0 or marker not in positive.stdout + positive.stderr:
-                    raise RuntimeError('#1089 bound positive did not pass')
-                mutated = text.replace(before, after, 1)
-                compile(mutated, str(path), 'exec')
-                compiled = True
-                path.write_text(mutated)
-                negative = run_owned(command, cwd=root, timeout=60)
-                save(out, name + '-negative', negative)
-                log = negative.stdout + negative.stderr
-                if negative.returncode == 0 and marker in log:
-                    status, reason = 'SURVIVED', 'bound unittest still passed'
-                elif (negative.returncode == 1 and f'FAIL: {test} (__main__.Manifest.{test})' in log
-                      and 'AssertionError' in log and assertion in log
-                      and 'FAILED (failures=' in log and 'ERROR:' not in log):
-                    status, reason = 'KILLED', 'bound #1089 assertion failed'
-                else:
-                    reason = 'wrong failure, missing test, or setup failure'
-            restored = run_owned(command, cwd=root, timeout=60)
-            save(out, name + '-restored', restored)
-            if restored.returncode != 0 or marker not in restored.stdout + restored.stderr:
-                status, reason = 'INVALID', 'restored positive failed'
+            with mutating_sources(root, window_paths(group),
+                                  lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
+                judged = [judge_row(row, originals[row[1]], out) for row in group]
         except Exception as error:
-            status, reason = 'INVALID', str(error)
+            for row in group:
+                verdicts[row[0]] = ('INVALID', str(error), False)
+            continue
+        for row, (status, reason, compiled) in zip(group, judged):
+            name, path, _before, _after, test, _assertion = row
+            command = [sys.executable, '-I', str(Path(__file__).with_name('test_manifest.py')),
+                       path.parent.name, '-v', 'Manifest.' + test]
+            marker = f'{test} (__main__.Manifest.{test}) ... ok'
+            try:
+                restored = run_owned(command, cwd=root, timeout=60)
+                save(out, name + '-restored', restored)
+                if restored.returncode != 0 or marker not in restored.stdout + restored.stderr:
+                    status, reason = 'INVALID', 'restored positive failed'
+            except Exception as error:
+                status, reason = 'INVALID', str(error)
+            verdicts[name] = (status, reason, compiled)
+    for name, *_ in chosen:
+        status, reason, compiled = verdicts[name]
         results.append(dict(name=name, status=status, reason=reason, compiled=compiled))
         print(f'{name}: {status}: {reason}', flush=True)
     counts = {key: sum(row['status'] == key for row in results) for key in ('KILLED', 'SURVIVED', 'INVALID')}

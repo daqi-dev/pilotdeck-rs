@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import signal
@@ -177,8 +178,14 @@ class LockReleaseControls(unittest.TestCase):
                          '#209 retained groups must be explicit in owner.json')
 
     def test_takeover_pending_refused(self):
+        # #2929 fix-r4: the owner must be a LIVE pid on an over-age lease, so
+        # the takeover decision is the only thing standing between this lease
+        # and a steal -- exactly the branch the cleanupPending guard protects.
+        # A dead owner would now fail fast before any takeover (#2929 fix-r3,
+        # probed by test_residual_lease_fast_fail.py), and the bound mutant
+        # would hide behind that fast refusal.
         self.lock.mkdir()
-        retained = {'pid': 424242, 'timestamp': 0, 'token': 'retained',
+        retained = {'pid': os.getpid(), 'timestamp': 0, 'token': 'retained',
                     'cleanupPending': [424242]}
         (self.lock / 'owner.json').write_text(json.dumps(retained))
         self.addCleanup(shutil.rmtree, self.lock, True)
