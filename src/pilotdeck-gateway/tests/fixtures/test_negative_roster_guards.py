@@ -1685,9 +1685,13 @@ TRIPLE_ENTRIES = (
     # the fixture (the FULL_ROSTER = 36 precedent above); a coordinated
     # "delete a row, shrink the roster, lower EXPECTED_TOTAL" edit must fail
     # here instead of shrinking the run silently.
+    # 名字里的 TRIPLE 是历史（fix-r1 时为三条）；#2856 fix-r4 起 #1371
+    # native-loop-stimulus 以第四条进入本表（DS sibling P1：迁移进启动名册族
+    # 却不登记，则「删行+缩名册+降 EXPECTED_TOTAL」协同编辑在此静默逃逸）。
     ('native-registry-switch', '#1369', 9),
     ('native-storage-stimulus', '#1370', 22),
     ('issue-1437-methods', '#1437', 21),
+    ('native-loop-stimulus', '#1371', 12),
 )
 
 
@@ -1708,13 +1712,13 @@ def load_named_entry(directory):
 
 
 class TripleFixtureRosterGuard(unittest.TestCase):
-    """#2572 fix-r1: the three roster fixtures' startup defences need a pin.
+    """#2572 fix-r1: the four roster fixtures' startup defences need a pin.
 
     Both review families found the same hole: the roster defences this batch
     added (``EXPECTED_NAMES`` + ``registered`` + ``refuse``) had no machine
     check of their own — shrinking ``EXPECTED_NAMES``, or reverting the
     unknown/repeated refusals to bare ``SystemExit`` strings, kept every
-    existing gate green. The three ``--check`` lines also enter CI directly
+    existing gate green. The four ``--check`` lines also enter CI directly
     (ci.yml 绑定漂移自检); this case additionally pins the exit codes, the
     named stderr, and the "a refusal claims no evidence directory" contract.
     No cargo, no tree mutation: every refusal fires before any write —

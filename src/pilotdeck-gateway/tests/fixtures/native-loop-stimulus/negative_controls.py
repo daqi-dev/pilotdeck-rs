@@ -283,6 +283,13 @@ def main():
     unknown = sorted(set(args.selected) - {row[0] for row in mutations})
     if unknown:
         refuse('#1371 unknown mutation name: ' + ', '.join(unknown))
+    # #2856 fix-r4: joining TRIPLE_ENTRIES subjects this fixture to the same
+    # swallowed-misuse pin as the other three (#2572 fix-r2/#1369 form) --
+    # `--check` with an output slot, a mutation name, or `--compile-only`
+    # must report itself (exit 2), not print a green line that drops them.
+    if args.check and (args.output is not None or args.selected
+                       or args.compile_only):
+        refuse('#1371 --check takes no positional arguments')
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
