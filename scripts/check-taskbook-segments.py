@@ -37,10 +37,22 @@ final.patch 全缺；同一晚 #1334 #1336 #1370 #1328 #1339 同类超时。
   不许写成「无需 / 不用 / 不会 …」这类否定句，也不许写 URL 片段）+「第 N 段失败从哪继续」的最小学样
   （失败 / 继续 / 接续 / 恢复 / resume；同样不许写在否定句里）。
 
-退出码：0 通过（含「小包，无需分段」，`--recent` 扫过但没扫到也算 0）· 1 命中大包但分段表缺失/不全 ·
-2 任务书读不了、为空、读取期间被改写、scope 行写坏，或 `--recent` 的递归扫描中断（「扫不了」不许
+退出码：0 通过（含「小包，无需分段」，`--recent` 扫过但没扫到也算 0）· 1 命中大包但分段表缺失/不全，
+或修复轮任务书缺必填字段 ·
+2 任务书读不了、为空、读取期间被改写、scope 行写坏、路径段 fix-r 后 ≥19 位数字（位界 {1,18} 外，
+与 PR 侧 check-pr-gate 同一结论 fail-closed，fix-r8），或 `--recent` 的递归扫描中断（「扫不了」不许
 冒充「没扫到」）· 3 用法错误（`--root` 只与 `--recent` 同用）
 （多个文件混合时 2 优先于 1，ERROR 比 FAIL 更需要人看）
+
+修复轮字段（#3056 长尾收口卡「机检落点」，置于 big/small 分支之前——小包同受检）：
+任务书路径段全匹配 fix-r<N>[b] 即修复轮（b 为接续轮后缀，算第 N 轮；ops dispatch-fix 生成于
+_tmp/<日期>-issue-<N>/fix-rN[/b]/task.md；词表与 gate 侧 FIXROUND_RE 单源），
+须含恰好一条 `<!-- pdrs-fixtype: 枚举式|结构性|不适用 [论证] -->`（独占一行；值只认字面三值，
+「结构派生 / 自动派生」等子类字样一律写「结构性」；枚举式附边界论证、结构性附词表核验，空白 /
+占位符不算）；fix-rN 的 N≥4 另须 `<!-- pdrs-residual: <非空判读> -->`（恰好一次；无上一轮时允许
+字面值「无上一轮」，空答不算答）。「不适用」的 diff 级路径合法性（只碰文档类路径，白名单只有
+state/board.md）由 PR 侧 scripts/check-pr-gate.py 按 scripts/ci_scope.py 的分类语义判定——任务书
+先于实现存在，本检查器不做路径判定。非修复轮任务书带这些标记不报错（模板 / 骨架可能含示例）。
 """
 
 import bisect
@@ -169,11 +181,41 @@ def placeholder_in(text):
     return m.group(0) if m else None
 
 
+# fix-r24（#3074 修 1）：`_gate_module()` 从本文件后段（FIXTYPE_VALUES 取件处，原 :1214）
+# 整体上移到这里——scope 关键字片段（SCOPEISH，:187）与 SCOPE_BODY 前缀改经
+# `_marker_kw_re()` 派生，模块级取件须先于使用点定义；函数体一字未改。
+def _gate_module():
+    """懒加载同目录 check-pr-gate.py 取字面三值常量（#3056 fix-r1，DS sibling#8）：run-review-roles.py
+    的 _gate_module() 是先例——三值改名 / 加值时任务书闸门与 PR 闸门用同一对象，不再各写一份
+    （各写一份会在改名后一侧放行另一侧永久拒收，假 FAIL）。加载失败让位后续 FIXTYPE_RE 检查报错
+    （fail-closed：拿不到正本就不做静默放行）。"""
+    import importlib.util
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-pr-gate.py")
+    spec = importlib.util.spec_from_file_location("pdrs_gate_for_taskbook_3056", p)
+    if spec is None or spec.loader is None:
+        print(f"check-taskbook-segments: 加载不了 {p}（字面三值的正本），fail-closed 退出", file=sys.stderr)
+        raise SystemExit(2)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 # ---- scope 行 --------------------------------------------------------------
 # 容忍大小写、`pdrs-scope` / `pdrs_scope` / `pdrs scope`、半角与全角冒号、半角与全角连字符、冒号前后空格。
-DASHES = r"[\s_\-－—‐‑]"
-SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
-COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
+# fix-r24 修 1（#3074，DS boundary#1 ≡ MM boundary#1/sibling#1 双撞，词表族第 6 次复发）：
+# scope 关键字的拼法族不再本文件手抄（旧 `DASHES` 常量 + 内联 `pdrs{DASHES}*scope`）——从
+# check-pr-gate.py 单源词表经 `_marker_kw_re("pdrs-scope:")` 派生（族正则
+# `(?i:pdrs[\s_\-－—‐‑]*scope)`，DASHES 类与旧常量逐字同源；大小写容忍收进族内 scoped
+# `(?i:...)`，外层 re.I 保留成冗余无害）。旧两侧各写一份：PR 侧借文词表只认精确
+# `pdrs-scope:`，本文件 SCOPEISH 自始认容错拼写 ⇒ `<!-- pdrs_scope: …` 这类借文在
+# PR 侧假 PASS（arb-r24.py 六形在案）。冒号不进族正则——SCOPE_BODY 的冒号槽
+# `\s*(?:[:：]\s*)?` 原样留在族外（族内再带 `[:：]?` 会成双冒号槽，`pdrs-scope:  : x`
+# 的 rest 从 `: x` 变 `x`＝r19 位形钉违反、合法声明面行为变化，任务书停点触发）。
+# 单源钉＝test-review-roles.py fix-r24 块（SCOPEISH.pattern ＝ 派生式整条相等）。
+SCOPEISH = re.compile(_gate_module()._marker_kw_re("pdrs-scope:"), re.I)
+# fix-r22（#3074，MM sibling#4）：死常量 COMMENT（`<!--(.*?)-->`，re.S）删除——已被
+# 下方 `_iter_comments` 线性 find 扫描取代（全仓 grep 无引用，只余 _iter_comments
+# docstring 的历史提法，一并改写不再点名常量）。
 # 行内代码（`` `…` `` / ``` ``…`` ```）是第四种「贴示例」形态：示例 scope 写在反引号里同样不是本包声明。
 # 只对 scope 解析屏蔽（人日 / `.rs` 回退、续跑路径仍看原文——反引号里常是真实路径）。
 # 反引号串长度必须配对（CommonMark）：修前只认单反引号，``` ``…`` ``` 里的示例 scope 照样被当前置声明。
@@ -232,17 +274,36 @@ def mask_inline_code(text):
                 out[x] = " "
         consumed = close + run
     return "".join(out)
-SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
+# fix-r19（#3074，DS/MM r17+r18 增量双谱系评审双撞）：`\s*[:：]?\s*` 相邻星号形（同一
+# 字符类可被两个量词同时匹配）改为语言等价的 `\s*(?:[:：]\s*)?`（W* C? W* ≡ W* (C W*)?，
+# r18 ECHO_HEAD 同款；不用 possessive/原子组——要 python≥3.11，此处全版本可用）。
+# 但光改冒号槽还不够：残余的 `\s*`（冒号后那组）× 贪心 `(?P<rest>.*)$` 同样二次方
+# （`\s*` 给回 × `.*` 全线重扫，实测 N=65514 失败形 7.8 s／a^N 形 >10 s——本机复测见
+# _tmp/20261114-3074-fixr19/scope-v2-probe.out）。rest 首字符钉非空白：改前正则的
+# 报告匹配里 `\s*` 贪心吃满 → rest 起点后首字符必非空白（或 rest 空）；给回空白只会
+# 让 rest 起点同行右移/移到更早行，而 `$` 只看 rest 末端 → 同败，语言与 rest 组值
+# 不变（字母表全枚举 1,567,636 串零差异），失败路径每步回溯 O(1)＝线性（实测 0.0028 s）。
+# `:526` 的「body 含换行须报错」判据不受影响：跨行桥形照常命中（`\s*` 含 \n）才走到
+# 该报错，v2 前后同判（见上面探针形状清单 `pdrs-scope:\nfiles=2` 等）。
+SCOPE_BODY = re.compile(r"^\s*" + _gate_module()._marker_kw_re("pdrs-scope:")
+                       + r"\s*(?:[:：]\s*)?(?P<rest>(?:[^\s\n][^\n]*)?)$", re.I)
 # 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
 # `需(要|投入)?` 跟着关键词：`预计需要 2 人日` / `共需投入 3 人日` 修前接不上数字，人日证据整路丢掉
 # → 退到 `.rs` 回退把大包判成小包（gate19 MiniMax boundary P2）。
 # `预期` 与 `预计` 同义，一并收（此前只认后者）。
+# fix-r19（#3074，同 SCOPE_BODY 的相邻星号反模式收族）：两处 `\s*[:：,，]?\s*` /
+# `\s*(?:个)?\s*` 改语言等价的 `\s*(?:[:：,，]\s*)?` / `\s*(?:个\s*)?`（W* C? W* ≡
+# W* (C W*)?，标点后空白只归一处；失败路径每步回溯 O(1)＝线性，实测 N=65514 失败形
+# 0.0014 s / 0.0023 s——改前 0.97 s @16000 起二次方，见 _tmp/20261114-3074-fixr19/）。
 PERSON_DAY = re.compile(r"(?:约|大约|估计|预计约|预计|预期|估算|估|工作量|共计|合计|总计|共)"
-                        r"(?:需(?:要|投入)?)?\s*[:：,，]?\s*"
-                        r"([0-9]+(?:\.[0-9]+)?)\s*(?:个)?\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
+                        r"(?:需(?:要|投入)?)?\s*(?:[:：,，]\s*)?"
+                        r"([0-9]+(?:\.[0-9]+)?)\s*(?:个\s*)?(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
 # URL 只吃 ASCII URL 字符：中文顿号/逗号/分号紧跟其后时不许被整串吞掉（否则后面的 .rs 枚举漏计）
 URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9./%#?=&_~:@!$'()*+-]+")
-RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs\b")
+# `\.rs` 的右边界不用 \b（#3056 fix-r2 修 3②，MM2 sibling#2）：Python 的 \w 含 CJK，「src/a.rs是文件」
+# 这类中文紧贴写法 \b 两侧都是 \w → 数不到该路径 → 卡在回退阈值 8 时大包被判小包（假 PASS）。
+# 与 :96 BARE_PLACEHOLDER 同款 ASCII 环视。
+RS_PATH = re.compile(r"[A-Za-z0-9_./\-]+\.rs(?![A-Za-z0-9_])")
 # 代码围栏（CommonMark）：闭合行须同字符、长度 **≥** 开栏、独占一行（只许前后空白）。
 # 逐行扫（FENCE_OPEN + _fence_spans），正则写不干净：修前要求闭合串与开栏串**完全相等**，
 # ```` ``` ```` 开、```` ```` ```` 收的标准写法被判「围栏没有闭合」→ 整份任务书 rc 2（假 ERROR）。
@@ -389,8 +450,8 @@ def _parse_scope_body(body):
 def _iter_comments(text):
     """线性扫 `<!-- … -->`，产出 (start, end, body)。body=None 表示没收到 `-->`。
 
-    修前用 `COMMENT`（非贪婪 `.*?` + DOTALL）：每个 `<!--` 都要往后找到 `-->` 或文件尾，
-    50 万个未闭合 `<!--`（2 MiB）就是 O(n²)，闸门挂死。
+    修前用单条非贪婪 `.*?` + DOTALL 正则扫 `<!-- … -->`：每个 `<!--` 都要往后找到 `-->`
+    或文件尾，50 万个未闭合 `<!--`（2 MiB）就是 O(n²)，闸门挂死。
     """
     i = 0
     while True:
@@ -1168,7 +1229,142 @@ def check_segments(text):
     return problems
 
 
-SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> est_min=<待填> -->
+# ---- 修复轮字段（#3056 长尾收口卡「机检落点」） ------------------------------
+# 修复轮信号 = 路径段全匹配 fix-r<N>（含接续轮 b 后缀，ops dispatch-fix 生成于
+# _tmp/<日期>-issue-<N>/fix-r<M>[/b]/task.md）。
+# 内容识别不可靠：任务书正文经常引用 fix-rN 字样（如本检查器的文档），不能当轮次信号。
+# 轮号词表单源（#3056 fix-r3 P1-3，MM boundary#2）：旧本文件手抄 `fix-r(\d+)` 与 PR 侧
+# FIXROUND_RE 是两份定义——b 后缀（fix-r11b，board.md:1660/:1642/:1981/:1984 在案）在
+# 任务书侧 fullmatch 失败、PR 侧词尾环视不认，两侧同时静默跳过该轮族的字段义务＝假 PASS。
+# 派生 check-pr-gate.py 的 FIXROUND_RE（b 算第 N 轮、只认 b、位界 {1,18}；fix-r5x 仍是
+# 非修复轮——PR 侧负控钉死），fullmatch 于路径段等价于词边界匹配。
+
+
+# fix-r24（#3074 修 1）：`_gate_module()` 定义已上移至 scope 段（SCOPEISH/SCOPE_BODY
+# 的派生点），本段只留取件行——函数体见上。
+
+# 修法类型只接受字面三值（卡「收口证明义务」节）；「结构派生/自动派生」等子类字样一律写 结构性。
+# 常量不复制：就是 check-pr-gate.py 的同一对象（见 _gate_module；配对测试断言 is 同一）。
+FIXTYPE_VALUES = _gate_module().FIXTYPE_VALUES
+# 轮号词表不复制：PR 侧 check-pr-gate.py 的 FIXROUND_RE 是源（fix-r3 P1-3，见上方段落注释；
+# fix_round_from_path 用 fullmatch，环视在串首/尾恒真，等价词边界匹配）。
+FIX_ROUND_PART = _gate_module().FIXROUND_RE
+# fix-r8 boundary P1（MM r7 评审，协调者实测复现 _tmp/20261114-3074-mm-p1-probe/）：
+# 位界 {1,18} 经单源派生到任务书侧后，超长 fix-r 段（≥19 位）fullmatch 失败 → 旧
+# fix_round_from_path 静默返回 None（判非修复轮，fixtype/residual 义务整段跳过＝假 PASS），
+# 而同一 token 在 PR 侧 check() 被 _overflow_err fail-closed 拒收——两闸门同输入结论相反。
+# 镜像 fail-closed：超长段派生 PR 侧 FIXROUND_OVER（单源，配对测试断言 is 同一），
+# fix_round_from_path 命中即抛 FixRoundOverflow（「读不了」），调用方按 rc 2 拒收。
+FIX_ROUND_OVER = _gate_module().FIXROUND_OVER
+
+
+class FixRoundOverflow(Exception):
+    """路径段 fix-r 后 ≥19 位数字（位界 {1,18} 外）——fail-closed，报「读不了」而非
+    静默判非修复轮（与 PR 侧 _overflow_err 同一 token 同一结论，MM r8 boundary P1）。"""
+# 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明。
+# fix-r23（#3074 修 1，DS sibling#1 ≡ MM sibling#1 双撞）：pdrs-fixtype 关键字不再手抄——
+# 从 check-pr-gate.py 的单源词表 `_MARKER_KEYWORDS` 经 `_marker_kw()` 派生（同
+# FIXTYPE_VALUES/RESIDUAL_RE 的单源手法；两份字面拷贝会在改标记语法时一侧判「缺」
+# 另一侧认声明，仓内 marker 关键字全仓只此一份）。配对一致性钉在 test-review-roles.py
+# fix-r23 块（FIXTYPE_RE.pattern ＝ 派生式整条相等）。
+# fix-r24（#3074 修 1）：取件从 `_marker_kw()` 升级为 `_marker_kw_re()`（扫描片段）——
+# pdrs-fixtype: 条目当前无族升级，两函数返回同值（字面零收窄）；条目日后升级为拼法族时
+# 两侧自动同步（r24 教训：r23 只钉「字面在表里」，没钉「扫描片段跟族走」）。
+FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*" + _gate_module()._marker_kw_re("pdrs-fixtype:")
+                        + r"(.*?)-->[ \t]*$", re.M)
+# residual 标记正则不复制：PR 侧 check-pr-gate.py 的 RESIDUAL_MARKER 是源（#3056 fix-r2 修 7，
+# DS simplify#1 / MM2 sibling#5）——两份同字面拷贝会在改标记语法时一侧判「缺」另一侧认声明。
+# 配对测试断言两处 pattern 一致（同 FIXTYPE_VALUES 的单源做法）。
+RESIDUAL_RE = _gate_module().RESIDUAL_MARKER
+# N≥4 门槛单源（#3056 fix-r2，DS r2 boundary#3 P2）：此前本文件与 check-pr-gate.py 各写一份
+# 字面量 4，改一侧不改另一侧会让任务书闸门与 PR 闸门对同一修复轮给出相反结论（一侧要
+# residual、另一侧不要）。派生自 check-pr-gate（同 FIXTYPE_VALUES 的手法，配对测试断言）。
+RESIDUAL_MIN_ROUND = _gate_module().RESIDUAL_MIN_ROUND
+RESIDUAL_NONE = "无上一轮"   # 字面值：没有上一轮时允许（空答不算答）
+
+
+def fix_round_from_path(path):
+    """路径里第一个全匹配 fix-r<N> 的段 → N；不是修复轮返回 None。
+
+    fix-r8 boundary P1（MM r7 评审）：命中超长 fix-r 段（≥19 位数字）时抛
+    FixRoundOverflow（fail-closed「读不了」），不静默返回 None——位界外的段
+    FIX_ROUND_PART 本就 fullmatch 不上，旧口径会让同一 token 在 PR 侧被拒收、
+    任务书侧静默跳过整段修复轮义务。fix-r9 P2（MM boundary#2）：超长检查**先全
+    路径扫完**再找合法段——旧口径逐段「先查超长、再查合法、合法即 return」，
+    合法段（fix-r5）排在超长段前面时后者永不检查＝短路放行；两遍扫后任一超长
+    段都触发 rc 2。"""
+    parts = Path(path).parts
+    for part in parts:      # 第一遍：超长段全查（合法段在前不得短路）
+        if FIX_ROUND_OVER.fullmatch(part):
+            raise FixRoundOverflow(part)
+    for part in parts:      # 第二遍：首个合法段定轮号
+        m = FIX_ROUND_PART.fullmatch(part)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def check_fix_fields(body, fix_round):
+    """修复轮任务书的必填字段检查（#3056）。body 须是去掉围栏后的正文（围栏里的示例不算声明）。
+
+    - `<!-- pdrs-fixtype: 枚举式|结构性|不适用 [论证] -->`：恰好一次；值须是字面三值；
+      枚举式附边界论证、结构性附词表核验（非空白、非占位符）；不适用在任务书侧不查路径
+      （任务书先于实现存在），diff 级合法性归 PR 侧 check-pr-gate.py（ci_scope 语义唯一口径）。
+    - fix-rN（N≥4）另须 `<!-- pdrs-residual: <非空> -->`：恰好一次、非空白、非占位符；
+      字面值「无上一轮」允许。
+    非修复轮（fix_round is None）返回空列表——字段存在也不报错（模板 / 骨架可能含示例）。
+    """
+    if fix_round is None:
+        return []
+    problems: list[str] = []
+    marks = FIXTYPE_RE.findall(body)
+    if not marks:
+        problems.append("修复轮任务书缺修法类型字段 `<!-- pdrs-fixtype: 枚举式|结构性|不适用 … -->`"
+                         "（三选一字面值；枚举式附边界论证、结构性附词表核验）")
+    elif len(marks) > 1:
+        problems.append(f"pdrs-fixtype 标记出现 {len(marks)} 次（至多一次）")
+    else:
+        inner = marks[0].strip()
+        if not inner:
+            problems.append("pdrs-fixtype 的值是空白串（三选一：枚举式 / 结构性 / 不适用；空答不算答）")
+        else:
+            parts = inner.split(None, 1)
+            value, arg = parts[0], (parts[1].strip() if len(parts) > 1 else "")
+            if value not in FIXTYPE_VALUES:
+                problems.append(f"修法类型「{value}」不是字面三值（枚举式 / 结构性 / 不适用）；"
+                                 "「结构派生 / 自动派生」等子类字样一律写「结构性」")
+            elif value in ("枚举式", "结构性"):
+                if not arg:
+                    problems.append(f"修法类型「{value}」缺论证（枚举式附边界论证、结构性附词表核验；空白不算）")
+                else:
+                    hit = placeholder_in(arg)
+                    if hit:
+                        problems.append(f"修法类型「{value}」的论证还是占位符：{_clip(hit)!r}（写实际论证）")
+    if fix_round >= RESIDUAL_MIN_ROUND:
+        marks = RESIDUAL_RE.findall(body)
+        if not marks:
+            problems.append(f"fix-r{fix_round}（N≥{RESIDUAL_MIN_ROUND}）任务书缺上轮残差判读 `<!-- pdrs-residual: … -->`"
+                            f"（上一轮的洞是边界暴露还是修法本身缺陷；{RESIDUAL_NONE}时写字面值「{RESIDUAL_NONE}」）")
+        elif len(marks) > 1:
+            problems.append(f"pdrs-residual 标记出现 {len(marks)} 次（至多一次）")
+        else:
+            content = marks[0].strip()
+            if not content:
+                problems.append("pdrs-residual 内容是空白串（空答不算答；"
+                                f"无上一轮时写字面值「{RESIDUAL_NONE}」）")
+            elif content != RESIDUAL_NONE:
+                hit = placeholder_in(content)
+                if hit:
+                    problems.append(f"pdrs-residual 内容还是占位符：{_clip(hit)!r}（写实际判读）")
+    return problems
+
+
+# fix-r24 修 3（#3074，P2a——MM sibling#2 + DS sibling#4）：产出侧 marker 字面量不再手抄——
+# 骨架里的 pdrs-scope 行 / fixtype 行 / residual 行与 run-review-roles.py 的结果块 marker
+# 同经 `_marker_kw()` 派生（canonical 字面；扫描片段才走 `_marker_kw_re()`，产出给人看的
+# 字面量保持精确拼写——本函数返回值即旧手抄字面，派生后 SKELETON 逐字节不变）。改标记
+# 关键字时骨架与结果块自动同步，不再出现「闸门已改、骨架还在教人写旧关键字」。
+SKELETON = f"""<!-- {_gate_module()._marker_kw('pdrs-scope:')} files=<待填> lines=<待填> modules=<待填> est_min=<待填> -->
 
 ## 分段交付（大包必填：每段一个可独立收货的交付）
 
@@ -1183,6 +1379,18 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 
 - 进度文件：`_tmp/<日期>-issue-<N>/progress.md`（每段开工 / 收工各追加一行 `S<n> start|done <时间> <HEAD>`）
 - 第 N 段失败：读 progress.md 最后一个 done 段，先 `git apply` 该段 final.patch 分片，再从 N+1 段继续；不重做已 done 段。
+"""
+
+# 骨架是填空题不是答案：修复轮字段段用占位形态写，原样贴进修复轮任务书会被打回（缺字段 / 占位符）。
+SKELETON += f"""修复轮任务书（路径在 `_tmp/<日期>-issue-<N>/fix-rN/task.md`）另须两件（#3056 长尾收口卡）：
+
+`<!-- {_gate_module()._marker_kw('pdrs-fixtype:')} <枚举式|结构性|不适用> <论证> -->` —— 三选一字面值：`枚举式` 附边界论证
+（词表封闭性论证，或反向负例清单证明修饰窗/边界不吞真发现）；`结构性` 附词表核验（须核到测试真实
+遍历的词表）；`不适用` 仅当 diff 只触及文档类路径（以 scripts/ci_scope.py 的分类语义为唯一口径，
+其白名单只有 `state/board.md` 一个精确路径）。
+
+`<!-- {_gate_module()._marker_kw('pdrs-residual:')} <上轮残差判读> -->` —— fix-rN 的 N≥4 必填：上一轮的洞是边界暴露还是修法
+本身缺陷；无上一轮时写字面值 `无上一轮`。
 """
 
 
@@ -1311,9 +1519,22 @@ def check_file(path, ignore_missing=False):
     cls = classify(body, text)
     if cls["big"] is None:
         return {"file": str(path), "rc": 2, "problems": [cls["reason"]], "class": cls}
+    # 修复轮字段检查置于 big/small 分支之前：小包（不分段的修复轮）同受检（#3056 义务 2）。
+    # fix-r8 boundary P1：超长 fix-r 路径段（≥19 位）按「读不了」fail-closed（rc 2），
+    # 不静默判非修复轮跳过字段义务——与 PR 侧 check-pr-gate._overflow_err 同一 token
+    # 同一结论（两闸门对同一输入不得相反）。
+    try:
+        fix_round = fix_round_from_path(p)
+    except FixRoundOverflow as e:
+        return _err(p, f"读不了：路径段「{e}」是 fix-r 后 ≥19 位数字——超出轮号位界 "
+                       "{1,18}，与 PR 侧 check-pr-gate 同一结论 fail-closed 拒收；"
+                       "请核对路径（正常修复轮号远小于 19 位）")
+    fix_problems = check_fix_fields(body, fix_round)
     if not cls["big"]:
+        if fix_problems:
+            return {"file": str(path), "rc": 1, "problems": fix_problems, "class": cls}
         return {"file": str(path), "rc": 0, "problems": [], "class": cls}
-    problems = check_segments(body)
+    problems = check_segments(body) + fix_problems
     return {"file": str(path), "rc": 1 if problems else 0,
             "problems": problems, "class": cls}
 

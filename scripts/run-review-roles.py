@@ -34,6 +34,13 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate
   python3 scripts/run-review-roles.py --worktree _build/wt-a61 --base origin/main --out _tmp/20261017-a61/gate --serial
   python3 scripts/run-review-roles.py --diff-file X.patch --worktree . --out ... --roles boundary --dry-run
+修复轮（#3056 长尾收口卡「机检落点」）：
+  --fixtype 枚举式|结构性|不适用 —— 修法类型写进结果块 fixtype= 键（闸门按字面三值校验）；
+  --rerun —— 本轮是补跑（首跑争抢/超时后重跑）：status.json 每条 rec 标 rerun=true、summary 注明，
+  且必须换独立 out 目录（目录里已有 summary.md / status.json / <角色>.md 原件即拒跑，#3056 H——
+  齐块判定以原件为准，复跑不得覆盖）；结果块 head= 绑定当轮 head，head 变了即非复跑、按新头整块重起。
+  rec 增加 resource_contention（bool，#3056 义务 6）：名额排队超时（SlotTimeout）/ 429 配额（ERR_QUOTA）/
+  执行级 TIMEOUT 三项为 true，其余 false——判据 5 的争抢类排除不再靠人读 detail 文本。
 退出码：0 全部 PASS · 1 有非 PASS · 2 参数/前置错误
 """
 from __future__ import annotations
@@ -58,13 +65,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def patch_fingerprint(wt: str, base: str, head: str) -> str:
-    """补丁指纹与闸门比对共用 check-pr-gate.py 的同一实现（结果块 patch= 键）。"""
+def _gate_module():
+    """懒加载 check-pr-gate.py（补丁指纹与 fixtype 字面三值的同一正本，不复制常量）。"""
     spec = importlib.util.spec_from_file_location("check_pr_gate", ROOT / "scripts" / "check-pr-gate.py")
     gate = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(gate)
-    return gate.patch_fingerprint(wt, base, head)
+    return gate
+
+
+def patch_fingerprint(wt: str, base: str, head: str) -> str:
+    """补丁指纹与闸门比对共用 check-pr-gate.py 的同一实现（结果块 patch= 键）。"""
+    return _gate_module().patch_fingerprint(wt, base, head)
 TEMPLATE_DIR = ROOT / ".claude" / "workflows"
 COMMON = "review-common.md"
 ROLES = {
@@ -81,6 +93,27 @@ LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走
 # 11-05 实测 MiniMax-M3.1-Flash 原样回显、deepseek-v4.1-flash-mb 回显 DeepSeek-V4.1-Flash，原件 _tmp/20261105-minimax-runner/）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
 SYNTHETIC_MODEL = "<synthetic>"  # 网关错误响应（额度 / 断连）的占位 model：不是换了模型，是真没跑成
+
+
+def originals_in(out: Path) -> list[str]:
+    """out 目录里已有的评审原件名（#3056 H 义务 7；#3056 fix-r1 DS simplify#1/sibling#4、DS concurrency#2）。
+
+    - 角色名从 ROLES 派生（不双份维护）：增删/改名角色后守卫自动跟上，不会静默失效；
+    - 清单含 <角色>.md / <角色>.jsonl / <角色>.err（含 .retryN 形）与 summary.md / status.json / diff.patch——
+      *.jsonl/*.err 是原始流、diff.patch 是被审对象：父进程在写 <角色>.md 之前被 SIGKILL/SIGINT 时
+      目录里只剩这些半成品，复跑 open("w") 会把它们截断，所以崩溃残留也算原件、一律拒覆盖。"""
+    pat = re.compile("(" + "|".join(re.escape(r) for r in ROLES) + r")(\.retry\d+)?\.(md|jsonl|err)")
+    return [p.name for p in out.iterdir()
+            if p.is_file() and (p.name in ("summary.md", "status.json", "diff.patch") or pat.fullmatch(p.name))]
+
+
+def error_rec(role: str, detail: str, contention: bool = False) -> dict:
+    """异常/争抢分支的 rec 模板：字段与正常路径一致（含 resource_contention，#3056 fix-r1 DS sibling#5）。
+
+    运行器异常时未知是否争抢，按「其余 false」口径置 False——status.json 的机读契约不因分支缺键
+    （下游 rec.get(...) is False 的断言拿到 None 会不成立）。"""
+    return {"role": role, "status": "ERROR", "detail": detail, "counts": None,
+            "resource_contention": contention}
 API_ERROR_MARK = "API Error:"  # 错误原文前缀，见 _tmp/20261106-issue-1527/review-r30-minimax/
 ERR_QUOTA = "额度耗尽（429）"  # 找人：升级 Token Plan 套餐 / 换 key
 ERR_CONN = "连接断开"  # 查网络 / 代理 / 节点
@@ -326,7 +359,8 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     err = out_dir / f"{role}{suffix}.err"
     started = time.time()
     rec: dict = {"role": role, "status": "ERROR", "detail": "", "counts": None, "cost_usd": None,
-                 "started": dt.datetime.now().isoformat(timespec="seconds")}
+                 "started": dt.datetime.now().isoformat(timespec="seconds"),
+                 "resource_contention": False}  # #3056 义务 6：争抢类机读（SlotTimeout / 429 配额 / TIMEOUT）
     cfg = Path(tempfile.mkdtemp(prefix=f"pdrs-review-cfg-{role}-"))
     env = {k: os.environ[k] for k in ENV_KEEP if k in os.environ}
     env.update(extra_env or {}, PWD=str(cwd), CLAUDE_CONFIG_DIR=str(cfg))  # 绑定 cwd 与 PWD（review-permissions）
@@ -399,6 +433,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
             proc.wait()
             rec["status"] = "TIMEOUT"
             rec["detail"] = f"超时 {timeout}s，已杀进程组"
+            rec["resource_contention"] = True  # #3056：执行级 TIMEOUT 属争抢类（通道慢/占用导致的超时）
         t.join(timeout=10)
 
     shutil.rmtree(cfg, ignore_errors=True)
@@ -440,6 +475,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["detail"] = f"{kind}：{why}（不是模型不符）"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
+        rec["resource_contention"] = kind == ERR_QUOTA  # #3056：429 / 配额耗尽属争抢类
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
     # 只有「这次真的没跑成」才按错误响应处理：流内出现过占位符、但最后是正常成功的 result
@@ -449,6 +485,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
         rec["detail"] = f"{kind}：{one_line(err_text) or '（错误响应没有内嵌原文）'}"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
+        rec["resource_contention"] = kind == ERR_QUOTA  # #3056：429 / 配额耗尽属争抢类
         rec["retry_connection"] = kind == ERR_CONN and has_mark and any(mark in err_text for mark in RETRY_MARKS)
         return rec
     # real_resp 为空（只有 <synthetic>/None 占位）时 issubset 恒真，守卫退化为只靠 usage 一条证据——
@@ -494,6 +531,10 @@ def main() -> int:
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")
     ap.add_argument("--env-file", type=Path, default=None, help="取钥文件；默认本检出或主仓根的 .env.local（测试用隔离 fixture）")
     ap.add_argument("--dry-run", action="store_true", help="只渲染任务书与命令，不起进程")
+    ap.add_argument("--fixtype", choices=_gate_module().FIXTYPE_VALUES, default=None,
+                    help="修复轮修法类型（#3056）：写进结果块 fixtype= 键；「不适用」仅当 diff 只碰文档白名单（闸门按 ci_scope 语义复算）")
+    ap.add_argument("--rerun", action="store_true",
+                    help="本轮是补跑（首跑争抢/超时后重跑）：rec 标 rerun=true；须换独立 out 目录（原件不得覆盖，#3056 H）")
     ap.add_argument("--serial", action="store_true",
                     help="角色逐个顺序跑（同一进程、同一 diff，产出单个四角色结果块）；并行全跑在本机会挂起时用")
     a = ap.parse_args()
@@ -521,8 +562,30 @@ def main() -> int:
         print(f"run-review-roles: 找不到 {a.claude_bin}", file=sys.stderr)
         return 2
     out.mkdir(parents=True, exist_ok=True)
+    # out 目录互斥（#3056 fix-r2 修 2，DS concurrency#1 = MM2 concurrency#2）：原件守卫是
+    # check-then-act 目录扫描，两个并发同 --out 的进程可同时通过守卫并互相截断/交错证据
+    # （TOCTOU 窗口 = git diff 期间原件尚未落盘）。目录内建 .lock，flock(LOCK_EX|LOCK_NB)
+    # 持到进程结束；占用时硬拒，文案与「已有原件」区分（rc 同为 2、语义不同）。
+    try:
+        lock_fd = os.open(out / ".lock", os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"run-review-roles: out 目录已被占用（{out}/.lock 被另一进程持有）——同目录并发会互相"
+              "截断证据，等在跑的结束或换独立 out 目录（内存「lock-use-flock」）", file=sys.stderr)
+        return 2
+    # lock_fd 故意不 close：持到进程结束，退出由内核释放（单进程一个 fd，不累积）
+    # #3056 H（义务 7）：齐块判定以原件（<角色>.md / .jsonl / .err / summary.md / status.json /
+    # diff.patch）为准——目录里已有原件即拒跑（复跑/分批须换独立 out 目录，覆盖会让原轮证据变成复跑字节）。
+    originals = originals_in(out)
+    if originals:
+        print(f"run-review-roles: out 目录已有评审原件 {sorted(originals)}——复跑/分批须换独立 out 目录（#3056 H，不得覆盖原件）",
+              file=sys.stderr)
+        return 2
 
-    diff_path = out / "diff.patch"
+    # fix-r2（DS r2 boundary#2 P2）：dry-run 不落 `diff.patch`——它在上面的 originals_in()
+    # 原件清单里，dry-run 落盘后同目录实跑会被「已有评审原件」拒掉（目录里其实没有任何评审
+    # 证据；重复 dry-run 也被拒）。dry-run 的预览件改名 dryrun-diff.patch，实跑仍写 diff.patch。
+    diff_path = out / ("dryrun-diff.patch" if a.dry_run else "diff.patch")
     patch_kv = ""
     if a.diff_file:
         shutil.copyfile(a.diff_file, diff_path)
@@ -578,12 +641,17 @@ def main() -> int:
         try:
             fd = acquire_slot(a.runner)
         except SlotTimeout as e:
-            results[r] = {"role": r, "status": "ERROR", "detail": str(e), "counts": None}
+            # #3056：名额排队超时属争抢类（首次排除、补跑后仍争抢计入）
+            results[r] = error_rec(r, str(e), contention=True)
+            return
+        except Exception as e:  # noqa: BLE001 —— 名额闸的其它异常（如 PDRS_REVIEW_SLOTS_* 非数字）也不得
+            # 杀 worker 线程：results 缺键 → 主线程 KeyError、status.json/summary 残缺（#3056 fix-r2 修 4）
+            results[r] = error_rec(r, f"名额闸异常 {type(e).__name__}")
             return
         try:
             results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model, a.budget_usd)
         except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
-            results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
+            results[r] = error_rec(r, f"运行器异常 {type(e).__name__}")
         finally:
             if fd is not None:
                 os.close(fd)
@@ -598,6 +666,9 @@ def main() -> int:
         for t in threads:
             t.join()
 
+    if a.rerun:
+        for r in results:
+            results[r]["rerun"] = True
     (out / "status.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     ok = all(results[r]["status"] == "PASS" for r in roles)
     tot = {k: sum((results[r]["counts"] or {}).get(k, 0) for r in roles) for k in ("P0", "P1", "P2", "P3")}
@@ -605,9 +676,15 @@ def main() -> int:
     # boundary 审 #2/#178（半修）：块内记录审计范围；gate 拒 partial 归 #178
     scope = "partial" if a.paths else "full"
     paths_kv = f" paths={','.join(a.paths)}" if a.paths else ""
+    fixtype_kv = f" fixtype={a.fixtype}" if a.fixtype else ""
+    rerun_kv = " rerun=true" if a.rerun else ""
+    # fix-r24 修 3（#3074，P2a——MM sibling#2 + DS sibling#4）：结果块 marker 的关键字不再手抄
+    # `pr-gate:v1`——经 `_gate_module()._marker_kw()` 派生（canonical 字面，与 check-pr-gate.py
+    # 单源词表同步；产出侧走 `_marker_kw` 而非 `_marker_kw_re`，给人看的字面保持精确拼写）。
+    # 任务书骨架（check-taskbook-segments.py 的 SKELETON）同轮同款派生。
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- pr-gate:v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} runner={a.runner} model={model} readonly=tools -->", "",
+        f"<!-- {_gate_module()._marker_kw('pr-gate:')}v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv}{fixtype_kv}{rerun_kv} runner={a.runner} model={model} readonly=tools -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:
@@ -616,6 +693,9 @@ def main() -> int:
         lines.append(f"| {r} | {results[r]['status']} | {c.get('P0', '-')} | {c.get('P1', '-')} | {c.get('P2', '-')} | "
                      f"{c.get('P3', '-')} | {results[r].get('seconds')} | {detail} |")
     lines += ["", f"原件：`{out.relative_to(ROOT)}/`（<角色>.md 为结论，.jsonl/.err 为原始流）"]
+    if a.rerun:
+        lines += ["", f"**复跑轮（--rerun，#3056 H）**：绑定当轮 head=`{head}`；本目录为复跑证据，原轮目录原件未动；"
+                      f"争抢类 rec 带 resource_contention（首次争抢排除、补跑后仍争抢按前提③计入）。"]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"run-review-roles: {'全部 PASS' if ok else '有非 PASS'}；P0={tot['P0']} P1={tot['P1']} P2={tot['P2']}；见 {out}/summary.md")
     return 0 if ok else 1

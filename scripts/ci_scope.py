@@ -36,8 +36,11 @@ def paths_are_docs_only(paths) -> bool:
     return bool(paths) and all(path == DOCS_ONLY_PATH for path in paths)
 
 
-def docs_only_for_range(root, base, head) -> bool:
-    """base..head 两点 diff 是否只碰文档区。git 任何失败都按 False（fail-closed）。
+def diff_paths_for_range(root, base, head):
+    """base..head 两点 diff 的路径清单（#3056 fix-r2，DS r2 boundary#4 P2）：供需要区分
+    「git 失败 / diff 为空 / 真触白名单外路径」的调用方（check-pr-gate.check_na_path 的
+    错误消息分条）使用；git 失败返回 None（fail-closed，与 docs_only_for_range 同一实现，
+    不复制第二份 diff 命令）。
 
     --no-renames 让 rename 两侧都列出（默认改名检测会藏掉旧路径），
     -z 按 NUL 切分，路径里带换行也不影响。
@@ -46,9 +49,19 @@ def docs_only_for_range(root, base, head) -> bool:
         ['git', 'diff', '--name-only', '--no-renames', '-z', base, head],
         cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if result.returncode != 0:
-        return False  # #1199 git 出错 fail-closed
-    paths = [chunk.decode() for chunk in result.stdout.split(b'\0') if chunk]
-    return paths_are_docs_only(paths)
+        return None  # #1199 git 出错 fail-closed
+    return [chunk.decode() for chunk in result.stdout.split(b'\0') if chunk]
+
+
+def docs_only_for_range(root, base, head) -> bool:
+    """base..head 两点 diff 是否只碰文档区。git 任何失败都按 False（fail-closed）。
+
+    实现单源于 diff_paths_for_range（fix-r2 拆出，行为不变）。注意调用方喂的 base 决定口径：
+    CI 事件里的固定 base SHA（classify 的原路径）与「当前 base tip」（check-pr-gate）在
+    base 前进后不等价——需要三点口径的调用方先取 merge-base 再进来。
+    """
+    paths = diff_paths_for_range(root, base, head)
+    return paths is not None and paths_are_docs_only(paths)
 
 
 def classify(env=None, cwd='.') -> bool:
@@ -83,7 +96,12 @@ def classify(env=None, cwd='.') -> bool:
 # 按路径放行的闸门就漏到真实 board 读者上。
 BOARD_RULER_ALLOWLIST = {
     'scripts/ci_scope.py': ('白名单常量与机检自身，只比较路径不读取文件', False),
+    'scripts/check-pr-gate.py': ('闸门 check_na_path 注释/文案叙述性引用 docs-only 白名单的精确路径（fix-r2 两点/merge-base 口径差异说明与错误消息），只比较路径不读取 board', False),
     'scripts/test-ci-scope.py': ('分类器自测的样例路径', False),
+    'scripts/test-review-roles.py': ('闸门自测在临时 git 仓库里造样例 diff（含白名单路径）来测 fixtype=不适用 的路径检查，不读仓库的 state/board.md', False),
+    'scripts/check-taskbook-segments.py': ('任务书闸门自身：正文与报错文案字面引用 docs-only 白名单的精确路径，只比较路径不读取 board', False),
+    'scripts/fixround-ledger.py': ('计数台账：注释引用 board 行号先例（flock + O_APPEND 跨进程丢行改追加写的依据），不读取 board', False),
+    'scripts/README.md': ('目录文档的叙述性提及（白名单路径、board 行号先例），不是尺子', False),
     'scripts/pdrs-loop.sh': ('本地 worker 循环工具，不在 CI 任何 job 运行（ci_free 断言看守）', True),
     'scripts/next-task.sh': ('本地 worker 工具，不在 CI 任何 job 运行（ci_free 断言看守）', True),
     'scripts/test-pdrs-loop.sh': ('临时目录自造测试 board，不读仓库的 state/board.md', False),
