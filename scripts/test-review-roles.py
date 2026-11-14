@@ -5,17 +5,20 @@
 """
 from __future__ import annotations
 
+import ast
 import datetime as dt
 import fcntl
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import time
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1055,9 +1058,17 @@ def _run(gate, rrr, out_base: Path) -> int:
             # 不空转」）。
             "import resource\n"
             "resource.setrlimit(resource.RLIMIT_CPU, (4, 4))\n"
+            # fix-r19（#3074 家族级）：探针加挂兄弟脚本 tb（scope/personday 模式用），并把
+            # r18 的 ECHO_HEAD 就地计时 + WAIVER/NO_ISSUE/SCOPE_BODY/PERSON_DAY 失败形计时
+            # 全部并入本护栏（fix-r16 教训 :1035-1038——回退态＝子进程被杀＝干净 FAIL）。
+            # 子进程自带计时打印 `ELAPSED <dt> <语义结果>`，父侧断言 <2.0 s + 失败形不命中。
+            "import os, time\n"
             "spec = importlib.util.spec_from_file_location('gate', sys.argv[1])\n"
             "gate = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(gate)\n"
+            "spec2 = importlib.util.spec_from_file_location('tb', os.path.join(os.path.dirname(sys.argv[1]), 'check-taskbook-segments.py'))\n"
+            "tb = importlib.util.module_from_spec(spec2)\n"
+            "spec2.loader.exec_module(tb)\n"
             "mode, n = sys.argv[2], int(sys.argv[3])\n"
             "if mode == 'chain':\n"
             "    print(gate.fix_round_from_title('fix(scripts) #1' + '#1'*n + ' fix-r4'*n,\n"
@@ -1070,6 +1081,21 @@ def _run(gate, rrr, out_base: Path) -> int:
             "    print(sorted(gate.pr_issues('Refs #3056 ' + '+ ,'*n + '、'*n + 'x')))\n"
             "elif mode == 'punct_nl':\n"
             "    print(sorted(gate.pr_issues('Closes #3056' + (',' + chr(10))*n + 'x')))\n"
+            "elif mode == 'echo':\n"
+            "    t0 = time.perf_counter(); r = gate.ECHO_HEAD.match('fix(scripts)' + ' '*n + 'fix-r5：x')\n"
+            "    print('ELAPSED %.4f %s' % (time.perf_counter() - t0, 'None' if r is None else 'HIT'))\n"
+            "elif mode == 'waiver':\n"
+            "    t0 = time.perf_counter(); r = gate.WAIVER.search('<!--pr-gate:waiver ' + ' '*n + 'x')\n"
+            "    print('ELAPSED %.4f %s' % (time.perf_counter() - t0, 'None' if r is None else 'HIT'))\n"
+            "elif mode == 'noissue':\n"
+            "    t0 = time.perf_counter(); r = gate.NO_ISSUE.search('<!--no-issue x' + ' '*n)\n"
+            "    print('ELAPSED %.4f %s' % (time.perf_counter() - t0, 'None' if r is None else 'HIT'))\n"
+            "elif mode == 'scope':\n"
+            "    t0 = time.perf_counter(); r = tb.SCOPE_BODY.match('pdrs-scope' + ' '*n + 'a'*8 + chr(10) + 'x')\n"
+            "    print('ELAPSED %.4f %s' % (time.perf_counter() - t0, 'None' if r is None else 'HIT'))\n"
+            "elif mode == 'personday':\n"
+            "    t0 = time.perf_counter(); r = tb.PERSON_DAY.search('合计' + ' '*n + 'x')\n"
+            "    print('ELAPSED %.4f %s' % (time.perf_counter() - t0, 'None' if r is None else 'HIT'))\n"
         )
         _gate_py = str(ROOT / "scripts" / "check-pr-gate.py")
         for _mode, _n, _want, _why in (
@@ -1090,6 +1116,40 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"fix-r15 探针异常退出 {_cp.returncode}: {_cp.stderr[-300:]}")
             elif _cp.stdout.strip() != _want:
                 fails.append(f"fix-r15 {_mode} 语义漂移：得 {_cp.stdout.strip()!r} 期望 {_want!r}")
+        # fix-r19（#3074 家族级，P0/P1 计时护栏）：r18 的 ECHO_HEAD 就地计时钉与本轮的
+        # WAIVER/NO_ISSUE/SCOPE_BODY/PERSON_DAY 失败形计时全部并入 _probe 子进程护栏
+        # （fix-r16 教训 :1035-1038——回退态＝子进程被 RLIMIT_CPU/墙钟超时杀掉＝干净 FAIL，
+        # 不再把套件挂死在就地断言上）。子进程自带计时打印 `ELAPSED <dt> <语义结果>`，
+        # 父侧断言耗时 <2.0 s（预注册 10 s 阈值的 5× 余量，r18 口径，防 CI 机器慢假红）
+        # ＋失败形不得命中（改写不得引入新匹配面）。
+        for _mode, _subj, _why in (
+                ("echo", "ECHO_HEAD", "r18 修的相邻星号二次回溯（r17 实测修前 35.172 s）回归"),
+                ("waiver", "WAIVER", "P0 三次方回溯（协调者实测修前 N=8000→171 s）回归"),
+                ("noissue", "NO_ISSUE", "P1 二次回溯（实测修前 N=65514→4.2 s）回归"),
+                ("scope", "SCOPE_BODY", "兄弟脚本冒号槽 + rest 残余（\\s*×.*）二次回溯回归"),
+                ("personday", "PERSON_DAY", "兄弟脚本人日槽相邻星号二次回溯回归")):
+            try:
+                _cp = subprocess.run([sys.executable, "-I", "-c", _probe, _gate_py, _mode, "65514"],
+                                     capture_output=True, text=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                fails.append(f"fix-r19 家族计时护栏：{_subj} 探针超时（>5s）——{_why}，"
+                             "闸门会挂起（作者可控正文/任务书）")
+                continue
+            if _cp.returncode != 0:
+                fails.append(f"fix-r19 探针异常退出 {_cp.returncode}: {_cp.stderr[-300:]}")
+                continue
+            _parts = _cp.stdout.strip().split()
+            if len(_parts) != 3 or _parts[0] != "ELAPSED" or _parts[2] != "None":
+                fails.append(f"fix-r19 {_subj} 探针输出不解析或失败形命中：{_cp.stdout.strip()!r}")
+                continue
+            try:
+                _el = float(_parts[1])
+            except ValueError:
+                fails.append(f"fix-r19 {_subj} 探针计时不解析：{_cp.stdout.strip()!r}")
+                continue
+            if _el >= 2.0:
+                fails.append(f"fix-r19 {_subj} 性能钉：N=65514 失败形 {_el:.3f}s ≥ 2.0s——"
+                             f"{_why}（改动须过 P0/P1 通道重新登记）")
         # fix-r14（DS r13 sibling#1 P2）：类型词表单源——ECHO_HEAD 与 TITLE_HEAD 只准引
         # `_TYPE_WORDS`，一处加词另一处漏改会让 CI 路径与本地回显路径的修复轮判定分裂
         # （r12 ISSUE_LINK/ISSUE_NUM 同款手抄漂移反模式）。
@@ -2517,19 +2577,14 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 性能钉：r17 计时构造法（`fix(scripts)` + N 空格 + `fix-r5：x`，GitHub 正文
         # 65536 字符上限内单行最大 N=65514）。修前实测（r17）：N=32768→7.854 s /
         # N=65514→35.172 s（二次方）；修后实测（本机 darwin python3.14）~0.003 s
-        #（echo-head-timing-r18.out）。断言阈值 2.0 s＝预注册 10 s 的 5× 余量（防
-        # CI 机器慢假红），是修后实测的 ~600× 上方、修前值的 ~17× 下方——写回相邻
-        # 星号（二次方）形态必红。
-        _t0 = time.perf_counter()
-        _m18 = gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "fix-r5：x")
-        _dt18 = time.perf_counter() - _t0
-        if _m18 is not None:
+        #（echo-head-timing-r18.out）。**fix-r19：计时断言迁入 _probe 子进程护栏**
+        #（上方 echo 模式，N=65514 断言 <2.0 s＝预注册 10 s 的 5× 余量；fix-r16
+        # 教训——就地断言在回退态会把套件挂死在永不返回的调用上）；本块只留语义面
+        #（失败形不命中/成功形命中），对照块的死赋值 perf_counter（MM r18
+        # concurrency#2 P3）随迁移一并删除。
+        if gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "fix-r5：x") is not None:
             fails.append("fix-r18 性能钉语义面：失败形（N 空格 + fix-r5：x）不得命中"
                          "（正则改写不得引入新匹配面）")
-        if _dt18 >= 2.0:
-            fails.append(f"fix-r18 性能钉：N=65514 失败形 ECHO_HEAD.match {_dt18:.3f}s ≥ 2.0s"
-                         "（相邻星号回溯回归——r17 修前实测 35.172s，修后 ~0.002s；"
-                         "改动须过 P0 通道重新登记）")
         _t0 = time.perf_counter()
         if gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "#3056") is None:
             fails.append("fix-r18 性能钉对照：成功形（N 空格 + #N）须照常命中（贪心首刀）")
@@ -2576,6 +2631,177 @@ def _run(gate, rrr, out_base: Path) -> int:
                 r"\([^)\n]{1,80}\)\s*(?:[:：]\s*)?(?:PR\s+)?#\d+":
             fails.append(f"fix-r18 形态钉：ECHO_HEAD 形态被改（现值 {gate.ECHO_HEAD.pattern!r}"
                          "——写回相邻星号形态 `\\s*[:：]?\\s*` 重开 O(N²) 回溯面）")
+
+        # —— #3074 fix-r19（家族级：DS/MM r17+r18 增量双谱系双撞——P0 WAIVER Θ(N³) +
+        # P1 NO_ISSUE Θ(N²) + P1 titles 空集三态 + 兄弟脚本 SCOPE_BODY/PERSON_DAY 同族
+        # 并入；协调者裁定 _tmp/20261114-3074-fixr19/extra.md）——
+        _tb_spec = importlib.util.spec_from_file_location(
+            "pdrs_taskbook_r19", ROOT / "scripts" / "check-taskbook-segments.py")
+        tb = importlib.util.module_from_spec(_tb_spec)
+        _tb_spec.loader.exec_module(tb)
+        # (0) 族级静态扫描钉（主护栏）：两脚本全部 re.compile 模式扫「同一字符类可被
+        # 相邻两个量词同时匹配」，白名单外即红；含探测器自检（修前反形态样本全命中，
+        # 防扫描器静默全放行）。实现与白名单在模块级 _fscan_* / _FSCAN_WHITELIST。
+        fails.extend(f"fix-r19 族级静态扫描：{e}" for e in _family_scan_fails(gate, tb))
+        # (1) 形态字面量钉 ×4：写回反模式形态（重开回溯面）或任何其他改写必红。
+        if gate.WAIVER.pattern != r"<!--\s*pr-gate:waiver\s+(\S.*?)-->":
+            fails.append(f"fix-r19 形态钉：WAIVER 形态被改（现值 {gate.WAIVER.pattern!r}"
+                         "——写回 `\\s+(.+?)\\s*` 三方可同吃一段空白形态重开 Θ(N³) 回溯面）")
+        if gate.NO_ISSUE.pattern != r"<!--\s*no-issue\s+(\S.*?)-->":
+            fails.append(f"fix-r19 形态钉：NO_ISSUE 形态被改（现值 {gate.NO_ISSUE.pattern!r}"
+                         "——写回尾部 `\\s*` 形态重开 Θ(N²) 回溯面）")
+        if tb.SCOPE_BODY.pattern != rf"^\s*pdrs{tb.DASHES}*scope\s*(?:[:：]\s*)?(?P<rest>(?:[^\s\n][^\n]*)?)$":
+            fails.append(f"fix-r19 形态钉：SCOPE_BODY 形态被改（现值 {tb.SCOPE_BODY.pattern!r}"
+                         "——冒号槽写回相邻星号形或去掉 rest 首字符钉（\\s*×.* 残余二次方）必红）")
+        if tb.PERSON_DAY.pattern != (
+                r"(?:约|大约|估计|预计约|预计|预期|估算|估|工作量|共计|合计|总计|共)"
+                r"(?:需(?:要|投入)?)?\s*(?:[:：,，]\s*)?"
+                r"([0-9]+(?:\.[0-9]+)?)\s*(?:个\s*)?(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]"):
+            fails.append(f"fix-r19 形态钉：PERSON_DAY 形态被改（现值 {tb.PERSON_DAY.pattern!r}"
+                         "——冒号/个槽写回 W* C? W* 形态重开二次回溯面）")
+        # (2) 等价差分钉（differential oracle，r18 口径）：与修前形态（r18 ref e3372e58c
+        # 字面量重建）确定性随机对拍。WAIVER 比对层面＝gate 的实际消费 `w.group(1).strip()`
+        # （:1851），尾随空白归并进组后再 strip 等价；**纯空白理由形＝登记收窄**（old 命中
+        # 空理由、new 不命中——两向都拒收，见 (4)），差分计数须排除该对。计时护栏在上方
+        # _probe（waiver/noissue/scope/personday 模式，N=65514 断言 <2.0 s）。
+        _old_w19 = re.compile(r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S)
+        _old_n19 = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
+        _old_s19 = re.compile(r"^\s*pdrs[\s_\-－—‐‑]*scope\s*[:：]?\s*(?P<rest>.*)$", re.I)
+        _old_p19 = re.compile(r"(?:约|大约|估计|预计约|预计|预期|估算|估|工作量|共计|合计|总计|共)"
+                              r"(?:需(?:要|投入)?)?\s*[:：,，]?\s*"
+                              r"([0-9]+(?:\.[0-9]+)?)\s*(?:个)?\s*(?:[–\-~至]\s*([0-9]+(?:\.[0-9]+)?)\s*)?人[日天]")
+        _rng19 = _rnd.Random(3056)
+        _aw, _an, _asc, _apd = " \t\n：:-额x", " \t\n：-x", " \n:：x_", " \t:，,.01357个–-~至人日x"
+        _dw = _dn = _ds = _dp = 0
+        for _ in range(4000):
+            _body = ("<!--pr-gate:waiver" + _rng19.choice(["", " ", "\n"])
+                     + "".join(_rng19.choice(_aw) for _ in range(_rng19.randrange(0, 14)))
+                     + _rng19.choice(["-->", "--", "", "-->x"]))
+            _a, _b = _old_w19.search(_body), gate.WAIVER.search(_body)
+            _ra = _a.group(1).strip() if _a else None
+            _rb = _b.group(1).strip() if _b else None
+            if _ra != _rb and not (_ra == "" and _rb is None):
+                _dw += 1
+            _body = ("<!--no-issue" + _rng19.choice(["", " "])
+                     + "".join(_rng19.choice(_an) for _ in range(_rng19.randrange(0, 12)))
+                     + _rng19.choice(["-->", "--", "", "-->x"]))
+            if bool(_old_n19.search(_body)) != bool(gate.NO_ISSUE.search(_body)):
+                _dn += 1
+            _body = ("pdrs" + _rng19.choice(["", "-", " ", "_", "—"]) + "scope"
+                     + "".join(_rng19.choice(_asc) for _ in range(_rng19.randrange(0, 12))))
+            _a, _b = _old_s19.match(_body), tb.SCOPE_BODY.match(_body)
+            if (_a is None) != (_b is None) or (_a and (_a.span() != _b.span()
+                                                        or _a.group("rest") != _b.group("rest"))):
+                _ds += 1
+            _body = (_rng19.choice(["约", "预计", "合计", "工作量", "共需投入", "预计约"])
+                     + "".join(_rng19.choice(_apd) for _ in range(_rng19.randrange(0, 16))))
+            if _old_p19.findall(_body) != tb.PERSON_DAY.findall(_body):
+                _dp += 1
+        if _dw:
+            fails.append(f"fix-r19 等价差分钉：WAIVER 4000 随机位形 strip 层差异 {_dw} 条"
+                         "（正则改写须语言等价——穷举证据 _tmp/20261114-3074-fixr19/）")
+        if _dn:
+            fails.append(f"fix-r19 等价差分钉：NO_ISSUE 4000 随机位形 bool 层差异 {_dn} 条")
+        if _ds:
+            fails.append(f"fix-r19 等价差分钉：SCOPE_BODY 4000 随机位形 match/span/rest 差异 {_ds} 条")
+        if _dp:
+            fails.append(f"fix-r19 等价差分钉：PERSON_DAY 4000 随机位形 findall 差异 {_dp} 条")
+        # (3) 冒号/三明治位形双向钉（等价面，r18 口径）：
+        for _body, _want in (
+                ("<!-- pr-gate:waiver 理由足够长 -->", True),
+                ("<!--pr-gate:waiver   多空白  理由   -->", True),
+                ("<!--pr-gate:waiver\n  跨行\n  理由\n-->", True),
+                ("<!--pr-gate:waiver 理由带尾随空白   -->", True),
+                ("<!--pr-gate:waiver\t理由制表符\t-->", True),
+                ("<!--pr-gate:waiver x-->理由<!--pr-gate:waiver y-->", True),
+                ("<!--pr-gate:waiver   -->", False),          # 纯空白理由＝登记收窄（见 (4)）
+                ("<!--pr-gate:waiver \n -->", False),
+                ("<!--pr-gate:waiver", False)):
+            if bool(gate.WAIVER.search(_body)) is not _want:
+                fails.append(f"fix-r19 WAIVER 位形钉：{_body[:44]!r} 须{'命中' if _want else '不命中'}")
+        for _body, _want in (("<!-- no-issue 纯文档说明 -->", True),
+                             ("<!--no-issue   多空白  x   -->", True),
+                             ("<!--no-issue\n跨行\n-->", True),
+                             ("<!--no-issue x-->", True),
+                             ("<!--no-issue  -->", False),
+                             ("<!--no-issue", False)):
+            if bool(gate.NO_ISSUE.search(_body)) is not _want:
+                fails.append(f"fix-r19 NO_ISSUE 位形钉：{_body[:44]!r} 须{'命中' if _want else '不命中'}")
+        for _body, _want in (
+                ("pdrs-scope: files=16 est_min=180", "files=16 est_min=180"),
+                ("pdrs-scope  ：  files=2", "files=2"),
+                ("pdrs-scope\n: files=2", "files=2"),          # 跨行桥形照常命中 → :526 报错路径保持
+                ("pdrs-scope:\nfiles=2", "files=2"),
+                ("pdrs-scope:  : x", ": x"),
+                ("PDRS-SCOPE: x", "x"),
+                ("pdrs-scope:  ", ""),
+                ("pdrs-scope: files=2\nx", None),              # 行中 \n 且后续有内容 → $ 失败（两版同判）
+                ("pdrs scope", "")):
+            _m = tb.SCOPE_BODY.match(_body)
+            if (_m.group("rest") if _m else None) != _want:
+                fails.append(f"fix-r19 SCOPE_BODY 位形钉：{_body[:36]!r} rest 须 {_want!r}"
+                             "（跨行桥形照常命中＝「body 含换行须报错」判据 :526 不动）")
+        for _body, _want in (("约 3 人日", [("3", "")]), ("预计：2 人日", [("2", "")]),
+                              ("工作量,5人日", [("5", "")]), ("共需投入 3.5 个人日", [("3.5", "")]),
+                              ("预计  3   个   人日", [("3", "")]), ("大约 1-2 人日", [("1", "2")]),
+                              ("合计： 4 人天", [("4", "")]), ("预计 3 人日，共 5 人日", [("3", ""), ("5", "")]),
+                              ("预计 3 个 x", []), ("合计", [])):
+            if tb.PERSON_DAY.findall(_body) != _want:
+                fails.append(f"fix-r19 PERSON_DAY 位形钉：{_body[:24]!r} 须 {_want}"
+                             f"（实得 {tb.PERSON_DAY.findall(_body)}）")
+        # :526 判据端到端：跨行 scope 注释照常报「必须写在一行里」（SCOPE_BODY 须命中
+        # 该形才走到这条报错——改写若断了跨行桥形，这条会静默变成「写法不对」别的通道）。
+        _psc, _pse = tb.parse_scopes("<!-- pdrs-scope:\nfiles=2 -->")
+        if _psc or not any("写在一行里" in e for e in _pse):
+            fails.append(f"fix-r19 :526 判据：跨行 scope 注释须照常报「写在一行里」：{_pse}")
+        _psc, _pse = tb.parse_scopes("  <!-- pdrs-scope: files=16 est_min=180 -->")
+        if _pse or _psc != [{"files": 16, "est_min": 180}]:
+            fails.append(f"fix-r19 正常 scope 声明不得被改写破坏：{_psc} {_pse}")
+        # (4) WAIVER 纯空白理由收窄钉（有意，fail-closed 方向不变）：旧形命中后走
+        # 「豁免理由太短」报错；新形不命中 → 走「缺角色审计结果块或 pr-gate:waiver 豁免」
+        # 报错——两向都拒收，只是通道换了；豁免理由本来就必须 ≥8 字，纯空白形从来不是
+        # 合规输入（登记见 WAIVER 定义处注释）。
+        _wv_errs = gate.check("<!--pr-gate:waiver   -->\nCloses #3056\n", "", "", "", "")
+        if not any("缺角色审计结果块" in e for e in _wv_errs) or any("豁免理由太短" in e for e in _wv_errs):
+            fails.append(f"fix-r19 WAIVER 收窄钉：纯空白理由形须走「缺结果块」通道拒收"
+                         f"（不得静默放行、也不得仍走旧「理由太短」通道）：{_wv_errs}")
+        if gate.check("<!-- pr-gate:waiver 纯文档变更无需角色审计结果块 -->\nCloses #3056\n",
+                      "", "", "", ""):
+            fails.append("fix-r19 WAIVER 正常路径：合法豁免（理由 ≥8 字 + Closes #N）不得被改写破坏")
+        if gate.check("<!--pr-gate:waiver\n  跨行\n  豁免理由足够长\n-->\nCloses #3056\n",
+                      "", "", "", ""):
+            fails.append("fix-r19 WAIVER 多行理由（re.S）不得被改写收窄")
+        # (5) titles 三态钉（P1 主修）：空集 []（base==head 空提交范围等＝无主信号，
+        # pr_commit_titles docstring 明写与 None 同款走兜底）+ 声明形首行 + 异单回显行
+        # → 须拒收；对照非空干净标题集照旧跳过（r15 面/r17 面保持，与 fix-r17 P1(b) 钉
+        # 同轴复钉防本轮回退）。
+        _orig_pct19 = gate.pr_commit_titles
+        try:
+            gate.pr_commit_titles = lambda repo, base, head: ([], "")
+            _t3_errs = gate.check(r17_body, "", "", "", "")
+        finally:
+            gate.pr_commit_titles = _orig_pct19
+        if not any("异单旁路" in e and "正文回显行" in e and "3099" in e for e in _t3_errs):
+            fails.append(f"fix-r19 titles 三态：空集 [] 须与 None 同走正文回显 foreign 扫描"
+                         f"（声明形首行不豁免）——r17 修的漏检形状在 [] 态的残留：{_t3_errs}")
+        try:
+            gate.pr_commit_titles = lambda repo, base, head: (["chore(state) 00:13 交接段：普通状态提交"], "")
+            _t3_ci = gate.check(r17_body, "", "", "", "")
+        finally:
+            gate.pr_commit_titles = _orig_pct19
+        if any("异单旁路" in e for e in _t3_ci):
+            fails.append(f"fix-r19 titles 三态对照：非空干净标题集声明形首行照旧跳过"
+                          f"（r15 修的假 FAIL 面保持）：{_t3_ci}")
+        if "titles is not None and _first_line_declares" in (gate._first_line_declares.__doc__ or "") \
+                or "titles and" not in (gate._first_line_declares.__doc__ or ""):
+            fails.append("fix-r19 titles 三态文档同源：_first_line_declares docstring 须写"
+                         "「titles and」（非空口径），旧完整条件句不得原样残留")
+        # (6) _echo_head_lines 直调钉（MM r16 simplify#2 抽单源后无测试配对，DS r18
+        # sibling#2 补）：行提取＝strip 后逐行 ECHO_HEAD.match，非回显行剔除。
+        if gate._echo_head_lines("散文行\nfix(scripts) #1 fix-r2：y\n  fix(scripts) #2 fix-r3：z  \n") \
+                != ["fix(scripts) #1 fix-r2：y", "fix(scripts) #2 fix-r3：z"]:
+            fails.append("fix-r19 _echo_head_lines 直调钉：strip 后逐行 ECHO_HEAD.match"
+                         "（非回显行剔除、行尾空白剥掉）——两半边（foreign/rounds）共用的行提取")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
@@ -2744,6 +2970,317 @@ def _run(gate, rrr, out_base: Path) -> int:
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
     return 1 if fails else 0
 
+
+
+# ---- fix-r19（#3074 家族级静态扫描钉）--------------------------------------------------------
+# r17 修单点（本地形态 foreign 出口）、r18 修单点（ECHO_HEAD），双谱系评审每轮都再撞出
+# 同族形态——本轮收族配的护栏：扫两个闸门脚本**全部 re.compile 模式**，命中「同一字符
+# 类可被相邻两个量词同时匹配」形态（WAIVER Θ(N³)/NO_ISSUE/SCOPE_BODY/PERSON_DAY/
+# ECHO_HEAD 回溯爆炸的共同根因）且不在白名单＝红。日后给任一脚本改正则不过本扫＝
+# 当场被抓（r17/r18 两轮「下次又漏一处」的教训固化成机器检查）。
+# 检测规则（探针先行验证：旧形样本全命中、修后两脚本全量扫描只剩白名单三处＋一处
+# 函数内局部量，证据 _tmp/20261114-3074-fixr19/family-scan-r19.out）：
+# - 单元＝序列里一个可消费字符的原子带其量词（MAX_REPEAT/MIN_REPEAT 的 min/max）；
+#   零宽（AT/ASSERT/ASSERT_NOT）打断相邻性；
+# - 可迭代＝max≥2 或无上界（每一步都能多吞一个字符）；
+# - 相邻对＝同层两个可迭代单元、中间只隔可跳过（min=0 或可空）单元，且前者**头或尾**
+#   字符集与后者头字符集相交——两个方向都要：头-头盖 W* C? W* 三明治（r18 ECHO_HEAD），
+#   尾-头盖 `(\S.*?)\s*`（r19 NO_ISSUE：组尾能吃空白、后面 `\s*` 也能吃）；
+# - 嵌套重复 (X+)+（fix-r14 指数族）独立命中；
+# - 字符类代数：LITERAL/RANGE 精确（range 超大区段判 ANY 保守）；CATEGORY 近似
+#   （\s→常用空白集、\d→数字、\w→字母数字下划线，其余 ANY）；NEGATE 与 NOT_ 类走
+#   补集代数（[^\S\r\n]＝空白减 \r\n、[^\w\s:#]＝词/空白/:/# 的补）；GROUPREF/未知 op
+#   保守 ANY；re.I 下字面量大小写互扩；neg∩neg 保守判相交。
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    try:
+        import sre_parse as _fscan_parse
+        from sre_constants import (ASSERT, ASSERT_NOT, AT, ANY, BRANCH, CATEGORY,
+                                  GROUPREF, IN, LITERAL, MAXREPEAT, MAX_REPEAT,
+                                  MIN_REPEAT, NEGATE, NOT_LITERAL, RANGE, SUBPATTERN)
+    except ImportError:  # python≥3.12 的迁移路径（3.11 前公开名仍可用，双名都试）
+        import re._parser as _fscan_parse
+        from re._constants import (ASSERT, ASSERT_NOT, AT, ANY, BRANCH, CATEGORY,
+                                  GROUPREF, IN, LITERAL, MAXREPEAT, MAX_REPEAT,
+                                  MIN_REPEAT, NEGATE, NOT_LITERAL, RANGE, SUBPATTERN)
+
+_FSCAN_WS = frozenset(map(ord, " \t\n\r\f\v\x1c\x1d\x1e\x1f\x85\xa0"))
+_FSCAN_DIGITS = frozenset(map(ord, "0123456789"))
+_FSCAN_WORD = frozenset(map(ord, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"))
+_FSCAN_CATS = {"SPACE": _FSCAN_WS, "DIGIT": _FSCAN_DIGITS, "WORD": _FSCAN_WORD}
+_FSCAN_ANY = "ANY"
+
+
+def _fscan_case(chars, flags):
+    if not flags & re.IGNORECASE:
+        return chars
+    out = set(chars)
+    for c in chars:
+        if chr(c).isalpha():
+            out.add(ord(chr(c).swapcase()))
+    return frozenset(out)
+
+
+def _fscan_in_class(items, flags):
+    """IN 参数 → ('pos'|'neg', lits, ranges) / ANYSET；neg＝(lits∪ranges) 的补集。"""
+    lits, ranges, neg, not_cats = set(), [], False, None
+    for op, av in items:
+        if op is LITERAL:
+            lits.add(av)
+        elif op is NEGATE:
+            neg = True
+        elif op is RANGE:
+            ranges.append(tuple(av))
+        elif op is CATEGORY:
+            name = str(av)
+            base = next((s for k, s in _FSCAN_CATS.items() if k in name), None)
+            if base is None:
+                return _FSCAN_ANY
+            if "NOT" in name:
+                not_cats = set(base) if not_cats is None else (not_cats & set(base))
+            else:
+                lits |= base
+        else:
+            return _FSCAN_ANY
+    lits = _fscan_case(lits, flags)
+    if not_cats is None:
+        kind = "neg" if neg else "pos"
+        return (kind, frozenset(lits), tuple(ranges))
+    # 类＝A ∪ not_cats^c：无 NEGATE → ("neg", not_cats\A)；有 NEGATE → ("pos", not_cats\A)
+    k = frozenset(c for c in not_cats
+                  if c not in lits and not any(a <= c <= b for a, b in ranges))
+    return ("pos", k, ()) if neg else ("neg", k, ())
+
+
+def _fscan_covers(lits, ranges, c):
+    return c in lits or any(a <= c <= b for a, b in ranges)
+
+
+def _fscan_intersects(a, b):
+    if a is _FSCAN_ANY or b is _FSCAN_ANY:
+        return True
+    (ka, la, ra), (kb, lb, rb) = a, b
+    if ka == "pos" and kb == "pos":
+        return bool(la & lb) \
+            or any(_fscan_covers(lb, rb, c) for c in la) \
+            or any(_fscan_covers(la, ra, c) for c in lb) \
+            or any(p1 <= q2 and p2 <= q1 for p1, q1 in ra for p2, q2 in rb)
+    if ka == "pos" and kb == "neg":
+        for c in la:
+            if not _fscan_covers(lb, rb, c):
+                return True
+        for x, y in ra:
+            cov = sum(max(0, min(y, q) - max(x, p) + 1) for p, q in rb)
+            cov += sum(1 for c in lb if x <= c <= y and not any(p <= c <= q for p, q in rb))
+            if cov < y - x + 1:
+                return True
+        return False
+    if ka == "neg" and kb == "pos":
+        return _fscan_intersects(b, a)
+    return True  # neg ∩ neg：保守判相交
+
+
+def _fscan_union(a, b):
+    if a is None:
+        return b
+    if a is _FSCAN_ANY or b is _FSCAN_ANY:
+        return _FSCAN_ANY
+    (ka, la, ra), (kb, lb, rb) = a, b
+    if ka == "pos" and kb == "pos":
+        return ("pos", la | lb, tuple(ra) + tuple(rb))
+    if ka == "neg":
+        return ("neg", frozenset(c for c in la if not _fscan_covers(lb, rb, c)),
+                tuple((p, q) for p, q in ra if not _fscan_covers(lb, rb, p)))
+    return _fscan_union(b, a)
+
+
+class _FscanUnit:
+    __slots__ = ("cls", "last", "minr", "maxr", "desc", "can_skip", "expandable")
+
+    def __init__(self, cls, minr, maxr, desc, last=None):
+        self.cls, self.minr, self.maxr = cls, minr, maxr
+        self.desc = desc
+        self.last = cls if last is None else last
+        self.can_skip = minr == 0
+        self.expandable = maxr == MAXREPEAT or maxr >= 2
+
+
+def _fscan_atom(items, flags):
+    """原子（可能是序列）→ Unit（量词默认 (1,1)）。不可消费（空序列）返回 None。"""
+    if not items:
+        return None
+    op0, av0 = items[0]
+    if op0 is LITERAL and len(items) == 1:
+        return _FscanUnit(("pos", _fscan_case({av0}, flags), ()), 1, 1, repr(chr(av0)))
+    if op0 is IN and len(items) == 1:
+        return _FscanUnit(_fscan_in_class(av0, flags), 1, 1, "IN")
+    if op0 is ANY and len(items) == 1:
+        return _FscanUnit(_FSCAN_ANY, 1, 1, ".")
+    if op0 is NOT_LITERAL and len(items) == 1:
+        return _FscanUnit(("neg", _fscan_case({av0}, flags), ()), 1, 1, "NOT_LIT")
+    if op0 is GROUPREF and len(items) == 1:
+        return _FscanUnit(_FSCAN_ANY, 1, 1, r"\%d" % av0)
+    if op0 is BRANCH and len(items) == 1:
+        fs, ls, exp, skip = None, None, False, False
+        for br in av0[1]:
+            a = _fscan_atom(list(br), flags)
+            if a is None:  # 空分支＝可跳过
+                skip = True
+                continue
+            exp = exp or a.expandable
+            skip = skip or a.can_skip
+            if a.cls is None:
+                continue
+            fs = _fscan_union(fs, a.cls)
+            ls = _fscan_union(ls, a.last)
+        u = _FscanUnit(fs if fs is not None else ("pos", frozenset()), 1, 1, "BRANCH",
+                       last=ls if ls is not None else ("pos", frozenset()))
+        u.expandable, u.can_skip = exp, skip
+        return u
+    inner = _fscan_units(items, flags)
+    if not inner:
+        return None
+    fs = None
+    for u in inner:
+        if u.cls is None:
+            continue
+        fs = _fscan_union(fs, u.cls)
+        if fs is _FSCAN_ANY:
+            break
+        if not u.can_skip:
+            break
+    ls = None
+    for u in reversed(inner):
+        if u.cls is None:
+            continue
+        ls = _fscan_union(ls, u.last)
+        if ls is _FSCAN_ANY:
+            break
+        if not u.can_skip:
+            break
+    u = _FscanUnit(fs, 1, 1, "GROUP", last=ls)
+    u.expandable = any(x.expandable for x in inner)
+    return u
+
+
+def _fscan_units(seq, flags):
+    out = []
+    for op, av in seq:
+        if op in (AT, ASSERT, ASSERT_NOT):
+            out.append(_FscanUnit(None, -1, -1, "zero-width"))
+            continue
+        if op in (MAX_REPEAT, MIN_REPEAT):
+            mn, mx, sub = av
+            u = _fscan_atom(list(sub), flags)
+            if u is None:
+                continue
+            u.minr, u.maxr = mn, mx
+            u.can_skip = mn == 0
+            u.expandable = mx == MAXREPEAT or mx >= 2
+            out.append(u)
+            continue
+        if op is SUBPATTERN:
+            u = _fscan_atom(list(av[-1]), flags)
+            if u is not None:
+                out.append(u)
+            continue
+        u = _fscan_atom([(op, av)], flags)
+        if u is not None:
+            out.append(u)
+    return out
+
+
+def _fscan_walk(seq, hits, where, flags):
+    units = _fscan_units(seq, flags)
+    for i, a in enumerate(units):
+        if a.cls is None or not a.expandable:
+            continue
+        for j in range(i + 1, len(units)):
+            b = units[j]
+            if b.cls is None:
+                break  # 零宽锚打断
+            if any(not u.can_skip for u in units[i + 1:j]):
+                break  # 中间有必现单元 → j 之后的不可能与 i 相邻
+            if b.expandable and (_fscan_intersects(a.cls, b.cls) or _fscan_intersects(a.last, b.cls)):
+                hits.append(f"{where}: {a.desc} … {b.desc}")
+    for op, av in seq:
+        if op in (MAX_REPEAT, MIN_REPEAT):
+            mn, mx, sub = av
+            sub_seq = list(sub)
+            if (mx == MAXREPEAT or mx >= 2) and mn >= 1 and sub_seq:
+                if any(u.expandable for u in _fscan_units(sub_seq, flags)):
+                    hits.append(f"{where}: repeat({mn},≥2) 嵌套可迭代单元（(X+)+ 指数族）")
+            _fscan_walk(sub_seq, hits, where + ".rep", flags)
+        elif op is SUBPATTERN:
+            _fscan_walk(list(av[-1]), hits, where + ".grp", flags)
+        elif op is BRANCH:
+            for br in av[1]:
+                _fscan_walk(list(br), hits, where + ".br", flags)
+        elif op in (ASSERT, ASSERT_NOT):
+            _fscan_walk(list(av[-1]), hits, where + ".as", flags)
+
+
+def _fscan_hits(pat, flags=0):
+    hits: list[str] = []
+    _fscan_walk(list(_fscan_parse.parse(pat, flags)), hits, "top", flags)
+    return hits
+
+
+# 白名单（已仲裁条目；改动/新增正则命中扫描且不在表内＝红，登记须给理由与实测依据）
+_FSCAN_WHITELIST = (
+    # gate ISSUE_NUM（#3056 fix-r14/r15 定谳形态，勿动）：标点分支内层 `(?:hws* 标点)*`
+    # 重复组后随尾部 GAP 空白——头-头同吃非换行空白，但每轮迭代必先吃一个标点＝轮划分
+    # 唯一（r14 修法本身），punct/punct_mix/punct_nl 三条 _probe 计时钉钉住该形态不回退。
+    ("check-pr-gate.py", r"(?<![A-Za-z0-9_])(?:close[sd]?"),
+    # tb SECTION：`\s+(.*)$` 相邻——逐行匹配（section_text 用 text.splitlines() 的行，
+    # 行内无 \n），`.*$` 恒成功 → 无失败重扫路径（改回全文匹配须重审本条）。
+    ("check-taskbook-segments.py", r"^(#{2,3})\s+(.*)$"),
+    # tb FENCE_OPEN：围栏串后 `(?P<info>.*)$` 同上逐行恒成功（_fence_spans 用 lines[i]）。
+    ("check-taskbook-segments.py", r" {0,3}(?P<f>`{3,}|~{3,})(?P<info>.*)$"),
+)
+
+
+def _family_scan_fails(gate, tb) -> list[str]:
+    """fix-r19 族级静态扫描：返回失败清单（空＝过）。"""
+    errs: list[str] = []
+    # 探测器自检（护栏的护栏）：r19 修前反模式字面样本必须全命中——静默全放行＝坏灯。
+    for _label, _pat, _flags in (
+            ("OLD WAIVER", r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S),
+            ("OLD NO_ISSUE", r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S),
+            ("r17 ECHO_HEAD", r"^(?:fix|feat)\([^)\n]{1,80}\)\s*[:：]?\s*(?:PR\s+)?#\d+", 0),
+            ("OLD SCOPE_BODY", r"^\s*pdrs[\s_\-－—‐‑]*scope\s*[:：]?\s*(?P<rest>.*)$", re.I),
+            ("naive SCOPE_BODY", r"^\s*pdrs[\s_\-－—‐‑]*scope\s*(?:[:：]\s*)?(?P<rest>.*)$", re.I),
+            ("OLD PERSON_DAY", r"(?:约|共)\s*[:：,，]?\s*([0-9]+)\s*(?:个)?\s*人[日天]", 0),
+            ("nested (P+)+", r"Closes(?:[,\s]+)+#3056", re.I)):
+        if not _fscan_hits(_pat, _flags):
+            errs.append(f"族级扫描探测器自检：{_label} 反形态必须命中（检测面退化＝改回反模式不红）")
+    for mod, path in ((gate, ROOT / "scripts" / "check-pr-gate.py"),
+                      (tb, ROOT / "scripts" / "check-taskbook-segments.py")):
+        base = path.name
+        src = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "compile" and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "re"):
+                continue
+            seg = ast.get_source_segment(src, node)
+            try:
+                rx = eval(seg, dict(mod.__dict__))  # noqa: S307 — 受控字面量 + 模块名空间
+            except NameError:
+                # 函数内局部量拼的模板（围栏闭合 re.escape(ch)/str(n)）：只许已登记的这一个，
+                # 且其代表形须过扫描（` {0,3}` 有界 + 围栏字面量隔断 + `[ \t]*` 收尾）。
+                if base == "check-taskbook-segments.py" and "re.escape(ch)" in seg:
+                    for rep in (r" {0,3}`{3,}[ \t]*", r" {0,3}~{4,}[ \t]*"):
+                        if _fscan_hits(rep):
+                            errs.append(f"围栏闭合代表形 {rep!r} 命中相邻量词形态（白名单登记失效）")
+                else:
+                    errs.append(f"{base} 有未登记的不可求值 re.compile：{seg[:70]!r}")
+                continue
+            hits = _fscan_hits(rx.pattern, rx.flags)
+            if hits and not any(base == b and rx.pattern.startswith(s) for b, s in _FSCAN_WHITELIST):
+                errs.append(f"{base} {seg[:70]!r} 命中未登记的相邻量词形态：{hits[:2]}"
+                             "（新反模式须仲裁：改写消歧或进白名单给理由）")
+    return errs
 
 
 def _carry_tests(gate, fails: list[str]) -> None:
