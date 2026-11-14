@@ -20,7 +20,15 @@ impl Scratch {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             match fs::create_dir(&dir) {
-                Ok(()) => return Self(fs::canonicalize(dir).unwrap()),
+                // #3143 fix-r2 (DS sibling#5, #2335): the guard owns the tree
+                // from the claim on, so a canonicalize failure unwinds
+                // through Drop instead of leaking it; the retry arm stays
+                // guard-free because that path belongs to another run.
+                Ok(()) => {
+                    let mut scratch = Self(dir);
+                    scratch.0 = fs::canonicalize(&scratch.0).unwrap();
+                    return scratch;
+                }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => panic!("{e}"),
             }
