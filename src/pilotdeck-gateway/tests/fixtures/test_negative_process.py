@@ -2627,11 +2627,26 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
         without the suppress a marker write on such a directory would escape
         the handler as a traceback and turn the exit-2 refusal into rc=1
         ("ran and was red"). The caller must get the failure text instead.
+
+        fix-r12 (review DS r11 boundary #2): the twin used to chmod(0o555)
+        the directory, but permission bits are uid/filesystem-dependent —
+        run as root or with TMPDIR on an overlay/SMB-style mount the write
+        succeeds and this test goes red on a healthy checker. Both the
+        marker write and the cleanup unlink now fail by injection (the
+        fixture's established twin form), so the escalation shape below is
+        host-independent.
         """
         with tempfile.TemporaryDirectory(prefix='pdrs-refuse-readonly-') as temp:
             out = Path(temp)
-            out.chmod(0o555)
-            try:
+
+            def failing_write(self, data, *args, **kwargs):
+                raise OSError(13, 'Permission denied')
+
+            def failing_unlink(self, *args, **kwargs):
+                raise PermissionError(13, 'Permission denied')
+
+            with patch.object(Path, 'write_text', failing_write), \
+                    patch.object(Path, 'unlink', failing_unlink):
                 try:
                     failure = negative_process.refuse_summary(
                         out, 'stale anchors', '42.1.777',
@@ -2639,10 +2654,6 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
                 except OSError as error:
                     self.fail('#1087 an unwritable directory must not raise past '
                               f'refuse_summary (got {error!r})')
-            finally:
-                # The directory must be writable again before the context
-                # manager tries to remove it.
-                out.chmod(0o755)
         self.assertTrue(failure is not None,
                         '#1087 the unwritable-directory marker write must '
                         'report itself as failure text')
@@ -2657,26 +2668,33 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
         raises ``PermissionError``; without the ``suppress`` that error
         escapes the ``except OSError`` clause and turns the exit-2 refusal
         into a traceback (rc=1, "ran and was red").
+
+        fix-r12 (review DS r11 boundary #2): the twin used to chmod(0o555)
+        the directory inside the refused rename — permission bits are
+        uid/filesystem-dependent (root, overlay/SMB-mounted TMPDIR), so the
+        cleanup failure is now injected the same way as the rename (the
+        build-owner twin below uses the identical shape).
         """
         with tempfile.TemporaryDirectory(prefix='pdrs-refuse-cleanup-') as temp:
             out = Path(temp)
 
             def unwritable_rename(self, destination, *args, **kwargs):
-                out.chmod(0o555)  # the directory loses write between the
-                # staging write and the rename.
+                # the directory loses write between the staging write and
+                # the rename.
                 raise OSError('twin: rename refused')
 
-            try:
-                with patch.object(Path, 'replace', unwritable_rename):
-                    try:
-                        failure = negative_process.refuse_summary(
-                            out, 'stale anchors', '42.1.777',
-                            summary_name='summary.42.1.777.json')
-                    except OSError as error:
-                        self.fail('#1087 the cleanup unlink must not escalate '
-                                  f'past the failure handler (got {error!r})')
-            finally:
-                out.chmod(0o755)
+            def failing_unlink(self, *args, **kwargs):
+                raise PermissionError(13, 'Permission denied')
+
+            with patch.object(Path, 'replace', unwritable_rename), \
+                    patch.object(Path, 'unlink', failing_unlink):
+                try:
+                    failure = negative_process.refuse_summary(
+                        out, 'stale anchors', '42.1.777',
+                        summary_name='summary.42.1.777.json')
+                except OSError as error:
+                    self.fail('#1087 the cleanup unlink must not escalate '
+                              f'past the failure handler (got {error!r})')
         self.assertTrue(failure is not None,
                         '#1087 a failing rename must report itself as '
                         'failure text, not raise')
@@ -2733,30 +2751,35 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
             source.write_text('original')
             publish = root / '.negctl-publish'
             publish.mkdir()
-            publish.chmod(0o555)  # the staging write fails on its own here.
+
+            # fix-r12 (review DS r11 boundary #2): the staging write used
+            # to fail via a chmod(0o555) publish directory, but permission
+            # bits are uid/filesystem-dependent (root, overlay/SMB-mounted
+            # TMPDIR) — the refusal is now injected at the open, same twin
+            # form as the failing_unlink beside it.
+            def refused_open(self, *args, **kwargs):
+                raise PermissionError(13, 'Permission denied')
 
             def failing_unlink(self, *args, **kwargs):
                 raise OSError('twin: the cleanup unlink fails')
 
-            try:
-                with patch.object(Path, 'unlink', failing_unlink):
-                    try:
-                        negative_process.write_source_atomic(root, source,
-                                                             b'replacement')
-                    except OSError as error:
-                        self.assertTrue('cleanup unlink fails' not in str(error),
-                                        f'#1087 the cleanup error must not '
-                                        f'mask the publish error (got '
-                                        f'{error!r})')
-                        self.assertTrue('Permission denied' in str(error),
-                                        f'#1087 the original publish error '
-                                        f'must be the read-only staging '
-                                        f'directory (got {error!r})')
-                    else:
-                        self.fail('#1087 the publish must fail on the '
-                                  'read-only staging directory')
-            finally:
-                publish.chmod(0o755)
+            with patch.object(Path, 'open', refused_open), \
+                    patch.object(Path, 'unlink', failing_unlink):
+                try:
+                    negative_process.write_source_atomic(root, source,
+                                                         b'replacement')
+                except OSError as error:
+                    self.assertTrue('cleanup unlink fails' not in str(error),
+                                    f'#1087 the cleanup error must not '
+                                    f'mask the publish error (got '
+                                    f'{error!r})')
+                    self.assertTrue('Permission denied' in str(error),
+                                    f'#1087 the original publish error '
+                                    f'must be the refused staging write '
+                                    f'(got {error!r})')
+                else:
+                    self.fail('#1087 the publish must fail on the '
+                              'refused staging write')
             self.assertEqual(source.read_text(), 'original',
                              '#1087 the failed publish must not touch the '
                              'source bytes')

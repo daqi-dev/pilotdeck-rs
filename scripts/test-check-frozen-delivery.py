@@ -2957,19 +2957,38 @@ def run():
 
     # ================================================ fix-r2（codex / GLM）
     # P0-1：装置发现在钉 HEAD 之前读可变工作树 → 发现阶段的 A→B→A 漏检。
-    # 垫片只把「工具第一次 rev-parse --verify HEAD」那一刻的树切回 A，
-    # 此前的文件系统读看到的是 B（少了 parity 的 FROZEN.md）。
-    GIT_SHIM = '''#!/usr/bin/env python3
-import os, subprocess, sys
-args = sys.argv[1:]
-done = os.environ['CFD_SHIM_DONE']
-if (not os.path.exists(done) and 'rev-parse' in args
-        and '--verify' in args and 'HEAD' in args):
-    open(done, 'w').close()
-    subprocess.run([os.environ['CFD_SHIM_GIT'], '-C', os.environ['CFD_SHIM_ROOT'],
-                    'checkout', '-q', os.environ['CFD_SHIM_A']],
-                   check=False, capture_output=True)
-os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
+    # fix-r12（DS r11 P1#2 随形）：工具自身的 git 调用已加固为绝对
+    # /usr/bin/git + 全新三键净环境，PATH 垫片够不到它（实测：垫片被
+    # 绕过、钉到 B、假 READY、树停在 B）。翻树改由进程内驱动完成：加载
+    # 工具真字节，在「第一次 rev-parse --verify HEAD」（即钉 HEAD 的那次
+    # 调用）执行前把树 checkout 回 A——语义与旧垫片逐字对齐，此前的
+    # 文件系统读看到的仍是 B（少了 parity 的 FROZEN.md）。
+    ABA_DRIVER = '''#!/usr/bin/env python3
+import importlib.util
+import subprocess
+import sys
+
+tool, root, base, head_a = sys.argv[1:5]
+real_run = subprocess.run
+state = {'flipped': False}
+
+
+def flip_on_first_pinned_query(command, *args, **kwargs):
+    if (not state['flipped'] and command and command[0] == '/usr/bin/git'
+            and 'rev-parse' in command and '--verify' in command
+            and 'HEAD' in command):
+        state['flipped'] = True
+        real_run(['/usr/bin/git', '-C', root, 'checkout', '-q', head_a],
+                 check=False, capture_output=True)
+    return real_run(command, *args, **kwargs)
+
+
+subprocess.run = flip_on_first_pinned_query
+sys.argv = [tool, '--root', root, '--base', base]
+spec = importlib.util.spec_from_file_location('cfd_aba_driver_load', tool)
+C = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(C)
+raise SystemExit(C.main())
 '''
     UNCHAINED = "scripts/parity/x.py: " + LACKS_CHAIN_MSG
     with tempfile.TemporaryDirectory() as td:
@@ -3002,19 +3021,11 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         head_b = git(root, "rev-parse", "HEAD")
         git(root, "checkout", "-q", head_b)               # 起跑时停在 B
 
-        shim_dir = Path(td) / "shim"
-        shim_dir.mkdir()
-        shim = shim_dir / "git"
-        shim.write_text(GIT_SHIM)
-        shim.chmod(0o755)
-        env = dict(os.environ)
-        env.update(PATH=str(shim_dir) + os.pathsep + env["PATH"],
-                   CFD_SHIM_DONE=str(Path(td) / "shim-done"),
-                   CFD_SHIM_GIT=shutil.which("git"),
-                   CFD_SHIM_ROOT=str(root), CFD_SHIM_A=head_a)
-        proc = subprocess.run([sys.executable, "-I", str(TOOL),
-                               "--root", str(root), "--base", "origin/main"],
-                              capture_output=True, text=True, timeout=TIMEOUT, env=env)
+        driver = Path(td) / "aba-driver.py"
+        driver.write_text(ABA_DRIVER)
+        proc = subprocess.run([sys.executable, "-I", str(driver), str(TOOL),
+                                str(root), "origin/main", head_a],
+                               capture_output=True, text=True, timeout=TIMEOUT)
         case("发现阶段 A→B→A → 装置集合取自钉住提交（parity 仍被审，旧实现假 READY）",
              proc.returncode == 1 and "=== parity === BLOCKED" in proc.stdout
              and "BLOCKED 1 / READY 1" in proc.stdout,

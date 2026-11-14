@@ -137,10 +137,10 @@ def git(root, *args):
     fix-r1: safe.directory=* keeps cross-uid checkouts usable — pinning
     GIT_CONFIG_GLOBAL drops the caller's safe.directory, and without it a
     dubious-ownership repo would turn this freeze gate into a false FAIL.
-    #2513 fix-r11：对齐 r10 加固形 — absolute /usr/bin/git (a PATH-steered
-    decoy binary is not a read of this checkout) and a fresh three-key env
-    instead of an inherited one stripped of GIT_* (system gitconfig is now
-    refused too)."""
+    #2513 fix-r10 (DS sibling#1): align with the hardened cli-parity/gateway
+    form — absolute /usr/bin/git (a PATH-steered decoy binary is not a read
+    of this checkout) and a fresh three-key env instead of an inherited one
+    stripped of GIT_* (system gitconfig is now refused too)."""
     env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
            'GIT_CONFIG_GLOBAL': os.devnull}
     return subprocess.check_output(['/usr/bin/git', '--no-optional-locks', '-c', 'core.fsmonitor=false',

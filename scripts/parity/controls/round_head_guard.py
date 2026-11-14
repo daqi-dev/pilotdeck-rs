@@ -196,7 +196,14 @@ def _steered_git_dir(decoy):
 
 
 def _discover_baseline():
-    """Resolve the PilotDeck baseline exactly as g03_compare does (#2398)."""
+    """Resolve the PilotDeck baseline the way g03_compare does (#2398).
+
+    #2513 fix-r12: g03_compare's discovery has since moved to the hardened
+    form (absolute /usr/bin/git + fresh three-key env); this control is a
+    hostile-environment constructor on purpose and keeps the legacy strip
+    form so its own decoys and steered GIT_DIR scenarios still build the
+    environment they claim to build.
+    """
     configured = os.environ.get('PDRS_BASELINE')
     if configured:
         candidate = Path(configured)
@@ -204,8 +211,8 @@ def _discover_baseline():
             raise RuntimeError(f'PDRS_BASELINE={configured} is not a directory')
         return candidate.resolve()
     candidates = [_REPO / 'resources/PilotDeck']
-    # Same git isolation as g03_compare's own discovery — never inherit
-    # GIT_*, never read a global gitconfig, always bounded.
+    # Legacy isolation form (see docstring): never inherit GIT_*, never read
+    # a global gitconfig, always bounded — not the hardened three-key shape.
     env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
     env['GIT_CONFIG_GLOBAL'] = os.devnull
     common = subprocess.run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',

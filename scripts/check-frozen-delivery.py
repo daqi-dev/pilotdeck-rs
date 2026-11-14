@@ -164,14 +164,17 @@ GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 # checkouts usable: pinning GIT_CONFIG_GLOBAL drops the caller's
 # safe.directory, and without it a dubious-ownership repo would turn this
 # delivery precheck into a wrong READY/FAIL.
-GIT_ISOLATION = ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+# #2513 fix-r12: aligned to the r10/r11 hardened checker form — an absolute
+# /usr/bin/git (a PATH-steered decoy binary is not a read of this checkout)
+# and a fresh three-key env instead of an inherited one stripped of GIT_*
+# (system gitconfig is now refused too).
+GIT_ISOLATION = ['/usr/bin/git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
                  '-c', 'core.hooksPath=/dev/null', '-c', 'safe.directory=*']
 
 
 def isolated_git_env():
-    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
-    env['GIT_CONFIG_GLOBAL'] = os.devnull
-    return env
+    return {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+            'GIT_CONFIG_GLOBAL': os.devnull}
 
 
 def git(root, *args):

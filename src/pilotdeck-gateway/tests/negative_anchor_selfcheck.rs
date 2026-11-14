@@ -52,6 +52,19 @@ fn negative_fixture_anchors_and_checker_controls() {
                 "DeadStreamDetach",
                 "DeadStreamPrint",
                 "RunTokenAndRefuseSummary",
+                // #2513 fix-r12 (DS r11 sibling#5)：另 5 个类此前不在任何 CI 入口。
+                // 本机纯 python 实测各类耗时（总 ~4.4 s，最大单类 1.85 s，均无
+                // 宿主依赖）：NodeVersionProbe 0.09 s / MutatingSources 1.85 s /
+                // ParityMutationLock 1.67 s / RestoreWindowSignals 0.66 s /
+                // TerminateHandlerRegistration 0.11 s，远低于 60 s 线。
+                // 另 fix-r12 (DS r11 boundary#2)：RunTokenAndRefuseSummary
+                // 里 3 条 chmod(0o555) 孪生改为调用点注入（write_text/open/
+                // unlink 打桩），消除 root / overlay TMPDIR 下的宿主依赖。
+                "NodeVersionProbe",
+                "MutatingSources",
+                "ParityMutationLock",
+                "RestoreWindowSignals",
+                "TerminateHandlerRegistration",
             ][..],
         ),
         ("_negkit/test_compare_verdicts.py", &[][..]),

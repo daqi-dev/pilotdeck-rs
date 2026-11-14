@@ -74,10 +74,14 @@ def baseline_path() -> 'Path':
     # bound. safe.directory=* keeps cross-uid checkouts usable: pinning
     # GIT_CONFIG_GLOBAL drops the caller's safe.directory, and without it a
     # dubious-ownership repo would turn the freeze gate into a false FAIL.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    # #2513 fix-r12: aligned to the hardened checker form — absolute
+    # /usr/bin/git (a PATH-steered decoy binary is not a read of this
+    # checkout) and a fresh three-key env instead of an inherited one
+    # stripped of GIT_* (system gitconfig is now refused too).
+    env = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": os.devnull}
     try:
-        common = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+        common = subprocess.run(["/usr/bin/git", "--no-optional-locks", "-c", "core.fsmonitor=false",
                                  "-c", "core.hooksPath=/dev/null", "-c", "safe.directory=*",
                                  "-C", str(WORKTREE), "rev-parse",
                                  "--path-format=absolute", "--git-common-dir"],
