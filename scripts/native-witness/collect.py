@@ -61,6 +61,13 @@ parity_lock = common.parity_lock
 # recorded ``_apparatus_source`` bytes are what actually executed. A manifest
 # entry whose module never loaded (or carries no recorded bytes) fails closed
 # in _verify_loaded_apparatus, so the list cannot silently shrink.
+# #2513 fix-r10 (DS sibling#2): the audit-only session_domain.py load
+# (witness.frozen_auditor) is *not* an entry execution — this entry never
+# calls audit(), and a ``sys.modules.get`` manifest row would fail-closed
+# every capture on a module that legitimately never loads here. That load is
+# instead verified against HEAD at its own load point in witness.py, and the
+# sys.modules sweep in _verify_loaded_apparatus covers any *other* loaded
+# apparatus module the fixed manifest below does not name.
 APPARATUS_FILES = (
     ('scripts/native-witness/witness.py', lambda: w),
     ('scripts/native-witness/stimulus_plan.py', lambda: stimuli),
@@ -144,6 +151,30 @@ def _verify_loaded_apparatus():
         source = getattr(module, '_apparatus_source', None)
         if not isinstance(source, bytes) or source != _head_source(relative):
             raise ValueError('#2513 loaded apparatus differs from HEAD: ' + relative)
+    # #2513 fix-r10 (DS sibling#2): the fixed manifest above cannot grow with
+    # a future transitive import, so sweep sys.modules the way gateway
+    # common.verify_loaded_apparatus does — any *loaded* module under the two
+    # apparatus directories must carry recorded bytes equal to HEAD. The
+    # executing entry (__main__) is excluded: its code object is compared
+    # above. witness.frozen_auditor's audit-only session_domain load is
+    # verified at its own load point (see APPARATUS_FILES above).
+    for module in tuple(sys.modules.values()):
+        if getattr(module, '__name__', None) == '__main__':
+            continue
+        path = getattr(module, '__file__', None)
+        if not path:
+            continue
+        try:
+            resolved = Path(path).resolve()
+        except OSError:
+            continue
+        if not (resolved.is_relative_to(ROOT / 'scripts/native-witness')
+                or resolved.is_relative_to(ROOT / 'scripts/gateway-parity')):
+            continue
+        source = getattr(module, '_apparatus_source', None)
+        if not isinstance(source, bytes) \
+                or source != _head_source(resolved.relative_to(ROOT).as_posix()):
+            raise ValueError('#2513 loaded apparatus differs from HEAD: ' + resolved.as_posix())
 
 
 @contextmanager

@@ -38,6 +38,13 @@ fn negative_fixture_anchors_and_checker_controls() {
                 "OutputDirectoryClaim",
                 "OutputDirectoryRunnerTests",
                 "TreeLockBudget",
+                // #2513 fix-r10（DS boundary#1）：三个机检持有人清单类不在任何 CI
+                // 入口里，等于「第七个族 fail-closed」这句自述在 CI 从没跑过。
+                // 不列进来等于这些测试在 CI 里从没跑过（本文件自己的注释点名
+                // 的失败形态）。
+                "ParityGuardedPredicate",
+                "BaselineTracksRuler",
+                "ParityLockHolderReconciliation",
             ][..],
         ),
         ("_negkit/test_compare_verdicts.py", &[][..]),

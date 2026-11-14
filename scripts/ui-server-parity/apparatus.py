@@ -24,6 +24,24 @@ APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008', 'specs/ui-serve
 TOOLCHAIN_FILES = ('rust-toolchain', 'rust-toolchain.toml')
 run_tool = subprocess.run
 
+# #2513 fix-r10 (DS sibling#1): bare ``git -C`` inherits the caller's
+# environment, so a steered GIT_DIR/GIT_WORK_TREE answers HEAD reads from a
+# decoy repository (measured: ``git -C <root> rev-parse HEAD`` with
+# GIT_DIR=<decoy> returns the decoy head — the same false-pass shape
+# cli-parity's round.py _head_source measured in fix-r7). Same hardened form
+# as cli-parity run_round._head_source and gateway common._head_source
+# (fix-r8/r9): absolute executable, safe.directory for cross-uid checkouts,
+# no inherited environment, fresh minimal env.
+GIT_ENV = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'}
+
+
+def git_read(root, *args, text=False):
+    """Read <root>'s repository state only; never a GIT_DIR-steered decoy."""
+    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',
+                                     '-C', str(root), *args],
+                                    env=GIT_ENV, stderr=subprocess.PIPE,
+                                    timeout=30, text=text)
+
 
 class ApparatusUnsafe(ValueError):
     pass
@@ -33,8 +51,8 @@ def tracked_files(directory):
     directory = Path(directory).absolute()
     root = directory.parents[1]
     try:
-        names = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z', '--',
-                                         str(directory.relative_to(root))], stderr=subprocess.PIPE)
+        names = git_read(root, 'ls-files', '-z', '--',
+                         str(directory.relative_to(root)))
     except (OSError, subprocess.CalledProcessError) as error:
         raise ApparatusUnsafe('apparatus git inventory unavailable: ' + str(directory)) from error
     return {str(root / os.fsdecode(name)) for name in names.split(b'\0') if name}
@@ -81,9 +99,9 @@ def git_admission(root, expected_head=None):
     scan(root / 'scripts/ui-server-parity')
     scan(root / 'scripts/exp008')
     toolchain_files(root)
-    status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain',
-                                     '--untracked-files=all', '-z', '--', *APPARATUS_PATHS,
-                                     *TOOLCHAIN_FILES])
+    status = git_read(root, 'status', '--porcelain',
+                      '--untracked-files=all', '-z', '--', *APPARATUS_PATHS,
+                      *TOOLCHAIN_FILES)
     # Exact basename + regular file only; never exempt links/directories.
     records = status.split(b'\0')
     status = b'\0'.join(record for record in records if record and not
@@ -92,7 +110,7 @@ def git_admission(root, expected_head=None):
                         and stat.S_ISREG((root / os.fsdecode(record[3:])).lstat().st_mode)))
     if status:
         raise ApparatusUnsafe('dirty apparatus git status: ' + os.fsdecode(status))
-    head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+    head = git_read(root, 'rev-parse', 'HEAD', text=True).strip()
     if expected_head is not None and head != expected_head:
         raise ApparatusUnsafe('batch HEAD changed; start a NEW batch')
     return head
@@ -101,8 +119,7 @@ def git_admission(root, expected_head=None):
 def toolchain_files(root):
     """Optional root toolchain selectors must be tracked regular files."""
     root = Path(root)
-    tracked = subprocess.check_output(['/usr/bin/git', '-C', str(root), 'ls-files', '-z', '--',
-                                       *TOOLCHAIN_FILES]).split(b'\0')
+    tracked = git_read(root, 'ls-files', '-z', '--', *TOOLCHAIN_FILES).split(b'\0')
     files = []
     for name in TOOLCHAIN_FILES:
         path = root / name
@@ -274,8 +291,7 @@ def verified_source(path, root, pins):
             raise ApparatusUnsafe('unregistered/changed source hash: ' + str(path))
     else:
         # Preserve missing-manifest DRAFT, but admit only committed source.
-        expected = subprocess.check_output(['git', '-C', str(root), 'show',
-                                            'HEAD:' + str(path.relative_to(root))])
+        expected = git_read(root, 'show', 'HEAD:' + str(path.relative_to(root)))
         if data != expected:
             raise ApparatusUnsafe('source differs from HEAD without manifest: ' + str(path))
     return data
@@ -421,9 +437,9 @@ def approval_valid(approver, basis, root, *, allow_ai_delegate=False):
     basis_paths = re.findall(r'(?:[^\s`+;,，；]+/)+[^\s`+;,，；]+\.(?:json|md|log|txt)', bases[0]) if len(bases) == 1 else []
     allowed = [root]
     try:
-        common = subprocess.check_output(['git', '-C', str(root), 'rev-parse',
-                                         '--path-format=absolute', '--git-common-dir'],
-                                        text=True, stderr=subprocess.PIPE).strip()
+        common = git_read(root, 'rev-parse',
+                          '--path-format=absolute', '--git-common-dir',
+                          text=True).strip()
         allowed.append(Path(common).resolve().parent / '_tmp')
     except (OSError, subprocess.CalledProcessError):
         pass

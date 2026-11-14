@@ -1384,6 +1384,18 @@ class ParityLockHolderReconciliation(unittest.TestCase):
             'the mutation window redirects its own common.parity_lock '
             'call to a per-batch evidence-dir lease (fix-r4); the shared '
             'lease stays host-pre-held per the lane contract',
+        # #2513 fix-r10 (DS boundary#2): the read-lease twin of the entry
+        # above — its windows redirect common.parity_lock to
+        # out/parity-redirect.lock behind the fail-closed _require_host_lease
+        # gate (fix-r7), the shared lease host-pre-held per the 28999 lane
+        # contract, and the dead/own/live lock-path checks exercise temporary
+        # a-/b-/c-/d-pdrs-parity.lock paths only.
+        'src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/'
+        'negative_controls.py':
+            'the mutation windows redirect common.parity_lock to '
+            'out/parity-redirect.lock behind the fail-closed host-pre-hold '
+            'gate (fix-r7); the shared lease stays host-pre-held per the '
+            '28999 lane contract',
         'src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py':
             'cells patch parity_lock to temporary leases or nullcontext',
         'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/'
