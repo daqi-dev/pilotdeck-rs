@@ -112,6 +112,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import _head_bytes, _kill_group, run_owned, tree_lock
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 RELATIVE = 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
@@ -680,8 +681,13 @@ def main():
                   restore_mode_lost=mode_lost, restore_complaint=complaint)
     (out / 'summary.json').write_text(json.dumps(record, indent=2) + '\n')
     print(json.dumps(record), flush=True)
-    return (0 if restored and not mode_lost
-            and counts['KILLED'] == len(rows) else 1)
+    # #3178 fix-r1 (sibling #2): the old `counts['KILLED'] == len(rows)` was
+    # vacuously true on a zero-row finish; the restoration predicates are the
+    # runner's own, so they stay explicit and the verdict itself is the family
+    # contract (fixtures/README.md「零行永不返回 0」).
+    if not (restored and not mode_lost):
+        return 1
+    return verdict_exit(rows, key='status')
 
 
 if __name__ == '__main__':

@@ -57,9 +57,13 @@ class EnvironmentControls(unittest.TestCase):
     # 其余被钉的步照此各设常量——r38 只改了 #2133 一处，#1666/#1570 的真跑钉
     # 仍写死 900 s（步预算 300 s；模块退化到 301–900 s 时守钉仍绿而 CI 步先
     # 红，假 PASS 方向）；#994 手抄 900 s 恰与步预算同值但无派生。driver 步
-    # 自身（本类全套 86 条，r38 实测本机 764 s）同样按实测 + 余量钉 30 min。
+    # 自身（本类全套 111 条，r38 实测 86 条 / 764 s；#3178 fix-r1 增孪生真跑钉
+    # / 接线钉 / 变异负控三条）同样按实测 + 余量钉 30 min。
     discovery_anchor_step_budget = 600
     optimize_guards_step_budget = 300
+    # #3178 fix-r1（评审 sibling#4）：p2 批孪生自测步的预算同源常量——八模块
+    # 实测合计 < 1 s，5 min 只防挂起，不参与任何模块的超时语义。
+    p2batch_twins_step_budget = 300
     copy_manifest_step_budget = 300
     isolation_step_budget = 900
     driver_step_budget = 1800
@@ -1558,6 +1562,7 @@ class EnvironmentControls(unittest.TestCase):
         # 而守卫的等式断言照样过。把「整分钟」机检为不变式，而不是靠巧合。
         for name in ('discovery_anchor_step_budget',
                      'optimize_guards_step_budget',
+                     'p2batch_twins_step_budget',
                      'copy_manifest_step_budget',
                      'isolation_step_budget',
                      'driver_step_budget'):
@@ -1796,10 +1801,79 @@ class EnvironmentControls(unittest.TestCase):
             'without it a hung step silently falls back to the 360-minute '
             'job default' % (self.optimize_guards_step_budget // 60))
 
+    def test_the_p2batch_twin_self_tests_collect_real_tests(self):
+        # #3178 fix-r1（评审 sibling#4）：p2 批孪生步的守卫同样不能只钉「步存在
+        # + 无条件 + cwd」——掏空任一孪生模块或整类 @unittest.skip 后
+        # `python3 -B -m unittest -v` 收 0 个测试仍退 0，CI 绿而孪生静默为空
+        # （r35/r37/r38 连环修过的洞）。逐模块真跑并核「Ran N」下限；下限取
+        # fix-r1 干净树实测：1/1/1/1/1/6/6/8/2，合计 27，九模块 < 1 s。
+        minimums = (
+            ('frozen-manifest/test_negative_controls.py', 1),
+            ('parity-lock-release/test_negative_controls.py', 1),
+            ('session-domain-lock-release/test_negative_controls.py', 1),
+            ('session-domain-expectations/test_negative_controls.py', 1),
+            ('session-domain-native/test_negative_controls.py', 1),
+            ('fe-coexist/test_negative_controls.py', 6),
+            ('memory-gateway/test_negative_controls.py', 6),
+            ('edgeclaw-messages/test_negative.py', 8),
+            ('user-dialog-http-store-1555/test_dirty_tree_control_1555.py', 2),
+        )
+        started = time.monotonic()
+        for module, minimum in minimums:
+            self._assert_suite_really_runs(
+                '#3178', module, minimum, self.p2batch_twins_step_budget)
+        self.assertLessEqual(
+            time.monotonic() - started, self.p2batch_twins_step_budget,
+            '#3178 the nine p2-batch twin modules together must fit the '
+            'twin step budget (%d s); near-miss modules must not outlive the '
+            'CI step they pin' % self.p2batch_twins_step_budget)
+
+    def test_required_job_runs_the_p2batch_twin_self_tests(self):
+        # #3178 fix-r1（评审 sibling#4）：六个孪生文件交付时只有 docstring 里的
+        # 「Run with」——仓内没有任何入口执行它们，删掉文件全绿。本钉与真跑钉
+        # 互补：八条命令逐一钉进同一步（子集判断下少一条不红，删掉 CI 里任一行
+        # 同样必须红），步必须无条件、cwd 正确、带同源超时。
+        commands = ('python3 -B -m unittest -v frozen-manifest/test_negative_controls.py',
+                    'python3 -B -m unittest -v parity-lock-release/test_negative_controls.py',
+                    'python3 -B -m unittest -v '
+                    'session-domain-lock-release/test_negative_controls.py',
+                    'python3 -B -m unittest -v '
+                    'session-domain-expectations/test_negative_controls.py',
+                    'python3 -B -m unittest -v '
+                    'session-domain-native/test_negative_controls.py',
+                    'python3 -B -m unittest -v fe-coexist/test_negative_controls.py',
+                    'python3 -B -m unittest -v memory-gateway/test_negative_controls.py',
+                    'python3 -B -m unittest -v edgeclaw-messages/test_negative.py',
+                    'python3 -B -m unittest -v '
+                    'user-dialog-http-store-1555/test_dirty_tree_control_1555.py')
+        jobs = self.ci_jobs('#3178')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#3178')
+        matching = [step for step in steps
+                    if all(command in self.ci_run_commands(step, '#3178')
+                           for command in commands)]
+        self.assertEqual(len(matching), 1,
+                         '#3178 required CI job must run the p2-batch twin self-tests')
+        fields = self.ci_step_fields(matching[0], '#3178')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#3178 the p2-batch twin step must be unconditional '
+                             'and required')
+        self.assertEqual(fields.get('working-directory'),
+                         ('src/pilotdeck-gateway/tests/fixtures', []),
+                         '#3178 the p2-batch twins import the fixtures tree, '
+                         'so the step runs from the fixtures dir')
+        self.assertEqual(
+            fields.get('timeout-minutes'),
+            (str(self.p2batch_twins_step_budget // 60), []),
+            '#3178 the p2-batch twin step must declare timeout-minutes: %d; '
+            'without it a hung step silently falls back to the 360-minute '
+            'job default' % (self.p2batch_twins_step_budget // 60))
+
     def test_required_job_runs_the_environment_controls(self):
         # #2136 fix-r39（DS sibling#1 / concurrency#2 P2）：r38 给四个被钉的
         # 步补了 timeout-minutes，唯独**真正跑这些真跑钉的那一步**（本类全套
-        # 86 条，含 #994/#1570/#1666/#2133 四条真跑钉，r38 实测本机 764 s）
+        # 111 条——r38 时 86 条，#3178 fix-r1 增孪生真跑钉 / 接线钉 / 变异负控
+        # 三条，含 #994/#1570/#1666/#2133/#3178 五条真跑钉，r38 实测本机 764 s）
         # 没有步级超时，挂起时回落 job 默认 360 分钟——正是那四条钉注释里
         # 要消灭的场景搬到了本步。照 #2133 步同法声明并钉住（30 min ≈ 2.4×
         # 余量，从 driver_step_budget 派生）。
@@ -2876,6 +2950,43 @@ class EnvironmentControls(unittest.TestCase):
              '#1666 the -O self-test step must declare timeout-minutes: 5'))]
         self.check_ci_mutations(
             cases, 'test_required_job_runs_the_optimize_guards_self_tests', '#1666')
+
+    def test_p2batch_twin_self_test_ci_regressions_are_rejected(self):
+        # #3178 fix-r1（评审 sibling#4）：p2 批孪生步的变异负控，与 #1666/#2133
+        # 步同形——该步存在的唯一理由是把六组交付孪生 + 两组 fix-r1 孪生接进
+        # CI；删掉任一条命令、加 if、加 continue-on-error、改错 cwd、删/膨胀
+        # 步级超时都必须杀在对应的专属断言上（timeout 锚串带首条命令行，不与
+        # #1666/#1570 步的同值 timeout 混淆——replace 取首个命中）。
+        workflow = self.ci_workflow_fixture()
+        name_line = '- name: 网关负控 p2 批孪生自测（#3178）\n'
+        command = ('python3 -B -m unittest -v '
+                   'frozen-manifest/test_negative_controls.py')
+        timeout_anchor = ('timeout-minutes: 5\n        run: |\n          ' + command)
+        timeout_message = '#3178 the p2-batch twin step must declare timeout-minutes: 5'
+        cases = [(name_, workflow.replace(old, new, 1), message)
+                 for name_, old, new, message in (
+            ('p2batch-twin-removed', command + '\n', '',
+             '#3178 required CI job must run the p2-batch twin self-tests'),
+            ('p2batch-twin-commented', command, '# ' + command,
+             '#3178 required CI job must run the p2-batch twin self-tests'),
+            ('p2batch-twin-skipped', name_line,
+             name_line + '        if: false\n',
+             '#3178 the p2-batch twin step must be unconditional and required'),
+            ('p2batch-twin-ignored', name_line,
+             name_line + '        continue-on-error: true\n',
+             '#3178 the p2-batch twin step must be unconditional and required'),
+            ('p2batch-twin-wrong-cwd',
+             name_line + '        working-directory: src/pilotdeck-gateway/tests/fixtures\n',
+             name_line + '        working-directory: src\n',
+             '#3178 the p2-batch twins import the fixtures tree, '
+             'so the step runs from the fixtures dir'),
+            ('p2batch-twin-timeout-removed', timeout_anchor,
+             'run: |\n          ' + command, timeout_message),
+            ('p2batch-twin-timeout-inflated', timeout_anchor,
+             'timeout-minutes: 360\n        run: |\n          ' + command,
+             timeout_message))]
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_p2batch_twin_self_tests', '#3178')
 
     def test_environment_controls_step_ci_regressions_are_rejected(self):
         # r39（DS sibling#1 P2）：driver 步（跑 EnvironmentControls 全套）的

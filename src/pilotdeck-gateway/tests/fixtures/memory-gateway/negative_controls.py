@@ -486,7 +486,12 @@ def main():
     recorded = [row["name"] for row in results]
     if recorded != expected:
         message = f"verdict roster mismatch: recorded={recorded} expected={expected}"
-        print(message, file=sys.stderr)
+        # #3178 fix-r1 (boundary #4): this mid-run refusal print is the one
+        # surviving bare ``print(file=sys.stderr)`` in the file — under
+        # ``2>&-`` CPython sets ``sys.stderr = None`` and ``print(file=None)``
+        # falls back to *stdout* (measured in the fix-r1 probe), re-routing
+        # the mismatch reason away from the stream the host watches.
+        dead_stream_print(message, stream='stderr')
         (out / "roster-mismatch.json").write_text(
             json.dumps(
                 {

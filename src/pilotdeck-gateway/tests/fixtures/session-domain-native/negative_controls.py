@@ -46,7 +46,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (dead_stream_print, mutating_sources,  # noqa: E402
+                             new_output_directory, run_owned)
+from negative_selection import verdict_exit
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -329,10 +331,22 @@ def main():
         if not isinstance(error, Exception):
             raise
         return 2
+    if not results:
+        # #3178 fix-r1 (sibling #2 / boundary #2 + #3): a zero-row finish is a
+        # never-started run (rc=2) and must not publish a summary.json that
+        # reads like a completed run — a lost MUTATIONS table used to leave an
+        # all-green-looking empty summary behind. The shared guarded print
+        # keeps the reason off stdout under a dead stderr (#1087 fix-r8).
+        dead_stream_print('no mutations selected: the table is empty or the '
+                          'selection matched no row', stream='stderr')
+        return 2
     publish_summary(out, results)
     counts = _counts(results)
     print(json.dumps(counts), flush=True)
-    return 0 if counts['KILLED'] == len(results) else 1
+    # #3178 fix-r1 (sibling #2): the old `0 if counts['KILLED'] ==
+    # len(results) else 1` was vacuously true on a zero-row run — the family
+    # contract (fixtures/README.md「零行永不返回 0」) is verdict_exit.
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':

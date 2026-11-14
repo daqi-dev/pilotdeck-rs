@@ -417,15 +417,23 @@ def _exec_mutant(tag, mutated_source):
 
 
 with tempfile.TemporaryDirectory() as tdir:
-    drive = os.path.join(tdir, 'drive')
-    os.makedirs(drive)
+    # #3178 fix-r1（sibling#5 / boundary#6）：两个变异各用独立 drive 子目录——
+    # 共用一个 drive 时，bare_remove 段（发布+清理双挂）留下的半截 tmp 会让
+    # no_cleanup 段的「留了文件」判定被**前段残留**满足：即使删清理变异实际
+    # 没生效（清理照跑）也照旧绿，红点不可指认。独立子目录后该判定只可能由
+    # 本段自己的 tmp 满足；配对的负向证明是上方「失败路径清理 tmp」判定
+    # （未变异装置在同一形态下目录里只剩 x.jsonl）。
+    drive_bare = os.path.join(tdir, 'drive-bare-remove')
+    drive_no_cleanup = os.path.join(tdir, 'drive-no-cleanup')
+    os.makedirs(drive_bare)
+    os.makedirs(drive_no_cleanup)
     # 裸 remove 变异：发布+清理双挂时，冒出来的是清理错（r15 之前的归因掩蔽形态）。
     try:
         os.replace = _publish_boom
         os.remove = _cleanup_boom
         try:
             _exec_mutant('bare_remove', _bare_remove_source)['write_trace'](
-                os.path.join(drive, 'x.jsonl'), [{'a': 1}, {'b': 2}])
+                os.path.join(drive_bare, 'x.jsonl'), [{'a': 1}, {'b': 2}])
             check('裸 remove 变异 → 仍抛异常', False)
         except OSError as error:
             check('裸 remove 变异 → 会把清理错顶上去（孪生专属判定的红点形态）',
@@ -438,16 +446,19 @@ with tempfile.TemporaryDirectory() as tdir:
         os.replace = _publish_boom
         try:
             _exec_mutant('no_cleanup', _no_cleanup_source)['write_trace'](
-                os.path.join(drive, 'y.jsonl'), [{'a': 1}, {'b': 2}])
+                os.path.join(drive_no_cleanup, 'y.jsonl'), [{'a': 1}, {'b': 2}])
             check('删清理变异 → 仍抛异常', False)
         except OSError as error:
             check('删清理变异 → 抛的还是发布错', '#twin publish boom' in str(error),
                   repr(error))
     finally:
         os.replace = _orig_replace
+    leftovers = sorted(name for name in os.listdir(drive_no_cleanup)
+                       if not name.endswith('.jsonl'))
     check('删清理变异 → 半截 tmp 留在盘上（「不留半截文件」判定的红点形态）',
-          sorted(name for name in os.listdir(drive) if not name.endswith('.jsonl')) != [],
-          os.listdir(drive))
+          len(leftovers) == 1 and leftovers[0].startswith('.trace-')
+          and leftovers[0].endswith('.tmp'),
+          os.listdir(drive_no_cleanup))
 
 # ---- run(): 空对拍必须硬失败（P0：旧版 0 pair 时打印「无第二种差异」并 rc=0）----
 with tempfile.TemporaryDirectory() as tdir:
