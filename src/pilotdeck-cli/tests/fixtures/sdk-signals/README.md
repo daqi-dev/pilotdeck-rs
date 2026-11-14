@@ -299,8 +299,11 @@ stdout 单面」。
 `/tmp/pdrs-parity.lock/host-hold.json`（`{"token": ...}`，tmp+replace，生命周期与持锁
 相同）并向被跑的 fixture 导出同一 token，两个 fixture 才会把重定向窗口当作宿主车道
 的一部分；身份校验不到时窗口不开，改在共享租约上排队（见各自 README 的
-`--window-lock-check` 四场景）。宿主没接这套布线时，窗口一律走共享租约排队，
-不会出现无守卫的变异窗口。
+`--window-lock-check` 四场景）。fix-r9 起仓内宿主整轮入口（`run_round.py` /
+`check_ruler.py`，经 `verified_parity_lock` 里的 `common._host_hold`）自动发布 marker
+并导出 token；宿主没接这套布线时，窗口在共享租约上排队 `min(lock_timeout, 60)` 秒后
+超时、整行 INVALID——不是「安全但串行」，是审计行报废（MM concurrency#1，fix-r9
+改口如实），仍不会出现无守卫的变异窗口。
 
 ```sh
 scripts/cargo-slots.sh

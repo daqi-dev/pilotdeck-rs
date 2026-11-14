@@ -25,6 +25,14 @@ READ_METHODS = ['native_archive_manifest', 'native_archive_entries', 'native_arc
                 'session_model_get', 'supported_agents', 'list_projects', 'describe_project']
 LOCK = Path('/tmp/pdrs-parity.lock')
 MAX_AGE = 2400
+# #2513 fix-r9 (concurrency P1): the host-identity half of the whole-round
+# lease. The whole-round entries publish HOST_HOLD_MARKER inside the lock
+# directory for exactly as long as they hold it and export the same token to
+# the fixtures they run through HOST_TOKEN_ENV; the sdk-signals/read-lease
+# fixtures verify both halves before redirecting a mutation window off the
+# shared lease (their _require_host_lease).
+HOST_HOLD_MARKER = 'host-hold.json'
+HOST_TOKEN_ENV = 'PDRS_PARITY_HOST_TOKEN'
 # A2 groups remain registered until their bounded cleanup proves absence.
 # A failed cleanup keeps the shared lock, even when the caller is interrupted.
 LIVE_GROUPS = set()
@@ -550,9 +558,17 @@ def cargo_config_problems(root=None, environ=None):
     for name in configs:
         path = root / name
         if path.exists() or path.is_symlink():
+            # #2513 fix-r9 (sibling P1): bare ``git -C`` inherits the
+            # caller's environment, so a steered GIT_DIR answers the tracked
+            # probe from a decoy repository's index (measured pre-fix,
+            # gitdir-lsfiles-probe.log) and the untracked config false-passes.
+            # Same hardened shape as _head_source above (fix-r8).
             tracked = subprocess.run(
-                ['git', '-C', str(root), 'ls-files', '--error-unmatch', '--', name],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),
+                 'ls-files', '--error-unmatch', '--', name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+                env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                     'GIT_CONFIG_GLOBAL': '/dev/null'})
             if tracked.returncode:
                 problems[path] = 'untracked worktree config (cargo would read it)'
     anchors = ('.cargo/config.toml', '.cargo/config')
@@ -769,6 +785,51 @@ def verify_loaded_apparatus(head=None):
 
 
 @contextmanager
+def _host_hold(lock=LOCK):
+    """#2513 fix-r9 (concurrency P1): publish the whole-round host identity.
+
+    The fixtures a whole round runs redirect their mutation windows off the
+    shared lease only under a *verified* host pre-hold: a live external
+    owner.json plus a host-hold.json marker whose token matches the
+    PDRS_PARITY_HOST_TOKEN the fixture received (their _require_host_lease).
+    Before this landed, no in-repo host published the marker, so every
+    redirected window fell back to queueing on the shared lease the round
+    itself held — min(lock_timeout, 60) s of queueing per window, then a
+    TimeoutError and an all-INVALID run (the r8 review's concurrency P1).
+
+    Publishing here — inside verified_parity_lock, after the verification —
+    means only a whole-round entry that holds the lease *and* whose executing
+    apparatus matches HEAD publishes: the fixtures' own short holds go through
+    the staged parity_lock, never this function, so they cannot mistake
+    themselves for the host. The marker is written atomically (tmp + replace),
+    its lifecycle is strictly inside the lease (withdrawn in the finally
+    before parity_lock releases, takeover rmtree aside), and the token is
+    exported through os.environ so every child spawned under the round —
+    fixtures included — receives it. An unexported or mismatched marker only
+    falls the fixtures back to the shared lease (fail-closed queueing), never
+    to an unguarded window.
+    """
+    token = uuid.uuid4().hex
+    marker = lock / HOST_HOLD_MARKER
+    temporary = marker.with_name(HOST_HOLD_MARKER + '.tmp')
+    temporary.write_text(json.dumps({'token': token}), encoding='utf-8')
+    temporary.replace(marker)
+    previous = os.environ.get(HOST_TOKEN_ENV)
+    os.environ[HOST_TOKEN_ENV] = token
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(HOST_TOKEN_ENV, None)
+        else:
+            os.environ[HOST_TOKEN_ENV] = previous
+        # The marker's lifecycle is the lease's: removed before the release,
+        # so a later holder cannot inherit a token.
+        marker.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
 def verified_parity_lock(timeout=600, takeovers=None, lock=LOCK):
     """Use HEAD's lease protocol; reject pre-lock imports before any work.
 
@@ -786,7 +847,8 @@ def verified_parity_lock(timeout=600, takeovers=None, lock=LOCK):
     trusted.LIVE_GROUPS = LIVE_GROUPS
     with trusted.parity_lock(timeout, takeovers, lock):
         verify_loaded_apparatus(head)
-        yield
+        with _host_hold(lock):
+            yield
 
 
 def install_shutdown():

@@ -240,9 +240,14 @@ marker 文件而非 owner.json 加 host 字段：`parity_lock` 的释放判定�
 的字节比对，往 owner.json 塞宿主字段会与协议释放冲突；评审原文也把 marker 列为
 备选（本条为登记的偏差，理由见 RESULT）。
 
-**宿主布线契约**（不接则一切回退共享租约排队，安全但串行）：宿主取共享租约后原子
-发布 `/tmp/pdrs-parity.lock/host-hold.json`（`{"token": ...}`），向被跑的 fixture
-导出同一 `PDRS_PARITY_HOST_TOKEN`，放锁前先撤 marker。
+**宿主布线契约**（fix-r9 起仓内宿主入口自带布线，common.`_host_hold`）：宿主整轮入口
+（`run_round.py` / `check_ruler.py`，经 `verified_parity_lock`）在装置核验通过、持有共享
+租约后**原子发布** `/tmp/pdrs-parity.lock/host-hold.json`（`{"token": ...}`，tmp+replace），
+把同一 token 经 `PDRS_PARITY_HOST_TOKEN` 导出给被跑的每个 fixture（含子进程），放锁前
+先撤 marker；fixture 自起的短持锁（`--shared-hold` stand-in）不走 `verified_parity_lock`，
+不会误发布。仓外宿主不接这套布线时，窗口**不重定向**：在共享租约上排队
+`min(lock_timeout, 60)` 秒后超时、整行 INVALID——不是「安全但串行」，是审计行报废
+（MM concurrency#1，fix-r9 改口如实）；仍不会出现无守卫的变异窗口。
 
 `sdk_signal_exit.rs` 本身**不取** parity 租约（只有 `.negative-source.lock` 读
 租约），Rust 侧无需重定向。

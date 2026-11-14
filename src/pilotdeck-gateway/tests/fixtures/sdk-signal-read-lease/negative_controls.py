@@ -40,6 +40,18 @@ windows now redirect to ``out/parity-redirect.lock`` behind the fail-closed
 process, the entry must acquire the window lock on the redirect path instead
 of blocking.
 
+#2513 fix-r9 (r8 incremental review, boundary P1 + P2-a): the identity-mode
+staging now waits (bounded, HOST_MARKER_WAIT_SECONDS) for the holder's
+host-hold.json to carry the exported token before returning — the callers
+run _require_host_lease with no retry, so the owner→marker race used to
+mean a false INVALID under load (and a false KILLED for the kill rows built
+on this staging). The marker read itself is bounded and one-line-refused
+(FIFO / non-object JSON), and scenario 3 propagates an unrelated
+RuntimeError unchanged instead of re-stamping it with the lapse marker
+(a marker-grep could have credited an infra red as the re-verification
+firing). The whole-round host side of the gate — the marker publication —
+landed in common.verified_parity_lock (_host_hold) the same round.
+
 Run only after commit (mutating_sources refuses a dirty tree):
     CARGO_TARGET_DIR=<target> python3 -I .../sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
 """
@@ -269,6 +281,14 @@ WINDOW_LOCK_PROBE_SECONDS = 5
 SHARED_HOLD_SECONDS = 30
 SHARED_HOLD_ENTRY_SECONDS = 30
 SHARED_HOLD_EXIT_SECONDS = 15
+# #2513 fix-r9 (boundary P1): after the holder's pid lands in owner.json its
+# host-hold.json write follows within this bound; staging waits that race out
+# (bounded, never indefinite) instead of handing callers a hold that is owned
+# but not yet verifiable.
+HOST_MARKER_WAIT_SECONDS = 10
+# #2513 fix-r9 (P2-a): the marker read is bounded — a FIFO planted at the
+# marker path must refuse, not block forever.
+HOST_MARKER_READ_LIMIT = 65536
 # The kill row's dedicated marker: the failure that credits the kill must
 # carry it (an unrelated red in the same entry stays INVALID, never KILLED).
 WINDOW_LOCK_MARKER = '#2513 该 fixture 必须能取到窗口锁'
@@ -349,10 +369,30 @@ def _host_hold_token(lock):
 
     The host publishes it atomically (tmp + replace), so a reader either
     sees the whole marker or nothing — never a torn token.
+
+    #2513 fix-r9 (P2-a): the marker path is adversarial input for this
+    gate — legal JSON that is not an object (``null`` / ``[]`` / ``123``)
+    used to crash it with an AttributeError, and a FIFO planted at the
+    path used to block ``read_text`` forever. The read is bounded and
+    non-object JSON is a one-line refusal (None), so both degrade to the
+    fail-closed fallback instead of taking the gate down.
     """
     try:
-        payload = json.loads((lock / HOST_HOLD_MARKER).read_text(encoding='utf-8'))
-    except (FileNotFoundError, NotADirectoryError, ValueError):
+        descriptor = os.open(lock / HOST_HOLD_MARKER,
+                             os.O_RDONLY | os.O_NONBLOCK)
+    except (OSError, ValueError):
+        return None
+    try:
+        chunk = os.read(descriptor, HOST_MARKER_READ_LIMIT)
+    except (BlockingIOError, OSError):
+        return None
+    finally:
+        os.close(descriptor)
+    try:
+        payload = json.loads(chunk.decode('utf-8', errors='replace'))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
         return None
     token = payload.get('token')
     return token if isinstance(token, str) else None
@@ -641,6 +681,30 @@ def _stop_shared_hold(holder, natural_wait):
     _collect(holder, 30)
 
 
+def _wait_hold_marker(common, holder, token):
+    """#2513 fix-r9 (boundary P1): wait out the owner→marker staging race.
+
+    In identity mode the holder publishes host-hold.json *after* its pid
+    lands in owner.json, so the owner match can return while the marker is
+    still unwritten. The callers run ``_require_host_lease`` with no retry,
+    so a lost race means a false INVALID (and a false KILLED for the kill
+    rows built on this staging). Bounded wait until the marker carries the
+    token exported to the holder; a holder that exits first or an exhausted
+    budget is an explicit RuntimeError — never an indefinite wait, and never
+    a silently unverified hold.
+    """
+    deadline = time.monotonic() + HOST_MARKER_WAIT_SECONDS
+    while _host_hold_token(common.LOCK) != token:
+        if holder.poll() is not None:
+            raise RuntimeError('#2513 the external shared-hold exited '
+                               'before publishing its host-hold marker')
+        if time.monotonic() > deadline:
+            raise RuntimeError('#2513 the external shared-hold did not publish '
+                               'a verifiable host-hold marker within '
+                               f'{HOST_MARKER_WAIT_SECONDS}s')
+        time.sleep(0.1)
+
+
 def _stage_external_hold(common, staged, hold, *, identity=False,
                          ignore_term=False):
     """Spawn ``--shared-hold`` and wait until it owns the real shared lease.
@@ -650,6 +714,11 @@ def _stage_external_hold(common, staged, hold, *, identity=False,
     stopping the holder, and a holder that will not stop is left to its own
     bounded hold (it does not own the shared lease — verified above) and
     reported, never killed around.
+
+    #2513 fix-r9 (boundary P1): in identity mode the owner match is not the
+    end of staging — the hold must also be *verifiable* (the marker carries
+    the exported token) before this returns, so the callers' no-retry
+    ``_require_host_lease`` cannot race the marker write.
     """
     environment = dict(os.environ)
     environment.pop(HOST_TOKEN_ENV, None)
@@ -663,10 +732,13 @@ def _stage_external_hold(common, staged, hold, *, identity=False,
          '--shared-hold', str(staged), str(hold)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True, env=environment)
+    token = environment.get(HOST_TOKEN_ENV)
     deadline = time.monotonic() + SHARED_HOLD_ENTRY_SECONDS
     while True:
         previous = common.owner(common.LOCK)
         if previous is not None and previous['pid'] == holder.pid:
+            if token is not None:
+                _wait_hold_marker(common, holder, token)
             return holder
         if holder.poll() is not None:
             _collect(holder, 30)
@@ -677,6 +749,8 @@ def _stage_external_hold(common, staged, hold, *, identity=False,
             # lease inside the race window, and a terminate then would hit
             # the owner of the shared lease mid-hold.
             if previous is not None and previous['pid'] == holder.pid:
+                if token is not None:
+                    _wait_hold_marker(common, holder, token)
                 return holder
             holder.terminate()
             patience = time.monotonic() + SHARED_HOLD_EXIT_SECONDS
@@ -829,9 +903,14 @@ def window_lock_check(out):
                         restored[0] = True
                 except RuntimeError as error:
                     if HOST_LAPSE_MARKER not in str(error):
-                        raise AssertionError(
-                            HOST_LAPSE_MARKER + '：窗口退出复验失败的消息不带专属'
-                            ' marker: ' + str(error)) from error
+                        # #2513 fix-r9 (P2-a): an unrelated failure must
+                        # stay itself. Re-stamping it with this row's marker
+                        # made any RuntimeError inside the window (e.g. the
+                        # hold never lapsing) read as the re-verification
+                        # firing to the marker-grep that credits the kill.
+                        raise
+                    # Expected: the window-exit re-verification refused
+                    # with the dedicated marker.
                 else:
                     raise AssertionError(
                         HOST_LAPSE_MARKER + '：宿主预持在窗口内消失，窗口退出前'

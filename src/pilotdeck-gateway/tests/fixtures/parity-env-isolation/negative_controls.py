@@ -55,6 +55,16 @@ variable as checkout evidence.  Five kill rows below are judged by
 ``control_round_head_guard_gateway`` against the control's phase-6..9
 markers, with the same INVALID-never-KILLED exclusivity.
 
+Guard under test (#2513 fix-r9, r8 incremental review sibling P1 + P2-b):
+``cargo_config_problems``' tracked probe had the same bare-``git`` shape the
+entry entries had before fix-r7 (measured pre-fix, gitdir-lsfiles-probe.log:
+a steered GIT_DIR answers ``ls-files`` from a decoy repository's index and the
+untracked ``.cargo/config.toml`` false-passes), and ``_has_git_checkout``'s
+unreadable-metadata branch (probe fails → ``return True``) had no pin at all.
+Two kill rows below are judged by ``control_round_head_guard_gateway``
+against the control's phase-10 and phase-12 markers, with the same
+INVALID-never-KILLED exclusivity.
+
 Every mutated source equals HEAD before its window opens (mutating_sources);
 each mutant compiles before its control runs; stale anchors abort instead of
 being recorded as SURVIVED.  No shadow repository or HEAD exemption is used.
@@ -215,6 +225,39 @@ mutations = [
      "    if 'GIT_DIR' in os.environ:\n"
      "        return True\n",
      'control_round_head_guard_gateway'),
+    # #2513 fix-r9 (sibling P1): cargo_config_problems' tracked probe keeps
+    # the hardened environment — an env-inheriting mutant lets a steered
+    # GIT_DIR answer `ls-files` from a decoy repository's index (the measured
+    # pre-fix false pass), the untracked .cargo/config.toml reads tracked and
+    # the baseline check false-passes. Judged by round_head_guard phase 10
+    # (untracked worktree config + decoy index) through the shared gateway
+    # marker.
+    ('gateway-common-cargo-config-env-inherited', root / 'scripts/gateway-parity/common.py',
+     "            tracked = subprocess.run(\n"
+     "                ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                 'ls-files', '--error-unmatch', '--', name],\n"
+     "                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,\n"
+     "                env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                     'GIT_CONFIG_GLOBAL': '/dev/null'})",
+     "            tracked = subprocess.run(\n"
+     "                ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                 'ls-files', '--error-unmatch', '--', name],\n"
+     "                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,\n"
+     "                env=dict(os.environ))",
+     'control_round_head_guard_gateway'),
+    # #2513 fix-r9 (P2-b, fixed as P1): _has_git_checkout's unreadable-
+    # metadata branch fails closed (probe fails → return True → the caller's
+    # HEAD read refuses). A `return False` mutant answers "no checkout" and
+    # verify_loaded_apparatus silently returns None over a static export —
+    # the false pass the r8 review found unpinned. Judged by round_head_guard
+    # phase 12 (git-less scratch + broken GIT_DIR) through the shared gateway
+    # marker.
+    ('gateway-common-has-git-checkout-broken-fail-open', root / 'scripts/gateway-parity/common.py',
+     "        except subprocess.CalledProcessError:\n"
+     "            return True\n",
+     "        except subprocess.CalledProcessError:\n"
+     "            return False\n",
+     'control_round_head_guard_gateway'),
 ]
 
 positives = [
@@ -237,6 +280,8 @@ EXPECTED_MUTATIONS = [
     'gateway-common-has-git-checkout-gitdir-pass',
     'gateway-guard-verify-cli-imports-env-inherited',
     'gateway-guard-has-git-checkout-gitdir-pass',
+    'gateway-common-cargo-config-env-inherited',
+    'gateway-common-has-git-checkout-broken-fail-open',
 ]
 EXPECTED_POSITIVES = [
     'parity-round-host-env-isolation',

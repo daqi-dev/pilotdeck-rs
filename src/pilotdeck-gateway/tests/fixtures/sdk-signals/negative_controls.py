@@ -66,6 +66,10 @@ MUTABLE_FIXTURE_FILES = frozenset({wrapper_source})
 HOST_TOKEN_ENV = "PDRS_PARITY_HOST_TOKEN"
 HOST_HOLD_MARKER = "host-hold.json"
 HOST_LAPSE_MARKER = "#2513 宿主预持在窗口内消失必须复验失败"
+# #2513 fix-r9 (P2-a): the marker read is bounded — a FIFO planted at the
+# marker path must refuse, not block forever (same shape as the
+# sdk-signal-read-lease twin; changed together).
+HOST_MARKER_READ_LIMIT = 65536
 
 
 def guarded_paths():
@@ -568,10 +572,31 @@ def _host_hold_token(lock):
 
     The host publishes it atomically (tmp + replace), so a reader either
     sees the whole marker or nothing — never a torn token.
+
+    #2513 fix-r9 (P2-a): the marker path is adversarial input for this
+    gate — legal JSON that is not an object (``null`` / ``[]`` / ``123``)
+    used to crash it with an AttributeError, and a FIFO planted at the
+    path used to block ``read_text`` forever. The read is bounded and
+    non-object JSON is a one-line refusal (None), so both degrade to the
+    fail-closed fallback instead of taking the gate down (same shape as
+    the sdk-signal-read-lease twin; changed together).
     """
     try:
-        payload = json.loads((lock / HOST_HOLD_MARKER).read_text(encoding="utf-8"))
-    except (FileNotFoundError, NotADirectoryError, ValueError):
+        descriptor = os.open(lock / HOST_HOLD_MARKER,
+                             os.O_RDONLY | os.O_NONBLOCK)
+    except (OSError, ValueError):
+        return None
+    try:
+        chunk = os.read(descriptor, HOST_MARKER_READ_LIMIT)
+    except (BlockingIOError, OSError):
+        return None
+    finally:
+        os.close(descriptor)
+    try:
+        payload = json.loads(chunk.decode("utf-8", errors="replace"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
         return None
     token = payload.get("token")
     return token if isinstance(token, str) else None

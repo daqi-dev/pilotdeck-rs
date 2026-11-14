@@ -93,6 +93,26 @@ Two mechanical repairs ride along (the r8 a-class findings):
 ``GIT_DIR`` steering now saves and restores the caller's value instead of
 popping it unconditionally, and the scratch/decoy staging git calls run
 with ``_discover_baseline``'s clean environment instead of inheriting one.
+
+#2513 fix-r9 (r8 incremental review: sibling P1 + P2-b) adds three more
+phases, same ``#2513 gateway-parity`` prefix in their assertion messages (the
+new kill rows in parity-env-isolation judge by it):
+
+  10. cargo-config tracked probe under steering — the scratch carries an
+      untracked ``.cargo/config.toml`` (the baseline cargo_config_problems
+      must report) and ``GIT_DIR`` is steered at a decoy whose *index* tracks
+      the same path: the pre-fix bare ``git ls-files`` read the decoy's index
+      and false-passed exactly here (r8 review gitdir-lsfiles-probe.log). The
+      hardened shape must still report the problem;
+  11. broken ``GIT_DIR`` over a real checkout — ``_has_git_checkout``'s
+      unreadable-metadata branch (probe fails → ``return True``) is the
+      fail-closed half of the two-phase shape: with executing bytes ≠ HEAD
+      the verification must still refuse with the standard #166 message;
+  12. broken ``GIT_DIR`` over a static export — the pin for the same branch
+      (the r8 review found none; over a real checkout the scratch's own
+      .git masks a ``return False`` mutant): a git-less scratch in the
+      system temp must not fall back to the static-export ``None`` — the
+      caller's HEAD read refuses instead.
 """
 import sys
 
@@ -329,6 +349,29 @@ def _stage_gateway_decoy(tag, common_bytes):
                  ['add', '-A'],
                  ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
                   'commit', '-q', '-m', 'pdrs-2513 fix-r8 gateway-parity guard control decoy']):
+        _scratch_git(decoy, *args)
+    return holder, decoy
+
+
+def _stage_cargo_decoy(tag):
+    """Stage a decoy repository whose *index* tracks .cargo/config.toml.
+
+    #2513 fix-r9 (sibling P1): ``git ls-files`` answers from the index, so a
+    decoy that commits the path carries it in its index — a bare,
+    environment-inheriting ``git -C <scratch> ls-files`` then reports the
+    untracked worktree config as tracked (the measured false pass), while the
+    hardened shape's fixed environment never sees ``GIT_DIR``.
+    """
+    (_REPO / '_tmp').mkdir(parents=True, exist_ok=True)
+    holder = tempfile.TemporaryDirectory(prefix=f'pdrs-2513-roundguard-cargodecoy-{tag}-',
+                                         dir=_REPO / '_tmp')
+    decoy = Path(holder.name)
+    (decoy / '.cargo').mkdir()
+    (decoy / '.cargo/config.toml').write_text('[build]\n')
+    for args in (['init', '-q'],
+                 ['add', '-A'],
+                 ['-c', 'user.name=pdrs-2513-roundguard', '-c', 'user.email=pdrs-2513@invalid',
+                  'commit', '-q', '-m', 'pdrs-2513 fix-r9 cargo-config decoy']):
         _scratch_git(decoy, *args)
     return holder, decoy
 
@@ -639,6 +682,108 @@ class RoundHeadGuardControls(unittest.TestCase):
                           '#2513 gateway-parity 装置核验在静态导出+GIT_DIR 引导下必须返回 None')
         self.assertIsNone(cli,
                           '#2513 gateway-parity 的 _guard 在静态导出+GIT_DIR 引导下必须返回 None')
+
+    def test_gateway_cargo_config_probe_reads_only_the_worktree_index(self):
+        # Phase 10 (#2513 fix-r9, sibling P1): the scratch carries an
+        # untracked .cargo/config.toml — the baseline cargo_config_problems
+        # must report — and GIT_DIR is steered at a decoy whose index tracks
+        # the same path. The pre-fix bare `git ls-files` read the decoy's
+        # index and answered "tracked" (the measured false pass,
+        # r8-review gitdir-lsfiles-probe.log); the hardened shape must still
+        # report the problem. An environment-inheriting mutant returns no
+        # problem and this phase's markered assertion goes red.
+        common_bytes = (_GATEWAY / 'common.py').read_bytes()
+        holder, entry_dir = _stage_gateway('cargo', common_bytes)
+        self.holders.append(holder)
+        scratch = entry_dir.parents[1]
+        (scratch / '.cargo').mkdir()
+        (scratch / '.cargo/config.toml').write_text('[build]\n')
+        module = _load('gateway_common_cargo', entry_dir / 'common.py')
+        # A throwaway CARGO_HOME keeps the persistent-config half out of the
+        # verdict; this phase pins the tracked probe, not the host's cargo
+        # installation.
+        environ = {'CARGO_HOME': str(scratch / 'cargo-home')}
+        decoy_holder, decoy = _stage_cargo_decoy('cargo')
+        self.holders.append(decoy_holder)
+        with _steered_git_dir(decoy):
+            problems = module.cargo_config_problems(environ=environ)
+        self.assertTrue(
+            any('untracked worktree config' in item for item in problems),
+            '#2513 gateway-parity cargo 配置探针必须不继承环境：'
+            'GIT_DIR 指向索引含同名路径的诱饵时未跟踪的 .cargo/config.toml '
+            f'假放行: {problems!r}')
+
+    def test_gateway_broken_git_dir_over_real_checkout_still_verifies(self):
+        # Phase 11 (#2513 fix-r9, P2-b): _has_git_checkout's broken-GIT_DIR
+        # branch (the fixed-environment probe fails → return True) is the
+        # fail-closed half of the two-phase shape — unreadable metadata must
+        # go through the caller's HEAD read, never fall to static semantics.
+        # A real checkout, executing bytes ≠ HEAD, and a GIT_DIR that points
+        # nowhere: the verification must refuse with the standard #166
+        # message. (Over this scratch a ``return False`` mutant is masked by
+        # the checkout walk finding the scratch's own .git; phase 12 pins the
+        # branch against it.)
+        common_bytes = (_GATEWAY / 'common.py').read_bytes()
+        holder, entry_dir = _stage_gateway('broken', common_bytes)
+        self.holders.append(holder)
+        executing = common_bytes + b'\n_2513_gateway_probe = 1\n'
+        (entry_dir / 'common.py').write_bytes(executing)
+        module = _load('gateway_common_broken', entry_dir / 'common.py')
+        module._apparatus_source = executing
+        (entry_dir / 'common.py').write_bytes(common_bytes)
+        try:
+            with _steered_git_dir(entry_dir / 'no-such-decoy'):
+                try:
+                    with self.assertRaises(
+                            ValueError,
+                            msg='#2513 gateway-parity 装置核验必须把坏 GIT_DIR '
+                                '当作不可读元数据（fail-closed）：真检出上执行字节≠HEAD '
+                                '的核验被静态语义假放行') as caught:
+                        module.verify_loaded_apparatus()
+                except subprocess.CalledProcessError as error:
+                    raise AssertionError(
+                        '#2513 gateway-parity 装置核验必须把坏 GIT_DIR '
+                        '当作不可读元数据（fail-closed）：探针失败被当成了别的错误: '
+                        + str(error)) from error
+            self.assertEqual(str(caught.exception),
+                             '#166 loaded apparatus differs from HEAD: '
+                             + str((entry_dir / 'common.py').resolve()),
+                             '#2513 gateway-parity 装置核验拒绝消息必须逐字节是既有的单行 #166 消息')
+        finally:
+            module.LIVE_GROUPS.clear()
+
+    def test_gateway_broken_git_dir_static_export_still_refuses(self):
+        # Phase 12 (#2513 fix-r9, P2-b): the pin phase 11 cannot carry. A
+        # static export — system temp, no .git anywhere above it (a scratch
+        # under the worktree's _tmp/ would let both the checkout walk and
+        # `git -C` find the worktree's repository) — with GIT_DIR steered at
+        # a path that points nowhere: the probe fails, the branch must fail
+        # closed (return True) through the caller's HEAD read, which then
+        # itself fails loudly. A ``return False`` mutant answers "no
+        # checkout", verify_loaded_apparatus silently returns None (the
+        # static-export false pass the r8 review found unpinned) and this
+        # phase's markered assertion goes red.
+        holder = tempfile.TemporaryDirectory(prefix='pdrs-2513-roundguard-brokenstatic-')
+        self.addCleanup(holder.cleanup)
+        scratch = Path(holder.name)
+        entry_dir = scratch / 'scripts' / 'gateway-parity'
+        entry_dir.mkdir(parents=True)
+        shutil.copy2(_GATEWAY / 'common.py', entry_dir / 'common.py')
+        module = _load('gateway_common_broken_static', entry_dir / 'common.py')
+        try:
+            with _steered_git_dir(scratch / 'no-such-decoy'):
+                try:
+                    result = module.verify_loaded_apparatus()
+                except subprocess.CalledProcessError:
+                    # The HEAD read itself failing is the fail-closed shape:
+                    # broken metadata must not fall back to static use.
+                    result = 'refused-by-head-read'
+        finally:
+            module.LIVE_GROUPS.clear()
+        self.assertNotEqual(
+            result, None,
+            '#2513 gateway-parity 装置核验必须把坏 GIT_DIR 当作不可读元数据（fail-closed）：'
+            '静态导出+坏 GIT_DIR 时核验不得静默返回 None（return False 假放行）')
 
 
 if __name__ == '__main__':
