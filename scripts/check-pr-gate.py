@@ -269,10 +269,37 @@
      凡旧拒收的照拒收；旧放行中「理由到自身最近 `-->` 全空白」的跨界命中形转拒收＝
      宁拒不漏，w 的 group 从 `-->` 字面起＝收紧形的机器可判特征）。簇③收口＝
      `_blank_waiver_marker` 按 marker 自身边界判空白（取代㊱的 WAIVER_BLANK「紧邻
-     `-->` 闭合」子形，语义被严格包含），未闭合空白 marker 同样拒收。护栏
+     `-->` 闭合」子形，语义被严格包含），未闭合空白 marker 同样拒收。**本段四项
+     残差（NO_ISSUE 借文未同步/裸 `>` 回溯/边界取 min 假红/未闭合拒收未落地）已由
+     fix-r22 收口，函数现名 `_invalid_waiver_marker`，见 ㊳**。护栏
      （test-review-roles.py fix-r21 块）：_probe 计时钉补 marker_multi / waiver_multi2 /
      noissue_multi2（`-->` 前置形，N=65514 <2.0 s）＋簇③位形两向钉＋新旧差分钉
      （多 marker/嵌套候选/`-->` 前置/未闭合位形，对照＝未改正则的全文 search 语义）。
+     fix-r22（#3074，DS/MM r21 双谱系评审 P0×1＋P1×3，协调者实测仲裁
+     _tmp/20261114-3074-fixr22/arbitration.md）：㊳ **四形同根成对收口（共用一套
+     「自身闭合 / 嵌套前缀」判定，不再单点补丁）**——①（P0，MM sibling#1）NO_ISSUE
+     借文：空白 `<!--no-issue` 前缀候选借下一条 marker 文本当 no-issue 理由（实测
+     rc0 假通过）＝簇③（WAIVER 借文）在 NO_ISSUE 侧的同根残留，`_valid_marker_search`
+     跳过借文候选（markerish open 落在候选有界 span 内 ⇒ 组必含嵌套前缀）后照报
+     「缺 issue 关联」；②（P1，DS concurrency#1 ≡ DS boundary#1，MM boundary#1 同根）
+     裸 `>` 墙形 Θ(M·N) 残差（`[^>]*` 贪心扫到裸 `>` 后逐字符回溯＝每候选 O(剩余长)，
+     实测 N≈131k＝2.17 s）：`_comment_opens_closes` 加收集 `>` 位置，`_marker_finditer`
+     传 gts 判跳（候选可行充要条件＝「组起点后第一个 `>` 恰为最近 `-->` 的 `>`」，
+     语义等价论证见 `_marker_match_at`）；③（P1，MM boundary#2，r21 自引入假红）
+     `_blank_waiver_marker` 边界取 min(`<!--`,`-->`) 与 `_marker_match_at` 口径不一致
+     ——「理由以 `<!--` 开头的合法豁免」r20 放行、r21 误拒：改 `_invalid_waiver_marker`
+     边界只认最近 `-->`（修 3 恢复 r20 行为），簇③借文形改由嵌套前缀判定收（不再
+     依赖 `<!--` 边界）；④（P1，MM boundary#3 ≡ DS boundary#2 双撞）「未闭合空白
+     marker 与合法豁免并存 ⇒ 拒收」宣称未实现＋`_c3_unclosed` 夹具空转：未闭合
+     waiver 前缀候选一律拒收（登记收紧：r18–r21 放行形＝「未闭合前缀被静默忽略」，
+     豁免必带 `-->`、无合法未闭合用例、宁拒不漏）。护栏（test-review-roles.py
+     fix-r22 块）：_probe 计时钉补 marker_multi2/marker_multi3（裸 `>` 墙形/中置形）
+     ＋winvalid_multi（`_invalid_waiver_marker` 多候选）＋residual_lazy/fixtype_lazy
+     （MM sibling#2：RESIDUAL_MARKER/FIXTYPE_RE 行锚定线性声明实证）＋修 1-修 4
+     位形两向钉＋`_WAIVER_PREFIX`/WAIVER 前缀一致性钉（DS boundary#3＋simplify#1
+     双撞）。登记不动：PR 侧只 strip_fences 不 mask_inline_code（口径设计题，
+     check() 内登记）；`_comment_opens_closes` 三表全量物化内存放大（MM boundary#4，
+     函数 docstring 登记）。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -321,11 +348,20 @@ WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(\S.*?)-->", re.S)
 #   <!--no-issue 纯文档说明 -->` 经 WAIVER 跨界命中以「下一条 marker 的文本」当豁免
 # 理由放行＝rc0 假通过）：r20 的 WAIVER_BLANK（`<!--\s*pr-gate:waiver\s*-->`）只收
 # 「紧邻 `-->` 闭合」子形，未闭合的空白 marker 收不到。修法＝空白判定改按 marker
-# **自身边界**（`_blank_waiver_marker`：起点后到最近的 `<!--`/`-->`/串尾之间、
-# `pr-gate:waiver` 字面之后全为空白即拒收），本前缀只负责「起点到 `pr-gate:waiver`
-# 字面」这一段（`<!--\s*` 与 WAIVER 同款），无跨界组＝失败路径线性。语义被
-# `_blank_waiver_marker` 严格包含的 WAIVER_BLANK 随修退役（历史登记见 ㊱/㊲）。
+# **自身边界**，本前缀只负责「起点到 `pr-gate:waiver` 字面」这一段（`<!--\s*` 与
+# WAIVER 同款），无跨界组＝失败路径线性。语义被 r21 判定严格包含的 WAIVER_BLANK
+# 随修退役（历史登记见 ㊱/㊲）。**fix-r22**：r21 的 `_blank_waiver_marker` 升格为
+# `_invalid_waiver_marker`（未闭合/借文/空白三形，边界只认最近 `-->`＝修 3 回正
+# r21 取 min(`<!--`,`-->`) 的自引入假红，见函数 docstring）；本前缀与 WAIVER 的
+# 前缀一致性由 test-review-roles.py fix-r22 块钉死（DS boundary#3＋simplify#1）。
 _WAIVER_PREFIX = re.compile(r"<!--\s*pr-gate:waiver")
+# fix-r22（#3074 修 1，MM sibling#1 P0——NO_ISSUE 借文与簇③同根）：「理由区借下一条
+# marker 文本」的机器可判特征＝理由区内嵌**已知 marker 关键字开头的 `<!--` 前缀**
+# （`<!--\s*` 后随 pr-gate:（v1/waiver 两形态）或 no-issue）。普通注释（`<!-- 说明`）
+# 不是借文——修 3 的合法形「理由以 `<!--` 开头」靠本词表区分（`<!--` 后随非关键字
+# ⇒ 借文判定不命中）。WAIVER 侧（簇③）与 NO_ISSUE 侧共用这一份判定（铁律：不复制
+# 两份），消费点＝`_invalid_waiver_marker` / `_valid_marker_search`。
+_NESTED_MARKER_PREFIX = re.compile(r"<!--\s*(?:pr-gate:|no-issue)")
 # fix-r13（DS r12 simplify#1 P2）：删除 ISSUE_LINK——规则 2 原用它判「有没有 issue 关联」，
 # 但它与 ISSUE_NUM 是「关键词 + #N」的同前缀正则，check() 里 issues = pr_issues(masked)
 # 已算过同一信息；两份词表/边界正是 r9-r12 反复漂移的形态（ISSUE_LINK 比 ISSUE_NUM 松时
@@ -1793,14 +1829,20 @@ def _foreign_reject_errs(pairs, issues, src: str) -> list[str]:
 # 同根＝marker 边界不由「自身闭合」定义，前两轮单点补预扫两次漏，本轮按同仓先例
 # check-taskbook-segments.py `_iter_comments`（「50 万个未闭合 `<!--` O(n²) 闸门挂死」
 # → 线性 find 扫描）转结构性修法，一次收口全部 Θ(M·N) 变体。
-def _comment_opens_closes(text: str) -> tuple[list[int], list[int]]:
-    """两遍线性 `str.find` 扫描：全部 `<!--` 候选起点（升序）＋全部 `-->` 位置（升序）。
+def _comment_opens_closes(text: str) -> tuple[list[int], list[int], list[int]]:
+    """三遍线性 `str.find` 扫描：全部 `<!--` 候选起点（升序）＋全部 `-->` 位置（升序）
+    ＋全部 `>` 位置（升序，fix-r22 修 2 给 MARKER 的 O(1) 判跳用）。
 
     `<!--` / `-->` 各自不可能与自身叠印（`<!--` 的第 3/4 位是 `--`、`-->` 的第 1/2 位
     是 `--`，错位叠印要求同一字符既是 `<`/`!` 又是 `-`），find 从上次命中 +1 单调推进，
-    两遍总代价各 O(N)。MARKER/WAIVER/NO_ISSUE 三个模式都以字面 `<!--` 起、字面 `-->`
+    三遍总代价各 O(N)。MARKER/WAIVER/NO_ISSUE 三个模式都以字面 `<!--` 起、字面 `-->`
     收 ⇒ 任何匹配的起点必是某个 `<!--` 位置——枚举候选即枚举全部可行起点，且与
     search/finditer 从左到右试起点的顺序一致（等价性前提，见 _marker_match_at）。
+
+    已登记限制（fix-r22，MM r21 boundary#4）：三张位置列表全量物化＝内存放大（三个
+    Python int 列表对 64 KiB 级正文约 9× 输入）。GitHub PR 正文 64 KiB 内可忽略；
+    `--body-file` 本地路径无长度上限，超大正文（1 MiB 级）会先在这里吃内存再进判定
+    ——与裸 `>` 判跳同属大输入面，按「--body-file 无上限＝作者可控」登记不另设闸。
     """
     opens: list[int] = []
     i = text.find("<!--")
@@ -1812,10 +1854,15 @@ def _comment_opens_closes(text: str) -> tuple[list[int], list[int]]:
     while j != -1:
         closes.append(j)
         j = text.find("-->", j + 1)
-    return opens, closes
+    gts: list[int] = []
+    g = text.find(">")
+    while g != -1:
+        gts.append(g)
+        g = text.find(">", g + 1)
+    return opens, closes, gts
 
 
-def _marker_match_at(pattern, text: str, start: int, closes: list[int]):
+def _marker_match_at(pattern, text: str, start: int, closes: list[int], gts: list[int] | None = None):
     """候选起点 start 上的有界匹配（`pattern.match(text, start, end)`，不拷贝切片）。
 
     核心：start 的闭合＝start+4 之后**最近的** `-->`（`<!--` 字面占 [start, start+4)，
@@ -1833,23 +1880,78 @@ def _marker_match_at(pattern, text: str, start: int, closes: list[int]):
       的机器可判特征＝旧 group 以 `-->` 字面起（差分钉据此逐条登记，fix-r21 块 (2)）。
       合法豁免（理由含非空白字符）不受影响；理由到自身边界全空白本来就不是合规输入
       （豁免理由须 ≥8 字），两向都拒收（fail-closed 方向不变）。
+
+    gts（fix-r22 修 2，DS concurrency#1 ≡ DS boundary#1，MM boundary#1 同根）：裸 `>`
+    墙形（`"<!--pr-gate:v1 "*M + ">-->"`，r21 实测 M=8700/N≈131k＝2.17 s 二次方——
+    `[^>]*` 贪心扫到裸 `>` 后 `-->` 失败、逐字符回溯到组起点＝每候选 O(剩余长)）的
+    判跳表。**只对「两字面之间不可能出现 `>`」的模式传**（MARKER 组 `[^>]*`——
+    `_marker_finditer` 调用点；WAIVER/NO_ISSUE 组 `\\S.*?` 可合法含 `>`，不传）。
+    语义等价论证：候选可行充要条件＝「组起点后第一个 `>` 恰为其最近 `-->` 的 `>`
+    （closes[k]+2）」——组 `[^>]*` 不能越 `>`，且有界 span 内唯一的 `-->` 就是
+    closes[k]（`-->` 不与自身叠印），`-->` 若在更早处成立则 closes[k] 就不是最近的
+    ⇒ [start+4, closes[k]) 区间内有任何 `>`（含裸 `>`）即必不命中，bisect O(log)
+    跳过；区间无 `>` 时照旧走正则（可能因字面量不匹配而败，但那是 O(1) 级失败）。
+    与旧全文 finditer 零差异（fix-r21 块 (2) 的随机位形含 `>`/`--` 片段，fix-r22 块
+    补 `>-->` 墙位形直拍）。
     """
     k = bisect_left(closes, start + 4)
     if k == len(closes):
         return None
+    if gts is not None:
+        g = bisect_left(gts, start + 4)
+        if g < len(gts) and gts[g] < closes[k]:
+            return None
     return pattern.match(text, start, closes[k] + 3)
 
 
 def _marker_search(pattern, text: str):
-    """`pattern.search(text)` 的有界 span 版（WAIVER/NO_ISSUE 调用点）：候选升序逐个
+    """`pattern.search(text)` 的有界 span 版（WAIVER 调用点；NO_ISSUE 自 fix-r22 起走
+    `_valid_marker_search` 的有效版）：候选升序逐个
     有界匹配，首个成功即返——与全文 search 同序同结果（安全子集：唯一差异＝簇③空白
     理由形的跨界命中被拒，见 _marker_match_at）。整体 O(N)：前缀失败的候选代价是其
     自身 `\\s*` 空白段（空白段终于首个非空白 ⇒ 各候选段互不重叠），命中的候选即返回，
     未命中而退出的空白理由候选其 span 内不可能再含其他 `<!--` 候选（理由段全空白）。
     """
-    opens, closes = _comment_opens_closes(text)
+    opens, closes, _gts = _comment_opens_closes(text)
     for s in opens:
         m = _marker_match_at(pattern, text, s, closes)
+        if m is not None:
+            return m
+    return None
+
+
+def _markerish_opens(text: str, opens: list[int]) -> list[int]:
+    """全部「已知 marker 关键字开头」的 `<!--` 起点（fix-r22 借文判定共用件，
+    `_NESTED_MARKER_PREFIX` 逐候选前缀匹配，每个 O(前缀长) ⇒ 整体 O(N)）。"""
+    return [o for o in opens if _NESTED_MARKER_PREFIX.match(text, o)]
+
+
+def _valid_marker_search(pattern, text: str):
+    """`_marker_search` 的有效版（fix-r22 修 1，NO_ISSUE 调用点）：跳过**借文候选**
+    ——候选起点 s 的有界 span [s+4, closes[k]) 内嵌已知 marker 前缀（markerish open）
+    ⇒ 组只能从下一条 marker 的文本借理由（`<!--no-issue   <!-- pr-gate:waiver … -->`
+    r21 实测 rc0 假通过：NO_ISSUE 组借下一条 marker 文本当 no-issue 理由，抑制
+    「缺 issue 关联」），不算有效命中，bisect O(log) 跳过后继续找下一条候选。空白/
+    未闭合候选本就不可能整式命中（组首钉 `\\S` ＋有界 span），与 WAIVER 侧
+    `_invalid_waiver_marker` 共用同一套「自身闭合 / 嵌套前缀」判定（铁律：不复制
+    两份——markerish 表与 `_comment_opens_closes` 均为共用件）。借文跳过的正确性：
+    markerish open 非 `\\s`，必落在 `\\s*`/`\\s+` 之后的理由区内 ⇒ 命中组（惰性到
+    closes[k]）必含该前缀 ⇒ 跳过的只是本来就要判无效的候选，不放宽也不误跳。
+
+    整体 O(N)：借文候选 O(log) 跳过（正则不跑）；非借文候选要么命中即返，要么在
+    前缀字面量（O(1)）/ 空白理由（`\\s+` 回溯限于候选自身空白段，各候选段互不重叠，
+    同 _marker_search 论证）处失败。
+    """
+    opens, closes, _gts = _comment_opens_closes(text)
+    markerish = _markerish_opens(text, opens)
+    for s in opens:
+        k = bisect_left(closes, s + 4)
+        if k == len(closes):
+            continue  # 未闭合候选：整式不可能命中（组须 `-->` 收尾），O(1) 跳过
+        mi = bisect_left(markerish, s + 4)
+        if mi < len(markerish) and markerish[mi] < closes[k]:
+            continue  # 借文候选：理由区内嵌已知 marker 前缀，不算有效命中
+        m = pattern.match(text, s, closes[k] + 3)
         if m is not None:
             return m
     return None
@@ -1859,40 +1961,65 @@ def _marker_finditer(pattern, text: str):
     """`pattern.finditer(text)` 的有界 span 版（MARKER 调用点，簇②）：非重叠语义
     保持——成功匹配终点之后的候选才继续（与 finditer 的扫描推进同构）。MARKER 的组
     `[^>]*` 不含 `>` ⇒ 旧全文语义不可能跨过任何 `-->` ⇒ 与 finditer **零差异**
-    （差分钉 fix-r21 块 (2) 逐位形对拍）。整体 O(N)（同 _marker_search 论证）。
+    （差分钉 fix-r21 块 (2) 逐位形对拍）。整体 O(N)（同 _marker_search 论证）；传
+    gts 进 `_marker_match_at`＝fix-r22 修 2 的裸 `>` 墙形 O(1) 判跳（MARKER 组不含
+    `>`，判跳语义等价论证见 `_marker_match_at`，计时钉 marker_multi2/marker_multi3）。
     """
-    opens, closes = _comment_opens_closes(text)
+    opens, closes, gts = _comment_opens_closes(text)
     out: list = []
     end = -1
     for s in opens:
         if s < end:  # 上一匹配已吞掉该起点（finditer 非重叠）
             continue
-        m = _marker_match_at(pattern, text, s, closes)
+        m = _marker_match_at(pattern, text, s, closes, gts)
         if m is not None:
             out.append(m)
             end = m.end()
     return out
 
 
-def _blank_waiver_marker(text: str) -> bool:
-    """全空白理由的 waiver marker 判定（fix-r21 簇③，宁拒不漏）：按 marker **自身
-    边界**——`_WAIVER_PREFIX` 在候选起点命中、且 `pr-gate:waiver` 字面到其后最近的
-    `<!--`/`-->`（或串尾）之间全为空白（含零长）⇒ 空白理由 marker，check() 置空
-    reason 走既有「豁免理由太短」通道。取代 r20 的 WAIVER_BLANK（只收「紧邻 `-->`
-    闭合」子形）：未闭合（其后无 `-->`）的空白 marker 与「空白 + 下一条 marker」形
-    （`<!--pr-gate:waiver   <!--no-issue … -->`，r20 实测 rc0 假通过）同样拒收；
-    合法豁免（理由含非空白字符）不受影响。整体 O(N)（边界 bisect、空白判定切片段）。
+def _invalid_waiver_marker(text: str) -> bool:
+    """无效 waiver marker 判定（fix-r21 簇③＋fix-r22 修 3/修 4，宁拒不漏）：任一
+    `<!--` 候选上 `_WAIVER_PREFIX` 命中且满足以下任一 ⇒ 无效，check() 置空 reason 走
+    既有「豁免理由太短」通道：
+
+    ① **未闭合**（fix-r22 修 4，MM boundary#3 ≡ DS boundary#2 双撞）：其后无 `-->`
+      ——r21 只在「到串尾全空白」时收得到，`Closes #3056` 等后续正文落进理由区即
+      非空白 ⇒ 照放行＝docstring 宣称与实现相反。修后一律拒收（豁免 marker 必须自
+      闭合才有效）。**登记收紧**：r18–r21 放行形＝「未闭合前缀被静默忽略」，收紧
+      理由＝豁免必带 `-->`、无合法未闭合用例、宁拒不漏。
+    ② **借文**（簇③主位形，fix-r22 与修 1 共用判定）：理由区（前缀后到自身最近
+      `-->`）内嵌已知 marker 前缀（markerish open）——`<!--pr-gate:waiver   <!--no-issue
+      纯文档说明 -->` 的组＝`<!--no-issue 纯文档说明`（r20 实测 rc0 假通过）。
+    ③ **空白**（r21 面）：前缀后到自身最近 `-->` 之间全空白（含零长）。**fix-r22
+      修 3（MM boundary#2，r21 新引入假红）**：边界只认最近 `-->`（与 `_marker_match_at`
+      同口径），`<!--` 不再作边界——r21 取 min(`<!--`,`-->`) 会把「理由以 `<!--`
+      开头的合法豁免」（r20 放行）截断判空白误拒；簇③借文形改由②收（不再依赖
+      `<!--` 边界）。
+
+    整体 O(N)：前缀失败 O(1)（`\\s*` 回溯限于候选自身空白段，各段互不重叠）；闭合/
+    借文 bisect O(log)；空白判定＝前导空白游标扫描（游标终于首个非空白 ⇒ 各候选
+    扫描段互不重叠，不切片——切片会对共享远闭合的多候选各付 O(剩余长)＝Θ(M·N)，
+    MM sibling#3 计时钉 winvalid_multi）。
     """
-    opens, closes = _comment_opens_closes(text)
-    for idx, s in enumerate(opens):
-        # 边界 b＝起点之后最近的 `<!--`（下一条候选）或 `-->`（自身闭合），都没有则串尾
-        b = opens[idx + 1] if idx + 1 < len(opens) else len(text)
+    opens, closes, _gts = _comment_opens_closes(text)
+    markerish = _markerish_opens(text, opens)
+    for s in opens:
+        m = _WAIVER_PREFIX.match(text, s)
+        if m is None:
+            continue
         k = bisect_left(closes, s + 4)
-        if k < len(closes) and closes[k] < b:
-            b = closes[k]
-        m = _WAIVER_PREFIX.match(text, s, b)
-        if m is not None and not text[m.end():b].strip():
-            return True
+        if k == len(closes):
+            return True  # ① 未闭合：豁免 marker 必须自闭合才有效（登记收紧）
+        c = closes[k]
+        mi = bisect_left(markerish, s + 4)
+        if mi < len(markerish) and markerish[mi] < c:
+            return True  # ② 借文：理由区内嵌已知 marker 前缀
+        j = m.end()
+        while j < c and text[j].isspace():
+            j += 1
+        if j >= c:
+            return True  # ③ 空白：前缀后到自身最近 `-->` 全空白（含零长）
     return False
 
 
@@ -1914,10 +2041,17 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
     if tb.fence_unclosed(body):
         return ["PR 正文代码围栏没有闭合（``` 开了没收）——未闭合围栏会把它之后的声明整段吞掉，先补齐围栏再过闸（fail-closed）"]
     masked = tb.strip_fences(body)
+    # 登记不动（fix-r22，DS sibling#2 / MM sibling#2 双撞，口径设计题非缺陷）：PR 侧
+    # 只 strip_fences 不 mask_inline_code，任务书侧两道都做——行内代码里的 marker 形
+    # 态在 PR 侧仍参与判定（宁拒不漏向）；统一口径须连 `_iter_comments` 的消费面
+    # 一起设计，超出本轮范围。
     # fix-r21（#3074 簇②，DS r20 sibling#1）：MARKER.finditer 是 r20 预扫的同源漏改点
     # （MARKER 也以字面 `-->` 收尾，无任何预扫；实测 `"<!--pr-gate:v1"*8000`＝1.73 s
     # ＝Θ(M·N)）——转有界 span 线性扫描（`_marker_finditer`，与 finditer 零差异：
-    # 组 `[^>]*` 不含 `>` 不可能跨界，见 _marker_match_at 语义论证）。
+    # 组 `[^>]*` 不含 `>` 不可能跨界，见 _marker_match_at 语义论证）。fix-r22 修 2：
+    # `_marker_finditer` 传 gts＝裸 `>` 墙形 O(1) 判跳（`[^>]*` 贪心扫到裸 `>` 后
+    # 逐字符回溯＝每候选 O(剩余长)，r21 实测 N≈131k＝2.17 s；判跳语义等价论证见
+    # `_marker_match_at`，计时钉 marker_multi2/marker_multi3）。
     blocks = _marker_finditer(MARKER, masked)
     # #3056 fix-r6：修复轮判定主信号 = PR 范围提交标题集合（pr_commit_titles + fix_round_from_titles，
     # head 天然在集合内，head 单标题不再单独走一条路）；缺 --base/--head（本地 --body-file 路径）
@@ -2066,13 +2200,14 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
     elif w:
         reason = w.group(1).strip()
         # fix-r20（DS r19 boundary#4）＋fix-r21 簇③（MM r20 boundary#1，P0）：正文另
-        # 存在全空白理由的 waiver marker → 豁免无效：置空 reason 走既有「豁免理由
-        # 太短」通道（与 r18 单独空白 marker 同通道）。r20 的 WAIVER_BLANK 只收「紧邻
-        # `-->` 闭合」子形（w 非空 ⇒ `-->` 在文，前提天然满足）；fix-r21 起按 marker
-        # 自身边界判定（`_blank_waiver_marker`）——未闭合空白 marker 与「空白 + 下一条
-        # marker」形（r20 实测 rc0 假通过）同样拒收，宁拒不漏（簇③位形两向钉见
-        # test-review-roles.py fix-r21 块）。
-        if _blank_waiver_marker(masked):
+        # 存在无效 waiver marker → 豁免无效：置空 reason 走既有「豁免理由太短」通道
+        # （与 r18 单独空白 marker 同通道）。fix-r22 起 `_invalid_waiver_marker` 收三形
+        # （共用判定，修 3/修 4）：未闭合（其后无 `-->`，一律拒收＝登记收紧）；借文
+        # （理由区内嵌已知 marker 前缀，簇③「空白 + 下一条 marker」形）；空白（边界
+        # 只认自身最近 `-->`——修 3：`<!--` 不作边界，「理由以 `<!--` 开头」的合法
+        # 豁免 r20 放行、r21 误拒、修后恢复），宁拒不漏（位形两向钉见
+        # test-review-roles.py fix-r21/fix-r22 块）。
+        if _invalid_waiver_marker(masked):
             reason = ""
         # 声明即查（MM sibling#7；与结果块侧 :check_block 的 fixtype 校验同口径）：标记内声明了
         # fixtype 就查值，是否必填才看修复轮判定——非修复轮写 fixtype=结构派生 / 不适用 也不再静默放行。
@@ -2115,7 +2250,12 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
     # fix-r21（簇①）：NO_ISSUE 调用点同 WAIVER 转有界 span 线性扫描（r20 的 has_close
     # 预扫同点退役；`-->` 前置形 Θ(M·N) 收口，noissue_multi2 计时钉在 _probe）。
-    if not issues and not _marker_search(NO_ISSUE, masked):
+    # fix-r22（修 1，P0，MM sibling#1）：改 `_valid_marker_search`——空白 no-issue
+    # 前缀候选借下一条 marker 文本当理由（`<!--no-issue   <!-- pr-gate:waiver … -->`
+    # r20/r21 均实测 rc0 假通过：借文抑制「缺 issue 关联」＋waiver 侧同时豁免＝全过）
+    # 不算有效命中，跳过后照报；与 WAIVER 侧 `_invalid_waiver_marker` 共用同一套
+    # 「自身闭合 / 嵌套前缀」判定（markerish 表，不复制两份）。
+    if not issues and not _valid_marker_search(NO_ISSUE, masked):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     return errs
 
