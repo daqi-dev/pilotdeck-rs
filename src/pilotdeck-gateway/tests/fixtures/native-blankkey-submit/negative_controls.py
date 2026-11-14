@@ -238,6 +238,11 @@ mutations = [
     # restoring the silent skip the review graded P0 (the only observable
     # left is the #[cfg(test)] per-file accessor). The log block sits right
     # after the records loop, so one span covers both halves of the surface.
+    # fix-merge-r3 (DS sibling#1/concurrency#1/boundary#1, P1 三撞): the old
+    # span re-anchored to the console_log_line shape — the #2558 tree scan
+    # reached this path, so the log line moved onto the shared non-panicking
+    # writer (the native-registry-switch re-anchor precedent). The deleted
+    # surface is unchanged: the counter increment and the per-read stderr line.
     ('registry-skip-silent', REGISTRY,
      '                snapshot.unrekeyable += 1;\n'
      '                UNREKEYABLE_SKIPPED.fetch_add(1, Ordering::Relaxed);\n'
@@ -253,10 +258,19 @@ mutations = [
      '    // mutation rewrites the file without the skipped records, so an operator\n'
      '    // sees the drop coming on every read, not after the bytes are gone.\n'
      '    if snapshot.unrekeyable > 0 {\n'
-     '        eprintln!(\n'
-     '            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",\n'
-     '            path.display(),\n'
-     '            snapshot.unrekeyable\n'
+     '        // #2692 fix-merge (DS sibling#1, P1): the merge brought #2558\'s\n'
+     '        // production `eprintln!` scan and this is a production path —\n'
+     '        // `eprintln!` panics when the write fails (std behavior), so the\n'
+     '        // skip signal itself could kill the read. Same non-panicking\n'
+     '        // writer the other library call sites share\n'
+     '        // (`production_tree_stays_eprintln_free` pins it).\n'
+     '        crate::native_process::channels::console_log_line(\n'
+     '            &mut std::io::stderr(),\n'
+     '            &format!(\n'
+     '                "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",\n'
+     '                path.display(),\n'
+     '                snapshot.unrekeyable\n'
+     '            ),\n'
      '        );\n'
      '    }\n',
      '                snapshot.unrekeyable += 1;\n'
