@@ -154,6 +154,39 @@ impl Drop for TranscriptWriteReservation<'_> {
         }
     }
 }
+/// Owned twin of [`TranscriptWriteReservation`] for `replace_last_turn`'s
+/// self-held reservation: the insert runs under the admission lock, but the
+/// release runs at the tail of a `'static` spawned body, so the guard owns
+/// its coordinator handle instead of borrowing it. `Drop` releases on every
+/// body exit — including the exits a TS Promise never takes (a panic
+/// unwinding the spawned body past the tail cleanup, where a paired manual
+/// remove never runs) — which would otherwise strand the key at
+/// `SESSION_BUSY` / `replace_turn_pending` until restart. `key: None` holds
+/// nothing: the admission block arms the guard inside the same critical
+/// section that inserts, so no exit between the two can leak.
+#[must_use = "hold the reservation for the spawned body"]
+struct OwnedTranscriptWriteReservation {
+    coordinator: ReplacementCoordinator,
+    key: Option<JsString>,
+}
+impl OwnedTranscriptWriteReservation {
+    fn new(coordinator: ReplacementCoordinator) -> Self {
+        Self {
+            coordinator,
+            key: None,
+        }
+    }
+    fn arm(&mut self, key: &JsString) {
+        self.key = Some(key.clone());
+    }
+}
+impl Drop for OwnedTranscriptWriteReservation {
+    fn drop(&mut self) {
+        if let Some(key) = self.key.take() {
+            self.coordinator.release_transcript_write(&key);
+        }
+    }
+}
 impl ReplacementCoordinator {
     pub fn new(
         storage: ReplacementStorage,
@@ -171,10 +204,11 @@ impl ReplacementCoordinator {
     }
     // Poison boundary (deliberate, not a missed sweep): only the three
     // transcript-write methods below tolerate a poisoned state lock —
-    // `release` runs from `TranscriptWriteReservation::drop`, which also
-    // executes while a panic unwinds the reserved body, where `.unwrap()`
-    // would double-panic and abort. The file's other 13 `state.lock()`
-    // sites never run under unwind and keep the repo-wide mainstream
+    // `release` runs from `TranscriptWriteReservation::drop` and
+    // `OwnedTranscriptWriteReservation::drop`, which also execute while a
+    // panic unwinds the reserved or spawned body, where `.unwrap()` would
+    // double-panic and abort. The file's other 13 `state.lock()` sites
+    // never run under unwind and keep the repo-wide mainstream
     // (poison = the panic propagates).
     pub fn reserve_transcript_write(
         &self,
@@ -252,6 +286,7 @@ impl ReplacementCoordinator {
         }
         let replacement = replacement.unwrap().clone();
         let key = string(&input, "sessionKey");
+        let mut reservation = OwnedTranscriptWriteReservation::new(self.clone());
         let active = {
             // Serialize competing reservations. Session getters must not call
             // back into this coordinator (as with the baseline's sync getters).
@@ -291,12 +326,17 @@ impl ReplacementCoordinator {
                 ));
             }
             state.reservations.insert(key.clone());
+            reservation.arm(&key);
             active
         };
         let this = self.clone();
         // Invoke abort synchronously, as the TS async prefix does.
         let abort = active.map(|run| port(|| self.0.session.abort_expected_turn(&key, &run)));
         running(async move {
+            // Held for the whole body: Drop releases the reservation on every
+            // exit, standing in for the TS `finally` (Coordinator.ts:126-128)
+            // even where a panic unwinds past the tail cleanup below.
+            let _reservation = reservation;
             let result = async {
                 if let Some(abort) = abort {
                     abort.await?;
@@ -325,7 +365,6 @@ impl ReplacementCoordinator {
             if result.is_err() {
                 state.pending.remove(&key);
             }
-            state.reservations.remove(&key);
             result
         })
     }
