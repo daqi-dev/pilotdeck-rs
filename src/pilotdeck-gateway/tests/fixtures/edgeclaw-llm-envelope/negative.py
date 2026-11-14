@@ -30,7 +30,11 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (dead_stream_print, detach_dead_streams,
+                              mutating_sources, new_run_token, refuse_summary,
+                              run_owned, unique_summary_tmp,
+                              wait_for_slot, write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/envelope.rs'
@@ -219,20 +223,141 @@ cases = [
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
 all_cases = list(cases)
+
+# #1087 fix-r2 (b-tier P1, review P2#5): every kill is now bound to the
+# failing oracle case's own assertion. The replay driver prints
+# ``{fn} args={:?} clock={clock_ms}`` (or ``{fn} args={:?}`` on the throw
+# shape) as the assert_eq! custom message, so the TS function name that
+# opens the message is the anchor. Groups whose oracle mixes several
+# functions (arrays / truncate / route) carry the alternatives of that
+# group; named_test_killed accepts an iterable of alternatives.
+EXPECTED = {
+    'object-shortcut': 'extractFirstJsonObject args=',
+    'object-escape': 'extractFirstJsonObject args=',
+    'envelope-slice': 'extractLooseJsonEnvelope args=',
+    'decode-final-unescape': 'extractLooseJsonStringProperty args=',
+    'decode-crlf': 'extractLooseJsonStringProperty args=',
+    'string-lazy-capture': 'extractLooseJsonStringProperty args=',
+    'slice-negative': ('truncate args=', 'normalizeWhitespace args=',
+                       'truncateForPrompt args='),
+    'unique-dedupe': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'route-case': ('normalizeMemoryRoute args=', 'normalizeBoolean args='),
+    'boolean-case': ('normalizeMemoryRoute args=', 'normalizeBoolean args='),
+    'payload-required': 'tryParseLooseMemoryCreatePayload args=',
+    'payload-error': 'tryParseLooseMemoryCreatePayload args=',
+    'string-greedy-gap': 'extractLooseJsonStringProperty args=',
+    'string-greedy-trailing': 'extractLooseJsonStringProperty args=',
+    'prompt-normalize': ('truncate args=', 'normalizeWhitespace args=',
+                         'truncateForPrompt args='),
+    'boolean-ascii-fold': 'extractLooseJsonBooleanProperty args=',
+    'boolean-nonascii-fold': 'extractLooseJsonBooleanProperty args=',
+    'array-single-string': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'array-single-blank': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'array-nonstring-filter': ('normalizeStringArray args=',
+                               'uniqueStrings args='),
+    'array-blank-filter': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'array-non-array': ('normalizeStringArray args=', 'uniqueStrings args='),
+    'string-empty-capture': 'extractLooseJsonStringProperty args=',
+    'boolean-false-literal': 'extractLooseJsonBooleanProperty args=',
+    'key-case-fold': 'extractLooseJsonBooleanProperty args=',
+    'comma-next-key-filter': 'extractLooseJsonStringProperty args=',
+}
+
+
+def classify(log, returncode, expected, test):
+    # #1087 fix-r2: the kill criterion is the shared strict #813 judge — the
+    # named test's own FAILED status line plus the bound ``<fn> args=`` anchor
+    # inside that test's own panic payload (negative_panic judges both). The
+    # old shape only checked ``test result: FAILED.`` plus ``running 1
+    # test``: any failure (an unrelated panic, a fixture defect) read as
+    # KILLED. Defined before the argv dispatch so the twin controls in
+    # test_negative.py can import the module and drive it directly.
+    if returncode is None:
+        return 'INVALID'
+    if 'could not compile' in log:
+        return 'INVALID'
+    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
+        if named_test_killed(log, test, expected):
+            return 'KILLED'
+        return 'INVALID'
+    if returncode == 0 and 'test result: ok.' in log:
+        return 'SURVIVED'
+    return 'INVALID'
+
+
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list'
+out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else None
+
+
+def _refuse_summary(reason):
+    """Record this run's refusal in its own summary file (#1087 fix-r4/r9).
+
+    The evidence directory is claimed with ``mkdir(exist_ok=True)`` so a host
+    re-run can land in the same path; the fix-r4 marker replaced the reused
+    directory's fixed-name ``summary.json`` so a stale green could not pose as
+    this run's evidence. #1087 fix-r9 (review concurrency #1): with the
+    per-run summary names that overwrite is impossible by construction — the
+    marker is this run's own ``summary.<token>.json``, one rename, carrying
+    no verdict rows, and the other runs' verdicts are never touched.
+
+    #1087 fix-r5 (boundary #3): a failing marker write must not turn the
+    refusal into a traceback (rc=1, "ran and was red") — the reason is
+    reported best-effort and the caller keeps its exit-2 code either way.
+    """
+    if out is None:
+        return
+    # #1087 fix-r8 (S1-c) / fix-r9 (P1): the shared marker writer — one
+    # rename under this run's per-run name, the token recorded so a reader
+    # can tell which run refused, and a failing write reports via the
+    # guarded print instead of a traceback.
+    refuse_summary(out, reason, run_token, summary_name=summary_name)
+
+
+def _refuse(message):
+    """#1087 fix-r5 (concurrency #1): an early check is a refusal, not a crash.
+
+    The old ``assert`` traceback exited 1 — "ran and was red" — masking a
+    refusal as a red run. Now the run exits 2 ("never started") and the
+    refusal lands in this run's own ``summary.<token>.json`` marker: a
+    previous run's verdict stays in its own file, untouched — it is never
+    this run's evidence (fix-r9 per-run markers; the same contract the
+    in-window stale-anchor refusal keeps).
+    """
+    _refuse_summary(f'{message}: run refused')
+    # #1087 fix-r8 (S1-a): the shared guarded print — a dead stderr (or an
+    # exec-time ``2>&-`` None, which used to re-route to stdout) must not
+    # turn this exit-2 refusal into a crash or a 120.
+    dead_stream_print(f'INVALID: {message}', stream='stderr')
+    raise SystemExit(2)
+
+
+# #1087 fix-r8 (S1-b/S1-c): the shared token (pid.serial.time_ns) is bound
+# before the first refusal can fire, so the refused marker records which
+# run refused; the old hand-copied ``pid.serial`` also died with pid
+# recycling (two runs truncating each other's logs in a reused OUT_DIR).
+run_token = new_run_token()
+# #1087 fix-r9 (P1, review concurrency #1): the verdict summary is per-run,
+# too — this OUT_DIR is a plain reused mkdir (not a claim_dir exclusive
+# directory), so a fixed ``summary.json`` publish let a refusing re-run
+# overwrite the previous run's green verdict recorded in the same path.
+summary_name = f'summary.{run_token}.json'
+
+if out is None:
+    _refuse('usage: negative.py OUT_DIR [NAME ...] | negative.py --list')
 selected = sys.argv[2:]
 unknown = set(selected) - set(names)
-assert not unknown, f'unknown controls: {sorted(unknown)}'
+if unknown:
+    _refuse(f'unknown controls: {sorted(unknown)}')
 if selected:
     cases = [case for case in cases if case[0] in selected]
-assert cases, 'no controls selected'
+if not cases:
+    _refuse('no controls selected')
 
-out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+if not target:
+    _refuse('negative.py requires CARGO_TARGET_DIR from the caller')
 out.mkdir(parents=True, exist_ok=True)
 
 env = dict(os.environ)
@@ -240,107 +365,191 @@ env['CARGO_TARGET_DIR'] = target
 command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_envelope']
 results = []
+# #1087 fix-r3 (boundary #1): bound before the guarded window so the
+# cancellation handler can always publish, even when the abort happened
+# before the baseline run recorded anything.
+baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
 
 
-def classify(log, returncode):
-    if returncode is None:
-        return 'INVALID'
-    if 'could not compile' in log:
-        return 'INVALID'
-    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
-        return 'KILLED'
-    if returncode == 0 and 'test result: ok.' in log:
-        return 'SURVIVED'
-    return 'INVALID'
+def write_summary(current_baseline):
+    """Publish the one final summary atomically (#1087 fix-r3, boundary #1).
+
+    Called exactly once per run, after ``mutating_sources`` restored and
+    byte-verified every guarded source — or from the cancellation handler,
+    after the same guard unwound. The old per-row truncating ``write_text``
+    left a partial all-KILLED summary on disk when a cancellation killed the
+    run mid-suite, and an interrupt inside the write could leave an empty or
+    half-written JSON document.
+
+    #1087 fix-r9 (P1, review concurrency #1): the publish target is this
+    run's per-run summary name and the payload names the run — a reused
+    OUT_DIR can host two runs' verdicts side by side and neither can
+    overwrite the other.
+    """
+    tmp = unique_summary_tmp(out, summary_name)
+    tmp.write_text(json.dumps(
+        {'runToken': run_token, 'baseline': current_baseline,
+         'cases': results}, indent=2) + '\n')
+    tmp.replace(out / summary_name)
 
 
-def write_summary(baseline):
-    (out / 'summary.json').write_text(json.dumps(
-        {'baseline': baseline, 'cases': results}, indent=2) + '\n')
+def _void_pending(error):
+    """Void the recorded rows and publish one INVALID summary (boundary #1).
+
+    A cancellation or crash inside the guarded window is not a verdict: the
+    rows recorded so far are voided, the remaining selected cases are
+    recorded INVALID, and the single summary is published after the guard
+    restored the tree. The process then exits 3 — deliberately different
+    from 2 ("never started", the stale-anchor refusal below) so a reader can
+    tell a cancelled run from one that never ran.
+    """
+    reason = f'runner: {type(error).__name__}: {error}'
+    for row in results:
+        row['outcome'] = 'INVALID'
+        row['reason'] = (f"{row['reason']}; voided: {reason}"
+                         if row['reason'] else f"voided: {reason}")
+    for name, _path, before, after, test in cases[len(results):]:
+        results.append({'name': name, 'test': test, 'outcome': 'INVALID',
+                        'reason': reason, 'returncode': None,
+                        'anchor': before, 'replacement': after})
+    write_summary(baseline)
+    # #1087 fix-r8 (S1-a): the shared guarded print — the summary is
+    # already published, "aborted = 3" is the only contract left
+    # to keep; a dead stderr must not replace the exit code.
+    dead_stream_print(f'voided {len(results)} row(s): {reason}', stream='stderr')
+    if isinstance(error, (OSError, ValueError)):
+        # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches the
+        # dead fds first, so the interpreter-shutdown flush cannot rewrite
+        # the exit code below to 120 ("Exception ignored in:").
+        detach_dead_streams()
+    if isinstance(error, SystemExit):
+        # Normalize: 128+signum and any other raw code must not decide how a
+        # coordinator reads this run (a 256/-256 code truncates to a zero
+        # process status on POSIX).
+        raise SystemExit(3) from error
+    if not isinstance(error, Exception):
+        raise
+    raise SystemExit(3) from error
 
 
-with mutating_sources(root, [source]) as originals:
-    original = originals[source].decode()
-    # An anchor that this list did not follow is a harness defect, not a
-    # classified cell: INVALID/exit 1 still blames the wrong thing and lets a
-    # broken control hide behind an environment or compile fault. Refuse
-    # before compiling.
-    stale = []
-    for name, _path, before, _after, _test in all_cases:
-        count = original.count(before)
-        if count != 1:
-            stale.append((name, source.relative_to(root).as_posix(), count))
-    if stale:
-        report = '\n'.join(
-            f'STALE ANCHOR {name}: {count} matches in {relative}'
-            for name, relative, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='', flush=True)
-        print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run',
-              flush=True)
-        sys.exit(2)
-    baseline_ok = False
-    baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
-    try:
+
+try:
+    with mutating_sources(root, [source]) as originals:
+        original = originals[source].decode()
+        # An anchor that this list did not follow is a harness defect, not a
+        # classified cell: INVALID/exit 1 still blames the wrong thing and lets a
+        # broken control hide behind an environment or compile fault. Refuse
+        # before compiling.
+        stale = []
+        for name, _path, before, _after, _test in all_cases:
+            count = original.count(before)
+            if count != 1:
+                stale.append((name, source.relative_to(root).as_posix(), count))
+        if stale:
+            report = '\n'.join(
+                f'STALE ANCHOR {name}: {count} matches in {relative}'
+                for name, relative, count in stale) + '\n'
+            (out / f'stale-anchors.{run_token}.log').write_text(report)
+            # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout
+            # must not turn this exit-2 refusal into an in-window abort, an
+            # exec-time ``1>&-`` reroute, or a 120; the report is already on
+            # disk in the stale-anchors log, the code is the contract.
+            dead_stream_print(report, end='')
+            dead_stream_print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run')
+            sys.exit(2)
+        baseline_ok = False
         try:
-            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            slots_text = slots.stdout + slots.stderr
-            run = run_owned(command, cwd=root, env=env, timeout=600)
-            log = slots_text + run.stdout + run.stderr
-            returncode = run.returncode
-        except subprocess.TimeoutExpired as error:
-            log = (error.stdout or '') + (error.stderr or '')
-            returncode = None
-        (out / 'baseline.log').write_text(log)
-        passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
-        baseline_ok = returncode == 0 and passed is not None
-        baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
-                    'returncode': returncode}
-        print(f'baseline: {"PASS" if baseline_ok else "FAIL"} exit={returncode}', flush=True)
-        write_summary(baseline)
-        if not baseline_ok:
-            print('baseline failed; mutants not run', flush=True)
-            raise SystemExit(1)
-
-        for name, path, before, after, test in cases:
-            slots_text = ''
-            log = ''
-            returncode = None
             try:
                 slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 slots_text = slots.stdout + slots.stderr
-                # Snapshot bytes come only from mutating_sources; the mutation
-                # itself is a single exact anchor replacement.
-                path.write_bytes(original.replace(before, after).encode())
-                try:
-                    run = run_owned(
-                        command + [test, '--', '--exact'],
-                        cwd=root, env=env, timeout=600)
-                    log = run.stdout + run.stderr
-                    returncode = run.returncode
-                finally:
-                    path.write_bytes(originals[path])
+                run = run_owned(command, cwd=root, env=env, timeout=600)
+                log = slots_text + run.stdout + run.stderr
+                returncode = run.returncode
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
-            except Exception as error:  # noqa: BLE001 - report, never hide a cell
-                log = f'{type(error).__name__}: {error}\n'
+            (out / f'baseline.{run_token}.log').write_text(log)
+            passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
+            baseline_ok = returncode == 0 and passed is not None
+            baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
+                        'returncode': returncode}
+            print(f'baseline: {"PASS" if baseline_ok else "FAIL"} exit={returncode}', flush=True)
+            if not baseline_ok:
+                print('baseline failed; mutants not run', flush=True)
+                raise SystemExit(1)
+
+            for name, path, before, after, test in cases:
+                slots_text = ''
+                log = ''
                 returncode = None
-            outcome = classify(log, returncode)
-            # A red baseline makes every mutation's "failure" untrustworthy.
-            if outcome == 'KILLED' and not baseline_ok:
-                outcome = 'INVALID'
-            (out / f'{name}.log').write_text(
-                'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
-                slots_text + log + f'\nexit={returncode}\n')
-            results.append({'name': name, 'test': test, 'outcome': outcome,
-                            'returncode': returncode, 'anchor': before, 'replacement': after})
-            write_summary(baseline)
-            print(f'{name}: {outcome} exit={returncode}', flush=True)
-    finally:
-        for path, data in originals.items():
-            path.write_bytes(data)
-            assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+                try:
+                    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                    slots_text = slots.stdout + slots.stderr
+                    # Snapshot bytes come only from mutating_sources; the mutation
+                    # itself is a single exact anchor replacement.
+                    # #1087 fix-r2: every guarded-source write in the window is
+                    # one atomic rename (#1903 rule, shared with
+                    # ``mutating_sources``) — a truncating ``write_bytes`` killed
+                    # mid-write leaves an empty or half-written product source.
+                    write_source_atomic(root, path,
+                                         original.replace(before, after).encode(),
+                                         mode=path.stat().st_mode & 0o7777)
+                    try:
+                        run = run_owned(
+                            command + [test, '--', '--exact'],
+                            cwd=root, env=env, timeout=600)
+                        log = run.stdout + run.stderr
+                        returncode = run.returncode
+                    finally:
+                        # Same #1087 fix-r2 window: the in-loop restore is also
+                        # one rename, never a truncating write_bytes.
+                        write_source_atomic(root, path, originals[path],
+                                            mode=path.stat().st_mode & 0o7777)
+                except subprocess.TimeoutExpired as error:
+                    log = (error.stdout or '') + (error.stderr or '')
+                    returncode = None
+                except Exception as error:  # noqa: BLE001 - report, never hide a cell
+                    log = f'{type(error).__name__}: {error}\n'
+                    returncode = None
+                outcome = classify(log, returncode, EXPECTED[name], test)
+                # A red baseline makes every mutation's "failure" untrustworthy.
+                if outcome == 'KILLED' and not baseline_ok:
+                    outcome = 'INVALID'
+                (out / f'{name}.{run_token}.log').write_text(
+                    'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
+                    slots_text + log + f'\nexit={returncode}\n')
+                results.append({'name': name, 'test': test, 'outcome': outcome,
+                                'reason': '', 'returncode': returncode,
+                                'anchor': before, 'replacement': after})
+                print(f'{name}: {outcome} exit={returncode}', flush=True)
+        finally:
+            for path, data in originals.items():
+                # Same #1087 fix-r2 window: the final restore is also one rename,
+                # never a truncating write_bytes.
+                write_source_atomic(root, path, data,
+                                    mode=path.stat().st_mode & 0o7777)
+except SystemExit as error:
+    if error.code == 1:
+        # The deliberate baseline failure: the guard already restored and
+        # byte-verified the tree while unwinding the with-block; publish the
+        # baseline row and keep the "ran and failed" exit code.
+        write_summary(baseline)
+        raise
+    if error.code == 2:
+        # The deliberate stale-anchor refusal: nothing was measured, so
+        # nothing is published. The directory claim above allows a host
+        # re-run into the same path; this run's refusal is recorded in its
+        # own ``summary.<token>.json``, and a previous run's verdict stays
+        # in its own file — it is never this run's evidence (#1087 fix-r9,
+        # per-run marker rename).
+        _refuse_summary('stale anchors: negative.py is out of sync with its sources')
+        raise
+    _void_pending(error)
+except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+    _void_pending(error)
+# Reaching here means mutating_sources restored every guarded file and
+# verified it against the baseline bytes. Only now may a summary exist.
+write_summary(baseline)
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']
 survived = [row['name'] for row in results if row['outcome'] == 'SURVIVED']

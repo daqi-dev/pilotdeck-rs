@@ -205,18 +205,13 @@ async fn materialize(messages: JsValue) -> Result<Vec<JsValue>, HostError> {
     Ok(messages)
 }
 fn string_items(s: &JsString) -> Vec<JsValue> {
-    let mut values = Vec::new();
-    let mut units = s.units().iter().copied().peekable();
-    while let Some(first) = units.next() {
-        let mut item = vec![first];
-        if (0xd800..=0xdbff).contains(&first)
-            && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))
-        {
-            item.push(units.next().unwrap());
-        }
-        values.push(JsValue::String(JsString::from_utf16(item)));
-    }
-    values
+    // The JS string iterator (the shared `js_value::code_point_chunks`
+    // walk): a well-formed surrogate pair is one element, a lone surrogate
+    // survives as its own.
+    crate::js_value::code_point_chunks(s.units())
+        .into_iter()
+        .map(|chunk| JsValue::String(JsString::from_utf16(chunk.to_vec())))
+        .collect()
 }
 fn cache_plan(
     request: &JsObject,

@@ -182,6 +182,11 @@ eof_unit = 'a_probe_that_dies_before_the_pid_line_takes_its_group_with_it'
 # #2142 fix-r3 (concurrency #1): the error-side classification of the
 # group-is-gone wait — Linux-only like the wait itself.
 gone_error_unit = 'a_proc_read_error_means_gone_only_when_the_entry_is_absent'
+# #2592 (#2142 fix-r3 DS sibling #1): the pid-mode reap evidence's own
+# error-side classification — Linux-only like the evidence itself, and
+# module-qualified because the executor always passes --exact (the
+# pid_mode precedent above).
+reap_unit = 'pid_mode::a_reap_read_error_means_gone_only_when_the_entry_is_absent'
 # #2142 fix-r2 (sibling r2 #2 / boundary r2 #2 / simplify r2 #1): the
 # production sweep's own classification test — Linux-only like the criterion
 # it pins, and module-qualified because the executor always passes --exact
@@ -725,13 +730,44 @@ cases = [
     # that nothing observed. The pid-mode test now proves the collection
     # from `/proc`: an unreaped zombie still has an entry, so the entry's
     # disappearance is the reap's own evidence.
+    # #2592: the replacement keeps the method referenced — dropping its only
+    # call left `reap_process` dead code, and a `-D warnings` host (the
+    # RUSTFLAGS the runner inherits; same defense as
+    # `helper-in-process-write` keeps its imports and
+    # `boundary-grace-never-evicts` keeps its parameters referenced) would
+    # fail the mutant's compile and read the row INVALID.
     ('stranger-pid-reap-removed', publication,
      '''        guard.confirm_reparented()?;
         guard.reap_process(stranger)''',
      '''        guard.confirm_reparented()?;
+        let _ = StrangerGuard::reap_process;
         Ok(())''',
      publication_target, pid_stranger,
      '#1409 the pid-mode guard must reap the stranger'),
+    # #2592 (#2142 fix-r3 review, DS sibling #1): the pid-mode reap evidence
+    # had the same fail-open fix-r3 took out of the group wait —
+    # `Path::exists()` read every /proc read error as "already gone", so a
+    # restricted procfs could pass the reap assert for a stranger that was
+    # only killed and never collected, and the row above could have
+    # false-PASSED through it. The classification is one function now
+    # (`reap_evidence_is_gone`, reusing `metadata_failure_is_gone`),
+    # pinned by its own unit test like the group rule. The mutant reverts
+    # it to "every read error is gone".
+    ('reap-evidence-error-always-gone', publication,
+     '''fn reap_evidence_is_gone(entry: &io::Result<fs::Metadata>) -> bool {
+        match entry {
+            Ok(_) => false,
+            Err(error) => metadata_failure_is_gone(error),
+        }
+    }''',
+     '''fn reap_evidence_is_gone(entry: &io::Result<fs::Metadata>) -> bool {
+        match entry {
+            Ok(_) => false,
+            Err(_) => true,
+        }
+    }''',
+     publication_target, reap_unit,
+     "#2592 an unreadable /proc entry means the stranger's state is unknown, never reaped"),
     # #1409 item 1 (P1): the scan used to skip every failed `read_dir` and
     # `read_link` under `/proc`, so a host that hides them (hidepid, gVisor,
     # a restricted container) could show the scan zero pipes and still PASS.
@@ -1027,6 +1063,7 @@ INVALID_OFF_LINUX = (
     'terminal-state-hardcoded-false',
     'terminal-state-production-hardcoded-false',
     'stranger-pid-reap-removed',
+    'reap-evidence-error-always-gone',
     'blind-source-self-unrelated',
     'probe-group-kill-removed',
     'metadata-failure-always-gone',

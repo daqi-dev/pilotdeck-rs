@@ -41,6 +41,13 @@ DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to
 STREAM_SUBMIT_ERR = "channel::api_server::tests::submit_error_stream_turn_emits_channel_submit_failed"
 BUFFERED_SUBMIT_ERR = "channel::api_server::tests::submit_error_buffered_turn_returns_submit_failed"
 API_KEY_CLASSIFICATION = "channel::api_server::tests::api_key_classification_pins_the_checkauth_table"
+CL0_MASK = "channel::api_server::tests::only_the_registered_cells_mask_a_content_length_zero"
+ADMISSION_ORACLE = "channel::api_server::tests::parser_admission_cells_stay_justified_by_the_oracle"
+TESTS = ROOT / "src/pilotdeck-gateway/src/channel/api_server/tests.rs"
+NATIVE_HTTP = ROOT / "src/pilotdeck-gateway/src/native_http.rs"
+TRANSPORT_SHAPE = (
+    "channel::api_server::tests::parser_rejections_keep_the_registered_transport_shape"
+)
 
 mutations = [
     (
@@ -261,6 +268,70 @@ mutations = [
         "    // mutant: parser admission disconnected\n",
         REPLAY,
         "#1333 unknown-method request 0: status differs",
+    ),
+    (
+        # #2775 fix-r1: the `content-length: 0` mask fires regardless of the
+        # admission flag, so the injected-line unit test's unregistered leg
+        # stops failing (the extra length line normalizes away) — the same
+        # shape as native-http's `native-http-cl0-mask-always`.
+        "api-server-cl0-mask-always",
+        TESTS,
+        '        if parser_admission && name == "content-length" && value == "0" {\n',
+        '        if (parser_admission || true) && name == "content-length" && value == "0" {\n',
+        CL0_MASK,
+        "#2775 an injected content-length: 0 on an unregistered cell must not normalize away",
+    ),
+    (
+        # #2775 fix-r1: a stale widening of the registered list — a cell that
+        # never exhibits the registered transport shape (`body-read-timeout`
+        # is Node's 408) — fails the guard's upper-bound assertion by name
+        # instead of only at the knob guard's indirect panic.
+        "api-server-admission-stale",
+        TESTS,
+        'const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];\n',
+        'const PARSER_ADMISSION_CELLS: &[&str] = '
+        '&["unknown-method", "missing-host", "body-read-timeout"];\n',
+        ADMISSION_ORACLE,
+        "#2775 the registered parser-admission cells must be exactly the oracle's bare 400s plus the inert",
+    ),
+    (
+        # #2775 fix-r2 (review r2, MM sibling#1 + MM boundary#1 + DS
+        # sibling#3): the replay's mask selection point goes through
+        # `fn parser_admission`, and the guard's through-the-predicate leg
+        # derives its admission set from the same function, so widening the
+        # predicate (the pre-#1683 blanket shape — the mask on every cell)
+        # fails the guard by name instead of silently re-widening the mask.
+        # Same shape as native-http's `native-http-cl0-wide`, native-ws's
+        # `native-ws-budget-cl0-wide` and webhook's `webhook-replay-cl0-wide`;
+        # the `(true || …)` spelling keeps the parameter used, matching the
+        # `api-server-cl0-mask-always` row's own `(parser_admission || true)`.
+        "api-server-cl0-wide",
+        TESTS,
+        '    PARSER_ADMISSION_CELLS.contains(&id)\n',
+        '    (true || PARSER_ADMISSION_CELLS.contains(&id))\n',
+        ADMISSION_ORACLE,
+        "#2775 the parser-admission predicate must admit exactly the oracle's bare 400s plus the inert",
+    ),
+    (
+        # #2775 fix-r4 (review P1-1, MM boundary#1): the `missing-host` half
+        # of the pair had no product-side pin for "never carries a length
+        # line" — the mask applies to the cell, so a hyper that grew
+        # `content-length: 0` on the Host-less 400 would replay green and
+        # silently widen the exemption face to a second bare 400. Swapping the
+        # streamed empty body for the sized one is exactly that drift shape;
+        # the raw pin's missing-host leg (placed before the chunked framing
+        # assert) fails by name. The registered-direction counterpart is
+        # native-http's `native-http-parser-400-cl0-off` knob (the streamed
+        # body drops the line the registered pin requires).
+        "api-server-headless-400-cl0",
+        NATIVE_HTTP,
+        "fn headless_bad_request() -> hyper::Response<Body> {\n"
+        "    let mut response = hyper::Response::new(streamed(None));\n",
+        "fn headless_bad_request() -> hyper::Response<Body> {\n"
+        "    // mutant: the sized empty body makes hyper add `content-length: 0`\n"
+        "    let mut response = hyper::Response::new(http_proxy::empty());\n",
+        TRANSPORT_SHAPE,
+        "#2775 pin missing-host: the inert 400 carries no content-length at all",
     ),
 ]
 

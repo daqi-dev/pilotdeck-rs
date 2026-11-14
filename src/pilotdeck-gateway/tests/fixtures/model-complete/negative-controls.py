@@ -58,6 +58,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -492,7 +493,11 @@ def atomic_write(path: Path, data: bytes) -> None:
         except OSError:
             pass
     finally:
-        Path(tmp).unlink(missing_ok=True)
+        # fix-r12 (review DS r11 sibling #1, same family as write_source_atomic):
+        # the cleanup unlink is the only swallowed error, so a failed publish
+        # always surfaces its own error instead of a PermissionError here.
+        with suppress(OSError):
+            Path(tmp).unlink(missing_ok=True)
 
 
 def load_state() -> dict | None:

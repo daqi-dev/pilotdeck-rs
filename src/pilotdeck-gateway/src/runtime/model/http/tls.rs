@@ -111,9 +111,17 @@ fn load_pem(roots: &mut rustls::RootCertStore, path: &Path) {
             .map_err(|error| error.to_string())
             .and_then(|cert| roots.add(cert).map_err(|error| error.to_string()));
         if let Err(error) = result {
-            eprintln!(
-                "Warning: could not load CA file {}: {error}",
-                path.display()
+            // #2558: a best-effort warn line, like Node's `console.error` — an
+            // `eprintln!` here panics when the write fails (std behavior), and
+            // this runs inside `client_config()`'s `OnceLock::get_or_init`, so
+            // the panic would unwind the task of the first HTTPS model request
+            // that is building its transport.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "Warning: could not load CA file {}: {error}",
+                    path.display()
+                ),
             );
             break;
         }
@@ -152,9 +160,13 @@ fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
     let file = match open_ca_file(path) {
         Ok(file) => file,
         Err(error) => {
-            eprintln!(
-                "Warning: could not load CA file {}: {error}",
-                path.display()
+            // #2558: the load_pem warn line's non-panicking shape.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "Warning: could not load CA file {}: {error}",
+                    path.display()
+                ),
             );
             return None;
         }
@@ -162,26 +174,38 @@ fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
     let metadata = match file.metadata() {
         Ok(metadata) => metadata,
         Err(error) => {
-            eprintln!(
-                "Warning: could not load CA file {}: {error}",
-                path.display()
+            // #2558: the load_pem warn line's non-panicking shape.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "Warning: could not load CA file {}: {error}",
+                    path.display()
+                ),
             );
             return None;
         }
     };
     if !metadata.is_file() {
-        eprintln!(
-            "Warning: skipping CA file {}: not a regular file",
-            path.display()
+        // #2558: the load_pem warn line's non-panicking shape.
+        crate::native_process::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!(
+                "Warning: skipping CA file {}: not a regular file",
+                path.display()
+            ),
         );
         return None;
     }
     if metadata.len() > MAX_CA_FILE_BYTES {
-        eprintln!(
-            "Warning: skipping CA file {}: {} bytes is larger than the {} byte limit",
-            path.display(),
-            metadata.len(),
-            MAX_CA_FILE_BYTES
+        // #2558: the load_pem warn line's non-panicking shape.
+        crate::native_process::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!(
+                "Warning: skipping CA file {}: {} bytes is larger than the {} byte limit",
+                path.display(),
+                metadata.len(),
+                MAX_CA_FILE_BYTES
+            ),
         );
         return None;
     }
@@ -199,17 +223,25 @@ fn read_ca_file(path: &Path) -> Option<Vec<u8>> {
     {
         Ok(_) if bytes.len() as u64 <= MAX_CA_FILE_BYTES => Some(bytes),
         Ok(_) => {
-            eprintln!(
-                "Warning: skipping CA file {}: grew past the {} byte limit while reading",
-                path.display(),
-                MAX_CA_FILE_BYTES
+            // #2558: the load_pem warn line's non-panicking shape.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "Warning: skipping CA file {}: grew past the {} byte limit while reading",
+                    path.display(),
+                    MAX_CA_FILE_BYTES
+                ),
             );
             None
         }
         Err(error) => {
-            eprintln!(
-                "Warning: could not load CA file {}: {error}",
-                path.display()
+            // #2558: the load_pem warn line's non-panicking shape.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "Warning: could not load CA file {}: {error}",
+                    path.display()
+                ),
             );
             None
         }
@@ -224,9 +256,13 @@ fn load_hash_dir(roots: &mut rustls::RootCertStore, dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) => {
-            eprintln!(
-                "Warning: could not read CA directory {}: {error}",
-                dir.display()
+            // #2558: the load_pem warn line's non-panicking shape.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "Warning: could not read CA directory {}: {error}",
+                    dir.display()
+                ),
             );
             return;
         }

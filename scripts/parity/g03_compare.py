@@ -42,6 +42,7 @@ import json
 import os
 import subprocess
 from collections import Counter, defaultdict
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -150,7 +151,12 @@ def write_result_exclusive(path: 'Path', data: 'str') -> 'None':
     try:
         _publish_exclusive(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        # fix-r13 (review DS r12 sibling #1, same family as the r12 fixture
+        # unlinks / write_source_atomic): the cleanup unlink is the only
+        # swallowed error, so a failed publish always surfaces its own error
+        # and a successful publish never reports itself as a failure.
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
 
 
 def write_results_exclusive(entries: 'list[tuple[Path, str]]') -> 'None':
@@ -170,11 +176,13 @@ def write_results_exclusive(entries: 'list[tuple[Path, str]]') -> 'None':
             published.append(path)
     except BaseException:
         for path in published:
-            path.unlink(missing_ok=True)
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
         raise
     finally:
         for _, temporary in temporaries:
-            temporary.unlink(missing_ok=True)
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def canon(value: 'Any') -> 'str':

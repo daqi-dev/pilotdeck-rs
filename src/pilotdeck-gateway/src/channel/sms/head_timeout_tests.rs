@@ -561,18 +561,22 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
          close-callback ordering (A8.3-CH-SMS-013-R1)"
     );
     // The accept loop is gone, so the port refuses new connections.
-    match tokio::time::timeout(
+    // #2461 fix-r6: only a refusal counts — the old `Ok(Err(_))` catch-all
+    // read every connect error kind as "listener closed", and the bound
+    // stays the same 1 second the site always had.
+    let probe = crate::test_fixed_port_probe::probe_fixed_port(
+        "stop/drain close probe",
+        ("127.0.0.1", PORT_STOP_DRAIN),
         Duration::from_secs(1),
-        TcpStream::connect(("127.0.0.1", PORT_STOP_DRAIN)),
     )
-    .await
-    {
-        Ok(Ok(_)) => panic!(
-            "#2026 the stopped channel still accepts connections on \
-             {PORT_STOP_DRAIN}; stop() must close the listener"
-        ),
-        Ok(Err(_)) => {}
-        Err(_) => panic!("#2026 the connect to the stopped port hung"),
+    .await;
+    if let Some(failure) = crate::test_fixed_port_probe::fixed_port_probe_failure(
+        "#2026",
+        PORT_STOP_DRAIN,
+        "closed",
+        &probe,
+    ) {
+        panic!("{failure}");
     }
     // The drained connection task must have released its SmsShared clone. The
     // finished accept loop releases its own clone too, so the settled count is

@@ -52,6 +52,16 @@ mutations = [
      '(valid_envelope(value, &self.key.session_id, &entries) || true)',
      'runtime::session::factory::projection_cache_tests::invalid_future',
      '#1011 invalid envelope is rejected before hydrate'),
+    # #2043: the anchor comparison must reject a checkpoint whose anchor
+    # disagrees with the log entry at the watermark; accepting it hydrates the
+    # wrong rows (stale checkpoint silently reused, #2043 P0). The mutation
+    # compares the checkpoint anchor with itself, skipping the log side.
+    ('anchor-mismatch-accepted',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     '.all(|key| field(&expected, key) == field(field(value, "anchor"), key))',
+     '.all(|key| field(field(value, "anchor"), key) == field(field(value, "anchor"), key))',
+     'runtime::session::factory::projection_cache_tests::checkpoint_states_restore_identically',
+     '#2043 mismatched anchor checkpoint is not silently reused'),
     ('concurrent-append-lost',
      'src/pilotdeck-gateway/src/runtime/session/factory.rs',
      'self.inner.append(key, entry)?;',
@@ -96,6 +106,15 @@ mutations = [
      'if let Some(checkpoint) = checkpoint.filter(|_| false) {',
      'runtime::session::factory::projection_cache_tests::fresh_load',
      '#1011 valid cache is hydrated'),
+    # #2043 fix-r1 (boundary P2): the web-view equality sweep has the same
+    # blind spot — both paths replay the same log — so the same hydrate-branch
+    # removal must also fail the web restore's own hydrated-row assertion.
+    ('web-hydrate-branch-removed',
+     'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
+     'if let Some(checkpoint) = checkpoint.filter(|_| ordered) {',
+     'if let Some(checkpoint) = checkpoint.filter(|_| false) {',
+     'runtime::session::factory::projection_cache_tests::web_history_restores_identically_with_and_without_checkpoint',
+     '#2044 checkpoint restore consumes the cached projection rows'),
     # fix-r1 (DeepSeek P2-1): rejecting the whole envelope because one row's
     # codec is unknown must not dehydrate the two supported rows.
     ('envelope-over-rejected',

@@ -1048,7 +1048,12 @@ pub(super) fn compose_attachment_turn(
         };
         #[cfg(test)]
         swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeOpen, &resolved);
-        let mut file = match File::open(&resolved) {
+        // #2098: the same guarded open family as the lease entry (`#1889`) —
+        // `O_NOFOLLOW` refuses a link swapped into the entry at the open,
+        // `O_NONBLOCK` makes a FIFO swapped into it return at once instead of
+        // blocking the composer for a writer that never comes, and the type
+        // term on the handle below refuses both.
+        let mut file = match crate::upload::open_artifact_guarded(&resolved) {
             Ok(file) => file,
             Err(error) => {
                 if no_resolver {
@@ -1113,6 +1118,23 @@ pub(super) fn compose_attachment_turn(
                 continue;
             }
         };
+        // #2098: the type term on the opened handle — a FIFO or a device
+        // swapped into the lease entry must be diagnosed not-found instead
+        // of being read. A directory is deliberately not refused here: its
+        // read fails the whole turn with Node's `EISDIR … read` shape
+        // (#1462), so it is neither the FIFO's wait nor the device's
+        // unbounded stream this term exists for.
+        if !metadata.file_type().is_file() && !metadata.file_type().is_dir() {
+            if no_resolver {
+                continue;
+            }
+            let error = std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "attachment lease path became a non-regular file after validation",
+            );
+            diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
+            continue;
+        }
         if !attachment_identity_matches(&path_stat, &metadata) {
             if no_resolver {
                 continue;
@@ -1512,8 +1534,27 @@ impl SubmitHostServices for Services {
         {
             let project = project
                 .as_string()
-                .and_then(|s| s.to_utf8().ok())
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
+            // #2617: the TS resolver chain runs a lone-surrogate `projectKey`
+            // to completion without throwing: the legacy slug regex drops the
+            // surrogate unit, so the key lands on the process cwd's project,
+            // not necessarily the configured one (submit-level probe
+            // `_tmp/20261111-issue-2617-probe/probe-submit-surrogate.out`;
+            // resolver-level rerun `_tmp/20261111-2617-evidence/
+            // probe-submit-surrogate-resolver.out`, whose "resolves like the
+            // fallback" flag is tautological — the script pinned
+            // `fallbackProjectRoot = process.cwd()`). So the string branch
+            // converts lossily — the #2083 close-path shape (session_dir.rs)
+            // — and only the `serves_project` capability gate decides. TS
+            // judges identity by storage-id slug (the surrogate folds away)
+            // while Rust judges by raw-path equality, so when the cwd is the
+            // configured project TS admits the key and Rust's lossy form
+            // still misses it — the divergence family registered in the
+            // gateway-parity ledger (-R17). A non-string keeps the type
+            // error above. Residual, registered with #2083: a key whose
+            // lossy form names the configured project (a real path
+            // containing U+FFFD) is served.
+            let project = String::from_utf16_lossy(project.units());
             if !self.options.serves_project(&project) {
                 return Err(unavailable(
                     "The isolated native process serves only its configured project.",
@@ -2029,8 +2070,10 @@ pub(super) mod swap_test_hook {
     /// Which injection point the swap happens in: right after `lease_guard`'s
     /// canonicalization but before the approved identity is sampled (#1468
     /// r2 — the approved stat must not follow a link planted here), after
-    /// that sample but before `File::open` (#1468 — the open itself may then
-    /// follow a swapped link), between `File::open` and the post-open
+    /// that sample but before the guarded open (#1468 — the open itself
+    /// refuses a swapped symlink at the open, #2098, so a swap planted here
+    /// is a hard link onto an outside regular file), between the open and
+    /// the post-open
     /// `canonicalize` containment revalidation (step 2), between the
     /// revalidation and the `(dev, inode)` path-stat/fstat comparison
     /// (step 3), or between the handle's own stat — the authoritative

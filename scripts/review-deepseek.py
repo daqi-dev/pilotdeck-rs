@@ -387,10 +387,12 @@ def main() -> int:
         if key in text:
             raise Fail(1, "回复中回显了密钥，拒绝落盘")
         got_model = resp.get("model")
-        want_model = RESP_MODEL.get(a.model, a.model)
-        if not isinstance(got_model, str) or got_model.casefold() != want_model.casefold():
+        # llm-center 同一后端两种回显形都会出现（2026-11-12 实测：run-review-roles 的 run 规范名/原样名混出
+        # 或整轮回原样请求名），与 scripts/run-review-roles.py:417-420 同口径：两形都放行，换谱系（别的名字）仍拒。
+        allowed = {RESP_MODEL.get(a.model, a.model), a.model}
+        if not isinstance(got_model, str) or got_model.casefold() not in {m.casefold() for m in allowed}:
             # 防上游静默换模型：换了模型这条回复就不算本谱系的评审结论
-            raise Fail(1, f"响应模型 {got_model!r} 与请求 {a.model}（回显名 {want_model}）不一致，结论不计")
+            raise Fail(1, f"响应模型 {got_model!r} 与请求 {a.model}（合法形 {sorted(allowed)}）不一致，结论不计")
         if a.require_verdict:
             why = check_verdict(text)
             if why:

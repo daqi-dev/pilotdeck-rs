@@ -11,6 +11,21 @@ mutant inside that test's own panic payload. Original source bytes and hashes
 are verified after every mutation; the summary is emitted only after all
 mutants have run.
 
+Run with no other writers in this worktree: the runner rewrites the guarded
+sources in place (compound `with stop_run(), mutating_sources(...)`), and
+`CARGO_TARGET_DIR` only isolates build artifacts, not source files -- a plain
+cargo test / build sharing this tree during the mutation window compiles a
+mutant and produces unrelated false failures. Who holds
+`.negative-source.lock`, what it does and does not exclude, and why an
+absent lock proves nothing: see the header of
+`src/pilotdeck-gateway/tests/common/read_lease.rs` (the canonical wording;
+`src/pilotdeck-cli/tests/common/read_lease.rs` is its enforced twin); the
+in-lock behavior of `mutating_sources`/`build_snapshot` is a separate
+subject, covered by the scanner section of
+`src/pilotdeck-gateway/tests/fixtures/README.md`. The operative rule for
+this fixture is the one above: nothing else -- writer, reader, or lockless
+checker -- runs in this tree during the mutation window.
+
 Modes: `--self-check` proves the slot guard still exits bounded under
 `python3 -O` (#1632); `--slot-guard-probe BUSY_SCRIPT TIMEOUT` is the child
 mode that self-check drives. Both run before any output directory is created,

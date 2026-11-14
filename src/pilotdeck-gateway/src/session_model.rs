@@ -146,6 +146,21 @@ pub(crate) fn execute<F: Files>(
             "sessionKey?.trim is not a function",
         ));
     };
+    // #1623 方案 B at the local-model read (fix-r4, #2992): `sanitize_session`
+    // renders the key through `String::from_utf16_lossy` before the
+    // `<id>.jsonl` join, so a lone-surrogate key and an explicit U+FFFD key
+    // read the same transcript — the same lossy-disk alias the `native_archive`
+    // family already refuses. The TS gate here is only the blank `?.trim()`
+    // check above (`NativeSessionModelSelectionPort.ts:118-121`), which the
+    // surrogate passes, so this rejection is the registered
+    // A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence, stricter than TS.
+    // Only the unpaired shape is refused.
+    if crate::native_process::has_unpaired_surrogate(session_string.units()) {
+        return Err(error(
+            "INVALID_SESSION_KEY",
+            crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+        ));
+    }
     let path_session = sanitize_session(session_string);
     let chat_dir = metadata
         .process_chat_dir(&project)

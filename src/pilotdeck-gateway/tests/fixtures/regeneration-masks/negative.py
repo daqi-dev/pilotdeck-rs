@@ -2,7 +2,9 @@
 # anchor-selfcheck: unsupported #953 mask diagnostics suite, rows are runtime cases
 """#953 mutation controls for run-registry mask diagnostics.
 
-Run from the repository root after the work is committed:
+Run from the repository root after the work is committed
+(``NEGATIVE_BASELINE=<commit>`` rehearses against a snapshot of the
+uncommitted tree, the same escape the edgeclaw suites use):
 
     CARGO_TARGET_DIR=<absolute> python3 \
         src/pilotdeck-gateway/tests/fixtures/regeneration-masks/negative.py \
@@ -24,8 +26,10 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (exclusive_write, mutating_sources,
-                              new_output_directory, run_owned, wait_for_slot)
-from negative_suite import invalidate_completed
+                              new_output_directory, run_owned, wait_for_slot,
+                              write_source_atomic)
+from negative_panic import named_test_killed
+from negative_suite import invalidate_completed, passed
 
 ROOT = Path(__file__).resolve().parents[5]
 MASKS = 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs'
@@ -58,7 +62,7 @@ ROWS = [
 def command(test):
     # No `--nocapture`: it splices the test's stdout into the
     # `test <name> ... ok/FAILED` status line (#938 r14) that
-    # passed()/classify() match exactly (#1053).
+    # the shared passed()/named_test_killed() judge exactly (#1053, #1087).
     return [
         'cargo', 'test', '--offline', '--locked',
         '--manifest-path', str(ROOT / 'src/Cargo.toml'),
@@ -74,19 +78,21 @@ def run(test, env, output, label):
     return result
 
 
-def passed(result, test):
-    log = result.stdout + result.stderr
-    return (result.returncode == 0 and f'test {test} ... ok' in log
-            and 'test result: ok. 1 passed;' in log)
-
-
 def classify(result, test, anchors):
+    # #1087: a kill is only the named test's own FAILED status line plus the
+    # marker inside that test's own panic payload (negative_panic judges both,
+    # so a sibling's panic or ordinary stdout is never evidence).
+    # #1087 fix-r4 (sibling #2): an aborted run is not a kill decision —
+    # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
+    # transcript without libtest's own summary (measured on a real libtest
+    # process), so the FAILED summary line is a separate requirement —
+    # #1087 fix-r5 (simplify #2) it is now the shared named_test_killed
+    # default (require_summary=True), not a local copy.
     log = result.stdout + result.stderr
     if passed(result, test):
         return 'SURVIVED', 'bound test still passed'
-    if (result.returncode != 0 and 'test result: FAILED' in log
-            and f'test {test} ... FAILED' in log and 'panicked at' in log
-            and any(anchor in log for anchor in anchors)):
+    if (result.returncode != 0
+            and named_test_killed(log, test, anchors)):
         return 'KILLED', 'bound test failed at its assertion'
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
 
@@ -98,7 +104,8 @@ def main():
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
     results = []
     try:
-        with mutating_sources(ROOT, [MASKS]) as originals:
+        with mutating_sources(ROOT, [MASKS],
+                              baseline=os.environ.get('NEGATIVE_BASELINE') or 'HEAD') as originals:
             for row in ROWS:
                 status, reason = 'INVALID', ''
                 try:
@@ -110,13 +117,24 @@ def main():
                         if original.count(row['old']) != 1:
                             status, reason = 'INVALID', 'mutation anchor is not unique'
                         else:
-                            Path(ROOT / MASKS).write_bytes(
-                                original.replace(row['old'], row['new'], 1).encode())
+                            # #1087 fix-r2: every guarded-source write in the
+                            # window is one atomic rename (#1903 rule, shared
+                            # with ``mutating_sources``) — a truncating
+                            # ``write_bytes`` killed mid-write leaves an empty
+                            # or half-written product source.
+                            write_source_atomic(
+                                ROOT, ROOT / MASKS,
+                                original.replace(row['old'], row['new'], 1).encode(),
+                                mode=(ROOT / MASKS).stat().st_mode & 0o7777)
                             status, reason = classify(run(row['test'], env, output, row['name'] + '-negative'), row['test'], row['anchors'])
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    Path(ROOT / MASKS).write_bytes(originals[Path(MASKS)])
+                    # Same #1087 fix-r2 window: the in-loop restore is also one
+                    # rename, never a truncating write_bytes.
+                    write_source_atomic(
+                        ROOT, ROOT / MASKS, originals[Path(MASKS)],
+                        mode=(ROOT / MASKS).stat().st_mode & 0o7777)
                 try:
                     if not passed(run(row['test'], env, output, row['name'] + '-restored'), row['test']):
                         status, reason = 'INVALID', (reason + '; ' if reason else '') + 'restored positive control did not pass'

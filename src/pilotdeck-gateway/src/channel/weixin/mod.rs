@@ -67,6 +67,13 @@ const WEIXIN_MAX_PENDING_REPLIES_PER_CHAT: usize = 20;
 const WEIXIN_MAX_PENDING_TURNS_PER_CHAT: usize = 20;
 const WEIXIN_LOGIN_RECOVERY_CHECK_INTERVAL_MS: u64 = 2000;
 const WEIXIN_LOGIN_RECOVERY_TIMEOUT_MS: u64 = 120_000;
+/// #1725#7: the channel-level bound on `stop()`'s wait for the poll and
+/// recovery tasks. TS has no explicit cap (it awaits the promises), but each
+/// request underneath is bounded by the ilink long-poll timeout
+/// (`DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000`), so a wait past this can only
+/// mean the task itself is wedged — warn and move on instead of hanging the
+/// stopper forever.
+const WEIXIN_STOP_WAIT_MS: u64 = 35_000;
 const WEIXIN_SESSION_EXPIRED_TEXT: &str =
     "微信登录状态已失效，当前任务无法继续通过微信回复。请重新扫码登录后再试。";
 const WEIXIN_CONNECTION_LOST_TEXT: &str =
@@ -91,6 +98,12 @@ const WEIXIN_VIDEO_SKIPPED_TEXT: &str = "微信视频附件暂未接入内容理
 pub fn default_credentials_path() -> PathBuf {
     home_pilotdeck_dir().join("weixin-credentials.json")
 }
+/// The TS `homedir()/.pilotdeck` root every durable weixin path derives
+/// from (the credentials file, the `saveCredentials` mkdir target, the
+/// `im-attachments` store; WeixinChannel.ts:32,142,149,992). Overridable
+/// in the baseline only by overriding `process.env.HOME` — the whole
+/// family moves together, which is what [`WeixinChannelOptions::credentials_home`]
+/// models.
 fn home_pilotdeck_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -184,14 +197,24 @@ pub type WeixinStateChange = Arc<dyn Fn(&JsValue) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct WeixinChannelOptions {
-    pub credentials_path: PathBuf,
-    /// The directory `saveCredentials` mkdirs before writing
-    /// (`PilotDeckServerShutdownBundle`-era TS: `join(homedir(), ".pilotdeck")`,
-    /// WeixinChannel.ts:990-998). Defaults to the process `HOME`; tests point it
-    /// inside their scratch directory — the TS generator does the same by
-    /// overriding `process.env.HOME` — so a replay never writes into the
-    /// machine's real `~/.pilotdeck`.
-    pub credentials_dir: Option<PathBuf>,
+    /// #1725 item 13: the one home knob — the TS baseline's
+    /// `join(homedir(), ".pilotdeck")` root, overridable in TS only by
+    /// overriding `process.env.HOME`. When set, the `saveCredentials` mkdir
+    /// target, the `im-attachments` root and (unless `credentials_path`
+    /// is explicitly repointed) the credentials file all derive from this
+    /// single source, so a caller overriding only this knob never touches
+    /// the machine's real `~/.pilotdeck`. `None` keeps the process `HOME`
+    /// derivation (`home_pilotdeck_dir`). Migration: this replaces the
+    /// former `credentials_dir` knob, which constrained neither the file
+    /// path nor the attachment root (a caller covering only
+    /// `credentials_path` still mkdir'd the real `~/.pilotdeck`).
+    pub credentials_home: Option<PathBuf>,
+    /// The TS `options.credentialsPath ?? CREDENTIALS_PATH` seam
+    /// (WeixinChannel.ts:142): the credentials file location. `None` keeps
+    /// the derived default `<credentials_home>/weixin-credentials.json` —
+    /// same source as the mkdir target, unlike the former always-defaulted
+    /// `PathBuf` field whose default the home knob could not move.
+    pub credentials_path: Option<PathBuf>,
     pub mapper: Arc<WeixinSessionMapper>,
     pub client_factory: WeixinClientFactory,
     pub login: WeixinLogin,
@@ -213,8 +236,8 @@ impl WeixinChannelOptions {
     /// loopback mock; production keeps the auth.js default).
     pub fn with_login_base_url(base_url: String) -> Self {
         Self {
-            credentials_path: default_credentials_path(),
-            credentials_dir: None,
+            credentials_home: None,
+            credentials_path: None,
             mapper: Arc::new(WeixinSessionMapper::new()),
             client_factory: default_client_factory(),
             login: Arc::new(move |callbacks| {
@@ -345,10 +368,30 @@ impl OrderedSet {
 struct ActiveChatSlot {
     channel: WeixinChannel,
     user: JsString,
+    /// Cleared by [`Self::release`]: the hand-off path gives the slot back
+    /// inside the same lock section as the final `shift_turn`, and a later
+    /// `Drop` must not take back an admission a *later* turn of the same chat
+    /// legitimately holds (the `channel::ActiveChat` guard's `armed` flag).
+    armed: bool,
+}
+impl ActiveChatSlot {
+    /// The normal-exit counterpart of the `Drop`: the caller holds the
+    /// `Inner` lock it took for the final `shift_turn`, so the marker release
+    /// and the "queue is empty" decision are one critical section — a message
+    /// that queues concurrently is either seen by that `shift_turn` or finds
+    /// the slot already free, never queued behind a marker nobody drains.
+    fn release(&mut self, inner: &mut Inner) {
+        if self.armed {
+            inner.active_chats.remove(&self.user);
+            self.armed = false;
+        }
+    }
 }
 impl Drop for ActiveChatSlot {
     fn drop(&mut self) {
-        self.channel.lock_inner().active_chats.remove(&self.user);
+        if self.armed {
+            self.channel.lock_inner().active_chats.remove(&self.user);
+        }
     }
 }
 
@@ -374,11 +417,14 @@ struct Inner {
 struct Shared {
     key: ChannelKey,
     credentials_path: PathBuf,
-    credentials_dir: PathBuf,
+    /// The resolved `homedir()/.pilotdeck` root (#1725 item 13): the
+    /// `saveCredentials` mkdir target and the `im-attachments` root both
+    /// derive from it, like the single TS source.
+    credentials_home: PathBuf,
     /// `new ImAttachmentStore({ rootDir: join(homedir(), ".pilotdeck",
     /// "im-attachments"), channelKey, maxBytes: WEIXIN_MAX_ATTACHMENT_BYTES })`
     /// (WeixinChannel.ts:148-152). Both roots derive from `homedir()` in the
-    /// baseline, so the injectable `credentials_dir` covers this one too.
+    /// baseline, so the injectable home knob covers this one too.
     attachment_store: Arc<ImAttachmentStore>,
     mapper: Arc<WeixinSessionMapper>,
     client_factory: WeixinClientFactory,
@@ -388,6 +434,13 @@ struct Shared {
     runtime_status: Option<WeixinRuntimeStatusReporter>,
     live_reply: LiveReplyOptions,
     logger: Mutex<Option<ChannelLog>>,
+    /// The `stop()` wait bound (`WEIXIN_STOP_WAIT_MS`); a plain field so the
+    /// pins can shorten it without a cfg-test dance.
+    stop_wait: Mutex<Duration>,
+    /// #1725#2: serializes the credentials file's read-modify-write pairs
+    /// (`save_credentials` / `save_cursor`) — TS's are synchronous on one
+    /// event loop and cannot interleave.
+    credentials_write: Mutex<()>,
     inner: Mutex<Inner>,
 }
 
@@ -398,17 +451,25 @@ pub struct WeixinChannel(Arc<Shared>);
 
 impl WeixinChannel {
     pub fn new(options: WeixinChannelOptions) -> Self {
-        let credentials_dir = options.credentials_dir.unwrap_or_else(home_pilotdeck_dir);
+        // #1725 item 13: one source. The home knob is the `homedir()/.pilotdeck`
+        // root; the credentials file defaults to it and only an explicit
+        // `credentials_path` (the TS constructor's own seam,
+        // WeixinChannel.ts:142) repoints the file alone — the mkdir target
+        // and the attachment root always follow the home knob.
+        let credentials_home = options.credentials_home.unwrap_or_else(home_pilotdeck_dir);
+        let credentials_path = options
+            .credentials_path
+            .unwrap_or_else(|| credentials_home.join("weixin-credentials.json"));
         let attachment_store = Arc::new(ImAttachmentStore::new(
-            credentials_dir.join("im-attachments"),
+            credentials_home.join("im-attachments"),
             CHANNEL_KEY,
             media::WEIXIN_ATTACHMENT_MAX_BYTES,
             Arc::new(media::WeixinAttachmentFetcher::new()),
         ));
         Self(Arc::new(Shared {
             key: ChannelKey::new(CHANNEL_KEY),
-            credentials_path: options.credentials_path,
-            credentials_dir,
+            credentials_path,
+            credentials_home,
             attachment_store,
             mapper: options.mapper,
             client_factory: options.client_factory,
@@ -418,6 +479,8 @@ impl WeixinChannel {
             runtime_status: options.runtime_status,
             live_reply: options.live_reply,
             logger: Mutex::new(None),
+            stop_wait: Mutex::new(Duration::from_millis(WEIXIN_STOP_WAIT_MS)),
+            credentials_write: Mutex::new(()),
             inner: Mutex::new(Inner {
                 generation: 0,
                 abort: None,
@@ -441,6 +504,13 @@ impl WeixinChannel {
 
     fn lock_inner(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.0.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Shortens `stop()`'s wait bound (#1725#7); the pins use a hanging poll
+    /// to prove the bound fires without waiting the production 35 s.
+    #[cfg(test)]
+    pub(crate) fn set_stop_wait_for_tests(&self, wait: Duration) {
+        *self.0.stop_wait.lock().unwrap_or_else(|e| e.into_inner()) = wait;
     }
 
     fn log(&self, level: &str, text: String) {
@@ -501,27 +571,54 @@ impl WeixinChannel {
     }
 
     fn save_credentials(&self, creds: &SavedCredentials) {
-        let write = (|| -> std::io::Result<()> {
-            // TS mkdirs `homedir()/.pilotdeck` regardless of credentialsPath.
-            std::fs::create_dir_all(&self.0.credentials_dir)?;
-            let mut object = JsObject::new();
-            object.insert("baseUrl".into(), JsValue::from(creds.base_url.as_str()));
-            object.insert("botToken".into(), JsValue::from(creds.bot_token.as_str()));
-            object.insert("accountId".into(), JsValue::from(creds.account_id.as_str()));
-            if let Some(cursor) = &creds.cursor {
-                object.insert("cursor".into(), JsValue::from(cursor.as_str()));
-            }
-            std::fs::write(
-                &self.0.credentials_path,
-                state::stringify_pretty(&JsValue::Object(object)),
-            )
-        })();
+        // #1725#2: the whole write under the credentials lock, so a
+        // concurrent `save_cursor` (stop vs the poll loop's batch finish)
+        // cannot read the file this write is about to replace — its
+        // read-modify-write would resurrect the just-overwritten value.
+        let _guard = self
+            .0
+            .credentials_write
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let write = self.write_credentials_file(creds);
         if let Err(error) = write {
             self.log(
                 "error",
                 format!("weixin: failed to save credentials: {error}"),
             );
         }
+    }
+
+    /// The on-disk half of `saveCredentials`: mkdir, tmp write, atomic
+    /// rename. The final bytes are the TS `writeFileSync` shape byte for
+    /// byte; the tmp hop only adds the never-observe-a-half-written-file
+    /// guarantee a single-threaded TS gets for free.
+    fn write_credentials_file(&self, creds: &SavedCredentials) -> std::io::Result<()> {
+        // TS mkdirs `homedir()/.pilotdeck` regardless of credentialsPath —
+        // the home knob, not the file's parent (#1725 item 13).
+        std::fs::create_dir_all(&self.0.credentials_home)?;
+        let mut object = JsObject::new();
+        object.insert("baseUrl".into(), JsValue::from(creds.base_url.as_str()));
+        object.insert("botToken".into(), JsValue::from(creds.bot_token.as_str()));
+        object.insert("accountId".into(), JsValue::from(creds.account_id.as_str()));
+        if let Some(cursor) = &creds.cursor {
+            object.insert("cursor".into(), JsValue::from(cursor.as_str()));
+        }
+        let temporary = self.0.credentials_path.with_file_name(format!(
+            ".{}.{}.tmp",
+            self.0
+                .credentials_path
+                .file_name()
+                .expect("#1725 credentials file name")
+                .to_string_lossy(),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        ));
+        std::fs::write(
+            &temporary,
+            state::stringify_pretty(&JsValue::Object(object)),
+        )?;
+        std::fs::rename(&temporary, &self.0.credentials_path)?;
+        Ok(())
     }
 
     fn save_cursor(&self) {
@@ -533,9 +630,24 @@ impl WeixinChannel {
         let Some(cursor) = cursor else {
             return;
         };
+        // #1725#2: the load and the save inside one critical section — the
+        // same lock `save_credentials` holds, so the cursor's
+        // read-modify-write cannot interleave with a credentials rewrite
+        // (one of the two would be lost on any interleaving).
+        let _guard = self
+            .0
+            .credentials_write
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(mut creds) = self.load_credentials() {
             creds.cursor = Some(cursor);
-            self.save_credentials(&creds);
+            let write = self.write_credentials_file(&creds);
+            if let Err(error) = write {
+                self.log(
+                    "error",
+                    format!("weixin: failed to save credentials: {error}"),
+                );
+            }
         }
     }
 
@@ -548,6 +660,22 @@ impl WeixinChannel {
                 self.log(
                     "warn",
                     "weixin: poll loop already running, skip duplicate start".into(),
+                );
+                return;
+            }
+            // #1725#5: a `stop()` may have aborted this generation's
+            // cancellation while the recovery watcher (or a credentials
+            // reload racing the stop) sits between its liveness check and
+            // this call. TS cannot restart there — the stopper awaits the
+            // recovery promise, and a settled `pollPromise` stays truthy
+            // until `stop` nulls it (the P1 probe) — so the recheck keeps the
+            // stopped state instead of installing a fresh poll behind the
+            // stopper's back. A deliberate restart goes through `start()`,
+            // which installs a fresh cancellation first.
+            if inner.abort.as_ref().is_some_and(|abort| abort.is_aborted()) {
+                self.log(
+                    "warn",
+                    "weixin: channel stopped, skip restarting the poll loop".into(),
                 );
                 return;
             }
@@ -802,13 +930,28 @@ impl WeixinChannel {
         };
         self.save_cursor();
         // TS awaits the poll and recovery promises; the QR login task only
-        // gets its marker dropped (stale-generation checks end it).
+        // gets its marker dropped (stale-generation checks end it). The wait
+        // is bounded (#1725#7, see `WEIXIN_STOP_WAIT_MS`): the poll loop can
+        // be parked inside a request the abort cannot interrupt, and the
+        // request's own 35 s timeout is the latest that resolves — past it,
+        // the task is wedged and the stopper must not hang with it.
         self.lock_inner().login_task = None;
-        if let Some(task) = poll_task {
-            let _ = task.await;
+        let stop_wait = *self.0.stop_wait.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(task) = poll_task
+            && tokio::time::timeout(stop_wait, task).await.is_err()
+        {
+            self.log(
+                "warn",
+                "weixin: stop timed out waiting for the poll loop to exit".into(),
+            );
         }
-        if let Some(task) = recovery_task {
-            let _ = task.await;
+        if let Some(task) = recovery_task
+            && tokio::time::timeout(stop_wait, task).await.is_err()
+        {
+            self.log(
+                "warn",
+                "weixin: stop timed out waiting for the login recovery watcher to exit".into(),
+            );
         }
         self.report_status(WeixinChannelState::Stopped, "weixin: stopped", |_| {});
         Ok(())
@@ -1385,6 +1528,7 @@ impl WeixinChannel {
         let active = ActiveChatSlot {
             channel: self.clone(),
             user: user.clone(),
+            armed: true,
         };
         Some(tokio::spawn(
             self.clone().run_queued_turns(user, turn, active),
@@ -1397,22 +1541,41 @@ impl WeixinChannel {
         first_turn: QueuedWeixinTurn,
         active: ActiveChatSlot,
     ) {
-        // Built by `enqueue_or_run` before the spawn and bound for the whole
-        // body, so `Drop` releases the marker on every exit path.
-        let _active = active;
+        // Bound for the whole body, so `Drop` releases the marker on every
+        // exit path the hand-off below does not cover (panic, cancellation).
+        let mut active = active;
         let mut next = Some(first_turn);
         while let Some(turn) = next.take() {
             self.process_message(&user, &turn).await;
-            next = self.lock_inner().chat_state.shift_turn(&user);
+            // #1725#4: TS runs `shiftTurn` and the `finally` marker delete
+            // with no await between (runQueuedTurns :544-547, the P4 probe
+            // anchor). One `lock_inner` section does both: take the next
+            // turn, or — still holding the lock — give the marker back, so a
+            // concurrent `enqueue_or_run` can never see the marker held with
+            // no drainer behind it and queue a message nobody drains.
+            next = {
+                let mut inner = self.lock_inner();
+                let next = inner.chat_state.shift_turn(&user);
+                if next.is_none() {
+                    active.release(&mut inner);
+                }
+                next
+            };
         }
-        // #1725#4: the `shift_turn` above and the marker release in `_active`'s
-        // drop are two separate lock sections; a message arriving in between
-        // queues with nobody left to drain it. Not changed here — this fix is
-        // panic safety only, the double-lock window stays under #1725#4.
     }
 
     async fn process_message(&self, user: &JsString, turn: &QueuedWeixinTurn) {
         let Some(gateway) = self.0.gateway.clone() else {
+            // TS `if (!this.gateway) return;` is silent. The port logs the
+            // drop, so a mis-assembled channel (no gateway wired) surfaces in
+            // the log instead of looking like silent message loss.
+            self.log(
+                "warn",
+                format!(
+                    "weixin: no gateway attached, dropping turn for chat {}",
+                    String::from_utf16_lossy(user.units())
+                ),
+            );
             return;
         };
         let generation = self.lock_inner().chat_state.generation(user);
@@ -2133,21 +2296,51 @@ impl ChannelHandle for WeixinHandle {
     }
 }
 
+/// Retires a finished submission's in-flight entry (#1725#6): only an entry
+/// that is still *this* submission's receiver goes, so a task that outlived a
+/// newer submission for the same session key leaves the newer fence in place
+/// for its own `abort_turn` to wait on.
+fn retire_in_flight_entry(
+    in_flight: &mut HashMap<JsString, watch::Receiver<bool>>,
+    key: &JsString,
+    own: &watch::Receiver<bool>,
+) {
+    if in_flight
+        .get(key)
+        .is_some_and(|current| current.same_channel(own))
+    {
+        in_flight.remove(key);
+    }
+}
+
 /// The production gateway port over the native turn submitter: every weixin
 /// turn goes through the same `TurnSubmitter` admission as a WS submit, and
 /// aborts follow the TS `abortTurn` contract (default reason, then wait for
 /// the in-flight submission to unwind its completion fence).
 pub struct NativeWeixinGatewayPort {
     submitter: Arc<crate::runtime::turn::submit::TurnSubmitter>,
-    in_flight: Mutex<HashMap<JsString, watch::Receiver<bool>>>,
+    /// The completion fence per session key. Shared with the detached
+    /// submission tasks so they can retire their own entries (#1725#6).
+    in_flight: Arc<Mutex<HashMap<JsString, watch::Receiver<bool>>>>,
 }
 
 impl NativeWeixinGatewayPort {
     pub fn new(submitter: Arc<crate::runtime::turn::submit::TurnSubmitter>) -> Self {
         Self {
             submitter,
-            in_flight: Mutex::new(HashMap::new()),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// #1725#6: how many in-flight entries the port still tracks. Production
+    /// never reads it; the pins use it to assert a finished submission stops
+    /// occupying the table.
+    #[cfg(test)]
+    pub(crate) fn in_flight_len(&self) -> usize {
+        self.in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 }
 
@@ -2158,6 +2351,10 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
             .and_then(JsValue::as_string)
             .cloned();
         let (done, done_rx) = watch::channel(false);
+        // The receiver that identifies *this* submission's entry: the task
+        // below may outlive a newer submission for the same key, so the
+        // cleanup only removes an entry that is still this one.
+        let own_entry = key.clone().map(|key| (key, done_rx.clone()));
         if let Some(key) = &key {
             self.in_flight
                 .lock()
@@ -2166,6 +2363,7 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
         }
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         let submitter = self.submitter.clone();
+        let in_flight = self.in_flight.clone();
         tokio::spawn(async move {
             let mut submission = submitter.submit(input);
             loop {
@@ -2190,6 +2388,15 @@ impl WeixinGatewayPort for NativeWeixinGatewayPort {
                 }
             }
             done.send_replace(true);
+            // #1725#6: retire this submission's entry once it is done. TS
+            // keeps no such table (the turn promise itself is the anchor an
+            // abort waits on); the entry here outlives its usefulness the
+            // moment the fence closes, and a `/new`-rotated session key that
+            // is never removed would pin its receiver forever.
+            if let Some((key, own_rx)) = own_entry {
+                let mut in_flight = in_flight.lock().unwrap_or_else(|e| e.into_inner());
+                retire_in_flight_entry(&mut in_flight, &key, &own_rx);
+            }
         });
         WeixinTurnStream {
             receiver,

@@ -174,12 +174,17 @@ impl Requests {
         // (maintenance already set for this session) or an active turn both
         // return SESSION_BUSY; the guard is dropped when the closure exits.
         tokio::task::spawn_blocking(move || {
-            let session_key = required_trimmed(
-                &params,
-                "sessionKey",
-                "INVALID_SESSION_KEY",
-                "sessionKey is required.",
-            )?;
+            // #1623 方案 B: rewind_files derives its transcript and file-history
+            // paths from the key (`create_session_storage` →
+            // `sanitize_session_id`), so a lone-surrogate key reads and
+            // restores the `s\u{FFFD}` session's files through the alias
+            // (fix-r2 probe B, `_tmp/20261111-issue-1623/fix-r2/`). TS
+            // rewindFilesForSdk has no sessionKey gate at all
+            // (ProjectRuntimeRegistry.ts:1125-1131, measured
+            // `probe_ts_gates.log`); the rejection is the registered
+            // A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence — the shared
+            // guard keeps the #1604 blank rejection and adds the surrogate one.
+            let session_key = super::require_session_key(&params)?;
             let user_message_id = required_trimmed(
                 &params,
                 "userMessageId",
@@ -335,5 +340,84 @@ mod tests {
         )
         .expect("#1604 a non-blank string passes the guard");
         assert_eq!("a8/session", key.to_utf8().expect("#1604 key is UTF-8"));
+    }
+
+    // #1623 方案 B: rewind_files derives its transcript and file-history
+    // paths from the key (`create_session_storage` → `sanitize_session_id`),
+    // so pre-fix a lone-surrogate key read and restored the `s\u{FFFD}`
+    // session's files through the alias — including the worktree write of
+    // `FileHistoryStore::rewind` (fix-r2 probe B,
+    // `_tmp/20261111-issue-1623/fix-r2/probe_rust_prefix.log`). TS
+    // rewindFilesForSdk has no sessionKey gate at all
+    // (ProjectRuntimeRegistry.ts:1125-1131, measured `probe_ts_gates.log`);
+    // the request gate is the registered A7-W5-SESSION-KEY-SURROGATE-REJECT-001
+    // divergence. The guard keeps the #1604 blank rejection and adds the
+    // surrogate one.
+    #[tokio::test]
+    async fn rewind_files_rejects_lone_surrogate_session_key() {
+        use crate::negative_assert_eq;
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let surrogate = JsString::from_utf16(vec![0x73, 0xd800]);
+        let params = crate::metadata::object([
+            ("sessionKey", JsValue::String(surrogate)),
+            ("userMessageId", "m1".into()),
+        ]);
+        let error = r
+            .tools_request("rewind_files".to_string(), params)
+            .await
+            .expect_err("#1623 rewind_files rejects the lone-surrogate key");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 rewind_files rejects the lone-surrogate session key"
+        );
+        negative_assert_eq!(
+            message(&error),
+            crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+            "#1623 the rewind rejection is the shared guard's domain error"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1623 controls: only the unpaired shape is refused. An explicit U+FFFD
+    // key and a surrogate pair (an astral character) pass the gate and reach
+    // the transcript read, which answers the ordinary no-checkpoint failure —
+    // the gate must not become a key filter TS never had.
+    #[tokio::test]
+    async fn rewind_files_keeps_fffd_and_paired_surrogate_keys() {
+        use crate::negative_assert_eq;
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        for (label, units) in [
+            ("explicit-fffd", vec![0x73, 0xfffd]),
+            ("paired-surrogate", vec![0x73, 0xd800, 0xdc00]),
+        ] {
+            let params = crate::metadata::object([
+                ("sessionKey", JsValue::String(JsString::from_utf16(units))),
+                ("userMessageId", "m1".into()),
+            ]);
+            let result = r
+                .tools_request("rewind_files".to_string(), params)
+                .await
+                .unwrap_or_else(|error| panic!("#1623 the {label} key passes the gate: {error:?}"));
+            negative_assert_eq!(
+                result.get("canRewind").and_then(JsValue::as_bool),
+                Some(false),
+                "#1623 the {label} key reaches the transcript read, not the gate"
+            );
+            let error_text = result
+                .get("error")
+                .and_then(JsValue::as_string)
+                .map(|text| String::from_utf16_lossy(text.units()));
+            negative_assert_eq!(
+                error_text,
+                Some(rewind::NO_CHECKPOINT.to_string()),
+                "#1623 the {label} key answers the ordinary no-checkpoint failure"
+            );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
     }
 }

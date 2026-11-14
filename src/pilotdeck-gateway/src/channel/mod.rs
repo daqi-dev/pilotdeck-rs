@@ -79,6 +79,12 @@ impl<K: Eq + Hash> ActiveChat<K> {
     /// their own state lock get an atomic "queue empty and no longer active"
     /// hand-off: a turn queued by a losing racer under that same lock is
     /// either seen before the release or wakes a fresh admission.
+    ///
+    /// The contract every user of this shape must keep: the release shares
+    /// the critical section with the "queue is empty" decision that ends the
+    /// drainer (see `feishu::Runtime::take_next_or_release` and weixin's
+    /// `ActiveChatSlot::release` — the same form over different lock homes:
+    /// a standalone set mutex here, the single `Inner` mutex there).
     pub(crate) fn release(&mut self) {
         if self.armed {
             self.active

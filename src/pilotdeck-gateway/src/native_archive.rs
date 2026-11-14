@@ -128,6 +128,21 @@ fn session(params: &JsValue) -> Result<&JsString> {
         JsValue::String(s) if js_trim(&String::from_utf16_lossy(s.units())).is_empty() => {
             Err(error("INVALID_SESSION_KEY", "sessionKey is required."))
         }
+        // #1623 方案 B: `session_id()` renders the key with
+        // `String::from_utf16_lossy`, so a lone-surrogate key and an explicit
+        // U+FFFD key open the same `<id>.jsonl` transcript and tool-results
+        // dir (fix-r2 probe C, `_tmp/20261111-issue-1623/fix-r2/`). TS's only
+        // gate in this family is the blank check above
+        // (`createLocalGateway.ts:1619-1620` — `?.trim()` leaves the surrogate
+        // intact, measured `probe_ts_gates.log`), so the rejection is the
+        // registered A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence, not a
+        // TS alignment. Only the unpaired shape is refused.
+        JsValue::String(s) if crate::native_process::has_unpaired_surrogate(s.units()) => {
+            Err(error(
+                "INVALID_SESSION_KEY",
+                crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+            ))
+        }
         JsValue::String(s) => Ok(s),
         _ => Err(error(
             "gateway_request_failed",

@@ -71,14 +71,15 @@ pub(super) fn trimmed_string_is_non_empty(value: &JsString) -> bool {
 /// string that is non-empty after JS trim, else
 /// INVALID_SESSION_KEY. A non-null non-string throws the bare TypeError the
 /// TS optional-chain call produces on the wire
-/// (A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2 ②).
+/// (A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2 ②). #1623 adds the
+/// lone-surrogate rejection on top: the model-selection / permission /
+/// thinking / style writes this family appends reach the transcript
+/// through the same `sanitize_session_id` lossy identity, so
+/// `s\u{D800}` would append into `s\u{FFFD}`'s transcript — 方案 B
+/// rejects the key (stricter than TS; see
+/// `A7-W5-SESSION-KEY-SURROGATE-REJECT-001`).
 fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
-    super::require_text(
-        params,
-        "sessionKey",
-        "INVALID_SESSION_KEY",
-        "sessionKey is required.",
-    )
+    super::require_session_key(params)
 }
 
 /// `truthy` over the protocol's value kinds, like the JS Boolean context.
@@ -1661,6 +1662,73 @@ mod tests {
         config_blank_key_gate_order("seed_read_state", seed_cell_params).await;
     }
 
+    /// #1623 fix-r8 (review P2 #3): the lone-surrogate refusal rides the
+    /// shared `require_session_key`, so every config entry — not only
+    /// `session_model_set` — must answer it. One row per call site: a future
+    /// edit that drops any of the six off the shared guard fails here, which
+    /// the single-method case (`session_model_set` alone) could not catch.
+    /// The extras mirror the `*_cell_params` builders — the family checks its
+    /// own fields first where it does (e.g. `set_permission_mode`'s mode
+    /// check), so a valid payload is required to reach the key gate.
+    #[tokio::test]
+    async fn config_family_surrogate_key_gate_matrix() {
+        let (_scratch, r) = setup_fixture();
+        let seed_file = r.options.project.join("gate-order-seed.txt");
+        std::fs::write(&seed_file, "seeded\n").expect("#1623 surrogate matrix seed file");
+        let mtime_ms = std::fs::metadata(&seed_file)
+            .expect("#1623 surrogate matrix seed metadata")
+            .modified()
+            .expect("#1623 surrogate matrix seed mtime")
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("#1623 surrogate matrix seed mtime is after the epoch")
+            .as_millis() as f64;
+        let matrix: Vec<(&str, Vec<(&'static str, JsValue)>)> = vec![
+            (
+                "session_model_set",
+                vec![("selection", selection("model", "test", "test"))],
+            ),
+            ("session_model_clear", vec![]),
+            ("set_permission_mode", vec![("mode", "default".into())]),
+            (
+                "set_session_thinking",
+                vec![(
+                    "thinking",
+                    object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+                )],
+            ),
+            ("set_output_style", vec![("name", JsValue::Null)]),
+            (
+                "seed_read_state",
+                vec![
+                    ("path", "gate-order-seed.txt".into()),
+                    ("mtime", JsValue::Number(mtime_ms)),
+                ],
+            ),
+        ];
+        for (method, extra) in matrix {
+            let mut fields: Vec<(&'static str, JsValue)> = vec![(
+                "sessionKey",
+                JsValue::String(JsString::from_utf16(vec![0x73, 0xd800])),
+            )];
+            fields.extend(extra);
+            let error = r
+                .session_config_request(method.into(), object(fields))
+                .await
+                .expect_err(&format!("#1623 {method} answers the surrogate gate"));
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#1623 the surrogate key is a sessionKey error"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                "sessionKey must not contain an unpaired surrogate.",
+                "#1623 every entry keeps the shared guard's message"
+            );
+        }
+        teardown(&r).await;
+    }
+
     #[tokio::test]
     async fn session_model_set_rejects_active_turn() {
         let (_scratch, r) = setup_fixture();
@@ -1877,6 +1945,40 @@ mod tests {
         teardown(&r).await;
     }
 
+    /// #1623: a lone-surrogate `sessionKey` is refused at the gate before
+    /// the port write. `record_model_selection` renders the transcript
+    /// identity through `sanitize_session_id`'s lossy conversion, so
+    /// `s\u{D800}` would append this session's model-selection metadata into
+    /// `s\u{FFFD}`'s transcript — the write-side half of the alias the
+    /// session_dir family rejects (方案 B, stricter than TS;
+    /// A7-W5-SESSION-KEY-SURROGATE-REJECT-001).
+    #[tokio::test]
+    async fn session_model_set_surrogate_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::String(key)),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#1623 the surrogate key answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1623 the surrogate key is a sessionKey error"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey must not contain an unpaired surrogate.",
+            "#1623 the surrogate key keeps the shared guard's message"
+        );
+        teardown(&r).await;
+    }
+
     /// #1872 (fix-r2): the request-side check stays live for a blank key. A
     /// turn held on the blank spelling itself (`submit.rs` folds a
     /// missing/null sessionKey to `""`) answers `SESSION_BUSY` — the TS
@@ -1983,6 +2085,45 @@ mod tests {
             "#1872 the blank key keeps permission's busy message"
         );
         r.owner.end_turn(&"".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1623 fix-r13 (review r12 sibling#2): symmetric with the submit-side
+    /// pin (`submit_turn_surrogate_gate_precedes_the_busy_refusal`) — a turn
+    /// held under the same lone-surrogate spelling makes `set_permission_mode`
+    /// answer `SESSION_BUSY` (the busy gate matches the request's original
+    /// spelling exactly; this is the divergence #3033 records, and after #1623
+    /// only a test fixture can register a turn under a surrogate spelling).
+    #[tokio::test]
+    async fn set_permission_mode_reports_busy_for_a_turn_held_on_the_surrogate_key() {
+        let (_scratch, r) = setup_fixture();
+        let key = JsString::from_utf16(vec![0x73, 0xd800]);
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&key, &run)
+            .expect("the surrogate spelling holds a live turn in the fixture");
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([
+                    ("sessionKey", JsValue::String(key.clone())),
+                    ("mode", "plan".into()),
+                ]),
+            )
+            .await
+            .expect_err("a surrogate-keyed turn is busy for permission");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#3033 the same surrogate spelling answers busy for permission"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change permission mode during an active turn.",
+            "#3033 the surrogate key keeps permission's busy message"
+        );
+        r.owner.end_turn(&key, Some(&run), Some(&reservation));
         teardown(&r).await;
     }
 

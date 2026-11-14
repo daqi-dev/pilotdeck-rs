@@ -24,6 +24,12 @@ pub(crate) use settings::METHODS;
 // routing seam's own dispatch body against the S1 stop face.
 #[cfg(test)]
 pub(crate) use cron::dispatch_under_management_gate;
+// #3143 fix-r1 (sibling#3): the run-read names have one owner (`runs`), the
+// same single-source rule `runtime::settings::METHODS` and
+// `runtime::cron::CRON_METHODS` already carry -- the management test
+// derives its filter from here instead of hand-copying the three names.
+#[cfg(test)]
+pub(crate) use runs::METHODS as RUN_METHODS;
 mod sop;
 mod steer;
 mod tools;
@@ -179,6 +185,54 @@ pub(super) fn require_text(
             "input.{key}?.trim is not a function"
         ))),
     }
+}
+
+/// The sessionKey guard the session_dir and config families share: the TS
+/// `?.trim()` gate (`require_text`) plus the #1623 lone-surrogate rejection.
+///
+/// TS accepts a lone surrogate in `sessionKey` (`?.trim()` leaves it intact —
+/// #1455 probe4), but every disk identity is rendered through
+/// `String::from_utf16_lossy` (`sanitize_session_id`), so `s\u{D800}` and
+/// `s\u{FFFD}` are one transcript / file-history / tool-results / subagents
+/// path: a surrogate key reaches another session's files and can append into
+/// or delete them (#1623 probes `_tmp/20261111-issue-1623/`, Node v22.22.0
+/// fs alias + the Rust end-to-end alias demonstration). Human decision #1623
+/// 方案 B: reject the surrogate key — stricter than TS — and keep the lossy
+/// disk identity (no sanitize injectivity change, no migration); the
+/// divergence is registered as `A7-W5-SESSION-KEY-SURROGATE-REJECT-001`.
+/// A paired surrogate (an astral character) and an explicit U+FFFD stay
+/// valid keys; only the unpaired shape is refused.
+pub(super) fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
+    let key = require_text(
+        params,
+        "sessionKey",
+        "INVALID_SESSION_KEY",
+        "sessionKey is required.",
+    )?;
+    if has_unpaired_surrogate(key.units()) {
+        return Err(RequestError {
+            code: "INVALID_SESSION_KEY".into(),
+            message: SESSION_KEY_SURROGATE_MESSAGE.into(),
+            details: None,
+            validation: None,
+        });
+    }
+    Ok(key)
+}
+
+/// The #1623 surrogate-rejection message, shared by every gate the divergence
+/// covers (session_dir / config / rewind_files request families, the
+/// connection-owned `submit_turn` entry, and the `native_archive` family) so
+/// the wording cannot drift between them.
+pub(crate) const SESSION_KEY_SURROGATE_MESSAGE: &str =
+    "sessionKey must not contain an unpaired surrogate.";
+
+/// True when the UTF-16 units contain a surrogate without its pair — the one
+/// shape the #1623 gate refuses. `char::decode_utf16` is the same walk the
+/// storage's `String::from_utf16_lossy` performs, so the two can never
+/// disagree about which keys are "lossy".
+pub(crate) fn has_unpaired_surrogate(units: &[u16]) -> bool {
+    char::decode_utf16(units.iter().copied()).any(|unit| unit.is_err())
 }
 
 /// `input.projectKey ?? fallbackProjectRoot` — the projectKey read the

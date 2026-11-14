@@ -116,14 +116,17 @@ mutations = [
     # #1460: the open failure is one of the content-skip's silent arms —
     # restoring the audio-only shape there turns the EACCES open of a
     # chmod-000 lease file into a not-found diagnostic.
+    # #2098 re-anchor note: the open itself became the guarded family
+    # (`open_artifact_guarded`); the row still mutates only the Err arm's
+    # gate, exactly as before.
     ('content-open-failure-diagnosed', SERVICES,
-     '''        let mut file = match File::open(&resolved) {
+     '''        let mut file = match crate::upload::open_artifact_guarded(&resolved) {
             Ok(file) => file,
             Err(error) => {
                 if no_resolver {
                     continue;
                 }''',
-     '''        let mut file = match File::open(&resolved) {
+     '''        let mut file = match crate::upload::open_artifact_guarded(&resolved) {
             Ok(file) => file,
             Err(error) => {
                 if audio {

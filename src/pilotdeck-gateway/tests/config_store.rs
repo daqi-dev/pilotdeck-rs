@@ -342,7 +342,11 @@ async fn run_step(
                     .expect("#879 healthy watcher paths"),
             )
         }
-        "unwatch" => watch.take().expect("watching").stop().await,
+        // #1920: `stop` now reports how the watcher ended; the parity runner
+        // does not assert on it, so the report is simply discarded here.
+        "unwatch" => {
+            watch.take().expect("watching").stop().await;
+        }
         "wait" => {
             let ms = step.get("ms").and_then(JsValue::as_number).expect("ms");
             tokio::time::sleep(Duration::from_millis(ms as u64)).await;

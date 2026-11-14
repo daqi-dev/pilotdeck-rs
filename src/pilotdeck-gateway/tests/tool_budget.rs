@@ -7,8 +7,6 @@ mod baseline;
 mod permission_faults;
 #[path = "common/scratch.rs"]
 mod scratch;
-#[path = "common/skip_line.rs"]
-mod skip_line;
 use pilotdeck_gateway::host::modules::context::{ContextInput, ContextRuntime};
 use pilotdeck_gateway::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
 use pilotdeck_gateway::runtime::context::{DefaultContextRuntime, Options};
@@ -241,16 +239,17 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             // #1525 / #1263: the permission-denied steps never ran here, so the
             // replay must say so instead of reporting an untested contract as a
             // pass — and the CI switch turns that skip into a failure.
-            assert!(
-                !permission_faults::require_permission_faults(),
-                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the deniedDir write probe \
-                 still succeeds (root or CAP_DAC_OVERRIDE); case {name} replays its \
-                 permission-denied steps only on an unprivileged host (需要非特权宿主)"
+            permission_faults::skip_or_require(
+                &format!(
+                    "#1263 skip: case {name}: deniedDir is writable by this caller (root or \
+                     CAP_DAC_OVERRIDE); its permission-denied steps need an unprivileged host\n"
+                ),
+                &format!(
+                    "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the deniedDir write probe \
+                     still succeeds (root or CAP_DAC_OVERRIDE); case {name} replays its \
+                     permission-denied steps only on an unprivileged host (需要非特权宿主)"
+                ),
             );
-            skip_line::stderr_skip_line(&format!(
-                "#1263 skip: case {name}: deniedDir is writable by this caller (root or \
-                 CAP_DAC_OVERRIDE); its permission-denied steps need an unprivileged host\n"
-            ));
             skipped += array(field(case, "steps")).len();
             continue;
         }

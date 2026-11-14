@@ -136,6 +136,40 @@ fn archive_lone_surrogate_ties_answer_natively_with_ts_bytes() {
     }
     assert_eq!(local, 11);
 }
+/// #1623 fix-r2（差异登记 `A7-W5-SESSION-KEY-SURROGATE-REJECT-001`，比 TS 严）：
+/// 录制原件是 TS `?.trim()` 门放行后的 SESSION_NOT_FOUND 应答；Rust 门在
+/// not-found 查找之前拒绝含孤立代理的 sessionKey。`cases.json` 按原字节保留
+/// 录制快照，故这类 case 的理论期望用生产 stringify 在此重建——id 与错误形状
+/// 不与真实 wire 漂移。
+pub(crate) fn surrogate_gate_divergence(request: &str) -> Option<String> {
+    let parsed = parse_json(request).ok()?;
+    let key = parsed.get("params")?.get("sessionKey")?.as_string()?;
+    if !crate::native_process::has_unpaired_surrogate(key.units()) {
+        return None;
+    }
+    let mut error = pilotdeck_protocol::JsObject::new();
+    error.insert("code".into(), "INVALID_SESSION_KEY".into());
+    error.insert(
+        "message".into(),
+        pilotdeck_protocol::JsValue::String(
+            crate::native_process::SESSION_KEY_SURROGATE_MESSAGE.into(),
+        ),
+    );
+    let mut response = pilotdeck_protocol::JsObject::new();
+    response.insert("type".into(), "response".into());
+    response.insert(
+        "id".into(),
+        pilotdeck_protocol::JsValue::String(parsed.get("id")?.as_string()?.clone()),
+    );
+    response.insert("ok".into(), pilotdeck_protocol::JsValue::Bool(false));
+    response.insert("error".into(), pilotdeck_protocol::JsValue::Object(error));
+    Some(
+        stringify_json(&pilotdeck_protocol::JsValue::Object(response))
+            .expect("#1623 surrogate divergence serializes")
+            .expect("#1623 surrogate divergence is defined"),
+    )
+}
+
 #[test]
 fn production_default_archive_wire_goldens() {
     let (metadata, data) = fixture();
@@ -157,9 +191,13 @@ fn production_default_archive_wire_goldens() {
         let Route::LocalResponse(response) = route else {
             panic!("unexpected forward: {}", case["id"])
         };
+        // #1623 fix-r2：孤立代理 sessionKey 的 case 期望登记差异应答，录制原件不动。
+        let recorded = case["response"].as_str().unwrap();
+        let divergence = surrogate_gate_divergence(raw);
+        let expected = divergence.as_deref().unwrap_or(recorded);
         assert_eq!(
             String::from_utf8(response).unwrap(),
-            case["response"].as_str().unwrap(),
+            expected,
             "{}",
             case["id"]
         );
@@ -551,12 +589,11 @@ fn archive_native_materialized_138_rpcs_match_with_explicit_path_relocation() {
         let Route::LocalResponse(raw) = route_with_metadata(&request, Some(&metadata)) else {
             panic!("Native unexpectedly forwarded {}", case["id"])
         };
-        assert_eq!(
-            raw,
-            case["response"].as_str().unwrap().as_bytes(),
-            "{}",
-            case["id"]
-        );
+        // #1623 fix-r2：孤立代理 sessionKey 的 case 期望登记差异应答，录制原件不动。
+        let expected = surrogate_gate_divergence(case["request"].as_str().unwrap())
+            .map(String::into_bytes)
+            .unwrap_or_else(|| case["response"].as_str().unwrap().as_bytes().to_vec());
+        assert_eq!(raw, expected, "{}", case["id"]);
         count += 1;
     }
     assert_eq!(count, 138);
@@ -820,4 +857,96 @@ async fn budget_spills_are_readable_by_archive() {
             .unwrap()
             .all(|entry| entry.unwrap().file_type().unwrap().is_file())
     );
+}
+
+// #1623 方案 B: the archive family's sessionKey gate refuses the lone
+// surrogate before `session_id()`'s lossy render picks a transcript file —
+// pre-fix, a surrogate key and an explicit U+FFFD key opened the same
+// `<id>.jsonl` (fix-r2 probe C,
+// `_tmp/20261111-issue-1623/fix-r2/probe_rust_prefix.log`). TS's only gate in
+// this family is the blank check (`createLocalGateway.ts:1619-1620` —
+// `?.trim()` leaves the surrogate intact, measured `probe_ts_gates.log`), so
+// the rejection is the registered A7-W5-SESSION-KEY-SURROGATE-REJECT-001
+// divergence, not a TS alignment. Only the unpaired shape is refused.
+#[test]
+fn archive_gate_rejects_lone_surrogate_session_key() {
+    use crate::negative_assert_eq;
+    let surrogate = JsString::from_utf16(vec![0x73, 0xd800]);
+    let params = object([("sessionKey", JsValue::String(surrogate))]);
+    let (code, message) =
+        session(&params).expect_err("#1623 the archive gate rejects the lone-surrogate key");
+    negative_assert_eq!(
+        code,
+        "INVALID_SESSION_KEY",
+        "#1623 the archive family turns the lone-surrogate session key away"
+    );
+    negative_assert_eq!(
+        String::from_utf16_lossy(message.units()),
+        crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+        "#1623 the archive rejection is the shared guard's domain error"
+    );
+    // The wire entry answers the same error — before any project or
+    // transcript lookup, so no registered project is needed.
+    let root = scratch();
+    let home = root.join("pilot");
+    let project = root.join("project");
+    for dir in [&home, &project] {
+        fs::create_dir_all(dir).expect("#1623 probe scratch");
+    }
+    let metadata = Metadata {
+        home: root.join("pilot"),
+        cwd: root.join("project"),
+        files: NativeFiles,
+    };
+    let request = object([
+        ("type", "request".into()),
+        ("id", "surrogate".into()),
+        ("method", "native_archive_manifest".into()),
+        ("params", params),
+    ]);
+    let response = response(&request, &metadata).expect("#1623 the gate answers locally");
+    let answered: Value =
+        serde_json::from_str(std::str::from_utf8(&response).unwrap()).expect("#1623 JSON answer");
+    negative_assert_eq!(
+        answered["ok"],
+        Value::Bool(false),
+        "#1623 the wire entry answers the surrogate key with an error"
+    );
+    negative_assert_eq!(
+        answered["error"]["code"],
+        serde_json::json!("INVALID_SESSION_KEY"),
+        "#1623 the wire error is the shared guard's domain code"
+    );
+    negative_assert_eq!(
+        answered["error"]["message"],
+        serde_json::json!(crate::native_process::SESSION_KEY_SURROGATE_MESSAGE),
+        "#1623 the wire error is the shared guard's message"
+    );
+    fs::remove_dir_all(root).expect("#1623 archive scratch cleanup");
+}
+
+// #1623 controls: only the unpaired shape is refused. An explicit U+FFFD key
+// is a legal (if odd) session identity and a surrogate pair is an astral
+// character — both pass the gate with their UTF-16 units intact.
+#[test]
+fn archive_gate_keeps_fffd_and_paired_surrogate_keys() {
+    use crate::negative_assert_eq;
+    for (label, units) in [
+        ("explicit-fffd", vec![0x73, 0xfffd]),
+        ("paired-surrogate", vec![0x73, 0xd800, 0xdc00]),
+    ] {
+        let key = JsString::from_utf16(units);
+        let params = object([("sessionKey", JsValue::String(key.clone()))]);
+        let accepted = session(&params).unwrap_or_else(|(code, message)| {
+            panic!(
+                "#1623 the {label} key passes the archive gate: {code} {}",
+                String::from_utf16_lossy(message.units())
+            )
+        });
+        negative_assert_eq!(
+            accepted.units(),
+            key.units(),
+            "#1623 the {label} key keeps its UTF-16 units through the gate"
+        );
+    }
 }

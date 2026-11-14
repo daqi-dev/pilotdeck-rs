@@ -191,6 +191,11 @@ UNSUPPORTED_SIGNALS = {
     'edgeclaw-service-orchestration/test_switch_negative.py': set(),
     # #1019 fix-r1: same shape as the orchestration runner's self-tests.
     'session-adopt/test_switch_negative.py': set(),
+    # #1087 fix-r5 (sibling #3): the publication twins load the delivered
+    # runner's mutation table by AST to drive their judge controls; the table
+    # signal is a read, never a source mutation table of their own.
+    'edgeclaw-file-memory/test_negative.py': {'table:MUTANTS'},
+    'edgeclaw-dangling-links/test_negative.py': {'table:MUTANTS'},
 }
 REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { baseline, requireUI } from './env.mjs';
 import { assertDeployExecutionEnv, deployPorts } from './deploy-matrix.mjs';
 
@@ -26,4 +27,4 @@ async function main() {
   await server.listen();
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void server.close().then(() => process.exit(0)); });
 }
-if (process.argv[1] === new URL(import.meta.url).pathname) await main();
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) await main();

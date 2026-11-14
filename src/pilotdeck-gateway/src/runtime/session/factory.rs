@@ -21,7 +21,8 @@ use crate::{
         },
     },
     storage::{
-        Diagnostic, TranscriptKey, TranscriptRead, TranscriptStore, WriterState,
+        AdapterError, Diagnostic, TranscriptKey, TranscriptRead, TranscriptStore, WriterState,
+        message_contains_tool_result,
         recorder::{Recorder, RecorderResult},
     },
 };
@@ -1580,19 +1581,21 @@ fn validate_web_history(entries: &[JsValue]) -> RuntimeResult {
         {
             continue;
         }
-        let content = property(field(entry, "message"), "content")?;
-        property(content, "some")?;
-        let JsValue::Array(blocks) = content else {
-            return Err(type_error("message.content.some is not a function"));
-        };
-        for block in blocks {
-            let kind = property(block, "type")?;
-            if is(kind, "tool_result") || is(kind, "tool_result_reference") {
-                break;
-            }
-        }
+        // #2043 fix-r1: the `.some` walk is the adapter's shared
+        // `message_contains_tool_result` port (WebHistoryProjections.ts:79,
+        // 321-324); routing the storage hydrate gate through it keeps both
+        // ports on one definition instead of a second hand-written copy.
+        message_contains_tool_result(field(entry, "message")).map_err(hydrate_type_error)?;
     }
     Ok(())
+}
+/// The adapter's hydrate gates report V8 TypeErrors; surface one as the
+/// runtime's TypeError-shaped error with its text unchanged.
+fn hydrate_type_error(error: AdapterError) -> RuntimeError {
+    match error {
+        AdapterError::Type(message) => type_error(message),
+        _ => RuntimeError::new(error.to_string()),
+    }
 }
 fn is(value: &JsValue, text: &str) -> bool {
     value.as_string().is_some_and(|s| s.equals_str(text))
@@ -1617,16 +1620,12 @@ fn merge_permission_denials(
 ) -> Result<(), RuntimeError> {
     match denials {
         JsValue::Array(items) => target.extend_from_slice(items),
+        // Strings iterate code points through the shared
+        // `js_value::code_point_chunks` walk (a surrogate pair is one
+        // element, a lone surrogate survives as its own).
         JsValue::String(text) => {
-            let mut units = text.units().iter().copied().peekable();
-            while let Some(first) = units.next() {
-                let mut item = vec![first];
-                if (0xd800..=0xdbff).contains(&first)
-                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))
-                {
-                    item.push(units.next().unwrap());
-                }
-                target.push(JsValue::String(JsString::from_utf16(item)));
+            for chunk in crate::js_value::code_point_chunks(text.units()) {
+                target.push(JsValue::String(JsString::from_utf16(chunk.to_vec())));
             }
         }
         _ => {

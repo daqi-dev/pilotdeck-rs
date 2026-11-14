@@ -74,7 +74,8 @@ from negative_process import (SourceBaselineError, mutating_sources,
                               run_owned, wait_for_slot, tree_lock,
                               write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
-                                refuse_unusable_target, registered, verdict_exit)
+                                refuse_unusable_target, registered,
+                                verdict_exit, withdraw_claim)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -162,9 +163,12 @@ mutations = [
 # failed control. #2590 item 7 (MM-sibling#2): the EXPECTED_NAMES roster is
 # the form the *migrated* family uses — sdk-mcp-session-tools (#1433),
 # handle-path-macos (#1990) and settings-gateway (#1734) are the precedents
-# to cite. The native-management and native-settings fixtures still compare a
-# local ordered tuple and exit via `SystemExit`/`sys.exit` (rc 1), so they
-# are explicitly not that precedent yet.
+# to cite. #1642 fix-r2 migrated native-management and
+# native-registry-switch to this form; the remaining rc 1 leftovers of the
+# same family are native-settings (`sys.exit(str)`), turn-gateway-clock-edge
+# (lines 99-108) and config-store (lines 950-959), whose `enforce_denominator`
+# helpers raise `SystemExit` with a string — explicitly not this precedent
+# yet; their migration is tracked in #3114 (c-class follow-up of this PR).
 EXPECTED_NAMES = (
     'dedup-gating-restored',
     'inspectable-registered-domain-restored',
@@ -481,12 +485,11 @@ def main():
             # fix-r3b (MM r3 boundary#1 P2a, utf16-residual-sort
             # startup_refusal precedent): the empty directory claim_dir
             # made is withdrawn so a "never started" refusal leaves no
-            # claimed-looking evidence directory — rmdir only removes
-            # the empty case; a run that already wrote logs keeps them.
-            try:
-                output.rmdir()
-            except OSError:
-                pass
+            # claimed-looking evidence directory — the shared atomic
+            # withdrawal (rename + rmtree in one helper, empty or not).
+            # #3143 fix-r2 (DS sibling#1): the same migration the four
+            # fix-r1 runners carry.
+            withdraw_claim(output)
             phase = ('source lock busy' if isinstance(error, TimeoutError)
                      else 'tree not pristine')
             refuse(f'#2495 {phase} (never started): '

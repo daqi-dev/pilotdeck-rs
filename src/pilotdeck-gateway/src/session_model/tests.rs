@@ -503,3 +503,111 @@ fn path_argument_preserves_lone_surrogate_units() {
         "#934 session_model path argument must keep the Node wording"
     );
 }
+
+/// The fixture row the #1623 entry-gate tests reuse: a registered project
+/// (`/fixture/project`) with an empty chats directory, so only the sessionKey
+/// spelling decides what the read sees.
+fn missing_session_row() -> serde_json::Value {
+    fixture()["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "missing-session")
+        .expect("#1623 the missing-session fixture row exists")
+        .clone()
+}
+
+/// #1623 方案 B at the `session_model_get` entry (fix-r4, #2992): the local
+/// model read renders the sessionKey through `sanitize_session`
+/// (`String::from_utf16_lossy`) before joining `<id>.jsonl`, so a
+/// lone-surrogate key and an explicit U+FFFD key are one transcript — the
+/// same lossy-disk alias the guard families refuse. TS's only gate is the
+/// blank `?.trim()` check (`NativeSessionModelSelectionPort.ts:118-121`),
+/// which the surrogate passes (Node v22.22.0: `"s\uD800".trim()` stays
+/// truthy), so the rejection is the registered
+/// A7-W5-SESSION-KEY-SURROGATE-REJECT-001 divergence, not a TS alignment.
+#[test]
+fn session_model_get_rejects_lone_surrogate_session_key() {
+    use crate::negative_assert_eq;
+    let row = missing_session_row();
+    let m = snapshot(&row);
+    let params = object([
+        ("projectKey", "/fixture/project".into()),
+        (
+            "sessionKey",
+            JsValue::String(JsString::from_utf16(vec![0x73, 0xd800])),
+        ),
+    ]);
+    let error = execute(&m, &params, &env(&row))
+        .expect_err("#1623 session_model_get rejects the lone-surrogate session key");
+    negative_assert_eq!(
+        error.code.as_str(),
+        "INVALID_SESSION_KEY",
+        "#1623 the surrogate key answers the entry's INVALID_SESSION_KEY"
+    );
+    negative_assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        crate::native_process::SESSION_KEY_SURROGATE_MESSAGE,
+        "#1623 the surrogate rejection is the shared guard's message"
+    );
+}
+
+/// #1623 controls: only the unpaired shape is refused. An explicit U+FFFD key
+/// and a surrogate pair (an astral character) pass the entry's gate and read
+/// their *own* `<id>.jsonl` — each spelling is seeded with its own saved
+/// selection, so a gate that over-rejected (or a read that resolved both
+/// spellings onto one file) cannot pass both assertions.
+#[test]
+fn session_model_get_keeps_fffd_and_paired_surrogate_keys() {
+    use crate::{negative_assert, negative_assert_eq};
+    for (label, units, provider) in [
+        ("explicit-fffd", vec![0x73, 0xfffd], "fffd-key"),
+        ("paired-surrogate", vec![0x73, 0xd800, 0xdc00], "paired-key"),
+    ] {
+        let mut row = missing_session_row();
+        let key = JsString::from_utf16(units);
+        let id = String::from_utf16_lossy(key.units());
+        let chats = "/fixture/home/projects/registered/chats";
+        let line = format!(
+            "{{\"type\":\"session_metadata\",\"sessionId\":\"{id}\",\"turnId\":\"turn\",\
+\"sequence\":1,\"createdAt\":\"2026-10-15T00:00:00.000Z\",\
+\"metadata\":{{\"modelSelection\":{{\"mode\":\"model\",\"provider\":\"{provider}\",\
+\"model\":\"deterministic\"}}}}}}\n"
+        );
+        row["files"]
+            .as_object_mut()
+            .expect("#1623 the files fixture map")
+            .insert(
+                format!("{chats}/{id}.jsonl"),
+                serde_json::json!({
+                    "directory": false,
+                    "size": line.len(),
+                    "bytes": base64::engine::general_purpose::STANDARD.encode(line),
+                }),
+            );
+        row["files"][chats]["entries"]
+            .as_array_mut()
+            .expect("#1623 the chats fixture entries")
+            .push(serde_json::json!([format!("{id}.jsonl"), false]));
+        let m = snapshot(&row);
+        let params = object([
+            ("projectKey", "/fixture/project".into()),
+            ("sessionKey", JsValue::String(key.clone())),
+        ]);
+        let result = execute(&m, &params, &env(&row)).unwrap_or_else(|error| {
+            panic!("#1623 the {label} key passes the entry gate: {error:?}")
+        });
+        negative_assert!(
+            is(field(field(&result, "saved"), "provider"), provider),
+            "#1623 the {label} key reads its own transcript's saved selection"
+        );
+        negative_assert_eq!(
+            field(&result, "sessionKey")
+                .as_string()
+                .expect("#1623 the result echoes the sessionKey")
+                .units(),
+            key.units(),
+            "#1623 the {label} key keeps its UTF-16 units through the entry gate"
+        );
+    }
+}

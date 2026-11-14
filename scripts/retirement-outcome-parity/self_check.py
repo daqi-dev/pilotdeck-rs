@@ -249,7 +249,79 @@ def check_emit():
     if produced != committed:
         raise CheckFailure('emit output differs from the committed ts-oracle.json; '
                            'regenerate the oracle (see fixtures/PROVENANCE.md)')
+    _assert_emit_publish_failure_surface()
     return f'byte-identical to {ORACLE.name} ({len(committed)} B)'
+
+
+def _assert_emit_publish_failure_surface(checker=None):
+    """emit 发布失败孪生（fix-r15，DS r14 sibling#3 / MM sibling#1 / MM
+    boundary#1 三撞 P2a）：失败路径清理错不得顶掉原发布错。
+
+    三份 check_frozen 的同款不变量已有 frozen-manifest 夹具的孪生+负控；emit 侧
+    此前只在成功路径上比金样字节，`publish_json` 的失败分支是裸的。进程内加载
+    真实 checker 源（同 `_load_negative_controls` 的 `pycache_prefix` 保存/还原
+    纪律），直接驱动 `publish_json` 的两半：
+    - 发布成功 + 清理会失败：金样照常落地（成功路径不得被清理反咬——将来有人
+      给成功路径加清理也必须吞掉清理错，与 check_frozen 的孪生同款）；
+    - 发布失败 + 清理也失败：冒出来的必须是发布自己的错（裸 unlink 会把清理错
+      顶上去＝r14 修掉的归因掩蔽形态）。
+    牙齿由 control_emit 的「裸化 unlink」变异提供（--self-check-controls）。
+    """
+    saved_prefix = sys.pycache_prefix
+    try:
+        spec = importlib.util.spec_from_file_location(
+            'checker_publish_probe', checker or CHECKER)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except SystemExit as error:
+            raise CheckFailure(
+                'cannot load the checker for the publish-failure twin: '
+                f'{CHECKER.name} exited during import with rc={error.code!r}'
+            ) from error
+    finally:
+        sys.pycache_prefix = saved_prefix
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-emit-twin-') as tmp:
+        target = Path(tmp) / 'oracle.json'
+        original_unlink = Path.unlink
+        original_replace = os.replace
+
+        def guarded_unlink(self, missing_ok=False):
+            raise OSError('#emit-twin cleanup boom')
+
+        try:
+            # ① 成功路径：清理失败不得拖红发布。
+            Path.unlink = guarded_unlink
+            module.publish_json(target, {'probe': 'success'})
+        except OSError as error:
+            raise CheckFailure('the emit publish is undone by a cleanup failure '
+                               f'on the success path: {error!r}') from error
+        finally:
+            Path.unlink = original_unlink
+        expected = json.dumps({'probe': 'success'}, ensure_ascii=False,
+                              indent=2) + '\n'
+        if not target.is_file() or target.read_text(encoding='utf-8') != expected:
+            raise CheckFailure('the emit publish did not land the oracle bytes '
+                               'while the cleanup path is hostile')
+
+        def failing_replace(src, dst):
+            raise OSError('#emit-twin publish boom')
+
+        try:
+            # ② 失败路径：发布错必须冒自己的错——裸 unlink 的清理错会顶掉它。
+            os.replace = failing_replace
+            Path.unlink = guarded_unlink
+            module.publish_json(target, {'probe': 'failure'})
+        except OSError as error:
+            if '#emit-twin publish boom' not in str(error):
+                raise CheckFailure(
+                    'the emit publish failure surfaced the wrong error (a '
+                    f'cleanup failure must not mask it): {error!r}') from error
+        else:
+            raise CheckFailure('the emit publish failure was swallowed entirely')
+        finally:
+            os.replace = original_replace
+            Path.unlink = original_unlink
 
 
 def _provenance_original_digests(fixtures=None):
@@ -3043,8 +3115,48 @@ def control_wiring():
             f'({", ".join(REGISTRY_MUTATION_ANCHORS)}) rejected')
 
 
+def control_emit():
+    """emit 发布失败孪生的牙齿（fix-r15，DS r14 sibling#3 / MM sibling#1 / MM
+    boundary#1 三撞 P2a）：把清理 unlink 裸化的变异必须让孪生红在专属判定上。
+
+    与 control_lock 的弱化 flock 变异同一形态：临时 checker 副本退回 r14 之前的
+    口径（失败路径清理错顶掉原发布错），孪生必须红在「surfaced the wrong error」
+    的专属文案上——裸 unlink 变异下②的 `except OSError` 收到的是清理错
+    `#emit-twin cleanup boom`，不含 `#emit-twin publish boom`。正控只跑进程内
+    孪生本身（check_emit 的子进程金样复算在七项自检里已跑，这里不重复起子进程，
+    预算行无新增贡献）。
+    """
+    _assert_emit_publish_failure_surface()
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-emit-') as tmp:
+        source = CHECKER.read_text(encoding='utf-8')
+        mutation = ('        with suppress(OSError):\n'
+                    '            tmp.unlink(missing_ok=True)\n')
+        if source.count(mutation) != 1:
+            raise CheckFailure('the emit cleanup-suppress anchor is not uniquely '
+                               f'present in {CHECKER.name} to mutate; update this '
+                               'control with the current anchor')
+        weakened = source.replace(
+            mutation, '        tmp.unlink(missing_ok=True)\n')
+        mutated = Path(tmp) / 'check_outcome_parity.py'
+        mutated.write_text(weakened, encoding='utf-8')
+        try:
+            _assert_emit_publish_failure_surface(mutated)
+        except CheckFailure as error:
+            if 'surfaced the wrong error' not in str(error):
+                raise CheckFailure(
+                    'the bare-unlink mutant was rejected by the wrong judgment: '
+                    f'{error}') from error
+        else:
+            raise CheckFailure(
+                'the emit publish twin did not reject a bare cleanup unlink (the '
+                'failure-path cleanup error masks the original publish error; '
+                'the r14 invariant has rotted)')
+    return 'the bare cleanup-unlink mutant is rejected by the publish twin'
+
+
 CONTROLS_FOR_CHECK = {
     'budget': control_budget,
+    'emit': control_emit,
     'check': control_check,
     'lock': control_lock,
     'wiring': control_wiring,

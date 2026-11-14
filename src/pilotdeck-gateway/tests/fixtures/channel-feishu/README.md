@@ -123,6 +123,8 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 `negative_controls.py` 形态照 wecom-callback：`--check` 校验锚点；
 `OUT [mutation …]` 在落盘后的 HEAD 树上执行（`mutating_sources` 拒绝未提交的
 产品文件，`channel/feishu/` 整树与 fixture 目录都是 #1329 的新文件，脚本随
-补丁入库、由协调者在合入后跑）。9 个变异锚点覆盖：去重环上限、verify gate
-比较方向、分段上限、token 失效码、排队串行、hot-reload 保留语义，以及
-oracle 的三重校验各一条。
+补丁入库、由协调者在合入后跑）。#1329 初始 9 个变异锚点覆盖：去重环上限、
+verify gate 比较方向、分段上限、token 失效码、排队串行、hot-reload 保留语义，
+以及 oracle 的三重校验各一条；#2055 并发面（每事件代际闸两腿、elicit 占用、
+权限 panic 释放、drainer panic 释批、`/new` 回读代际）与 #2775 fix-r4
+（elicit 陈旧释放无条件化）后续按行追加，当前 17 行，各行语义见脚本内注释。

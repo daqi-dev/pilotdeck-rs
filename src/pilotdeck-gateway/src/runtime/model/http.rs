@@ -1797,10 +1797,17 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
         },
         8,
     )?;
-    println!(
-        "[model-debug] Request dumped to {} (model={})",
-        path.display(),
-        model
+    // #2558: the dump receipt goes through the same best-effort writer as
+    // the error lines below — a raw `println!` panics when the write fails
+    // (std behavior) and would fail the stream loop after the dump itself
+    // already succeeded.
+    crate::native_process::channels::console_log_line(
+        &mut std::io::stdout(),
+        &format!(
+            "[model-debug] Request dumped to {} (model={})",
+            path.display(),
+            model
+        ),
     );
     Ok(())
 }
@@ -2212,9 +2219,15 @@ async fn send_provider_request(
         // unchanged by this candidate's diff); registered in
         // A6.4-MODEL-DUMP-SECURE-001.
         if let Err(failure) = dump_request_to_file(&final_body, field(body, "model")) {
-            eprintln!(
-                "[model-debug] Failed to write request dump: {}",
-                failure.message()
+            // #2558: the dump failure line must not panic on the console
+            // write (std panics when a raw write fails) — the stream loop it
+            // reports from still has the request to send.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "[model-debug] Failed to write request dump: {}",
+                    failure.message()
+                ),
             );
         }
     }

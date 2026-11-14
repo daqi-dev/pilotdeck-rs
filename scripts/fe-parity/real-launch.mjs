@@ -2,7 +2,8 @@
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile, realpath } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { baseline, root, realRunRoot, realPorts, REAL_TEST_KEY, ownedPath } from './env.mjs';
 import { assertRealExecutionEnv } from './execution-env.mjs';
 import { assertRealGitBin } from './real-git.mjs';
@@ -66,4 +67,4 @@ async function main() {
   });
   supervisor.run();
 }
-if (process.argv[1] === new URL(import.meta.url).pathname) await main();
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) await main();

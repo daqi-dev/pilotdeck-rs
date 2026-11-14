@@ -90,7 +90,11 @@ impl ControlledRegistry {
 }
 impl Drop for ControlledRegistry {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).unwrap();
+        // #3143 fix-r2 (DS sibling#6): a cleanup failure must not turn a test
+        // failure into a double panic (abort) -- ignored the way the
+        // family's fixed shapes report it (the result already carries
+        // the original failure).
+        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 impl TurnRunRegistry for ControlledRegistry {

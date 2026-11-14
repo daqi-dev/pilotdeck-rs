@@ -26,5 +26,6 @@
   "src/agent/modules/checkpoint/seedStateProjection.ts",
   "src/agent/turn/TurnRunner.ts",
   "src/agent/session/AgentSessionRuntimeBundle.ts",
-  "src/agent/scope/AgentRuntimeScope.ts"
+  "src/agent/scope/AgentRuntimeScope.ts",
+  "src/session/projection/WebHistoryProjections.ts"
 ]

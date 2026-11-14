@@ -923,7 +923,11 @@ impl Drop for Scratch {
             "refusing to remove {}",
             self.0.display()
         );
-        std::fs::remove_dir_all(&self.0).unwrap();
+        // #3143 fix-r2 (DS sibling#6): a cleanup failure must not turn a test
+        // failure into a double panic (abort) -- ignored the way the
+        // family's fixed shapes report it (the result already carries
+        // the original failure).
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 

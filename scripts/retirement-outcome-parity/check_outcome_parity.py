@@ -684,6 +684,32 @@ def emit_report(report):
     return EXIT_PASS if report['status'] == 'PASS' else EXIT_FAIL
 
 
+def publish_json(target, payload):
+    """金样的原子发布（tmp 写入 + `os.replace`，与负控 summary.json 同一口径）。
+
+    fix-r15（DS r14 sibling#3 / MM sibling#1 / MM boundary#1 三撞，P2a）：从
+    run_emit 提到模块级，供 self_check 的发布失败孪生直接驱动——三份 check_frozen
+    的同款不变量已有 frozen-manifest 夹具的孪生+负控，emit 侧此前是裸的。tmp 名取
+    不可预测的（`<name>.<pid>.tmp` 在世界可写目录里可被预置符号链接，写入会跟随
+    它截断目标）；任何失败都先删 tmp，再按输入不可用收口（两家评审 r10）。
+    """
+    handle, tmp_name = tempfile.mkstemp(
+        dir=target.parent, prefix=target.name + '.', suffix='.tmp')
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+            stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+        os.replace(tmp, target)
+    except BaseException:
+        # fix-r14（DS r13 sibling#2 P2a，与 g03/check_frozen r13-r14 同族）：清理
+        # unlink 是唯一吞掉的错——失败路径清理错不得顶掉原发布错（否则外层
+        # InputError 报的是清理失败而非 os.replace 的真实失败，归因被掩蔽）。
+        from contextlib import suppress
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise
+
+
 def run_emit(args):
     bundles = [load_round_bundle(path) for path in args.round]
     if len(bundles) < 1:
@@ -757,16 +783,7 @@ def run_emit(args):
         # 不可预测的（`<name>.<pid>.tmp` 在世界可写目录里可被预置符号链接，写入会
         # 跟随它截断目标）；任何失败都先删 tmp，再按输入不可用收口（两家评审 r10）。
         with output_lock(target.parent):
-            handle, tmp_name = tempfile.mkstemp(
-                dir=target.parent, prefix=target.name + '.', suffix='.tmp')
-            tmp = Path(tmp_name)
-            try:
-                with os.fdopen(handle, 'w', encoding='utf-8') as stream:
-                    stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
-                os.replace(tmp, target)
-            except BaseException:
-                tmp.unlink(missing_ok=True)
-                raise
+            publish_json(target, payload)
             # 摘要也算写金样的一部分：读到 OSError 同样不是判据 FAIL。必须在**锁内**
             # 算——出了锁再读，排队的下一个 `emit` 可能已 `os.replace` 成自己的产物，
             # 报告的 `sha256` 就会归因到别人的写入。

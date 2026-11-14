@@ -59,6 +59,12 @@ mod dream_tail_race;
 #[cfg(test)]
 #[path = "../tests/common/exact_receipt.rs"]
 mod test_exact_receipt;
+// #2461 fix-r6: the shared connect-probe judgment for every fixed-port
+// criterion (refusal proves, everything else is a named failure). See the
+// module doc for why it lives under tests/common.
+#[cfg(test)]
+#[path = "../tests/common/fixed_port_probe.rs"]
+mod test_fixed_port_probe;
 #[cfg(test)]
 #[path = "../tests/common/native_ws_sample.rs"]
 mod test_native_ws_sample;
@@ -205,9 +211,15 @@ pub fn ensure_sigxfsz_ignored() {
         // A failed attempt is recorded as `None`, so the registration
         // and this note both happen exactly once per process.
         Err(reason) => {
-            eprintln!(
-                "[model-debug] SIGXFSZ handler not registered ({reason}); \
-                 writes past RLIMIT_FSIZE will terminate the process"
+            // #2558: the note must not panic on the console write (std
+            // panics when a raw write fails) — the registration already
+            // failed and the process keeps running either way.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "[model-debug] SIGXFSZ handler not registered ({reason}); \
+                     writes past RLIMIT_FSIZE will terminate the process"
+                ),
             );
             None
         }

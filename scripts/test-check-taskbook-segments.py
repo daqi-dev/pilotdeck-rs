@@ -68,6 +68,12 @@ case("人日多条取最大（0.1 + 2）", 1,
      "# #1\n约 0.1 人日（前置准备）\n后续约 2 人日\n", must=["分段交付"])
 case("大包 rs 路径回退（9 个）", 1,
      "# #1\n" + "\n".join(f"- src/m{i}/x.rs" for i in range(9)), must=["分段交付"])
+# 修 3②（MM2 sibling#2）：`\.rs` 右边界是 ASCII 环视——中文紧贴（「x.rs是本包要改的」）仍要数到
+# 该路径（\b 两侧都是 \w 会漏计 → 卡阈值 8 时大包被判小包，假 PASS）；.rsx 仍不算
+case("大包 rs 路径回退 CJK 紧贴（9 个）", 1,
+     "# #1\n" + "\n".join(f"- src/m{i}/x.rs是本包要改的" for i in range(9)), must=["分段交付"])
+case("rs 路径回退：.rsx 不算（9 个，正控）", 0,
+     "# #1\n" + "\n".join(f"- src/m{i}/x.rsx" for i in range(9)))
 case("段时长 > 90 min", 1, BIG_SCOPE + SEGMENTS_OK.replace("| 80 min |", "| 120 min |"), must=["120 min > 90 min"])
 case("缺 续跑 一节", 1, BIG_SCOPE + SEGMENTS_OK.split("## 续跑")[0], must=["续跑"])
 case("续跑 写「无需进度文件」", 1,
@@ -852,6 +858,76 @@ CLI_CASES = [
 
 
 
+# ---- 修复轮字段（#3056 长尾收口卡「机检落点」）：路径段 fix-rN 才触发 ------------
+# 载荷都是小包文本（无 scope 声明、无 9 个 .rs）：字段检查须在 big/small 分支之前生效（义务 2）。
+FIX_TASKBOOK = "# #9 fix(gateway) 修复轮\n\n## 要做\n1. 改 `src/a.rs` 补测试\n"
+FIXTYPE_ENUM = "<!-- pdrs-fixtype: 枚举式 词表封闭性：两类词表各自全文遍历，无第三种写法 -->\n"
+FIXTYPE_STRUCT = "<!-- pdrs-fixtype: 结构性 词表核验：测试真实遍历的词表 12/12 项全部覆盖 -->\n"
+FIXTYPE_NA = "<!-- pdrs-fixtype: 不适用 -->\n"
+RESIDUAL_OK = "<!-- pdrs-residual: 上轮的洞是边界暴露：仅修饰窗差一词，修法本身成立 -->\n"
+RESIDUAL_NONE = "<!-- pdrs-residual: 无上一轮 -->\n"
+
+FIX_CASES = []
+
+
+def fixcase(name, expect_rc, text, must=None, rnd="fix-r5"):
+    FIX_CASES.append((name, expect_rc, rnd, text, must or []))
+
+
+fixcase("修复轮正控：枚举式（附边界论证）", 0, FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK)
+fixcase("修复轮正控：结构性（附词表核验）", 0, FIX_TASKBOOK + FIXTYPE_STRUCT + RESIDUAL_OK)
+fixcase("修复轮正控：不适用（任务书侧不查路径）", 0, FIX_TASKBOOK + FIXTYPE_NA + RESIDUAL_OK)
+fixcase("修复轮缺 fixtype 字段", 1, FIX_TASKBOOK + RESIDUAL_OK, must=["pdrs-fixtype"])
+fixcase("修复轮子类字样：结构派生", 1,
+        FIX_TASKBOOK + "<!-- pdrs-fixtype: 结构派生 已覆盖全部词表 -->\n" + RESIDUAL_OK,
+        must=["字面三值", "结构派生"])
+fixcase("枚举式无边界论证", 1, FIX_TASKBOOK + "<!-- pdrs-fixtype: 枚举式 -->\n" + RESIDUAL_OK,
+        must=["缺论证"])
+fixcase("fixtype 值是空白串", 1, FIX_TASKBOOK + "<!-- pdrs-fixtype:    -->\n" + RESIDUAL_OK,
+        must=["空白"])
+fixcase("fixtype 标记出现两次", 1, FIX_TASKBOOK + FIXTYPE_ENUM + FIXTYPE_STRUCT + RESIDUAL_OK,
+        must=["至多一次"])
+fixcase("fixtype 论证是占位符", 1, FIX_TASKBOOK + "<!-- pdrs-fixtype: 枚举式 <边界论证> -->\n" + RESIDUAL_OK,
+        must=["占位符"])
+fixcase("fix-r5（N≥4）缺 residual", 1, FIX_TASKBOOK + FIXTYPE_ENUM, must=["pdrs-residual"])
+fixcase("residual 内容是空白串", 1, FIX_TASKBOOK + FIXTYPE_ENUM + "<!-- pdrs-residual:   -->\n",
+        must=["空白"])
+fixcase("residual 字面值 无上一轮（正控）", 0, FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_NONE)
+fixcase("residual 内容是占位符", 1, FIX_TASKBOOK + FIXTYPE_ENUM + "<!-- pdrs-residual: <上轮残差判读> -->\n",
+        must=["占位符"])
+fixcase("fix-r3（N<4）不要求 residual（正控）", 0, FIX_TASKBOOK + FIXTYPE_ENUM, rnd="fix-r3")
+fixcase("fix-r3 仍要求 fixtype", 1, FIX_TASKBOOK, must=["pdrs-fixtype"], rnd="fix-r3")
+# fix-r3 P1-3（MM boundary#2）：接续轮 b 后缀——`fix-r11b` 算第 11 轮（真实目录
+# _tmp/20261108-archive-wt-1809/20261026-issue-1809/fix-r11b/task.md 即此形），字段义务
+# （fixtype 必填 / N≥4 residual）不得整段跳过；`fix-r5x`（非 b 后缀）仍不是修复轮
+# （与 PR 侧 test-review-roles.py 的 fix-r5x 负控同词表，单源 FIXROUND_RE）。
+fixcase("fix-r11b 接续轮算第 11 轮：字段齐（正控）", 0,
+        FIX_TASKBOOK + FIXTYPE_STRUCT + RESIDUAL_OK, rnd="fix-r11b")
+fixcase("fix-r11b 接续轮仍要求 fixtype", 1, FIX_TASKBOOK, must=["pdrs-fixtype"], rnd="fix-r11b")
+fixcase("fix-r11b（N≥4）缺 residual", 1, FIX_TASKBOOK + FIXTYPE_ENUM, must=["pdrs-residual"], rnd="fix-r11b")
+fixcase("fix-r5x 不是修复轮：字段不检查（正控）", 0,
+        FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK, rnd="fix-r5x")
+# fix-r8 boundary P1（MM r7 评审）：超长 fix-r 段（≥19 位）不得静默判非修复轮——
+# 同一 token 在 PR 侧 check() 被 _overflow_err fail-closed 拒收，任务书侧旧口径
+# fullmatch 失败 → None → fixtype/residual 义务整段跳过＝两闸门同输入结论相反。
+# 修复＝镜像 fail-closed：check_file 报「读不了」rc=2（与 非UTF-8/FIFO 同款拒收通道）。
+fixcase("超长 fix-r 段（≥19 位）：fail-closed 读不了，不静默跳过字段义务", 2,
+        FIX_TASKBOOK, must=["读不了", "位界"], rnd="fix-r" + "1" * 19)
+# fix-r9 P2（MM boundary#2 + boundary#3，随轮修）：超长检查**先全路径扫完**再找合法段
+# ——旧口径逐段「先超长再合法、合法即 return」，合法段（fix-r5）排在超长段前面时后者
+# 永不检查＝短路放行；18 位是位界 {1,18} 的**上限内**合法值，照常解析轮号（对照正控）。
+fixcase("合法段在前不短路：路径含 fix-r5 与超长段 → 仍读不了", 2,
+        FIX_TASKBOOK, must=["读不了", "位界"], rnd="fix-r5/fix-r" + "1" * 19)
+fixcase("18 位位界上限内：fix-r 后 18 位照常解析（正控）", 0,
+        FIX_TASKBOOK + FIXTYPE_ENUM + RESIDUAL_OK, rnd="fix-r" + "1" * 18)
+fixcase("围栏里的 fixtype 不算声明", 1, FIX_TASKBOOK + "```\n" + FIXTYPE_ENUM + "```\n" + RESIDUAL_OK,
+        must=["pdrs-fixtype"])
+fixcase("大包修复轮：分段 + 字段齐（正控）", 0, BIG_SCOPE + SEGMENTS_OK + FIXTYPE_STRUCT + RESIDUAL_OK)
+fixcase("大包修复轮：缺分段表（字段齐）", 1, BIG_SCOPE + FIXTYPE_ENUM + RESIDUAL_OK, must=["分段交付"])
+fixcase("大包修复轮：分段齐但缺字段", 1, BIG_SCOPE + SEGMENTS_OK, must=["pdrs-fixtype"])
+case("非修复轮带 fixtype/residual 标记：不检查（正控）", 0, SMALL + FIXTYPE_ENUM + RESIDUAL_OK)
+
+
 def run():
     fails = 0
     with tempfile.TemporaryDirectory() as td:
@@ -860,6 +936,19 @@ def run():
             p.write_text(text, encoding="utf-8")
             r = ctbs.check_file(p)
             out = "；".join(r["problems"]) + " " + ((r["class"] or {}).get("reason") or "")
+            ok = r["rc"] == expect and all(s in out for s in must)
+            print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={r['rc']}（期望 {expect}）{'' if ok else ' ← ' + out}")
+            if not ok:
+                fails += 1
+
+        # 修复轮字段用例：任务书写进 _tmp/<单>/fix-rN/task.md（路径段即修复轮信号，与 ops
+        # dispatch-fix 的生成位置同构）；载荷是小包文本——字段检查须先于 big/small 分支。
+        for name, expect, rnd, text, must in FIX_CASES:
+            p = Path(td) / "_tmp" / "20261105-issue-9" / rnd / "task.md"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            r = ctbs.check_file(p)
+            out = "；".join(r["problems"])
             ok = r["rc"] == expect and all(s in out for s in must)
             print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={r['rc']}（期望 {expect}）{'' if ok else ' ← ' + out}")
             if not ok:
@@ -1283,6 +1372,93 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  .preview 不当备份跳过、.prev-r2 与 remote-run 仍跳过")
         fails += 0 if ok else 1
 
+        # 12) 字面三值单源（#3056 fix-r1 item 13，DS sibling#8）：任务书侧常量必须派生自
+        # check-pr-gate.py（同一集合），且赋值行不得再写一份字面值（改回复制会在加值/改名后漂移：
+        # 一侧放行、另一侧永久拒收，假 FAIL）
+        _gspec = importlib.util.spec_from_file_location("gate_for_taskbook_pairing", HERE / "check-pr-gate.py")
+        _gate = importlib.util.module_from_spec(_gspec)
+        _gspec.loader.exec_module(_gate)
+        _assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                   if ln.startswith("FIXTYPE_VALUES = ")]
+        ok = (ctbs.FIXTYPE_VALUES == _gate.FIXTYPE_VALUES and len(_assign) == 1
+              and "_gate_module()" in _assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  FIXTYPE_VALUES 派生自 check-pr-gate（同一集合，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 13) residual 标记正则单源（#3056 fix-r2 修 7，DS simplify#1 / MM2 sibling#5）：
+        # 任务书侧 RESIDUAL_RE 必须派生自 check-pr-gate.py 的 RESIDUAL_MARKER（同一 pattern 与
+        # flags），且赋值行不得再写 re.compile 拷贝——两份同字面拷贝会在改标记语法时一侧判「缺」、
+        # 另一侧认声明（任务书侧与 PR 侧对同一份文本给出相反结论，假 FAIL / 假 PASS 分歧）
+        _r_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("RESIDUAL_RE = ")]
+        ok = (ctbs.RESIDUAL_RE.pattern == _gate.RESIDUAL_MARKER.pattern
+              and ctbs.RESIDUAL_RE.flags == _gate.RESIDUAL_MARKER.flags and len(_r_assign) == 1
+              and "_gate_module()" in _r_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_RE 派生自 check-pr-gate 的 RESIDUAL_MARKER（同一正则，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 14) N≥4 门槛单源（#3056 fix-r2，DS r2 boundary#3 P2）：任务书侧 RESIDUAL_MIN_ROUND 必须
+        # 派生自 check-pr-gate.py（同一数值），且赋值行不得再写字面量 4——两份字面量会在改阈值时
+        # 漂移，一个闸门要 residual、另一个不要，同一 PR 两边结论相反（假 PASS / 假 FAIL 分歧）
+        _m_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("RESIDUAL_MIN_ROUND = ")]
+        ok = (ctbs.RESIDUAL_MIN_ROUND == _gate.RESIDUAL_MIN_ROUND and len(_m_assign) == 1
+              and "_gate_module()" in _m_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  RESIDUAL_MIN_ROUND 派生自 check-pr-gate（同一门槛，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 15) 轮号词表单源（#3056 fix-r3 P1-3，MM boundary#2；fix-r4 P2-4，DS concurrency#5 +
+        # boundary#11 双撞）：任务书侧 FIX_ROUND_PART 必须派生自 check-pr-gate.py 的 FIXROUND_RE，
+        # 且赋值行不得再写 re.compile 拷贝——两份定义会在 b 后缀 / 位界改动时一侧认接续轮
+        # 另一侧不认（该轮族的 fixtype/residual/多块一致整段跳过＝假 PASS）。断言用
+        # .pattern+.flags 而非 `is`：两侧对象来自两次独立 exec_module，identity 只靠 CPython
+        # re._cache 的实现细节偶然成立，缓存淘汰 / re.purge() 即假 FAIL。
+        _f_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("FIX_ROUND_PART = ")]
+        ok = (ctbs.FIX_ROUND_PART.pattern == _gate.FIXROUND_RE.pattern
+              and ctbs.FIX_ROUND_PART.flags == _gate.FIXROUND_RE.flags and len(_f_assign) == 1
+              and "_gate_module()" in _f_assign[0] and "re.compile" not in _f_assign[0])
+        print(f"{'PASS' if ok else 'FAIL'}  FIX_ROUND_PART 派生自 check-pr-gate 的 FIXROUND_RE（pattern+flags 同一，不复制第二份）")
+        fails += 0 if ok else 1
+
+        # 16) 超长 fix-r 段两侧同结论（#3074 fix-r8 boundary P1，MM r7 评审）：任务书侧
+        # FIX_ROUND_OVER 派生自 check-pr-gate 的 FIXROUND_OVER（单源）；同一 token
+        # （fix-r+19 位）在 PR 侧 _overflow_err 报错、任务书侧 fix_round_from_path 抛
+        # FixRoundOverflow（调用方转 rc 2「读不了」）——两闸门对同一输入不得一个拒收
+        # 一个静默放行（字段族漂移＝假 PASS）。正常段照常返回轮号（5）。
+        _o_assign = [ln for ln in (HERE / "check-taskbook-segments.py").read_text(encoding="utf-8").splitlines()
+                     if ln.startswith("FIX_ROUND_OVER = ")]
+        _tok = "fix-r" + "1" * 19
+        try:
+            ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/{_tok}/task.md")
+            raised = False
+        except ctbs.FixRoundOverflow:
+            raised = True
+        ok = (ctbs.FIX_ROUND_OVER.pattern == _gate.FIXROUND_OVER.pattern
+              and ctbs.FIX_ROUND_OVER.flags == _gate.FIXROUND_OVER.flags
+              and len(_o_assign) == 1 and "_gate_module()" in _o_assign[0]
+              and raised
+              and ctbs.fix_round_from_path("_tmp/20261114-issue-3056/fix-r5/task.md") == 5
+              and _gate._overflow_err(f"fix(scripts) #1 {_tok}: x", "提交标题") is not None)
+        print(f"{'PASS' if ok else 'FAIL'}  超长 fix-r 段两侧同结论：PR 侧 _overflow_err 拒收、"
+              f"任务书侧抛 FixRoundOverflow（rc 2 读不了），FIX_ROUND_OVER 单源派生")
+        fails += 0 if ok else 1
+
+        # 17) fix-r9 P2（MM boundary#2 + boundary#3）：超长检查不因合法段短路（先全扫
+        # 超长、再找首个合法段）；18 位是位界 {1,18} 的上限内合法值，照常解析
+        try:
+            ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/fix-r5/{_tok}/task.md")
+            raised_first = False
+        except ctbs.FixRoundOverflow:
+            raised_first = True
+        _e18 = "fix-r" + "1" * 18
+        ok = (raised_first
+              and ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/{_e18}/task.md") == int("1" * 18)
+              and ctbs.fix_round_from_path(f"_tmp/20261114-issue-3056/{_e18}/fix-r5/task.md") == int("1" * 18))
+        print(f"{'PASS' if ok else 'FAIL'}  超长段不因合法段短路（fix-r5 在前仍抛）；"
+              f"18 位上限内照常解析（首个合法段定轮号）")
+        fails += 0 if ok else 1
+
 
     # 命令行契约
     sys.stdout = _real_stdout          # 恢复：下面的 CLI 契约与 PARSE_EST 用各自的 len() 计数
@@ -1292,9 +1468,10 @@ def run():
         print(f"{'PASS' if ok else 'FAIL'}  {name}：rc={rc}（期望 {expect}）")
         fails += 0 if ok else 1
 
-    # 命令行契约用 len(CLI_CASES) 数；「线性铺开」的独立检查用实际打印行数（_manual["n"]），
-    # 跳过的分支不计数——手写常数会让 SUMMARY 虚报（gate21 MiniMax boundary P3）。
-    total = len(CASES) + _manual["n"] + len(CLI_CASES) + len(PARSE_EST)
+    # 命令行契约用 len(CLI_CASES) 数；FIX_CASES 在自己的计数器建立之前打印（上面 run() 开头），
+    # 所以显式计入（#3056 fix-r1 item 11，DS sibling#6：SUMMARY cases= 少报 19 条）；
+    # 「线性铺开」的独立检查用实际打印行数（_manual["n"]），跳过的分支不计数。
+    total = len(CASES) + len(FIX_CASES) + _manual["n"] + len(CLI_CASES) + len(PARSE_EST)
     # parse_est 直接断言数值：`rc=0` 抓不到「算成 82 但没超 90」这类回归
     for cell, unit, want in PARSE_EST:
         got = ctbs.parse_est(cell, unit)

@@ -16,10 +16,13 @@ import sys
 if not sys.flags.isolated:
     raise SystemExit('run with python3 -I')
 sys.dont_write_bytecode = True
+import ast
 import contextlib
+from collections import Counter
 import errno
 import fcntl
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -1153,6 +1156,7 @@ class NegativeRunnerTests(unittest.TestCase):
         self.events = []
         self.timeouts = []
         self.disks = []
+        self.lease_budgets = []
         c.common.LIVE_GROUPS.clear()
         self.addCleanup(c.common.LIVE_GROUPS.clear)
 
@@ -1168,37 +1172,64 @@ class NegativeRunnerTests(unittest.TestCase):
         return module
 
     def _drive(self, runner, *, run_effect=None, slot_error=None, gap=0.0,
-               lease=None, window=0.0):
+               lease=None, window=0.0, tree=None, first_enter_fails=None):
         """Run the real e2e main(); record stage events, timeouts, disk bytes.
 
         Stage labels come from the runner's own calls (passed/classify/with),
         never from call counting, so injected failures cannot mislabel a stage.
+        #1536: the guarded loop's tree lock defaults to a no-op stand-in here;
+        tests that pin it inject a recording one through `tree`.
+        #1528: the acquire budgets the runner hands to mutating_sources are
+        recorded the same way -- the kwarg is the contract under test.
         """
-        events, timeouts, disks = self.events, self.timeouts, self.disks
+        events, timeouts, disks, budgets = self.events, self.timeouts, self.disks, self.lease_budgets
         originals = {self.source: self.source.read_bytes()}
         ok = subprocess.CompletedProcess([], 0, '', self.OK_LOG)
         killed = subprocess.CompletedProcess([], 1, '', self.KILLED_LOG)
         real_passed = runner.passed
+        # #2929 fix-r6 (DS sibling#2 = boundary#3): the first mutating_sources
+        # enter can be made to burn real seconds and then time out, exactly
+        # the failed acquire whose wait the `if not acquired:` stop-mark must
+        # keep charged.
+        enter_failures = [first_enter_fails]
 
-        @contextlib.contextmanager
-        def mutating(root, paths, **_kwargs):
-            if lease is None:
-                events.append('acquire')
-                try:
-                    yield dict(originals)
-                finally:
-                    events.append('release')
-            else:
+        class mutating:
+            """#1529 explicit enter/exit stand-in: a @contextlib.contextmanager
+            stand-in lets the interpreter close its generator on GC, so an
+            enter-without-exit mutant used to observe a premature "release"
+            (the kill depended on GC timing, not on the missing exit); only a
+            real __exit__ records one now."""
+
+            def __init__(self, root, paths, **_kwargs):
+                self.inner = None
+                budgets.append(_kwargs.get('lock_timeout'))
+
+            def __enter__(self):
+                if enter_failures[0] is not None:
+                    seconds, enter_failures[0] = enter_failures[0], None
+                    events.append('acquire')
+                    time.sleep(seconds)
+                    raise TimeoutError('mutating_sources enter timed out '
+                                       'waiting for the tree lock / lease')
+                if lease is None:
+                    events.append('acquire')
+                    return dict(originals)
                 # The real lease protocol on a private directory: the drive is
                 # evidence that a second host can take the between-case gap.
-                with c.common.parity_lock(timeout=2, lock=lease):
-                    events.append(('acquire', time.monotonic()))
-                    if window:
-                        time.sleep(window)
-                    try:
-                        yield dict(originals)
-                    finally:
-                        events.append(('release', time.monotonic()))
+                self.inner = c.common.parity_lock(timeout=2, lock=lease)
+                self.inner.__enter__()
+                events.append(('acquire', time.monotonic()))
+                if window:
+                    time.sleep(window)
+                return dict(originals)
+
+            def __exit__(self, *_exc):
+                if lease is None:
+                    events.append('release')
+                else:
+                    events.append(('release', time.monotonic()))
+                    self.inner.__exit__(*_exc)
+                return False
 
         def run_owned(command, **kwargs):
             # cargo is the only command that names its stage; a Python bound
@@ -1219,13 +1250,12 @@ class NegativeRunnerTests(unittest.TestCase):
                 # classify probes the negative result internally through the
                 # module-global passed; that is not a stage of its own.
                 return real_passed(result)
-            # positive precedes the lease (or follows the previous case's
-            # release); restored now runs inside the lease, right after the
-            # negative control -- a plain string without a lease, a
-            # timestamped tuple when the real lease protocol records the event.
+            # #1536 moved the positive control inside the lease, right after
+            # acquire; restored runs right after the negative control -- a
+            # plain string without a lease, a timestamped tuple when the real
+            # lease protocol records the event.
             last = events[-1] if events else None
-            stage = 'restored' if (last in ('cargo', 'negative') or
-                                   (isinstance(last, tuple) and last[0] == 'acquire')) else 'positive'
+            stage = 'restored' if last == 'negative' else 'positive'
             events.append(stage)
             disks.append((stage, self.source.read_text()))
             return real_passed(result)
@@ -1244,12 +1274,15 @@ class NegativeRunnerTests(unittest.TestCase):
         rows = [('first', self.source, 'x = 0', 'x = 1', self.SYNTHETIC_TEST),
                 ('second', self.source, 'y = 1', 'y = 2', self.SYNTHETIC_TEST)]
         with mock.patch.object(runner, 'cases', rows), \
+                mock.patch.object(runner, 'EXPECTED_CASES', len(rows)), \
                 mock.patch.object(runner, 'messages', {row[0]: self.MARKER for row in rows}), \
                 mock.patch.object(runner, 'preflight'), \
                 mock.patch.object(runner, 'execution_environment', return_value={}), \
                 mock.patch.object(runner, 'run_owned', run_owned), \
                 mock.patch.object(runner, 'wait_for_slot', slot), \
                 mock.patch.object(runner, 'mutating_sources', mutating), \
+                mock.patch.object(runner, 'tree_lock',
+                                  tree or (lambda *arguments, **keywords: contextlib.nullcontext())), \
                 mock.patch.object(runner, 'passed', passed), \
                 mock.patch.object(sys, 'argv',
                                   [str(Path(__file__).with_name('negative_controls.py')),
@@ -1261,7 +1294,9 @@ class NegativeRunnerTests(unittest.TestCase):
         marker = '#1402 each case takes and releases the parity lease exactly once'
         runner = self.load_runner()
         code, summary = self._drive(runner)
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'restored', 'release']
+        # #1536: the positive control runs inside the lease window, right
+        # after acquire; the slot probe stays outside it.
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release']
         self.assertTrue(code == 0 and self.events == expected * 2, marker)
         self.assertTrue(all(row['status'] == 'KILLED' and row['compiled'] for row in summary['controls']), marker)
         self.assertTrue(self.events.count('acquire') == 2 and self.events.count('release') == 2, marker)
@@ -1321,14 +1356,37 @@ class NegativeRunnerTests(unittest.TestCase):
     def test_negative_lease_bound_composition(self):
         marker = '#1402 the per-case lease bound is composed and below the stale-lease age'
         runner = self.load_runner()
-        self.assertTrue(runner.PER_CASE_LEASE_SECONDS == runner.BUILD_SECONDS + 2 * runner.BOUND_TEST_SECONDS
+        code, _summary = self._drive(runner)
+        # fix-r1 (#1528 review P1): the bound is validated against the real
+        # stage sequence the drive records inside one lease window, not by
+        # re-deriving a formula -- #1536 moved the positive control inside,
+        # so the window is three bound-test stages (positive, negative,
+        # restored) plus one cargo build, and the old BUILD + 2*BOUND pin
+        # stayed green over a window it no longer described.
+        sequence = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release'] * 2
+        # fix-r2 (#1528 review P3): sequence and composition fail with their
+        # own sub-messages, so a red run says which half drifted instead of
+        # collapsing both into window == [].
+        self.assertTrue(code == 0 and self.events == sequence,
+                        marker + ': the real stage sequence the drive records')
+        window = self.events[2:6]
+        builds = window.count('cargo')
+        self.assertTrue(window == ['positive', 'cargo', 'negative', 'restored']
+                        and runner.PER_CASE_LEASE_SECONDS
+                        == builds * runner.BUILD_SECONDS + (len(window) - builds) * runner.BOUND_TEST_SECONDS
                         and min(runner.BUILD_SECONDS, runner.BOUND_TEST_SECONDS, runner.SLOT_WAIT_SECONDS) > 0
                         and runner.PER_CASE_LEASE_SECONDS < c.common.MAX_AGE, marker)
-        code, _summary = self._drive(runner)
-        expected = {'slot': runner.SLOT_WAIT_SECONDS, 'cargo': runner.BUILD_SECONDS,
-                    'bound': runner.BOUND_TEST_SECONDS, 'negative': runner.BOUND_TEST_SECONDS}
-        self.assertTrue(code == 0 and all(timeout == expected[stage]
-                                          for stage, timeout in self.timeouts), marker)
+        # fix-r2 (#1528 review): a bare run() bound stage inside the lease
+        # window holds real time the events sequence never records, and the
+        # old value-only timeout check never counted either -- the per-case
+        # timeouts multiset is the judge: exactly one slot, one cargo and
+        # three bound-test stages (positive, negative, restored) per case,
+        # both cases, nothing else.
+        expected_timeouts = Counter({('slot', runner.SLOT_WAIT_SECONDS): 1,
+                                      ('cargo', runner.BUILD_SECONDS): 1,
+                                      ('bound', runner.BOUND_TEST_SECONDS): 2,
+                                      ('negative', runner.BOUND_TEST_SECONDS): 1})
+        self.assertTrue(Counter(self.timeouts) == expected_timeouts + expected_timeouts, marker)
 
     def test_negative_lease_released_on_case_failure(self):
         marker = '#1402 a failed case releases the lease and the next case continues'
@@ -1341,7 +1399,7 @@ class NegativeRunnerTests(unittest.TestCase):
         # The negative stage timed out: the exception propagates out of the
         # guarded window before the restored control, which stays inside the
         # lease exactly like the other guarded runners.
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release']
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'release']
         self.assertTrue(code == 1 and self.events == expected * 2, marker)
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
                         and all('timed out' in row['reason'] for row in summary['controls']), marker)
@@ -1356,7 +1414,7 @@ class NegativeRunnerTests(unittest.TestCase):
 
         with self.assertRaises(KeyboardInterrupt, msg=marker):
             self._drive(runner, run_effect=effect)
-        expected = ['positive', 'slot', 'acquire', 'cargo', 'negative', 'release']
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'release']
         self.assertTrue(self.events == expected, marker + ': the lease must be released on the way out')
         summary = json.loads((self.out / 'summary.json').read_text())
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls'])
@@ -1372,6 +1430,293 @@ class NegativeRunnerTests(unittest.TestCase):
         self.assertTrue(code == 1 and 'acquire' not in self.events
                         and 'cargo' not in self.events and 'negative' not in self.events, marker)
         self.assertTrue(all(row['status'] == 'INVALID' for row in summary['controls']), marker)
+
+    def test_expected_case_count(self):
+        marker = '#1535 e2e negative case inventory is complete'
+        # A dropped or duplicated case row used to surface only at the next
+        # control run, as a missing verdict or a wrong total; the runner now
+        # refuses to start at every entry point instead. Same shape as the
+        # session-lease pin: direct call plus every argv shape main() takes.
+        # fix-r1 (#1528 review): the red side covers all three damage shapes
+        # now -- a dropped row (count), an appended duplicate (count) and the
+        # equal-length swap (unique names) the count alone never caught.
+        path = Path(__file__).with_name('negative_controls.py')
+        try:
+            spec = importlib.util.spec_from_file_location('e2e_case_count', path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.validate_case_count()
+            damaged = [module.cases[:-1],
+                       module.cases + [module.cases[0]],
+                       module.cases[:-1] + [module.cases[0]]]
+            for argv in ([], ['--check-anchors'], ['--memory-run', 'unused'],
+                         ['unused-output'], ['unused-output', '--memory', '--case', 'unused']):
+                for index, rows in enumerate(damaged):
+                    with self.subTest(argv=argv, damage=index):
+                        with mock.patch.object(sys, 'argv', [str(path)] + argv), \
+                                mock.patch.object(module, 'cases', rows):
+                            with self.assertRaises(SystemExit) as rejected:
+                                module.main()
+                        self.assertTrue(str(rejected.exception.code).startswith(marker), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_negative_guarded_run_holds_tree_lock(self):
+        marker = '#1536 the guarded e2e run holds the tree lock around the whole loop'
+        # The recording lock is not a stage mock: main() itself must call
+        # tree_lock once for the whole loop, before the first slot and after
+        # the last release, so a second same-tree runner cannot interleave
+        # writes with the per-case parity lease windows.
+        runner = self.load_runner()
+        calls = []
+        events = self.events
+
+        class recording_tree_lock:
+            def __init__(self, *arguments, **keywords):
+                calls.append((arguments, keywords))
+
+            def __enter__(self):
+                events.append('tree-enter')
+
+            def __exit__(self, *_exc):
+                events.append('tree-exit')
+
+        def tree(*arguments, **keywords):
+            return recording_tree_lock(*arguments, **keywords)
+
+        code, summary = self._drive(runner, tree=tree)
+        expected = ['slot', 'acquire', 'positive', 'cargo', 'negative', 'restored', 'release'] * 2
+        self.assertTrue(code == 0 and calls == [((runner.root,), {'timeout': 900})]
+                        and events[0] == 'tree-enter' and events[-1] == 'tree-exit'
+                        and events[1:-1] == expected, marker)
+        self.assertTrue(all(row['status'] == 'KILLED' and row['compiled'] for row in summary['controls']), marker)
+
+    def test_negative_guarded_sources_take_parity_lease(self):
+        marker = '#1529 the e2e runner guards gateway-parity sources under the real parity lease'
+        # Not a mock: the runner's own inventory, against the criterion
+        # negative_process.mutating_sources applies -- any scripts/gateway-parity
+        # path in the guarded set takes /tmp/pdrs-parity.lock per case. If this
+        # list ever loses that prefix, the real lease silently disappears while
+        # every _drive-based test stays green, so the core claim is pinned here.
+        runner = self.load_runner()
+        relative = [path.relative_to(runner.root).as_posix() for path in runner.paths]
+        self.assertTrue('scripts/gateway-parity/session_domain.py' in relative
+                        and any(name.startswith('scripts/gateway-parity/')
+                                for name in relative)
+                        and runner.common in runner.paths, marker)
+
+    def test_negative_lease_released_after_run(self):
+        marker = '#1529 a finished run leaves the parity lease immediately acquirable'
+        runner = self.load_runner()
+        lease = self.folder / 'parity.lock'
+        code, summary = self._drive(runner, lease=lease)
+        # The stand-in's __exit__ must really have exited the inner
+        # parity_lock, or this acquisition would block and time out.
+        with c.common.parity_lock(timeout=2, lock=lease):
+            # The probe itself must be discriminating: a lease still held by
+            # its owner must time out, or "acquirable" would be vacuous.
+            with self.assertRaises(TimeoutError, msg=marker):
+                with c.common.parity_lock(timeout=2, lock=lease):
+                    pass
+        self.assertTrue(code == 0 and all(row['status'] == 'KILLED' for row in summary['controls']), marker)
+
+    def test_negative_parity_acquire_budget_follows_lock_timeout(self):
+        marker = '#1528 the parity lease acquire budget follows the caller lock timeout'
+        # Two links must hold: mutating_sources hands its lock_timeout to
+        # _parity_mutation_lock (the old cap min(lock_timeout, 60) starved
+        # runners queuing behind another tree's case window; the acquire
+        # budget must cover the family's largest whole-round hold, not this
+        # runner's own hold), and that lock forwards the budget to the
+        # snapshot common.py's parity_lock. The call site is pinned statically
+        # (running mutating_sources itself needs a git repo and the real
+        # /tmp/pdrs-parity.lock), the forwarding through a stub snapshot.
+        spec = importlib.util.spec_from_file_location(
+            'e2e_budget_probe', Path(__file__).resolve().parents[1] / 'negative_process.py')
+        process = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(process)
+        calls = [node for node in ast.walk(ast.parse(inspect.getsource(process.mutating_sources)))
+                 if isinstance(node, ast.Call) and getattr(node.func, 'id', '') == '_parity_mutation_lock']
+        self.assertTrue(len(calls) == 1 and len(calls[0].args) == 3
+                        and isinstance(calls[0].args[2], ast.Name)
+                        and calls[0].args[2].id == 'lock_timeout', marker)
+        record = self.folder / 'acquire-budget.txt'
+        stub = ('import contextlib\n'
+                'LIVE_GROUPS = set()\n'
+                '@contextlib.contextmanager\n'
+                'def parity_lock(timeout=600, takeovers=None, lock=None):\n'
+                '    with open(%r, "w") as stream:\n'
+                '        stream.write(str(timeout))\n'
+                '    yield\n' % str(record))
+        snapshot = {ROOT / 'scripts/gateway-parity/common.py': stub.encode()}
+        with process._parity_mutation_lock(ROOT, snapshot, 900):
+            pass
+        self.assertTrue(record.is_file() and record.read_text() == '900', marker)
+        # fix-r1 (#1528 review): the shared default was never pinned -- a
+        # revert to the old 60 s cap would keep every assertion above green
+        # while every default-budget caller silently lost its queue budget.
+        # The runner now passes its own budget explicitly; fix-r2 (#2929
+        # review) re-derived it from the family roster's maximum whole-round
+        # hold bound plus this runner's tail and one stage -- the live
+        # derivation and the closed roster live in
+        # test_lease_acquire_budgets.py, so the literal here is only a drift
+        # tripwire against the old peer-window era (2100 s).  Pin all
+        # three: the shared default, this runner's derivation, and the
+        # values actually handed over by main() (the drive records the kwarg
+        # like a stage).  fix-r3 (#2929 review): main() now hands each
+        # per-case acquire the *remaining* time of one monotonic round
+        # deadline, not the full constant, so the recorded budgets must each
+        # be positive and at most the round constant, and never increase.
+        self.assertTrue(inspect.signature(process.mutating_sources)
+                        .parameters['lock_timeout'].default == 900, marker)
+        with mock.patch.dict(process.mutating_sources.__wrapped__.__kwdefaults__,
+                             {'lock_timeout': 60}):
+            # Red side: the pin above must fire on the reverted cap, or it
+            # guards nothing (same proof shape as the pin mutants).
+            self.assertFalse(inspect.signature(process.mutating_sources)
+                             .parameters['lock_timeout'].default == 900,
+                             marker + ': the default pin must be discriminating')
+        runner = self.load_runner()
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
+        code, _summary = self._drive(runner)
+        self.assertTrue(code == 0 and len(self.lease_budgets) == 2, marker)
+        # #2929 fix-r4: a dropped-kwarg mutant records None, and comparing
+        # `1 <= None` raises TypeError -- unittest then reports an ERROR
+        # (not a FAIL), the negative-control classifier only accepts a FAIL
+        # with the marker, and the row degrades from KILLED to a false
+        # INVALID.  Discriminate None inside the assertion so the drop still
+        # fails as a plain AssertionError carrying the marker.
+        self.assertTrue(all(value is not None
+                            and 1 <= value <= runner.LEASE_ACQUIRE_SECONDS
+                            for value in self.lease_budgets), marker)
+        self.assertTrue(all(first >= second for first, second
+                            in zip(self.lease_budgets, self.lease_budgets[1:])),
+                        marker + ': the per-case acquire budgets must not grow')
+
+    def test_negative_round_budget_ignores_own_work(self):
+        marker = ('#2929 fix-r4: the round acquire budget is spent only on '
+                  'acquire waits, never on the runner\'s own work')
+        # DS concurrency#1: the fix-r3 monotonic deadline charged every
+        # wall-clock second of the round -- including the runner's own work
+        # (window bodies, restored controls, between-case slot gaps) -- so
+        # the tail cases' acquire budgets decayed towards the 1 s floor
+        # while their own waits had not started yet; queued behind another
+        # tree's family-max live window (the exact case fix-r2 sized this
+        # budget to wait out), they would starve after hours of own work
+        # in earlier cases.  The drive's slot gap (3 s of between-case own
+        # work, outside the lease) is the discriminator: the second case's
+        # acquire budget must come out whole, not 3 s short.
+        runner = self.load_runner()
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
+        code, _summary = self._drive(runner, gap=3.0)
+        self.assertTrue(code == 0 and len(self.lease_budgets) == 2, marker)
+        first, second = self.lease_budgets
+        self.assertTrue(1 <= first <= runner.LEASE_ACQUIRE_SECONDS, marker)
+        self.assertGreaterEqual(second, runner.LEASE_ACQUIRE_SECONDS - 1,
+                                marker + ': own work consumed the acquire budget')
+        # #2929 fix-r5 (DS boundary#6): the upper bound too, at the old
+        # test's None-discriminating shape -- an over-refunding mutant
+        # (a doubled refund, or a refund of a span the budget never spent)
+        # must fail here, not only in the gap discriminator below.
+        # #2929 fix-r6 (DS concurrency#1): +1 tolerance, symmetric with the
+        # lower bound's -1 -- the old two-sample arming double-counted the
+        # interval between the samples into the first refund, pushing the
+        # first budget above the constant (an apparatus false red).
+        self.assertTrue(all(value is not None
+                            and 1 <= value <= runner.LEASE_ACQUIRE_SECONDS + 1
+                            for value in self.lease_budgets),
+                        marker + ': no acquire budget may exceed the round constant')
+
+    def test_negative_round_budget_ignores_tree_lock_wait(self):
+        marker = ('#2929 fix-r5: the round acquire budget is armed after the '
+                  'tree-lock wait, so the first acquire still gets the full '
+                  'budget')
+        # DS boundary#3: the round-level tree lock can wait up to 900 s on
+        # a same-tree runner; arming the deadline before that wait silently
+        # charged it against the lease budget -- the first case's acquire
+        # came out 900 s short exactly when the budget exists to wait out
+        # another tree's family-max window.  The default _drive stand-in is
+        # a nullcontext, so this test injects a tree lock that really
+        # consumes seconds and pins the first budget whole.
+        runner = self.load_runner()
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
+
+        @contextlib.contextmanager
+        def slow_tree_lock(*_arguments, **_keywords):
+            time.sleep(2.0)
+            yield
+
+        code, _summary = self._drive(runner, tree=slow_tree_lock)
+        self.assertTrue(code == 0 and len(self.lease_budgets) == 2, marker)
+        first, second = self.lease_budgets
+        self.assertGreaterEqual(first, runner.LEASE_ACQUIRE_SECONDS - 1,
+                                marker + ': the tree-lock wait consumed the '
+                                'first acquire budget')
+        # fix-r6 (DS concurrency#1): +1 upper tolerance, symmetric with the
+        # lower bound's -1 (see test_negative_round_budget_ignores_own_work).
+        self.assertTrue(1 <= first <= runner.LEASE_ACQUIRE_SECONDS + 1
+                        and 1 <= second <= runner.LEASE_ACQUIRE_SECONDS + 1, marker)
+
+    def test_negative_failed_case_keeps_own_work_refundable(self):
+        marker = ('#2929 fix-r5: a case that fails after acquiring keeps '
+                  'its own work out of the round acquire budget')
+        # DS concurrency#1: the failure path used to push the refund mark to
+        # the failure moment for ANY exception, so a failing case's own
+        # work (positive control, no-run build) permanently occupied the
+        # budget; 34 such cases could eat 2100 s apiece out of the tail
+        # cases' acquire.  The first case below acquires, burns two
+        # seconds of its own work, then fails at the no-run build; the
+        # second case's acquire budget must come out whole anyway.
+        runner = self.load_runner()
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
+        failed = []
+
+        def fail_first_cargo(stage):
+            if stage == 'cargo' and not failed:
+                failed.append(True)
+                time.sleep(2.0)
+                return ValueError('no-run failed')
+            return None
+
+        code, summary = self._drive(runner, run_effect=fail_first_cargo)
+        self.assertTrue(code == 1 and len(self.lease_budgets) == 2, marker)
+        self.assertEqual([row['status'] for row in summary['controls']],
+                         ['INVALID', 'KILLED'], marker + ': the first case must '
+                         'fail INVALID after acquiring, the second must stay green')
+        first, second = self.lease_budgets
+        self.assertGreaterEqual(second, runner.LEASE_ACQUIRE_SECONDS - 1,
+                                marker + ': the failed case\'s own work '
+                                'consumed the next acquire budget')
+        # fix-r6 (DS concurrency#1): +1 upper tolerance, symmetric with the
+        # lower bound's -1 (see test_negative_round_budget_ignores_own_work).
+        self.assertTrue(1 <= first <= runner.LEASE_ACQUIRE_SECONDS + 1
+                        and 1 <= second <= runner.LEASE_ACQUIRE_SECONDS + 1, marker)
+
+    def test_negative_failed_acquire_keeps_wait_charged(self):
+        marker = ('#2929 fix-r6: a failed acquire keeps its wait charged '
+                  'against the round budget')
+        # DS sibling#2 = boundary#3: the `if not acquired:` stop-mark is
+        # the only thing keeping a failed acquire's wait inside the round
+        # budget -- drop it and the next case's refund hands the failed
+        # wait back, reviving the N-failed-acquires x family-max
+        # multiplication fix-r4 closed, with every mock green.  The first
+        # case's enter burns two seconds waiting and then times out; the
+        # second case's budget must come out shorter by that failed wait.
+        runner = self.load_runner()
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
+        code, summary = self._drive(runner, first_enter_fails=2.0)
+        self.assertTrue(code == 1 and len(self.lease_budgets) == 2, marker)
+        self.assertEqual([row['status'] for row in summary['controls']],
+                         ['INVALID', 'KILLED'], marker + ': the first case '
+                         'must fail INVALID at the acquire, the second must '
+                         'stay green')
+        first, second = self.lease_budgets
+        self.assertTrue(1 <= first <= runner.LEASE_ACQUIRE_SECONDS + 1, marker)
+        self.assertLessEqual(second, runner.LEASE_ACQUIRE_SECONDS - 1,
+                             marker + ': the failed acquire\'s wait was '
+                             'refunded into the next budget')
+        self.assertGreaterEqual(first - second, 1,
+                                marker + ': the second budget must come out '
+                                'clearly smaller than the first')
 
     def test_negative_chain_denominators_derived(self):
         marker = '#1402 chain denominators derive from the calibration manifest'

@@ -88,6 +88,11 @@ fn native_stimulus_plan_controls() {
         "PlanTests.test_unknown_and_detached_plan",
         "PlanTests.test_unwitnessed_is_not_run",
         "PlanTests.test_memory_rehearsal_holds_tree_lock",
+        // #1528 fix-r1 (review DS sibling#1): #1530 added this pin test without
+        // re-listing it here, so `cargo test` never ran it -- the same
+        // anti-pattern as the #2396 block above (this list is the only
+        // selective entry for the fixture).
+        "PlanTests.test_hardcoded_counts_track_calibration",
         "AdapterTests.test_storage_arms_match_the_arming_table",
         "AdapterTests.test_driver_slow_status_choreography",
         "AdapterTests.test_driver_slow_append_two_barriers",

@@ -2038,15 +2038,12 @@ fn committed_marker_with_unreadable_manifest_republishes() {
         // and the shared writer puts the note on the stderr handle (the
         // print-family macros are captured by libtest, so a skipping test's
         // note never reaches the log).
-        assert!(
-            !permission_faults::require_permission_faults(),
-            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a mode-000 file is still \
-             readable (root or CAP_DAC_OVERRIDE); the unreadable-manifest contract needs \
-             an unprivileged host (需要非特权宿主)"
-        );
-        skip_line::stderr_skip_line(
+        permission_faults::skip_or_require(
             "committed_marker_with_unreadable_manifest_republishes: skipped, \
              running as root (chmod cannot make the manifest unreadable)\n",
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a mode-000 file is still \
+             readable (root or CAP_DAC_OVERRIDE); the unreadable-manifest contract needs \
+             an unprivileged host (需要非特权宿主)",
         );
         return;
     }

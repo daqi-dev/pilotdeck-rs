@@ -1384,18 +1384,74 @@ mod pid_mode {
     /// zombie still has a `/proc` entry, so the entry's disappearance is what
     /// separates "reaped by this process" from "killed and left for someone
     /// else to collect" — the pid-mode counterpart of the group mode's
-    /// group-empty poll in [`StrangerGuard::reap_group`].
+    /// group-empty poll in [`StrangerGuard::reap_group`]. #2592 (#2142
+    /// fix-r3 review, DS sibling #1): that evidence fails closed — only a
+    /// vanished entry proves the collection ([`reap_evidence_is_gone`]), so
+    /// the wait keeps polling on anything else and the deadline is what
+    /// fails the assert, never a read error read as "already gone".
     fn assert_reaped_by_this_process(stranger: Pid) {
         let path = PathBuf::from(format!("/proc/{stranger}"));
         let deadline = Instant::now() + STRANGER_PID_REAP_TIMEOUT;
-        while path.exists() && Instant::now() < deadline {
+        while !reap_evidence_is_gone(&fs::metadata(&path)) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
         assert!(
-            !path.exists(),
-            "#1409 the pid-mode guard must reap the stranger: {} still exists, so the stranger \
-             was only killed",
+            reap_evidence_is_gone(&fs::metadata(&path)),
+            "#1409 the pid-mode guard must reap the stranger: {} still exists or is unreadable, \
+             so the stranger was only killed",
             path.display()
+        );
+    }
+
+    /// #2592 (#2142 fix-r3 review, DS sibling #1): what a `/proc/<pid>`
+    /// metadata read says about the pid-mode reap evidence. Only a vanished
+    /// entry ([`metadata_failure_is_gone`]) is a disappearance — the one
+    /// observation that separates "reaped by this process" from "killed and
+    /// left for someone else to collect". Anything else keeps the stranger
+    /// counted as un-reaped: a readable entry is still there to be
+    /// collected, and a restricted procfs (hidepid, a restricted container,
+    /// gVisor — the #1409 threat model this fixture's README itself adopts)
+    /// that answers EACCES for the still-unreaped stranger leaves the
+    /// entry's state unknown, which this evidence must read as present —
+    /// `Path::exists()` turned every such read error into "already gone",
+    /// the fail-open shape #2142 fix-r3 took out of the group mode's
+    /// [`group_is_gone_within`], which could have false-PASSED the
+    /// reap-removed mutant. Pinned by its own unit test the way the group
+    /// rule is: a healthy host's `/proc` never answers the error side for
+    /// a descendant.
+    fn reap_evidence_is_gone(entry: &io::Result<fs::Metadata>) -> bool {
+        match entry {
+            Ok(_) => false,
+            Err(error) => metadata_failure_is_gone(error),
+        }
+    }
+
+    /// #2592: the error side of the pid-mode reap evidence, pinned the way
+    /// `a_proc_read_error_means_gone_only_when_the_entry_is_absent` pins the
+    /// group rule — a healthy host's `/proc` never answers the error side
+    /// for a descendant, so the classification is the testable seam. Only a
+    /// vanished entry means reaped: a procfs that hides the stranger behind
+    /// EACCES must leave it counted as present, or the reap assert could
+    /// pass a stranger that was only killed and never collected — the
+    /// fail-open that could have false-PASSED the reap-removed mutant.
+    #[test]
+    fn a_reap_read_error_means_gone_only_when_the_entry_is_absent() {
+        assert!(
+            !reap_evidence_is_gone(&fs::metadata("/proc/self")),
+            "#2592 a live /proc entry is not reap evidence"
+        );
+        assert!(
+            reap_evidence_is_gone(&Err(io::Error::from(io::ErrorKind::NotFound))),
+            "#2592 a vanished /proc entry is the one read error that means the stranger was \
+             reaped"
+        );
+        assert!(
+            !reap_evidence_is_gone(&Err(io::Error::from_raw_os_error(13))),
+            "#2592 an unreadable /proc entry means the stranger's state is unknown, never reaped"
+        );
+        assert!(
+            !reap_evidence_is_gone(&Err(io::Error::from_raw_os_error(5))),
+            "#2592 an I/O error reading /proc means the stranger's state is unknown, never reaped"
         );
     }
 

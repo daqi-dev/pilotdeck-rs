@@ -743,23 +743,21 @@ fn host_events(body: &HostBody) -> Option<Vec<HostEvent>> {
     match body {
         HostBody::Value(JsValue::String(text)) => {
             let units = text.units();
-            let mut events = Vec::new();
-            let mut index = 0;
-            while index < units.len() {
-                // The JS string iterator: a well-formed surrogate pair is one
-                // code point (one event); everything else — a lone surrogate
-                // included — is its own single-unit event.
-                let pair = !crate::mutants::on("module-host-string-codepoint-off")
-                    && (0xD800..0xDC00).contains(&units[index])
-                    && index + 1 < units.len()
-                    && (0xDC00..0xE000).contains(&units[index + 1]);
-                let end = index + 1 + usize::from(pair);
-                events.push(HostEvent::Text(String::from_utf16_lossy(
-                    &units[index..end],
-                )));
-                index = end;
-            }
-            Some(events)
+            // The JS string iterator (the shared `js_value::code_point_chunks`
+            // walk): a well-formed surrogate pair is one code point (one
+            // event); everything else — a lone surrogate included — is its
+            // own single-unit event.
+            let chunks = if crate::mutants::on("module-host-string-codepoint-off") {
+                units.chunks(1).collect::<Vec<&[u16]>>()
+            } else {
+                crate::js_value::code_point_chunks(units)
+            };
+            Some(
+                chunks
+                    .into_iter()
+                    .map(|chunk| HostEvent::Text(String::from_utf16_lossy(chunk)))
+                    .collect(),
+            )
         }
         HostBody::Value(JsValue::Array(items)) => Some(
             items

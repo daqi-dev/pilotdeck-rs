@@ -166,7 +166,19 @@ impl ReplacementCoordinator {
             storage,
             session,
             timeout: Duration::from_millis(timeout_ms.max(1)),
-            warn: warn.unwrap_or_else(|| Arc::new(|message, error| eprintln!("{message} {error}"))),
+            // #2558: the default warn sink — a best-effort console line,
+            // like TS's `console.warn`; an `eprintln!` panics when the
+            // write fails (std behavior) and would kill the reservation
+            // path that only owed a warning (the maintenance default's
+            // #2558 fix, same shape).
+            warn: warn.unwrap_or_else(|| {
+                Arc::new(|message, error| {
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!("{message} {error}"),
+                    );
+                })
+            }),
         }))
     }
     // Poison boundary (deliberate, not a missed sweep): only the three

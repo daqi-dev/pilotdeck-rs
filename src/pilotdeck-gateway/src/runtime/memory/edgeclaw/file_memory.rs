@@ -2662,9 +2662,18 @@ mod mutation_security_tests {
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {
+            // #2335 (via #3143 fix-r1 sibling#4): the guard must exist
+            // before the first fallible disk op, not only at the return --
+            // a panic anywhere below otherwise leaks the temp tree,
+            // because only a constructed `Scratch` unwinds through `Drop`.
+            // The canonical path is written back into the guard, never a
+            // second `Scratch(...)`, which would drop-and-delete the tree
+            // it points at (the same shape management_tests.rs pins).
             let p = std::env::temp_dir().join(format!("pdrs-597-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&p).unwrap();
-            Self(fs::canonicalize(p).unwrap())
+            let mut scratch = Self(p);
+            fs::create_dir_all(&scratch.0).unwrap();
+            scratch.0 = scratch.0.canonicalize().unwrap();
+            scratch
         }
     }
     impl Drop for Scratch {
@@ -3647,6 +3656,12 @@ mod round6_tests {
 #[cfg(all(test, unix))]
 mod write_stage_tests {
     use super::*;
+    // #2558 fix-r4: the `WRITE_ERROR=` receipts below go through the shared
+    // writer so the widened console-macro scan
+    // (`tests/console_panic_safety.rs`) stays green — it cannot see this
+    // module's `#[cfg(all(test, unix))]` gating spelling; the printed text
+    // (which `child_write_error` parses) is unchanged.
+    use crate::native_process::channels::console_log_line;
 
     #[test]
     #[ignore = "spawned by overwrite_reports_the_write_stage_like_node"]
@@ -3668,7 +3683,10 @@ mod write_stage_tests {
             &[b'a'; 4096],
         )
         .expect_err("a write past RLIMIT_FSIZE must fail");
-        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
+        console_log_line(
+            &mut std::io::stdout(),
+            &format!("WRITE_ERROR={}", FileMemoryError::Io(error)),
+        );
     }
 
     #[test]
@@ -3706,7 +3724,10 @@ mod write_stage_tests {
             [b'a'; 4096],
         )
         .expect_err("a write past RLIMIT_FSIZE must fail");
-        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
+        console_log_line(
+            &mut std::io::stdout(),
+            &format!("WRITE_ERROR={}", FileMemoryError::Io(error)),
+        );
     }
 
     #[test]

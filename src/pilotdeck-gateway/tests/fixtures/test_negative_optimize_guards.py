@@ -108,6 +108,30 @@ SCRIPTS = (
     # claim_dir behind the selection and target refusals, so its "never
     # started" contract joins the matrix; its --check is also wired into CI.
     ('parity-env-isolation/negative_controls.py', (), ('-I',)),
+    # #1642 fix-r3 (review a6, MM sibling#3): native-management and
+    # native-registry-switch completed the startup refusal migration this
+    # round (unknown/repeated name, roster drift at import, unusable target,
+    # existing output directory -> refuse rc 2 before any evidence is
+    # claimed), so their startup matrix is machine-checked like the other
+    # migrated entries; the guard-failure phase map itself is pinned by
+    # their own protocol tests (test_protocol.py / test_roster.py, both in
+    # CI), not here.
+    ('native-management/negative_controls.py', (), ()),
+    ('native-registry-switch/negative_controls.py', (), ()),
+    # #1642 fix-r4 (review P1-B sibling#3): native-dispatch completed the
+    # startup refusal migration this round (unknown/repeated name, unusable
+    # target, existing output directory -> refuse rc 2 before the evidence
+    # directory is claimed), so its startup matrix is machine-checked like
+    # the other migrated entries; the guard-failure phase map, the enter
+    # refusal and the write_source_atomic patch are pinned by its own
+    # test_protocol.py (in CI), not here.
+    # #1642 fix-r5 (review sibling P1#2): the entry also carries the frozen
+    # roster now -- registered + refuse at import, the same shape
+    # native-management and native-registry-switch carry -- so a deleted or
+    # renamed row is a startup refusal instead of a smaller green run; the
+    # roster drift itself is pinned by its own test_protocol.py, like the
+    # other registered entries.
+    ('native-dispatch/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -228,9 +252,15 @@ def calls(source, name):
 PENDING_BARE_ASSERTS = {
     'cli-parity-lock-bounded/negative_controls.py':
         'frozen positive/negative pairing pins the assert text; needs its own round',
+    # 真合并轮（#2513 重锚收货）：read-lease 车道自 r7 起就有 marker 钉的
+    # 探针断言（宿主预持闸 / 窗口重定向两族），但本登记一直缺这一条——
+    # 重锚自测首跑当场红出；按 #1666 债务口径补登记，迁移归后续轮。
+    'sdk-signal-read-lease/negative_controls.py':
+        'read-lease lane probes pin the host pre-hold gate and the '
+        'redirect-window invariants with marker-tagged asserts; needs its '
+        'own round',
     'host-event-pump/negative_controls.py': 'not migrated yet (batch 3)',
     'mcp-gateway/negative_controls.py': 'not migrated yet (batch 3)',
-    'mcp-hooks-spawn/negative_controls.py': 'not migrated yet (batch 3)',
     'pump-order-cases/negative_controls.py': 'not migrated yet (batch 3)',
     'runtime-spawn-panic/negative_controls.py': 'not migrated yet (batch 3)',
     'skills/negative_controls.py': 'not migrated yet (batch 3)',
@@ -271,6 +301,12 @@ SCANNED_EXTRA = (
     'negative_suite.py',
     'negative_panic.py',
     'negative_scope.py',
+    # #1642 fix-r4 (review P1-C/P1-E): the shared Rust binding-scan views
+    # (kept/structure pair + carries_test_attribute) the native-management
+    # and native-registry-switch binders import. Same "no bare assert under
+    # -O" contract as the other shared helpers, at zero assert statements
+    # today.
+    'rust_binding_views.py',
     # Review r2 sibling P2: two more shared executors guard anchors, execution
     # and restoration with `raise`. Both are at zero assert statements today.
     '_shared/regeneration-negative.py',
@@ -588,7 +624,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-eight entries migrated so far (twenty-seven fixture directories;
+    The thirty-one entries migrated so far (thirty fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in

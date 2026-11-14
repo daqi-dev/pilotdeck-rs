@@ -7,6 +7,7 @@ failing baseline makes the whole run INVALID before any mutant verdict counts.
 """
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -156,6 +157,33 @@ def claim_dir(path):
     return directory
 
 
+def withdraw_claim(path):
+    """Withdraw an evidence-directory claim :func:`claim_dir` made, atomically.
+
+    The companion of ``claim_dir`` on the refusal side of the exit-code
+    table: an enter-phase guard failure withdraws the never-ran claim so a
+    host re-running the same output path is not refused on a leftover
+    directory. One visibility step, not two destructive calls (#1642 fix-r5
+    shape): the rename removes the claimable path in a single syscall (the
+    r4 shape unlinked a marker and only then rmdir'd the directory, so a
+    concurrent run claiming the path in that window owned a directory the
+    withdrawal's second call then deleted), and the rmtree cleans the
+    renamed directory, never the claimable path. #3143 fix-r1 (simplify#6)
+    + fix-r2 (DS sibling#1): one mechanism for the seven runners -- this
+    replaces the bare ``out.rmdir()`` copies that only removed the empty
+    case. An OSError
+    here must not mask the caller's refusal, so it is swallowed on purpose;
+    the caller is already on the rc 2 path.
+    """
+    directory = Path(path)
+    withdrawn = directory.with_name(directory.name + f'.withdrawn-{os.getpid()}')
+    try:
+        os.rename(directory, withdrawn)
+        shutil.rmtree(withdrawn)
+    except OSError:
+        pass
+
+
 def refuse(message):
     """Refuse to run: print the reason to stderr and exit 2.
 
@@ -167,9 +195,19 @@ def refuse(message):
 
     A ``SystemExit`` carrying a *string* exits 1, so the message is written
     first and the code is passed explicitly as an int.
+
+    #1087 fix-r5 (boundary #2 / sibling #2): a caller whose stderr is already
+    dead must still exit 2 — an unguarded write would crash with rc=1 and read
+    as "ran and was red". ``2>&-`` at exec time makes CPython set
+    ``sys.stderr = None`` (AttributeError on write), a really closed stream
+    object raises ValueError, and a dead fd raises OSError. The message is
+    best-effort; the code is the contract.
     """
-    sys.stderr.write(f'INVALID: {message}\n')
-    sys.stderr.flush()
+    try:
+        sys.stderr.write(f'INVALID: {message}\n')
+        sys.stderr.flush()
+    except (AttributeError, OSError, ValueError):
+        pass
     raise SystemExit(2)
 
 

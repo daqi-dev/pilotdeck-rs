@@ -23,7 +23,7 @@ session = root / 'scripts/gateway-parity/session_domain.py'
 common = root / 'scripts/gateway-parity/common.py'
 test_file = Path(__file__).with_name('test_boundary.py')
 guarded_sources = [common, gateway_doc, witness_doc, controls_doc, session, test_file, Path(__file__).resolve()]
-EXPECTED_CASES = 9
+EXPECTED_CASES = 10
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('omit-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),
@@ -34,6 +34,11 @@ cases = [
     ('controls-independent-claim', controls_doc, '不防共同重钉', '独立锚', 'test_documented_boundary'),
     ('drop-consistency-check', session, "isinstance(driver, dict) and driver.get('binding') == contract['binding']", 'True', 'test_binding_writer_boundary'),
     ('omit-boundary-case', Path(__file__).resolve(), "    ('om" + "it-common-guard', Path(__file__).resolve(), 'guarded_' + 'sources = [common,', 'guarded_' + 'sources = [', 'test_guarded_sources_include_common'),\n", '', 'test_expected_case_count'),
+    # fix-r2 (#1528 review): an equal-length swap (drop one row, paste
+    # another over it) keeps len(cases) == EXPECTED_CASES, so the count
+    # check alone let a retired control vanish with the summary still
+    # green; validate_case_count now also refuses non-unique names.
+    ('duplicate-boundary-case', Path(__file__).resolve(), "    ('gateway-independent-cla" + "im', gateway_doc, '只防协作写者', 'driver 记录独立锚', 'test_documented_boundary'),\n", "    ('witness-observer-scop" + "e', witness_doc, 'observer 记录独立于被测网关与预注册 contract，不独立于 driver。', 'observer 独立于 driver。', 'test_documented_boundary'),\n", 'test_expected_case_count'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
 ]
 messages = {
@@ -45,10 +50,35 @@ messages = {
 }
 
 
+# #2929 fix-r2: the parity-lease acquire budget for the one mutating_sources
+# window this runner holds: FAMILY_MAX -- the family roster's largest
+# whole-round hold bound (gateway-batch; the live value is the roster's FAMILY_MAX) -- plus this runner's own
+# restore tail and one stage of handoff margin, rounded up to the 900 s
+# family unit.  One derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.  A live holder always carries
+# cleanupPending and no taker takes such an owner over, so the budget
+# deliberately exceeds common.MAX_AGE -- MAX_AGE only ages out
+# never-published stale locks; a published owner, dead pid included, keeps
+# the cleanupPending protection and is never taken over automatically
+# (fix-r3: such a residual now fails the acquire fast with a diagnostic
+# instead of waiting the budget out) -- and just has to cover the family's
+# largest live hold (#1528/#1529).
+LEASE_ACQUIRE_BUDGET_SECONDS = 65700
+
+
 def validate_case_count():
+    # fix-r2 (#1528 review): the count alone cannot catch an equal-length
+    # swap -- drop one row and paste another over it and len(cases) still
+    # matches, so the uniqueness of the names is refused here too (same
+    # shape as the e2e runner's #1535 guard).
+    names = {row[0] for row in cases}
     if len(cases) != EXPECTED_CASES:
         raise SystemExit(f'#a5b boundary negative case inventory is complete: '
                          f'expected {EXPECTED_CASES}, got {len(cases)}')
+    if len(names) != EXPECTED_CASES:
+        raise SystemExit(f'#a5b boundary negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES} unique names, got {len(names)}')
 
 
 def preflight():
@@ -186,7 +216,8 @@ def main():
                 for row in selected:
                     one(row)
         else:
-            with mutating_sources(root, guarded_sources) as originals:
+            with mutating_sources(root, guarded_sources,
+                                  lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
                 for row in selected:
                     one(row, True)
     except BaseException as error:

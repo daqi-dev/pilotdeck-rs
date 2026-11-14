@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import http.server
+import importlib.util
 import json
 import os
 import subprocess
@@ -17,7 +18,23 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "review-deepseek.py"
 FAKE_KEY = "sk-FAKE0123456789"
-MODEL = "DeepSeek-V4.1-Flash"  # llm-center 对 deepseek-v4.1-flash-mb 的回显名；大小写不符也会被拒绝
+MODEL = "DeepSeek-V4.1-Flash"  # llm-center 对 deepseek-v4.1-flash-mb 的回显名；大小写差异按 casefold 放行
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# 双表单源：被测脚本的 RESP_MODEL 与闸门脚本的 RESP_MODEL_ALIAS 都从这里取值，case 不再手抄模型名
+rd_mod = _load("rd", SCRIPT)
+rrr_mod = _load("rrr", SCRIPT.parent / "run-review-roles.py")
+RAW_NAME = rd_mod.DEFAULT_MODEL  # 原样请求名 deepseek-v4.1-flash-mb
+OTHER_CANON = next((v for k, v in rrr_mod.RESP_MODEL_ALIAS.items() if k != RAW_NAME), None)  # 别家（GLM）规范名
+if OTHER_CANON is None:  # 别名表收缩到只剩 DS 一项时给干净的 FAIL，而不是 import 阶段 StopIteration 崩栈
+    raise SystemExit("FAIL: run-review-roles.RESP_MODEL_ALIAS 只剩 DS 一项，别家负控无从取值")
 
 
 class Fake(http.server.BaseHTTPRequestHandler):
@@ -170,6 +187,15 @@ def main() -> int:
          expect_msg="缺等级计数")
     case("响应模型与请求不一致 → 不落盘", (200, ok_body(good, model="other-model")), 1,
          expect_msg="响应模型", not_msg=("Traceback",))
+    # llm-center 同一后端两种回显形（2026-11-12 实测）：原样回请求名也算同一家；别家的规范名仍拒
+    case("响应原样回显请求名 → 照常落盘", (200, ok_body(good, model=RAW_NAME)), 0,
+         expect_out=good, contract=True)
+    case("响应仅大小写不同 → 照常落盘", (200, ok_body(good, model=MODEL.swapcase())), 0,
+         expect_out=good, contract=True)
+    case("响应是别家规范名 → 不落盘", (200, ok_body(good, model=OTHER_CANON)), 1,
+         expect_msg="响应模型")
+    case("响应是别家原样请求名 → 不落盘", (200, ok_body(good, model=next((k for k in rrr_mod.RESP_MODEL_ALIAS if k != RAW_NAME), "other-model"))), 1,
+         expect_msg="响应模型")
     case("响应缺 stop_reason → 判形状异常", (200, b'{"model": "%s", "content": [{"type": "text", "text": "OK"}]}' % MODEL.encode()),
          1, expect_msg="缺 stop_reason")
     case("stop_reason=null → 判形状异常", (200, ok_body("OK", finish=None)), 1, expect_msg="null")
@@ -281,12 +307,9 @@ def main() -> int:
     fails += not ok
     case("连不上", (200, b""), 1, "--api", "http://127.0.0.1:9/")
 
-    # .env.local 解析子集：直接调函数，用假值
+    # .env.local 解析子集：直接调函数，用假值（rd 在模块头已加载，这里不再二次 exec）
     sys.path.insert(0, str(SCRIPT.parent))
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("rd", SCRIPT)
-    rd = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(rd)
+    rd = rd_mod
     for raw, want in [('"sk-FAKE" # local', "sk-FAKE"), ("sk-FAKE # note", "sk-FAKE"), ("# unset", ""),
                       ("'sk-FAKE'", "sk-FAKE"), ("", "")]:
         got = rd.parse_env_value(raw)
@@ -307,6 +330,17 @@ def main() -> int:
     # 回显名别名表：llm-center 不回显请求 id，真实调用实测（_tmp/20261105-minimax-repo/deepseek-model-check/）
     ok = rd.RESP_MODEL.get(rd.DEFAULT_MODEL) == MODEL
     print(f"{'PASS' if ok else 'FAIL'} 回显模型别名表 {rd.RESP_MODEL}")
+    fails += not ok
+    # 两表单源机检（3047 r2）：review-deepseek 的 RESP_MODEL 与 run-review-roles 的 RESP_MODEL_ALIAS
+    # 是双抄表——公共键不一致即漂移；两张表的内容各用字面钉死做离线 oracle，改错值必须红。
+    ok = all(rrr_mod.RESP_MODEL_ALIAS.get(k) == v for k, v in rd_mod.RESP_MODEL.items())
+    print(f"{'PASS' if ok else 'FAIL'} 两表公共键一致（rd.RESP_MODEL ⊆ rrr.RESP_MODEL_ALIAS 且值相同）")
+    fails += not ok
+    ok = rd_mod.RESP_MODEL == {"deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
+    print(f"{'PASS' if ok else 'FAIL'} RESP_MODEL 离线 oracle（字面钉住内容）")
+    fails += not ok
+    ok = rrr_mod.RESP_MODEL_ALIAS == {"glm-5.3-mb": "GLM-5.3", "deepseek-v4.1-flash-mb": "DeepSeek-V4.1-Flash"}
+    print(f"{'PASS' if ok else 'FAIL'} RESP_MODEL_ALIAS 离线 oracle（字面钉住内容）")
     fails += not ok
     r = run(Path(tempfile.mkdtemp()), "https://evil.example/")
     ok = r.returncode == 2 and "本机测试地址" in r.stderr

@@ -1015,6 +1015,14 @@ fn directory_flags() -> rustix::fs::OFlags {
                                 and "could not compile" not in raw
                                 and (
                                     overflow
+                                    # #1087 fix-r5 (simplify #2): the assertion
+                                    # disjunct's summary requirement moved into
+                                    # the shared named_test_killed default
+                                    # (require_summary=True). The overflow
+                                    # disjunct is the terminal evidence itself
+                                    # — the abort happens before libtest could
+                                    # print anything — so it opts out with
+                                    # require_summary=False.
                                     or named_test_killed(
                                         raw, used_test, "should throw"
                                     )
@@ -1030,6 +1038,12 @@ fn directory_flags() -> rustix::fs::OFlags {
                             # #813: the named test must be the one that failed,
                             # and the marker must be inside its own panic block
                             # (not stdout or a sibling test).
+                            # #1087 fix-r5 (boundary #4 → simplify #2): libtest's
+                            # own dotted summary line is required too — an
+                            # aborted run that printed the named test's FAILED
+                            # status and payload but never reached the summary
+                            # is not a kill; the requirement is now the shared
+                            # named_test_killed default (require_summary=True).
                             killed = (
                                 returncode == 101
                                 and "could not compile" not in raw

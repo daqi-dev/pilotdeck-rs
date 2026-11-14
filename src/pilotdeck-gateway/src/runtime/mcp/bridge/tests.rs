@@ -5,9 +5,18 @@ use std::{cell::Cell, fs, os::unix::fs::symlink};
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
+        // #2335 (via #3143 fix-r1 sibling#4): the guard must exist before
+        // the first fallible disk op, not only at the return -- a panic
+        // anywhere below otherwise leaks the temp tree, because only a
+        // constructed `Scratch` unwinds through `Drop`. The canonical path
+        // is written back into the guard, never a second `Scratch(...)`,
+        // which would drop-and-delete the tree it points at (the same
+        // shape management_tests.rs pins).
         let path = std::env::temp_dir().join(format!("pdrs-mcp-image-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&path).unwrap();
-        Self(path.canonicalize().unwrap())
+        let mut scratch = Self(path);
+        fs::create_dir(&scratch.0).unwrap();
+        scratch.0 = scratch.0.canonicalize().unwrap();
+        scratch
     }
     fn path(&self, name: &str) -> PathBuf {
         self.0.join(name)
@@ -15,7 +24,13 @@ impl Scratch {
 }
 impl Drop for Scratch {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
+        // #3143 fix-r1 (sibling#4): with the guard now constructed before
+        // `create_dir`, a failure there unwinds through this `Drop` on a
+        // directory that never came to exist -- an `unwrap` would turn that
+        // panic into a double panic (abort), so the cleanup failure is
+        // reported the way the family's fixed shapes report it (ignored;
+        // the test result already carries the original failure).
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 

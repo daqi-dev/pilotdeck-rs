@@ -54,7 +54,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (KILL_TIMEOUT, defer_signal_exit, mutating_sources,
                              restore_critical, run_owned, take_deferred_signal,
-                             wait_for_slot)
+                             wait_for_slot, write_source_atomic)
 from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -7500,7 +7500,16 @@ JUDGES = {
         'aggregation-audit',
         calibrate_status_builtins_subscript_copy, False, ()),
 }
-if set(JUDGES) != {row[0] for row in MUTATIONS}:
+# #2743 fix-r10 (DS r9 sibling#2): a bare set comparison cannot see a
+# duplicated row. Delete one row, copy another -- with JUDGES kept in step
+# the two sets still match, the run records N-1 rows while the summary
+# prints 331/331 -- the same #1666 family shape the r9 meta-test pin
+# closed on the CI path. The sdk-signals shape (:501-504) pins uniqueness
+# and membership separately, so a direct entry run refuses at import.
+names = [row[0] for row in MUTATIONS]
+if len(set(names)) != len(names):
+    raise SystemExit('MUTATIONS rows must have unique names')
+if set(JUDGES) != set(names):
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
 
 # #892 fix-r18: the restore window must defer the fixture's own SIGTERM exit
@@ -7574,6 +7583,20 @@ KILL_GRACE_SECONDS = KILL_TIMEOUT
 # restore/digest of the sources is charged once more on top (MiniMax concurrency
 # r10 P2-2 / r11 P2-4).
 TAIL_OVERHEAD_SECONDS = 20
+# #2929 fix-r2: the acquire side is a different quantity from the hold
+# budget above -- LEASE_BUDGET_SECONDS stays the fail-closed hold cap the
+# mutation loop enforces (with its below-MAX_AGE startup gate below, a
+# hold-side self-check), while the acquire wait for the one
+# mutating_sources window is FAMILY_MAX -- the family roster's largest
+# whole-round hold bound (gateway-batch; the live value is the roster's FAMILY_MAX) -- plus this runner's
+# own restore tail and one stage of handoff margin, rounded up to the
+# 900 s family unit.  One derivation for the whole family, recomputed live
+# in test_lease_acquire_budgets.py; its closed roster keeps a new
+# global-lease runner from silently missing a budget.  A live holder
+# always carries cleanupPending and no taker takes such an owner over, so
+# the acquire budget deliberately exceeds common.MAX_AGE and just has to
+# cover the family's largest live hold (#1528/#1529, sibling#6).
+LEASE_ACQUIRE_BUDGET_SECONDS = 65700
 
 
 def lease_budget_left(started, now):
@@ -7719,10 +7742,12 @@ def main():
     sources = sorted({COMMON_SOURCE, *(Path(row[1]) for row in MUTATIONS)}, key=str)
     try:
         with mutating_sources(ROOT, sources, baseline=args.baseline,
-                              lock_timeout=LEASE_BUDGET_SECONDS) as originals:
+                              lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
-            # The budget has to stay below the age at which a *different*
+            # The *hold* budget (LEASE_BUDGET_SECONDS above -- a different
+            # quantity from the acquire budget the with-statement just used)
+            # has to stay below the age at which a *different*
             # apparatus gives up on this lease, so a drift in either constant
             # would silently break the promise; the two are checked against each
             # other here.  An explicit raise, not an ``assert``: ``python -O``
@@ -7768,7 +7793,12 @@ def main():
                         changed = contents[source].replace(old, new, 1)
                         compile(changed, str(source), 'exec')
                         (output / f'{name}-compile.log').write_text('Python compile: PASS\n')
-                        source.write_text(changed)
+                        # One rename, never a truncating in-place write: a
+                        # SIGKILL in the write window must not leave a
+                        # half-written frozen source behind (#1903; the same
+                        # hardening same-json-surfaces pinned as #2425 and
+                        # manager-gateway as #2309 fix-r3).
+                        write_source_atomic(ROOT, source, changed.encode())
                         try:
                             run = run_check(case, mode)
                             returncode = run.returncode
@@ -7781,7 +7811,11 @@ def main():
                     except Exception as error:
                         verdict, detail = 'INVALID', f'{type(error).__name__}: {error}'
                     finally:
-                        source.write_bytes(originals[source])
+                        # Atomic per-case restore, same #1903 shape as the
+                        # publish above; mutating_sources' own exit side is
+                        # only the backstop, it cannot undo a half-written
+                        # file a SIGKILL already left.
+                        write_source_atomic(ROOT, source, originals[source])
                         require_restored(source, digests[source])
                     entry = {'mutation': name, 'mode': mode, 'verdict': verdict,
                              'detail': detail, 'returncode': returncode,
@@ -7793,8 +7827,11 @@ def main():
                         survived.append(entry)
                     print(f'{name}: {verdict} {detail}'.rstrip(), flush=True)
             finally:
+                # The backstop restore rewrites every guarded source once
+                # more after the loop; one rename each, never truncating
+                # (#1903, mirror of the per-case restore above).
                 for source in sources:
-                    source.write_bytes(originals[source])
+                    write_source_atomic(ROOT, source, originals[source])
             restored_case = output / 'restored-positive'  # must not pre-exist
             restored_error = None
             try:

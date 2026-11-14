@@ -22035,12 +22035,32 @@ def negative_restored_replays(output):
     check and the restored-positive summary are patched, so no tracked byte is
     touched.  This is the final aggregation point the r6 review found: a
     restored PASS_WITH_SKIPS child must make the batch non-PASS, never PASS/0.
+
+    #2743: the fixture's publish/restore resolve through its own imported
+    ``write_source_atomic`` global (temp file + ``os.replace``), which neither
+    ``Path.write_*`` guard intercepts -- pin that entry too, or the replay
+    really renames the guarded sources on disk (no tree lock, no parity
+    lease; an inode probe confirmed it before this guard existed).
+
+    r2 hardening: the guard is fail-closed (``Path(path)`` coercion; a call
+    outside the guarded set is recorded, never forwarded) and asserts the
+    publish *role* -- the mutant payload itself must be seen through the
+    guarded global, not just any call count.
     """
     nc = load_negative_controls()
     name = nc.MUTATIONS[0][0]
     sources = {nc.COMMON_SOURCE, *(Path(row[1]) for row in nc.MUTATIONS)}
     real_write_text = Path.write_text
     real_write_bytes = Path.write_bytes
+    atomic_calls = []
+    unguarded = []
+    # Single per-case snapshot (DS r3 concurrency #1/#2): the originals the
+    # window yields are also the baseline the publish-role check compares
+    # against. A second, unsynchronized disk read in the polluted pre-try
+    # window could raise past the finally-restore below, and an external
+    # mutation window flipping a source between two reads would let a plain
+    # restore impersonate the mutant publish.
+    window_originals = {}
 
     def guarded_write_text(path, data, *args, **kwargs):
         if path in sources:
@@ -22052,9 +22072,25 @@ def negative_restored_replays(output):
             return len(data)
         return real_write_bytes(path, data, *args, **kwargs)
 
+    def guarded_write_atomic(root, path, data, *, mode=None):
+        # Fail-closed on both axes (r2 concurrency #1 / boundary #2): the
+        # real ``write_source_atomic`` coerces ``path = Path(path)`` on its
+        # first line, so an un-coerced membership test would let a str
+        # spelling of a guarded source through to the real rename; and every
+        # call in this replay must hit the guard -- one that slips outside the
+        # guarded set is recorded, never forwarded, and fails the case below.
+        if Path(path) in sources:
+            atomic_calls.append((Path(path), bytes(data)))
+            return None
+        unguarded.append(Path(path))
+        return None
+
     @contextlib.contextmanager
     def fake_mutating(*_args, **_kwargs):
-        yield {source: source.read_bytes() for source in sources}
+        window_originals.clear()
+        window_originals.update(
+            {source: source.read_bytes() for source in sources})
+        yield dict(window_originals)
 
     cases = (
         ('pass', 'darwin', 'PASS', 0, 'KILLED', True, ('PASS', 0)),
@@ -22074,16 +22110,20 @@ def negative_restored_replays(output):
         fake_summary = {'status': restored_status, 'results': result_rows}
         fake = SimpleNamespace(returncode=restored_code, stdout='', stderr='')
         saved = (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS)
+                 nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS,
+                 nc.write_source_atomic)
         nc.MUTATIONS = [row for row in nc.MUTATIONS if row[0] == name]
         nc.mutating_sources = fake_mutating
         nc.run_check = lambda *_a, **_k: fake
         nc.read_summary = lambda *_a, **_k: (fake_summary, None)
         nc.classify = lambda *_a, **_k: (verdict, 'injected')
         nc.pgrep_launcher = lambda: ''
+        nc.write_source_atomic = guarded_write_atomic
         nc.sys.argv = ['negative_controls.py', '--output', str(case), '--only', name]
         nc.sys.platform = platform
         try:
+            intercepted = len(atomic_calls)
+            unguarded_before = len(unguarded)
             with patch.object(Path, 'write_text', guarded_write_text), \
                     patch.object(Path, 'write_bytes', guarded_write_bytes):
                 code = nc.main()
@@ -22091,13 +22131,36 @@ def negative_restored_replays(output):
             observed = (report.get('status'), code)
             failures = [] if observed == want else [
                 f'#164-fix-r7 negative-restored {tag}: {observed!r}, want {want!r}']
+            case_calls = atomic_calls[intercepted:]
+            if not case_calls:
+                # The guard itself must stay live: if the replayed main()
+                # stops resolving its writes through write_source_atomic
+                # (or the guard is dropped again), the in-memory promise
+                # above silently stops being true.
+                failures.append(
+                    f'#2743 negative-restored {tag}: the replay never reached '
+                    'write_source_atomic -- the in-memory write guard is dead')
+            elif not any(data != window_originals.get(path)
+                         for path, data in case_calls):
+                # The mutant publish must resolve through the guarded global
+                # too: a publish that escapes it writes real bytes while the
+                # restores keep the liveness count non-zero (r2 boundary #2).
+                failures.append(
+                    f'#2743 negative-restored {tag}: the mutant publish never '
+                    'resolved through the guarded write_source_atomic global')
+            if unguarded[unguarded_before:]:
+                failures.append(
+                    f'#2743 negative-restored {tag}: write_source_atomic was '
+                    f'called outside the guarded set: '
+                    f'{[str(p) for p in unguarded[unguarded_before:]]}')
         except Exception as error:
             observed = (None, None)
             failures = [f'#164-fix-r7 negative-restored {tag}: '
                         f'{type(error).__name__}: {error}']
         finally:
             (nc.sys.argv, nc.sys.platform, nc.mutating_sources, nc.run_check,
-             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS) = saved
+             nc.read_summary, nc.classify, nc.pgrep_launcher, nc.MUTATIONS,
+             nc.write_source_atomic) = saved
         rows[f'{tag}Status'] = observed[0]
         rows[f'{tag}Returncode'] = observed[1]
         rows[f'{tag}Passed'] = not failures

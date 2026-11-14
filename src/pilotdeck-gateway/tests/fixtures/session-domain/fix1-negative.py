@@ -18,7 +18,10 @@ if not os.environ.get('CARGO_TARGET_DIR'):
 OUT = REPO / '_tmp/20261023-issue-222-domain-log/fix1-negative'
 OUT.mkdir(parents=True, exist_ok=True)
 ADAPTER = SRC / 'pilotdeck-gateway/src/storage/transcript_adapter.rs'
-with mutating_sources(REPO, [ADAPTER]) as snapshots:
+# #1281 (same exception as the session-factory runners): PDRS_NEGATIVE_BASELINE
+# lets an uncommitted sandbox candidate run against its exact working tree;
+# committed hosts keep the default HEAD.
+with mutating_sources(REPO, [ADAPTER], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as snapshots:
     original = snapshots[ADAPTER].decode()
     selected = set(sys.argv[1:])
     killed = []
@@ -57,15 +60,20 @@ with mutating_sources(REPO, [ADAPTER]) as snapshots:
 
     try:
         run('baseline', False)
-        a = original.index('fn validate_hydrated_message(')
-        b = original.index('fn message_supported(', a)
+        # #2043 fix-r1: impl-r1 extracted the hydrate `.some` walk into
+        # `message_contains_tool_result` (with the shared `cannot_read`
+        # constructor and a `return Ok(true)` short circuit), so the five body
+        # mutants follow that function's text now; `validate_hydrated_message`
+        # itself is only the `Ok(())` projection left for `skip-message-check`.
+        a = original.index('fn message_contains_tool_result(')
+        b = original.index('fn validate_hydrated_message(', a)
         body = original[a:b]
         changes = [
             ('skip-message-check', '                validate_hydrated_message(field(entry, "message"))?;', '                let _ = validate_hydrated_message;'),
-            ('wrong-some-property', body, body.replace('property_error(content, "some")', 'property_error(content, "content")')),
+            ('wrong-some-property', body, body.replace('cannot_read(content, "some")', 'cannot_read(content, "content")')),
             ('wrong-nonarray-error', body, body.replace('"message.content.some is not a function"', '"content.some is not a function"')),
-            ('skip-null-block', body, body.replace('return Err(property_error(block, "type"));', 'continue;')),
-            ('lose-short-circuit', body, body.replace('            break;', '            continue;')),
+            ('skip-null-block', body, body.replace('return Err(cannot_read(block, "type"));', 'continue;')),
+            ('lose-short-circuit', body, body.replace('return Ok(true);', 'continue;')),
             ('reject-primitive-blocks', body, body.replace('    for block in blocks {', '    for block in blocks {\n        if !nullish(block) && !plain_object(block) { return Err(AdapterError::Type("block must be an object".into())); }')),
         ]
         for name, before, after in changes:

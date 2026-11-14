@@ -306,10 +306,15 @@ const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
 
 /// `ImLiveReplyController.ts:102-106`: `WARNING_STATUS_EVENTS` is the
 /// visible-failure list plus two entries, so the two can never drift
-/// (`channel/weixin/live_reply.rs` keeps the same shape).
+/// (`channel/weixin/live_reply.rs` keeps the same shape). Both memberships
+/// come out of one lookup (#1725): `handle_agent_status` needs the
+/// visible-failure list for the failure flag and the warning list for the
+/// text append, and the shared list must not be scanned twice per event.
 const WARNING_STATUS_EVENTS_EXTRA: &[&str] = &["structured_output_completed", "turn_aborted"];
-fn is_warning_status_event(name: &str) -> bool {
-    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name) || WARNING_STATUS_EVENTS_EXTRA.contains(&name)
+fn status_event_memberships(name: &str) -> (bool, bool) {
+    let visible_failure = VISIBLE_FAILURE_STATUS_EVENTS.contains(&name);
+    let warning = visible_failure || WARNING_STATUS_EVENTS_EXTRA.contains(&name);
+    (visible_failure, warning)
 }
 
 /// `isVisibleFailureStatusDetail`: `detail.visible !== false && severity === "error"`.
@@ -398,12 +403,12 @@ impl LiveReplyBuffer {
     fn handle_agent_status(&mut self, event: &JsValue) {
         let name = text_of(event.get("event")).unwrap_or_default();
         let detail = event.get("detail");
+        let (visible_failure_status, warning_status) = status_event_memberships(name.as_str());
         let visible_failure = detail
             .and_then(JsValue::as_object)
             .map(|detail| !matches!(detail.get("visible"), Some(JsValue::Bool(false))))
             .unwrap_or(true)
-            && (VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str())
-                || is_visible_failure_detail(detail));
+            && (visible_failure_status || is_visible_failure_detail(detail));
         if visible_failure {
             self.has_visible_failure_status = true;
         }
@@ -428,7 +433,7 @@ impl LiveReplyBuffer {
                 })
             )),
             _ => {
-                if (is_warning_status_event(&name) || is_visible_failure_detail(detail))
+                if (warning_status || is_visible_failure_detail(detail))
                     && let Some(message) = detail_message
                 {
                     self.text.push_str(&format!("\n⚠️ {message}\n"));

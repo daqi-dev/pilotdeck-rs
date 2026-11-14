@@ -1625,3 +1625,232 @@ fn subagent_duplicate_completed_rows_kept() {
         "#2042 duplicate completed index keeps the last entry"
     );
 }
+
+// ---- #2044 web-history host view -------------------------------------------
+
+/// The `webHistory` rows of the session-factory oracle, behind the same
+/// `test_baseline::oracle` provenance check every other golden replay uses.
+fn web_history_rows() -> Vec<serde_json::Value> {
+    let text = fs::read_to_string(format!("{SESSION_FACTORY}/oracle.json")).unwrap();
+    crate::test_baseline::oracle(&text);
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    parsed["webHistory"]
+        .as_array()
+        .expect("#2044 web history rows")
+        .clone()
+}
+fn web_history_cell(name: &str) -> serde_json::Value {
+    let rows: Vec<_> = web_history_rows()
+        .into_iter()
+        .filter(|row| row["name"] == name)
+        .collect();
+    assert_eq!(rows.len(), 1, "#2044 web history cell {name}");
+    rows.into_iter().next().unwrap()
+}
+fn project_web_history_cell(row: &serde_json::Value) -> AdapterResult<WebHistoryView> {
+    let entries = js(&row["entries"].to_string());
+    let JsValue::Array(ref entries) = entries else {
+        panic!("#2044 web history cell entries must be an array")
+    };
+    project_web_history(entries)
+}
+/// `JSON.stringify` of a projected value, so the comparison is field by field
+/// against the recorded TS text instead of a Rust-side paraphrase.
+fn web_json(value: &JsValue) -> serde_json::Value {
+    serde_json::from_str(
+        &stringify_json(value)
+            .expect("#2044 web history serialize")
+            .expect("#2044 web history defined"),
+    )
+    .expect("#2044 web history JSON")
+}
+fn web_history_view(actual: &WebHistoryView) -> serde_json::Value {
+    serde_json::json!({
+        "fileArtifacts": web_json(&JsValue::Array(actual.file_artifacts.clone())),
+        "agentStatuses": web_json(&JsValue::Array(actual.agent_statuses.clone())),
+        "turnErrors": web_json(&JsValue::Array(actual.turn_errors.clone())),
+        "tokenUsage": web_json(&actual.token_usage),
+        "incompleteTurnIds": web_json(&JsValue::Array(actual.incomplete_turn_ids.clone())),
+    })
+}
+
+#[test]
+fn web_history_view_matches_ts() {
+    let rows = web_history_rows();
+    assert_eq!(rows.len(), 35, "#2044 web history denominator");
+    for row in &rows {
+        let name = row["name"].as_str().expect("#2044 web history cell name");
+        let actual = project_web_history_cell(row);
+        let Some(expected) = row.get("error") else {
+            let actual = actual.expect("#2044 web history projection replay");
+            assert_eq!(
+                web_history_view(&actual),
+                row["view"],
+                "#2044 web history view {name}"
+            );
+            continue;
+        };
+        let error = actual.expect_err("#2044 web history cell rejects");
+        let outcome = web_json(&error_outcome(&error));
+        assert_eq!(
+            outcome["error"], *expected,
+            "#2044 web history error {name}"
+        );
+    }
+}
+
+#[test]
+fn web_history_workspace_diff_filtered() {
+    let row = web_history_cell("workspace-diff-filtered");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.file_artifacts.clone())),
+        row["view"]["fileArtifacts"],
+        "#2044 non-tool turns drop their workspace_diff artifacts"
+    );
+}
+
+#[test]
+fn web_history_tool_turn_keeps_diff() {
+    let row = web_history_cell("tool-turn-keeps-diff");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.file_artifacts.clone())),
+        row["view"]["fileArtifacts"],
+        "#2044 tool-result turns keep their workspace_diff artifacts"
+    );
+    assert_eq!(
+        web_json(&JsValue::Array(actual.incomplete_turn_ids.clone())),
+        row["view"]["incompleteTurnIds"],
+        "#2044 tool-result turns keep their workspace_diff artifacts"
+    );
+}
+
+#[test]
+fn web_history_finalize_rejects_nonarray() {
+    for name in ["artifacts-str", "artifacts-hex-length"] {
+        let row = web_history_cell(name);
+        let error = project_web_history_cell(&row)
+            .expect_err("#2044 non-array artifacts reject in finalize");
+        assert_eq!(
+            error.to_string(),
+            "entry.artifacts.filter is not a function",
+            "#2044 {name} reports the missing filter method"
+        );
+    }
+}
+
+#[test]
+fn web_history_context_budget_matches_ts() {
+    for name in [
+        "context-budget",
+        "context-budget-partial",
+        "context-budget-used-fallback",
+    ] {
+        let row = web_history_cell(name);
+        let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+        assert_eq!(
+            web_json(&actual.token_usage),
+            row["view"]["tokenUsage"],
+            "#2044 the latest context budget is exposed ({name})"
+        );
+    }
+}
+
+#[test]
+fn web_history_compact_budget_matches_ts() {
+    for name in ["compact-budget", "compact-budget-nopost"] {
+        let row = web_history_cell(name);
+        let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+        assert_eq!(
+            web_json(&actual.token_usage),
+            row["view"]["tokenUsage"],
+            "#2044 the latest compact budget is exposed ({name})"
+        );
+    }
+}
+
+#[test]
+fn web_history_turn_usage_matches_ts() {
+    let row = web_history_cell("turn-usage");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&actual.token_usage),
+        row["view"]["tokenUsage"],
+        "#2044 the latest turn usage is exposed"
+    );
+}
+
+#[test]
+fn web_history_incomplete_turns_filtered() {
+    let row = web_history_cell("incomplete");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.incomplete_turn_ids.clone())),
+        row["view"]["incompleteTurnIds"],
+        "#2044 completed turns leave the incomplete list"
+    );
+}
+
+#[test]
+fn web_history_visible_failures_filtered() {
+    let row = web_history_cell("turn-error-visibility");
+    let actual = project_web_history_cell(&row).expect("#2044 web history projection replay");
+    assert_eq!(
+        web_json(&JsValue::Array(actual.turn_errors.clone())),
+        row["view"]["turnErrors"],
+        "#2044 turns with a visible failure status leave the error rows"
+    );
+    assert_eq!(
+        web_json(&JsValue::Array(actual.agent_statuses.clone())),
+        row["view"]["agentStatuses"],
+        "#2044 turns with a visible failure status leave the error rows"
+    );
+}
+
+/// #2043 fix-r1 (simplify P2): the fileArtifact finalize `[...artifacts]`
+/// spread of a string iterates code points through the shared
+/// `js_value::code_point_chunks` walk. The `artifacts-str-tool-turn` golden
+/// row is ASCII only, so this test is the branch's own surrogate-pair pin —
+/// a later re-inlined per-unit loop would fail here even though the shared
+/// helper's factory golden still passes. Real TS/Node v22.22.0:
+/// `[...'a\u{1F600}\uD800b']` yields `'a'`, `'\u{1F600}'`, `'\uD800'`, `'b'`.
+#[test]
+fn web_history_string_artifacts_spread_by_code_point() {
+    let tool_turn = r#"{"version":1,"type":"durable_message","entryId":"web-1","parentEntryId":"web-0","sequence":1,"sessionId":"session-745","turnId":"tools","createdAt":"2026-10-28T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_result"}]}}"#;
+    let artifacts_row = r#"{"version":1,"type":"file_artifacts","entryId":"web-2","parentEntryId":"web-1","sequence":2,"sessionId":"session-745","turnId":"tools","createdAt":"2026-10-28T00:00:00.000Z","artifacts":"x"}"#;
+    // The lone surrogate cannot ride a JSON literal (serde_json would replace
+    // it), so the artifacts string is planted as a hand-built JsString.
+    let mut row = match js(artifacts_row) {
+        JsValue::Object(ref row) => row.clone(),
+        _ => panic!("#2044 web history string artifacts row object"),
+    };
+    row.insert(
+        "artifacts".into(),
+        JsValue::String(JsString::from_utf16(vec![
+            0x61, 0xd83d, 0xde00, 0xd800, 0x62,
+        ])),
+    );
+    let entries = [js(tool_turn), JsValue::Object(row)];
+    let view = project_web_history(&entries).expect("#2044 web history projection replay");
+    assert_eq!(
+        view.file_artifacts.len(),
+        1,
+        "#2044 the tool-result turn keeps its string artifacts row"
+    );
+    let units: Vec<Vec<u16>> = match field(&view.file_artifacts[0], "artifacts") {
+        JsValue::Array(items) => items
+            .iter()
+            .map(|value| match value {
+                JsValue::String(text) => text.units().to_vec(),
+                _ => panic!("#2044 string artifacts spread into strings"),
+            })
+            .collect(),
+        _ => panic!("#2044 string artifacts spread into an array"),
+    };
+    assert_eq!(
+        units,
+        vec![vec![0x61], vec![0xd83d, 0xde00], vec![0xd800], vec![0x62]],
+        "#2044 string artifacts spread by code point"
+    );
+}

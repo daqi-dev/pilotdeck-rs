@@ -11,6 +11,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import time
 import unittest
 from unittest.mock import patch
 
@@ -30,23 +31,67 @@ runner = Path(__file__).resolve()
 # Every guarded-source path this runner may mutate or must prove pristine.
 # Module-level because #1402 takes the global parity lease per case instead
 # of one whole-run lease, so the loop no longer sits inside a single with.
+# #1529: test_negative_guarded_sources_take_parity_lease guards this list --
+# drop the session_domain.py entry and the real parity lease silently
+# disappears while every mock-based test stays green.
 paths = [session, common, native, collector, fixture, runner, chain]
 # #1402 per-case lease window: a case holds /tmp/pdrs-parity.lock only while
 # its mutant is on disk and through the restored control (cargo no-run
-# preflight + bound test + restore + restored re-run). wait_for_slot and the
-# positive control run outside the lease, so other trees can take it in
-# every gap. The window must stay below the stale-lease takeover age in
-# common.py, or another tree could take a live window over;
-# test_negative_lease_bound_composition pins the composition.
+# preflight + bound test + restore + restored re-run). wait_for_slot still
+# runs outside the lease -- it reads no guarded bytes, so other trees can
+# take the lease in every gap. #1536 moved the positive control inside the
+# window: it reads guarded bytes (the fixture loads collect.py and the
+# frozen session_domain.py), so a second same-tree runner must not write
+# under it -- the guarded loop in main() now holds the tree lock for the
+# same reason. The window stays below the stale-lease takeover age in
+# common.py as defense in depth: a live holder always carries
+# cleanupPending and no current taker takes such an owner over (verified
+# #2929 fix-r2), so this bounds the residue a SIGKILL leaves, not a
+# takeover guard; test_negative_lease_bound_composition pins the
+# composition.
 BUILD_SECONDS = 900
 BOUND_TEST_SECONDS = 300
 SLOT_WAIT_SECONDS = 900
-PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS
+# fix-r1 (#1528 review P1): #1536 moved the positive control inside the
+# window, so the hold now covers three bound-test stages (positive,
+# negative, restored) plus the cargo build; the old BUILD + 2*BOUND pinned
+# a window that no longer described the run while its composition test
+# stayed green. test_negative_lease_bound_composition validates the sum
+# against the real stage sequence; staying below common.py's MAX_AGE is
+# defense in depth, not a takeover guard (a live holder always carries
+# cleanupPending and is never taken over).
+PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 3 * BOUND_TEST_SECONDS
+# fix-r2 (#2929 review): acquire the per-case lease with the family-max
+# budget instead of this runner's own peer-window guess (the old
+# PER_CASE + one bound stage assumed the largest other holder was 1800 s,
+# while gateway-batch alone holds the family's largest whole-round hold
+# bound -- a case queued behind it went INVALID at 2100 s).  The value is
+# FAMILY_MAX -- the family roster's largest whole-round hold bound,
+# derived live in test_lease_acquire_budgets.py -- plus this runner's own
+# restore tail and one stage of handoff margin, rounded up to the 900 s
+# family unit.  A live holder always carries cleanupPending and no taker
+# takes such an owner over (fix-r3: a dead cleanupPending owner now fails
+# the acquire fast with a diagnostic instead of waiting the budget out),
+# so the budget deliberately exceeds common.MAX_AGE and just has to
+# cover the family's largest live hold (#1528/#1529).
+# test_negative_parity_acquire_budget_follows_lock_timeout pins the
+# forwarding and the shared default.
+LEASE_ACQUIRE_SECONDS = 66600
+# fix-r3 (#2929 review): the whole round gets ONE monotonic deadline, and
+# each per-case acquire passes the remaining time, not the full constant
+# -- 34 cases each handing the full acquire constant to a lease they can never
+# get multiplies the acquire budget into an unbounded round wait.  The
+# clamp keeps the value positive: parity_lock refuses a non-positive
+# timeout, and an exhausted round must fail through the TimeoutError path.
+def lease_wait_left(deadline):
+    return max(deadline - time.monotonic(), 1)
 # Each row mutates one #1140 fix-r1 addition and names the e2e test whose
 # dedicated assertion message must fire (the named FAIL the classifier pins):
 # the scoring-side shapes in session_domain.py and the recorder/contract-side
 # shapes in collect.py, so neither the collector's output nor the frozen audit
 # can silently drift away from the P1 recorder contract.
+EXPECTED_CASES = 35
+# Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('decoder-frame-for-send-rows', session, "        require(len(decoded) == 1\n                and decoded[0].get('raw' if row['direction'] == 'send' else 'frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", "        require(len(decoded) == 1\n                and decoded[0].get('frame') == row['frame'],\n                'OBSERVER_WIRE', 'wire observation disagrees with recorder')\n", 'test_e2e_scores_real_capture'),
     ('drop-required-provider-score', session, "        if case in required and case not in covered:\n            surfaces.append('provider.requests')\n", '        pass\n', 'test_e2e_data_control_empty_ledger'),
@@ -70,12 +115,45 @@ cases = [
     ('drop-unwitnessed-candidate', session, "            cell['cases'] = native['verdicts']", "            cell['cases'] = [] if all(row['status'] == 'NOT_RUN' for row in native['verdicts']) else native['verdicts']", 'test_unwitnessed_stimuli_are_not_executed'),
     ('manifest-count-minus-one', fixture, "    return len(c.session_manifest())", "    return len(c.session_manifest()) - 1", 'test_e2e_scores_real_capture'),
     ('chain-manifest-count-minus-one', chain, "        return len(self.healthy['expected'])", "        return len(self.healthy['expected']) - 1", 'test_negative_chain_denominators_derived'),
-    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
-    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
+    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline, lock_timeout=lease_wait_left(lease_deadline)) as originals:\n                    enter_finished = acquired = time.monotonic()\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline, lock_timeout=LEASE_ACQUIRE_SECONDS).__enter__()]:\n                    enter_finished = acquired = time.monotonic()\n                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
+    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 3 * BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
+    # fix-r1 (#1528 review P2): the acquire budget is only as good as its
+    # forwarding -- dropping the kwarg silently reverts to the shared 900 s
+    # default, the exact starvation #1528 closed, while every mock stays green.
+    ('lease-acquire-budget-dropped', runner, "                with mutating_sources(root, paths, baseline=baseline, lock_timeout=lease_wait_left(lease_deadline)) as originals:\n", "                with mutating_sources(root, paths, baseline=baseline) as originals:\n", 'test_negative_parity_acquire_budget_follows_lock_timeout'),
+    # fix-r2 (#1528 review): the composition pin only priced the stages the
+    # events sequence records -- a bare run() bound stage inside the lease
+    # window (not wrapped in passed, no event) held real time no assertion
+    # counted while every check stayed green. The per-case timeouts multiset
+    # is the judge now, and this row proves it can fail.
+    ('bare-bound-run-in-window', runner, "                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    write_source_atomic(root, path, changed.encode())\n", "                    if not passed(run(name + '-positive', test)):\n                        raise ValueError('positive bound test did not pass')\n                    run(name + '-bare-bound-stage', test)\n                    write_source_atomic(root, path, changed.encode())\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
-    ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
+    ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                # fix-r6 (DS sibling#3): the memory branch never consumes\n                # the round deadline (its cases take no lease), but binding\n                # the names keeps a future refactor from tripping a\n                # NameError instead of failing a test.\n                lease_deadline = enter_finished = time.monotonic()\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            # fix-r6 (DS sibling#3): the memory branch never consumes\n            # the round deadline (its cases take no lease), but binding\n            # the names keeps a future refactor from tripping a\n            # NameError instead of failing a test.\n            lease_deadline = enter_finished = time.monotonic()\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('port-lease-not-exclusive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\n', 'test_port_reservation_is_exclusive_across_processes'),
     ('provider-lease-dropped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\n', '            provider_lease = _acquire_port_lease(candidate + 100)\n', 'test_port_reservation_is_exclusive_across_processes'),
+    # #1535: an edited table (row dropped or duplicated) must fail fast at
+    # every entry point, not first at the next control run's missing verdict.
+    ('omit-e2e-case', Path(__file__).resolve(), "    ('provider-lease-drop" + "ped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\\n', '            provider_lease = _acquire_port_lease(candidate + 100)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", '', 'test_expected_case_count'),
+    # fix-r1 (#1528 review P2): an equal-length swap (drop one row, paste
+    # another over it) keeps len(cases) == EXPECTED_CASES, so the count
+    # check alone let a retired control vanish with the summary still green;
+    # validate_case_count now also refuses non-unique names.
+    ('duplicate-e2e-case', Path(__file__).resolve(), "    ('port-lease-not-exclu" + "sive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", "    ('provider-lease-drop" + "ped', fixture, '            provider_lease = _acquire_port_lease(candidate + 1)\\n', '            provider_lease = _acquire_port_lease(candidate + 100)\\n', 'test_port_reservation_is_exclusive_across_processes'),\n", 'test_expected_case_count'),
+    # #1536: without the tree lock a second same-tree runner can interleave
+    # writes with this runner's per-case lease windows.
+    ('guarded-run-without-tree-lock', Path(__file__).resolve(), '        else:\n            with tree_' + 'lock(root, timeout=900):', '        else:', 'test_negative_guarded_run_holds_tree_lock'),
+    # #1529: drop the session_domain.py entry and the real parity lease
+    # silently disappears while every mock-based test stays green.
+    ('omit-parity-guarded-source', Path(__file__).resolve(), 'paths = [sessio' + 'n, common, native, collector, fixture, runner, chain]', 'paths = [common, native, collector, fixture, runner, chain]', 'test_negative_guarded_sources_take_parity_lease'),
+    # #2929 fix-r6 (DS sibling#2 = boundary#3): the `if not acquired:`
+    # stop-mark is the only thing keeping a failed acquire's wait inside
+    # the round budget -- drop it and the next case's refund hands the
+    # failed wait back, reviving the N-failed-acquires x family-max
+    # multiplication fix-r4 closed, with every mock green.
+    ('lease-failed-acquire-refunded', runner,
+     "            if not acquired:\n                enter_finished = time.monotonic()\n",
+     "            if not acquired:\n                pass\n",
+     'test_negative_failed_acquire_keeps_wait_charged'),
 ]
 messages = {
     'decoder-frame-for-send-rows': '#1140 e2e real capture scores 72/72 per-case PASS',
@@ -102,11 +180,34 @@ messages = {
     'chain-manifest-count-minus-one': '#1402 chain denominators derive from the calibration manifest',
     'lease-enter-without-release': '#1402 a cancelled case must release the parity lease and stay loud',
     'lease-bound-erased': '#1402 the per-case lease bound is composed and below the stale-lease age',
+    'bare-bound-run-in-window': '#1402 the per-case lease bound is composed and below the stale-lease age',
+    'lease-acquire-budget-dropped': '#1528 the parity lease acquire budget follows the caller lock timeout',
     'lease-cancel-swallowed': '#1402 a cancelled case must release the parity lease and stay loud',
     'memory-rehearsal-without-lock': '#1398 e2e memory rehearsal holds the source tree lock',
     'port-lease-not-exclusive': '#1510 the closed-guard handoff window stays exclusive via the port lease',
     'provider-lease-dropped': '#1510 the closed-guard handoff window stays exclusive via the port lease',
+    'omit-e2e-case': '#1535 e2e negative case inventory is complete',
+    'duplicate-e2e-case': '#1535 e2e negative case inventory is complete',
+    'guarded-run-without-tree-lock': '#1536 the guarded e2e run holds the tree lock around the whole loop',
+    'omit-parity-guarded-source': '#1529 the e2e runner guards gateway-parity sources under the real parity lease',
+    'lease-failed-acquire-refunded': '#2929 fix-r6: a failed acquire keeps its wait charged against the round budget',
 }
+
+
+def validate_case_count():
+    # #1535: a dropped or duplicated case row used to pass silently until the
+    # next control run noticed the missing verdict; this runs at every entry
+    # point (main and preflight) so the inventory fails fast instead.
+    # fix-r1 (#1528 review): the count alone cannot catch an equal-length
+    # swap -- drop one row and duplicate another and len(cases) still matches,
+    # so the uniqueness of the names is refused here too.
+    names = {row[0] for row in cases}
+    if len(cases) != EXPECTED_CASES:
+        raise SystemExit(f'#1535 e2e negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES}, got {len(cases)}')
+    if len(names) != EXPECTED_CASES:
+        raise SystemExit(f'#1535 e2e negative case inventory is complete: '
+                         f'expected {EXPECTED_CASES} unique names, got {len(names)}')
 
 
 def _test_classes():
@@ -146,6 +247,7 @@ def bound(test):
 
 def preflight():
     # Read-only: this never executes a mutant or bypasses the HEAD guard.
+    validate_case_count()
     errors = []
     for name, path, before, after, test in cases:
         if test not in TEST_CLASSES:
@@ -206,11 +308,21 @@ def execution_environment():
         raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
     # #1402: this guard pair is byte-duplicated in native-stimulus-plan's
     # runner; consolidating it means changing the shared negative_process.py,
-    # which belongs to the M6 lane (#1099) and is out of scope here.
+    # which belongs to the M6 lane (#1099). The #1528 family batch did
+    # change that shared file once, under coordinator dispensation:
+    # mutating_sources' parity-lease acquire budget (min(lock_timeout, 60)
+    # -> the caller's value) so a case queuing behind another tree's full
+    # case window can take the lease instead of starving at the old 60 s
+    # cap (this runner derives its per-case acquire from
+    # LEASE_ACQUIRE_SECONDS for exactly that).
+    # M6 #1099 has no active lane and no sibling branch edits that file, so
+    # no parallel conflict; coordinator-approved 2026-11-13, retained
+    # pending human re-review.
     return target_environment(root)
 
 
 def main():
+    validate_case_count()
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
     preflight()
@@ -262,6 +374,10 @@ def main():
         (out / (name + '.log')).write_text(result.stdout + result.stderr)
         return result
     def one(row):
+        # #2929 fix-r4 (DS concurrency#1): both accounts below belong to
+        # this closure -- the round deadline, and the acquire-refund mark
+        # that keeps the runner's own work out of it.
+        nonlocal lease_deadline, enter_finished
         name, path, before, after, test = row
 
         def restored():
@@ -272,6 +388,12 @@ def main():
             except Exception as error:
                 status, reason = 'INVALID', reason + '; restore: ' + str(error)
 
+        # #2929 fix-r5 (DS concurrency#1): the refund mark only moves when
+        # the acquire itself failed -- a case whose own work failed after a
+        # successful acquire keeps its work refundable, exactly like a
+        # successful case.  `acquired` defaults to True (nothing to keep
+        # charged) and flips to False only while an acquire is pending.
+        acquired = True
         # `native-stimulus-plan` anchors the two lines below verbatim
         # (`memory-e2e-claims-compiled`); keep them adjacent.
         status, reason, compiled = 'INVALID', '', False
@@ -281,8 +403,6 @@ def main():
                 raise ValueError('STALE ANCHOR ' + name)
             changed = text.replace(before, after, 1)
             compile(changed, str(path), 'exec')
-            if not passed(run(name + '-positive', test)):
-                raise ValueError('positive bound test did not pass')
             # #1402: the slot probe runs outside the lease -- it reads no
             # guarded bytes, so the shared parity lease need not be held.
             if not memory:
@@ -293,13 +413,34 @@ def main():
                 # test, restore) and through the restored control, because
                 # that control re-runs the bound test and must never race
                 # another tree that takes the same .negative-source.lock /
-                # parity lease over (#1440).
+                # parity lease over (#1440). #1536: the positive control also
+                # runs inside the window -- it reads guarded bytes (the
+                # fixture loads collect.py and the frozen session_domain.py),
+                # so a second same-tree runner must not write under it.
                 # #1908: one rename, never a truncating in-place write; the
                 # shared publish helper (#1903) keeps a SIGKILL mid-write from
                 # leaving a source the next preflight would refuse as "differs
                 # from HEAD". The table row `lease-enter-without-release`
-                # anchors the two lines below verbatim: keep them adjacent.
-                with mutating_sources(root, paths, baseline=baseline) as originals:
+                # anchors the with-entry, the acquire-finished mark, the
+                # positive control and the mutation write below verbatim:
+                # keep them adjacent.
+                # #2929 fix-r4 (DS concurrency#1): the round deadline must
+                # bound cumulative acquire WAITS, never this round's own
+                # work.  Refund the span since the previous window was
+                # acquired (window bodies, restored controls, between-case
+                # slot gaps) before the next acquire, so only the
+                # mutating_sources enters themselves -- tree-lock wait,
+                # admission scan and lease wait, all waiting to get the
+                # window -- stay charged; charging own work too would clamp
+                # the tail cases' acquire to the 1 s floor exactly when
+                # another tree holds the family-max live window this
+                # budget exists to wait out.
+                lease_deadline += time.monotonic() - enter_finished
+                acquired = False
+                with mutating_sources(root, paths, baseline=baseline, lock_timeout=lease_wait_left(lease_deadline)) as originals:
+                    enter_finished = acquired = time.monotonic()
+                    if not passed(run(name + '-positive', test)):
+                        raise ValueError('positive bound test did not pass')
                     write_source_atomic(root, path, changed.encode())
                     try:
                         build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
@@ -324,22 +465,70 @@ def main():
                     # run under the whole-loop tree lock below instead.
                     restored()
             else:
+                if not passed(run(name + '-positive', test)):
+                    raise ValueError('positive bound test did not pass')
                 status = classify(run(name + '-negative', test, name), test, messages[name])
                 reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
                           'INVALID': 'exit/test identity/assertion marker did not match'}[status]
                 restored()
         except Exception as error:
             status, reason = 'INVALID', str(error)
+            # #2929 fix-r4 (DS concurrency#1): a failed acquire must keep
+            # its wait charged -- moving the refund mark to the failure
+            # means the next case cannot refund that wait back into a
+            # fresh budget (a round of all-failing cases would otherwise
+            # re-wait the family max per case, the multiplication the
+            # deadline exists to close).  #2929 fix-r5 (DS boundary#4):
+            # only the acquire itself counts -- a failure after a
+            # successful enter is this case's own work (positive control,
+            # no-run build, bound run), which the next case must refund
+            # like any other own-work span, or a round of failing cases
+            # eats its 2100 s apiece out of the tail cases' budget.
+            if not acquired:
+                enter_finished = time.monotonic()
         results.append({'name': name, 'status': status, 'compiled': compiled, 'reason': reason,
                         'test': bound(test), 'marker': messages[name]})
+    # #1536: the guarded (committed-source) loop holds the tree lock for the
+    # whole run, same premise as the memory rehearsal above: this runner
+    # writes guarded bytes case by case, so a second same-tree runner must
+    # not interleave writes with the per-case lease windows. The between-case
+    # gaps stay free for other trees (README.md documents the premise); the
+    # table row `guarded-run-without-tree-lock` anchors the else entry below.
+    # One monotonic round deadline (#2929 fix-r3): every per-case acquire in
+    # one() passes the remaining time of this single budget, so the round's
+    # total acquire wait is bounded by LEASE_ACQUIRE_SECONDS no matter how
+    # many cases queue behind an ungettable lease.  #2929 fix-r4 (DS
+    # concurrency#1): the budget is charged only for the mutating_sources
+    # enters themselves -- one() refunds every span between acquires, the
+    # round's own work, back into the deadline -- so a tail case still has
+    # the family-max wait left after hours of own work in earlier cases.
     try:
         if memory:
             with tree_lock(root, timeout=900):
+                # fix-r6 (DS sibling#3): the memory branch never consumes
+                # the round deadline (its cases take no lease), but binding
+                # the names keeps a future refactor from tripping a
+                # NameError instead of failing a test.
+                lease_deadline = enter_finished = time.monotonic()
                 for row in selected:
                     one(row)
         else:
-            for row in selected:
-                one(row)
+            with tree_lock(root, timeout=900):
+                # #2929 fix-r4 (DS concurrency#1) + fix-r5 (DS boundary#3):
+                # both the refund clock and the deadline itself start only
+                # once the tree lock (an own wait of up to 900 s) is held, so
+                # the first acquire is handed the full budget -- arming the
+                # deadline before the tree-lock wait silently charged that
+                # wait against the lease budget, the exact own-work span
+                # the refund account exists to keep out.  fix-r6 (DS
+                # concurrency#1): one monotonic() sample arms both -- the
+                # interval between two samples double-counted into the
+                # first refund and pushed the first budget above the
+                # constant.
+                enter_finished = time.monotonic()
+                lease_deadline = enter_finished + LEASE_ACQUIRE_SECONDS
+                for row in selected:
+                    one(row)
     except BaseException as error:
         # A guard failure or a cancellation voids every row; a swallowed
         # Ctrl-C would keep a stale green summary. The per-case with above

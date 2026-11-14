@@ -30,6 +30,7 @@ factory = root / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
 handle = factory.with_name('handle.rs')
 owner = factory.with_name('owner.rs')
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
+js_value = root / 'src/pilotdeck-gateway/src/js_value.rs'
 oracle = Path(__file__).with_name('oracle.json')
 test_source = factory.with_name('factory_tests.rs')
 snapshot = Path(__file__).with_name('file-snapshot.mts')
@@ -106,7 +107,10 @@ cases = [
     # earlier, when the lone surrogate makes the actual-state JSON unserializable
     # (r5b: `#745 actual JSON: unexpected end of hex escape` instead of the
     # intended conclusion assertion).
-    ('denials-string-surrogate-pair', factory, '                if (0xd800..=0xdbff).contains(&first)\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', '                if false\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', None, prefix+'permission_denials_string_expands_by_code_point_like_js', '#1985 code point expansion'),
+    # #2043 fix-r1: the walk moved into the shared `js_value::code_point_chunks`
+    # (web fileArtifact finalize and module host stream events use it too), so
+    # the anchor follows the helper; the kill still binds the denials test.
+    ('denials-string-surrogate-pair', js_value, '        let paired = (0xd800..=0xdbff).contains(&first)\n            && tail\n                .first()\n                .is_some_and(|&next| (0xdc00..=0xdfff).contains(&next));', '        let paired = false\n            && tail\n                .first()\n                .is_some_and(|&next| (0xdc00..=0xdfff).contains(&next));', None, prefix+'permission_denials_string_expands_by_code_point_like_js', '#1985 code point expansion'),
     ('projection-metadata', factory, 'key.equals_str("title") || key.equals_str("linkedPullRequest")', 'false', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-invalid-compact', factory, 'return text("text");', 'return true;', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-js-trim', factory, 'crate::metadata::js_trim(&text)', 'text.trim()', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
@@ -400,8 +404,10 @@ def audit():
     readme = (Path(__file__).with_name('README.md')).read_text()
     declared = re.search(r'(\d+) 项变异绑定完整', readme)
     if declared is None or int(declared.group(1)) != len(cases):
-        raise SystemExit(f'#1210 README mutation count drift: README says '
-                         f'{declared and declared.group(1)}, table has {len(cases)}')
+        # #3143 fix-r2 (DS sibling#3): a count drift means the audit never
+        # started, so the refusal carries the four-way table's rc 2.
+        refuse(f'#1210 README mutation count drift: README says '
+               f'{declared and declared.group(1)}, table has {len(cases)}')
     rows = []
     for case in cases:
         name, changes, scope, test, assertion = row_parts(case)
@@ -470,19 +476,21 @@ USAGE = 'usage: negative_controls.py --audit | [--compile] OUT [mutation names]'
 mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
 if mode == '--audit':
     if arguments:
-        raise SystemExit(f'--audit takes no arguments: {arguments!r}\n{USAGE}')
+        # #3143 fix-r2 (DS sibling#3): usage shapes are never-started
+        # refusals (rc 2), the same entry the sibling runners carry.
+        refuse(f'--audit takes no arguments: {arguments!r}\n{USAGE}')
     raise SystemExit(audit())
 # Zero arguments and an unknown `-*` first argument are both usage errors;
 # `--compile` keeps its existing first-position contract: a prefix of the
 # main path, not a standalone mode.
 if mode is None:
-    raise SystemExit(USAGE)
+    refuse(USAGE)
 if mode != '--compile' and mode.startswith('-'):
-    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+    refuse(f'unknown mode: {mode}\n{USAGE}')
 compile_only = mode == '--compile'
 args = arguments if compile_only else [mode, *arguments]
 if not args:
-    raise SystemExit(USAGE)
+    refuse(USAGE)
 env = os.environ.copy()
 if missing_target() or not env.get('PDRS_BASELINE'):
     refuse('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')

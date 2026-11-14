@@ -221,10 +221,15 @@ const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
     "unknown_finish_reason",
 ];
 /// ImLiveReplyController.ts:102-106: `WARNING_STATUS_EVENTS` derives from the
-/// visible-failure list plus two entries, so the two can never drift.
+/// visible-failure list plus two entries, so the two can never drift. Both
+/// memberships come out of one lookup (#1725): `handle_agent_status` needs
+/// the visible-failure list for the failure flag and the warning list for
+/// the text append, and the shared list must not be scanned twice per event.
 const WARNING_STATUS_EVENTS_EXTRA: &[&str] = &["structured_output_completed", "turn_aborted"];
-fn is_warning_status_event(name: &str) -> bool {
-    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name) || WARNING_STATUS_EVENTS_EXTRA.contains(&name)
+fn status_event_memberships(name: &str) -> (bool, bool) {
+    let visible_failure = VISIBLE_FAILURE_STATUS_EVENTS.contains(&name);
+    let warning = visible_failure || WARNING_STATUS_EVENTS_EXTRA.contains(&name);
+    (visible_failure, warning)
 }
 
 const EMPTY_RESPONSE_EXHAUSTED_TEXT: &str = "The model returned empty content repeatedly, so this turn has stopped. Try again later or increase max output tokens.";
@@ -670,8 +675,8 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
         // visible; `isVisibleFailureStatusDetail` needs `severity === "error"`.
         let visible = detail.get("visible") != Some(&JsValue::Bool(false));
         let severity_error = visible && detail.get("severity") == Some(&JsValue::from("error"));
-        let is_visible_failure =
-            visible && (VISIBLE_FAILURE_STATUS_EVENTS.contains(&name.as_str()) || severity_error);
+        let (visible_failure_status, warning_status) = status_event_memberships(name.as_str());
+        let is_visible_failure = visible && (visible_failure_status || severity_error);
         if is_visible_failure {
             self.has_visible_failure_status = true;
         }
@@ -692,7 +697,7 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
             self.append(&format!("\n⚠️ {text}\n")).await;
             return;
         }
-        if is_warning_status_event(name.as_str()) || severity_error {
+        if warning_status || severity_error {
             if let Some(message) = detail_message() {
                 self.append(&format!("\n⚠️ {message}\n")).await;
             }

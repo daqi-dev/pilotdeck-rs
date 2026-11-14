@@ -1747,7 +1747,14 @@ async fn native_archives_match_production_wire_and_do_not_reach_upstream() {
         let request = case["request"].as_str().unwrap();
         let response = case["response"].as_str().unwrap();
         let server_boot = archive_server_boot_response(request, &home);
-        let expected = server_boot.as_deref().unwrap_or(response);
+        // #1623 fix-r2：孤立代理 sessionKey 的 case 期望登记差异应答
+        // （A7-W5-SESSION-KEY-SURROGATE-REJECT-001，比 TS 严），录制原件不动；
+        // 门在 not-found 查找之前，故该覆盖优先于 server-boot 重定向。
+        let surrogate_gate = crate::native_archive::tests::surrogate_gate_divergence(request);
+        let expected = surrogate_gate
+            .as_deref()
+            .or(server_boot.as_deref())
+            .unwrap_or(response);
         let wire = client_frame(0x81, 126, request.as_bytes());
         write(&mut pair.client, &wire).await;
         local += 1;
@@ -1908,7 +1915,14 @@ async fn archive_native_materialized_138_pairs_are_local() {
         // home ships no General chat dir either, so the two nullish-key
         // object-params cases answer the session-not-found diagnostic.
         let server_boot = archive_server_boot_response(request, &home);
-        let expected = server_boot.as_deref().unwrap_or(response);
+        // #1623 fix-r2：孤立代理 sessionKey 的 case 期望登记差异应答
+        // （A7-W5-SESSION-KEY-SURROGATE-REJECT-001，比 TS 严），录制原件不动；
+        // 门在 not-found 查找之前，故该覆盖优先于 server-boot 重定向。
+        let surrogate_gate = crate::native_archive::tests::surrogate_gate_divergence(request);
+        let expected = surrogate_gate
+            .as_deref()
+            .or(server_boot.as_deref())
+            .unwrap_or(response);
         let wire = client_frame(0x81, 126, request.as_bytes());
         write(&mut pair.client, &wire).await;
         read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;

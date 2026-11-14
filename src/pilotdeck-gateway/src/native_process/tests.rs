@@ -32,15 +32,25 @@ fn json_value(value: &JsValue) -> Value {
 }
 struct Scratch(PathBuf);
 impl Scratch {
+    // #2335: guard first — a panic inside the build loop otherwise leaks
+    // the temp tree; only a constructed `Scratch` unwinds through `Drop`.
+    // The canonical path is written back into the guard, never a second
+    // `Self(...)`, which would drop-and-delete the tree it points at.
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-1071-{}", uuid::Uuid::new_v4()));
+        let mut scratch = Self(root);
         for name in ["home", "project"] {
-            std::fs::create_dir_all(root.join(name)).expect("#1071 scratch dirs");
+            std::fs::create_dir_all(scratch.0.join(name)).expect("#1071 scratch dirs");
         }
         for name in ["token", "sidecar"] {
-            std::fs::write(root.join(name), "fixture").expect("#1071 scratch file");
+            std::fs::write(scratch.0.join(name), "fixture").expect("#1071 scratch file");
         }
-        Self(root.canonicalize().expect("#1071 scratch canonical path"))
+        let canonical = scratch
+            .0
+            .canonicalize()
+            .expect("#1071 scratch canonical path");
+        scratch.0 = canonical;
+        scratch
     }
     fn args(&self) -> Vec<OsString> {
         [
@@ -1950,13 +1960,37 @@ async fn requests_registry_switch_gates_run_reads() {
         let capabilities = described["capabilities"]
             .as_array()
             .expect("#1369 registry switch capabilities");
-        for capability in ["run_get", "run_events", "run_reattach"] {
+        // #3143 fix-r2 (DS sibling#4): the run-read names have one owner
+        // (`methods/runs.rs`), the same single-source rule fix-r1 P2#6
+        // pinned in management_tests.rs.
+        for &capability in crate::native_process::methods::RUN_METHODS {
             negative_assert_eq!(
                 capabilities
                     .iter()
                     .any(|listed| listed.as_str() == Some(capability)),
                 on,
                 "#1369 describe_server gates run capabilities"
+            );
+        }
+        // #1642: the memory pair and the cron six are gated the same way as
+        // the run reads above — `capabilities.rs` consults the bound memory
+        // gateway and the configured cron runtime, not just the static
+        // method registry. Both loop bodies keep memory disabled and cron
+        // unconfigured, so neither family may appear in either iteration.
+        for name in ["memory_list", "memory_wipe"] {
+            negative_assert!(
+                !capabilities
+                    .iter()
+                    .any(|listed| listed.as_str() == Some(name)),
+                "#1642 describe_server gates memory capabilities on the bound gateway"
+            );
+        }
+        for name in crate::runtime::cron::CRON_METHODS {
+            negative_assert!(
+                !capabilities
+                    .iter()
+                    .any(|listed| listed.as_str() == Some(name)),
+                "#1642 describe_server gates cron capabilities on the configured runtime"
             );
         }
         if on {
@@ -1980,7 +2014,9 @@ async fn requests_registry_switch_gates_run_reads() {
                 "#1369 run_events with a registry reports the run"
             );
         } else {
-            for method in ["run_get", "run_events", "run_reattach"] {
+            // #3143 fix-r2 (DS sibling#4): same single source as the loop
+            // above -- the three run reads are `runs::METHODS` verbatim.
+            for &method in crate::native_process::methods::RUN_METHODS {
                 let error = crate::test_negative_receipt::expect_err(
                     requests.request(method.into(), reference.clone()).await,
                     "#1369 run read without a registry is unavailable",

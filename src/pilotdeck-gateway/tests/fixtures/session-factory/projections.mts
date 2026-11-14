@@ -52,6 +52,84 @@ export async function observations(base:string) {
    return {name,entries,started:r.started,completed:r.completed,startedById:index(r.startedById),completedById:index(r.completedById)};
   }catch(error:any){return {name,entries,error:{name:error.name,message:error.message}};}
  });
+ // #2044: the web-history host view (`projectWebHistory`,
+ // WebHistoryProjections.ts:279-311) over the web-only registry (:266-277).
+ // The driver scans the whole log per cell before any finalize, so the error
+ // rows pin which pass throws first; the `lastSequence` constructor read makes
+ // a null element report 'sequence', unlike the registry.project subagent
+ // rows above that read `entry.type` first.
+ const {projectWebHistory}=await import(`${base}/src/session/projection/WebHistoryProjections.ts`);
+ const webEntry=(i:number,extra:any)=>({version:1,entryId:`web-${i}`,parentEntryId:i?`web-${i-1}`:null,sequence:i,sessionId:'session-745',turnId:'A',createdAt:'2026-10-28T00:00:00.000Z',...extra});
+ const toolMessage=(i:number,turnId:string)=>webEntry(i,{type:'durable_message',turnId,message:{role:'assistant',content:[{type:'tool_result'}]}});
+ const webCells:Array<[string,any[]]>=[
+  ['full',[
+   toolMessage(1,'tools'),
+   webEntry(2,{type:'file_artifacts',turnId:'tools',artifacts:[{source:'workspace_diff',path:'a'},{source:'session',path:'b'},{path:'c'}]}),
+   webEntry(3,{type:'file_artifacts',turnId:'plain',artifacts:[{source:'workspace_diff'},{source:'session'}]}),
+   webEntry(4,{type:'agent_status_message',turnId:'info',kind:'info',detail:{}}),
+   webEntry(5,{type:'agent_status_message',turnId:'hidden',kind:'error',detail:{visible:false}}),
+   webEntry(6,{type:'agent_status_message',turnId:'shown',kind:'error'}),
+   webEntry(7,{type:'turn_result',turnId:'hidden',result:{type:'error'}}),
+   webEntry(8,{type:'turn_result',turnId:'shown',result:{type:'error'}}),
+   webEntry(9,{type:'agent_status_message',event:'context_budget',turnId:'budget',detail:{displayUsed:5,used:7,total:100,effectiveTotal:90,reservedOutputTokens:3,state:'ok',ratio:0.5,budgetUsed:6}}),
+   webEntry(10,{type:'control_boundary',boundary:{kind:'compact',subtype:'compact_boundary',compactMetadata:{postTokens:100,preTokens:200,messagesSummarized:3}}}),
+   webEntry(11,{type:'turn_result',turnId:'last',result:{type:'success',usage:{inputTokens:2,outputTokens:3,extra:'kept'},permissionDenials:[]}}),
+  ]],
+  ['workspace-diff-filtered',[webEntry(1,{type:'file_artifacts',turnId:'plain',artifacts:[{source:'workspace_diff'},{source:'session'},{path:'c'}]})]],
+  ['tool-turn-keeps-diff',[toolMessage(1,'tools'),webEntry(2,{type:'file_artifacts',turnId:'tools',artifacts:[{source:'workspace_diff'}]})]],
+  ['artifacts-primitive-elements',[webEntry(1,{type:'file_artifacts',artifacts:[5]}),webEntry(2,{type:'file_artifacts',artifacts:[{type:'x'}]})]],
+  ['artifacts-str',[webEntry(1,{type:'file_artifacts',artifacts:'str'})]],
+  ['artifacts-str-tool-turn',[toolMessage(1,'tools'),webEntry(2,{type:'file_artifacts',turnId:'tools',artifacts:'str'})]],
+  ['artifacts-hex-length',[webEntry(1,{type:'file_artifacts',artifacts:{length:'0x10'}})]],
+  ['artifacts-hex-length-tool-turn',[toolMessage(1,'tools'),webEntry(2,{type:'file_artifacts',turnId:'tools',artifacts:{length:'0x10'}})]],
+  ['artifact-null',[webEntry(1,{type:'file_artifacts',artifacts:[null]})]],
+  ['artifact-null-tool-turn',[toolMessage(1,'tools'),webEntry(2,{type:'file_artifacts',turnId:'tools',artifacts:[null]})]],
+  ['artifacts-empty',[webEntry(1,{type:'file_artifacts',artifacts:[]})]],
+  ['artifacts-missing',[webEntry(1,{type:'file_artifacts'})]],
+  ['artifacts-null',[webEntry(1,{type:'file_artifacts',artifacts:null})]],
+  ['message-null',[webEntry(1,{type:'durable_message',message:null})]],
+  ['message-content-number',[webEntry(1,{type:'durable_message',message:{role:'assistant',content:5}})]],
+  ['content-null-block',[webEntry(1,{type:'durable_message',message:{role:'assistant',content:[null]}})]],
+  ['turn-error-visibility',[
+   webEntry(1,{type:'agent_status_message',turnId:'hidden',kind:'error',detail:{visible:false}}),
+   webEntry(2,{type:'agent_status_message',turnId:'shown',kind:'error'}),
+   webEntry(3,{type:'agent_status_message',turnId:'visible-flag',kind:'error',detail:{visible:true}}),
+   webEntry(4,{type:'agent_status_message',turnId:'primitive-detail',kind:'error',detail:5}),
+   webEntry(5,{type:'turn_result',turnId:'hidden',result:{type:'error'}}),
+   webEntry(6,{type:'turn_result',turnId:'shown',result:{type:'error'}}),
+   webEntry(7,{type:'turn_result',turnId:'visible-flag',result:{type:'error'}}),
+   webEntry(8,{type:'turn_result',turnId:'primitive-detail',result:{type:'error'}}),
+  ]],
+  ['turn-result-null-result',[webEntry(1,{type:'turn_result',result:null})]],
+  ['usage-null',[webEntry(1,{type:'turn_result',result:{type:'success',usage:null}})]],
+  ['usage-primitive',[webEntry(1,{type:'turn_result',result:{type:'success',usage:5}})]],
+  ['compact-metadata-null',[webEntry(1,{type:'control_boundary',boundary:{kind:'compact',subtype:'compact_boundary',compactMetadata:null}})]],
+  ['boundary-null',[webEntry(1,{type:'control_boundary',boundary:null})]],
+  ['context-budget',[webEntry(1,{type:'agent_status_message',event:'context_budget',detail:{displayUsed:5,used:7,total:100,effectiveTotal:90,reservedOutputTokens:3,state:'ok',ratio:0.5,budgetUsed:6}})]],
+  ['context-budget-partial',[webEntry(1,{type:'agent_status_message',event:'context_budget',detail:{used:2,total:10}})]],
+  ['context-budget-used-fallback',[webEntry(1,{type:'agent_status_message',event:'context_budget',detail:{used:2,displayUsed:0,total:10,effectiveTotal:8}})]],
+  ['compact-budget',[webEntry(1,{type:'control_boundary',boundary:{kind:'compact',subtype:'compact_boundary',compactMetadata:{postTokens:100,preTokens:200,messagesSummarized:3}}})]],
+  ['compact-budget-nopost',[webEntry(1,{type:'control_boundary',boundary:{kind:'compact',subtype:'compact_boundary',compactMetadata:{preTokens:200}}})]],
+  ['turn-usage',[webEntry(1,{type:'turn_result',result:{type:'success',usage:{inputTokens:2,outputTokens:3,extra:'kept'},permissionDenials:[]}})]],
+  ['incomplete',[
+   webEntry(1,{type:'durable_message',turnId:'A',message:{role:'assistant',content:[{type:'text',text:'x'}]}}),
+   webEntry(2,{type:'durable_message',turnId:'A',message:{role:'assistant',content:[{type:'text',text:'y'}]}}),
+   webEntry(3,{type:'durable_message',turnId:'B',message:{role:'assistant',content:[{type:'text',text:'z'}]}}),
+   webEntry(4,{type:'turn_result',turnId:'A',result:{type:'success'}}),
+  ]],
+  ['empty',[]],
+  ['null-entry',[webEntry(1,{type:'file_artifacts',artifacts:[]}),null]],
+  ['primitive-entries',[42,'text',true]],
+  ['near-miss-type',[webEntry(1,{type:'File_Artifacts',artifacts:'str'}),webEntry(2,{type:'file_artifacts ',artifacts:'str'})]],
+  ['error-priority-finalize-vs-reduce',[webEntry(1,{type:'file_artifacts',artifacts:'str'}),webEntry(2,{type:'turn_result',result:null})]],
+  ['error-priority-reduce-passes',[webEntry(1,{type:'file_artifacts',artifacts:null}),webEntry(2,{type:'turn_result',result:null})]],
+ ];
+ const webHistory=webCells.map(([name,raw])=>{
+  const entries=raw.map((e:any)=>e);
+  try{const r=projectWebHistory(entries);
+   return {name,entries,view:{fileArtifacts:r.fileArtifacts,agentStatuses:r.agentStatuses,turnErrors:r.turnErrors,tokenUsage:r.tokenUsage,incompleteTurnIds:r.incompleteTurnIds}};
+  }catch(error:any){return {name,entries,error:{name:error.name,message:error.message}};}
+ });
  const {SessionRuntime}=await import(`${base}/src/session/events/SessionRuntime.ts`);
  const {createDefaultSessionProjectionRegistry}=await import(`${base}/src/session/projection/BuiltinSessionProjections.ts`);
  const {SessionProjectionDriver}=await import(`${base}/src/session/projection/SessionProjectionDriver.ts`);
@@ -112,5 +190,5 @@ export async function observations(base:string) {
   } catch(error:any) { return {name,entries,error:{name:error.name,message:error.message}}; }
   finally { driver.dispose(); }
  });
- return {projections,subagentReferences,storageErrors,hydrated,fileState:{allowedReadFiles:file.allowedReadFiles,readFileState:Object.fromEntries(file.readFileState),writeSnapshots:Object.fromEntries(file.writeSnapshots)}};
+ return {projections,subagentReferences,webHistory,storageErrors,hydrated,fileState:{allowedReadFiles:file.allowedReadFiles,readFileState:Object.fromEntries(file.readFileState),writeSnapshots:Object.fromEntries(file.writeSnapshots)}};
 }

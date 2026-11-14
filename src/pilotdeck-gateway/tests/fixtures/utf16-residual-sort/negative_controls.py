@@ -20,7 +20,7 @@ from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
                                run_owned, tree_lock, wait_for_slot)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, select,
-                                verdict_exit)
+                                verdict_exit, withdraw_claim)
 from negative_suite import (Case, classify, invalidate_completed, passed,
                             publish_summary)
 
@@ -176,12 +176,10 @@ def main():
         # claim_dir made is withdrawn so a refusal leaves no evidence dir that
         # looks claimed (specs/negative-controls/README.md, the exit-code
         # four-way table and the "guards run before claim_dir" paragraph).
-        # rmdir only removes the empty case -- a run that already wrote logs
-        # keeps them.
-        try:
-            out.rmdir()
-        except OSError:
-            pass
+        # #3143 fix-r2 (DS sibling#1): the shared atomic withdrawal (rename
+        # + rmtree in one helper, empty or not) -- the same migration the
+        # four fix-r1 runners carry.
+        withdraw_claim(out)
         refuse(f'guard refused to start: {error!r}')
 
     # Startup is everything the guard does before the first mutation; after

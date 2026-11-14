@@ -29,7 +29,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, new_run_token, run_owned,
+                              unique_summary_tmp, wait_for_slot)
 from negative_suite import classify as shared_classify
 
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
@@ -73,7 +74,7 @@ def restore_positive(run):
     still exits nonzero.
     """
     try:
-        code = run('restored', '')
+        code = run('restored', '')[0]
         return code == 0, None if code == 0 else f'exit={code}'
     except Exception as error:
         return False, f'{type(error).__name__}: {error}'
@@ -99,10 +100,19 @@ def summary_payload(*, results, failures, restored, restored_ok,
     return payload
 
 
-def write_summary(output, payload):
-    pending = output / 'summary.json.tmp'
+def write_summary(output, payload, run_token):
+    # #1087 fix-r8 (S2-b): the staging name is per-process instead of the
+    # fixed ``summary.json.tmp`` — a shared mutable file on this reused
+    # mkdir directory that two overlapping runs truncated each other
+    # through — and the payload names the run.
+    # #1087 fix-r9 (P2-a #2): the publish name is per-run for the same
+    # reason — a fixed ``summary.json`` let a later run overwrite the
+    # previous run's verdict in the reused directory.
+    summary_name = f'summary.{run_token}.json'
+    pending = unique_summary_tmp(output, summary_name)
+    payload['runToken'] = run_token
     pending.write_text(json.dumps(payload, indent=2) + '\n')
-    pending.replace(output / 'summary.json')
+    pending.replace(output / summary_name)
 
 
 def main():
@@ -113,6 +123,12 @@ def main():
     root = Path(__file__).resolve().parents[5]
     output = Path(sys.argv[1]).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # #1087 fix-r8 (S1-b/S2-b): every evidence name this run publishes
+    # carries the shared per-run token (pid.serial.time_ns) — the OUT_DIR
+    # above is a plain reused mkdir, so two overlapping runs must not
+    # truncate each other's fixed-name logs, and the time_ns component
+    # survives pid recycling.
+    run_token = new_run_token()
     prepare = root / 'src/pilotdeck-gateway/src/runtime/context/prepare.rs'
     manifest = root / 'src/pilotdeck-gateway/src/host/modules/manifest.rs'
     oracle = root / ('src/pilotdeck-gateway/tests/fixtures/'
@@ -357,9 +373,15 @@ def main():
                 mutant['name'], 'mutation anchor must be unique')
 
         def run(name, test, gate=None):
-            with (output / f'{name}.log').open('w') as log:
+            # #1087 fix-r8 (S2-b): the log name is per-run, and the verdict
+            # below reads the transcript this run's own ``run_owned`` built
+            # in memory — the old disk read-back could pick up another run's
+            # bytes on this reused directory and judge them (a false
+            # SURVIVED/KILLED).
+            with (output / f'{name}.{run_token}.log').open('w') as log:
                 gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
-                log.write(gate.stdout + gate.stderr)
+                transcript = gate.stdout + gate.stderr
+                log.write(transcript)
                 log.flush()
                 # No `--nocapture`: it interleaves a test's stdout with the
                 # `test <name> ... FAILED` status line the shared judge reads
@@ -371,10 +393,11 @@ def main():
                     env=env,
                     timeout=600,
                 )
+                transcript += result.stdout + result.stderr
                 log.write(result.stdout + result.stderr)
-                return result.returncode
+                return result.returncode, transcript
 
-        assert run('positive', '') == 0, 'positive tests must pass before mutating'
+        assert run('positive', '')[0] == 0, 'positive tests must pass before mutating'
         failures = []
         try:
             for mutant in mutants:
@@ -387,8 +410,7 @@ def main():
                 path.write_text(mutated)
                 try:
                     try:
-                        code = run(name, mutant['test'], gate)
-                        raw = (output / f'{name}.log').read_text()
+                        code, raw = run(name, mutant['test'], gate)
                         status, reason = classify_control(mutant, code, raw)
                     except Exception as error:
                         # Account for every mutant even when its runner fails.
@@ -428,7 +450,7 @@ def main():
             after_sha256={path.name: hashlib.sha256(
                 path.read_bytes()).hexdigest() for path in files},
         )
-        write_summary(output, payload)
+        write_summary(output, payload, run_token)
         counts = payload['counts']
         print('summary: ' + ', '.join(
             f'{state}={count}' for state, count in counts.items()), flush=True)

@@ -18,6 +18,7 @@ from negative_suite import matrix_main
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parents[1]
 weixin = root / 'src/pilotdeck-gateway/src/channel/weixin'
+runtime_status = root / 'src/pilotdeck-gateway/src/channel/runtime_status.rs'
 attachments = root / 'src/pilotdeck-gateway/src/channel/im_attachment.rs'
 attachment_tests = (root / 'src/pilotdeck-gateway/src/channel'
                     / 'im_attachment/tests.rs')
@@ -229,10 +230,16 @@ MUTATIONS = [
      SUPERSEDED, '#2073 a superseded timer must not write before the debounce elapses'),
     # 2) a cancelled drain reports completion: the waiter returns a success
     #    that never wrote (this is the pre-fix shape, where the entry also
-    #    stayed forever).
+    #    stayed forever). #1725 re-based the anchor onto the `Option<Result>`
+    #    payload — a dropped drain must not settle its waiters at all, or the
+    #    state it claimed is never written.
     ('weixin-state-drain-cancel-reported-done', weixin / 'state.rs',
-     '            completed: false,',
-     '            completed: true,',
+     '        if let (Some(sender), Some(outcome)) = (sender, self.outcome.take()) {\n'
+     '            let _ = sender.send_replace(Some(outcome));\n'
+     '        }\n',
+     '        if let Some(sender) = sender {\n'
+     '            let _ = sender.send_replace(Some(self.outcome.take().unwrap_or(Ok(()))));\n'
+     '        }\n',
      ABANDONED, '#2073 the claimed state must not be lost with the dropped drain'),
     # 3) the cancelled drain does not put back the state it claimed.
     ('weixin-state-claimed-not-restored', weixin / 'state.rs',
@@ -354,12 +361,256 @@ MUTATIONS = [
      '            BodyError::Terminated => WeixinClientError::fetch_failed(),',
      'channel::weixin::media::tests::a_terminated_body_reports_the_fetch_type_error',
      '#1823 truncated body reports terminated'),
+
+    # #1725 / #2055 p2batch-x concurrency close-out. The reachable half of the
+    # release-atomicity fix: a release that only disarms leaves the chat's
+    # marker in `active_chats`, so the next admission is swallowed forever.
+    # (Reverting to the split shift-then-Drop shape survives single-threaded
+    # tests — that window needs cross-thread preemption — and is registered
+    # as a structural guarantee, not a mutation row.)
+    ('release-keeps-leftover-marker', weixin / 'mod.rs',
+     '    fn release(&mut self, inner: &mut Inner) {\n'
+     '        if self.armed {\n'
+     '            inner.active_chats.remove(&self.user);\n'
+     '            self.armed = false;\n'
+     '        }\n'
+     '    }\n',
+     '    fn release(&mut self, _inner: &mut Inner) {\n'
+     '        if self.armed {\n'
+     '            self.armed = false;\n'
+     '        }\n'
+     '    }\n',
+     'channel::weixin::tests::drained_chat_is_re_admitted_without_a_leftover_marker',
+     '#1725 a drained queue leaves the chat immediately re-admittable'),
+    # The in-lock abort recheck: without it, a late recovery watcher or a
+    # credentials reload racing a `stop()` installs a fresh poll behind the
+    # stopper's back (TS cannot — the stopper awaits the recovery promise).
+    ('start-after-stop-recheck-dropped', weixin / 'mod.rs',
+     '            if inner.abort.as_ref().is_some_and(|abort| abort.is_aborted()) {',
+     '            if inner.abort.as_ref().is_some_and(|abort| abort.is_aborted() && false) {',
+     'channel::weixin::tests::stopped_channel_does_not_restart_the_poll_loop',
+     '#1725 a stopped channel does not restart its poll loop'),
+    # The stop's wait for the poll task must be bounded: a plain await hangs
+    # with a poll loop parked inside a request the abort cannot interrupt
+    # (the test's own outer timeout then dies by name instead of the suite
+    # hanging).
+    ('stop-wait-unbounded', weixin / 'mod.rs',
+     '        if let Some(task) = poll_task\n'
+     '            && tokio::time::timeout(stop_wait, task).await.is_err()\n'
+     '        {\n'
+     '            self.log(\n'
+     '                "warn",\n'
+     '                "weixin: stop timed out waiting for the poll loop to exit".into(),\n'
+     '            );\n'
+     '        }\n',
+     '        if let Some(task) = poll_task {\n'
+     '            let _ = task.await;\n'
+     '            self.log(\n'
+     '                "warn",\n'
+     '                "weixin: stop timed out waiting for the poll loop to exit".into(),\n'
+     '            );\n'
+     '        }\n',
+     'channel::weixin::tests::stop_is_bounded_when_the_poll_never_returns',
+     '#1725 stop returns even when the poll loop never does'),
+    # The identity check: only an entry that is still *this* submission's
+    # receiver goes, so a late task cannot tear down a newer submission's
+    # abort fence.
+    ('in-flight-retirement-ignores-identity', weixin / 'mod.rs',
+     '    if in_flight\n'
+     '        .get(key)\n'
+     '        .is_some_and(|current| current.same_channel(own))\n'
+     '    {\n'
+     '        in_flight.remove(key);\n'
+     '    }\n',
+     '    in_flight.remove(key);\n',
+     'channel::weixin::tests::retiring_an_in_flight_entry_spares_a_newer_submission',
+     "#1725 the stale task's retirement spares the newer entry"),
+    # The wiring: without the retirement call itself, every finished
+    # submission leaves its entry pinned forever.
+    ('in-flight-retirement-not-wired', weixin / 'mod.rs',
+     '            if let Some((key, own_rx)) = own_entry {\n'
+     '                let mut in_flight = in_flight.lock().unwrap_or_else(|e| e.into_inner());\n'
+     '                retire_in_flight_entry(&mut in_flight, &key, &own_rx);\n'
+     '            }\n',
+     '            drop(own_entry);\n',
+     'channel::weixin::tests::finished_submission_retires_its_in_flight_entry',
+     '#1725 a finished submission stops occupying the in-flight table'),
+    # TS `Promise.all(keys.map(ensureWrite))`: every drain starts before the
+    # first await settles; a sequential `?` leaves the keys after the failing
+    # one unwritten.
+    ('flush-sequential-short-circuit', weixin / 'state.rs',
+     '        let outcomes =\n'
+     '            futures_util::future::join_all(keys.iter().map(|key| self.ensure_write(key))).await;\n'
+     '        for outcome in outcomes {\n'
+     '            outcome?;\n'
+     '        }\n',
+     '        for key in &keys {\n'
+     '            self.ensure_write(key).await?;\n'
+     '        }\n',
+     'channel::weixin::tests::flush_attempts_every_dirty_key_before_reporting_the_first_failure',
+     '#1725 the key after the failing one is still written'),
+    # The waiter must observe the drainer's failure, not report a success the
+    # drainer never achieved.
+    ('flush-waiter-swallows-drainer-failure', weixin / 'state.rs',
+     '                Ok(outcome) => {\n'
+     '                    return outcome\n'
+     '                        .clone()\n'
+     '                        .expect("#1725 the wait_for predicate guarantees a payload");\n'
+     '                }\n',
+     '                Ok(_) => {\n'
+     '                    return Ok(());\n'
+     '                }\n',
+     'channel::weixin::tests::flush_waiter_observes_the_drainers_failure',
+     "#1725 the waiter observes the drainer's failure, not a success"),
+    # A8.3-CH-WEIXIN-FLUSH-001: the flush error is the first one in KEY order,
+    # the registered stand-in for the TS `Promise.all` temporal first
+    # rejection. A reversed iteration reports the LAST failing key's error
+    # instead — the deterministic any-order surrogate (a true time-order
+    # mutant would be unreproducible, which is exactly why key order was
+    # registered: completion order is timing-dependent).
+    ('flush-error-order-reversed', weixin / 'state.rs',
+     '        for outcome in outcomes {\n'
+     '            outcome?;\n'
+     '        }\n',
+     '        for outcome in outcomes.into_iter().rev() {\n'
+     '            outcome?;\n'
+     '        }\n',
+     'channel::weixin::tests::'
+     'flush_reports_the_key_order_first_error_when_two_keys_fail_differently',
+     "#1725 the flush error is the key-order first key's EISDIR, per "
+     'A8.3-CH-WEIXIN-FLUSH-001'),
+
+    # #1725 persistence close-out (S3). The reporter's whole
+    # read-modify-write must sit inside the shared lock — the TS module is
+    # synchronous on one event loop — and its publish must go through the
+    # tmp+rename hop.
+    ('runtime-status-reporter-lock-dropped', runtime_status,
+     '        let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());\n',
+     '        let _ = &lock;\n',
+     'native_process::channels_tests::reporter_updates_serialize_through_the_shared_lock',
+     '#1725 a report blocked on the shared lock writes nothing'),
+    ('runtime-status-reporter-reads-before-lock', runtime_status,
+     '        let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());\n'
+     '        let now = now_iso();\n'
+     '        let mut channels = match read_snapshot(&pilot_home)\n'
+     '            .get("channels")\n'
+     '            .and_then(JsValue::as_object)\n'
+     '        {\n'
+     '            Some(channels) => channels.clone(),\n'
+     '            None => JsObject::new(),\n'
+     '        };\n',
+     '        let mut channels = match read_snapshot(&pilot_home)\n'
+     '            .get("channels")\n'
+     '            .and_then(JsValue::as_object)\n'
+     '        {\n'
+     '            Some(channels) => channels.clone(),\n'
+     '            None => JsObject::new(),\n'
+     '        };\n'
+     '        let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());\n'
+     '        let now = now_iso();\n',
+     'native_process::channels_tests::reporter_updates_serialize_through_the_shared_lock',
+     '#1725 the blocked report re-reads under the lock and keeps the concurrent rewrite: other'),
+    ('runtime-status-publish-rename-dropped', runtime_status,
+     '            std::fs::rename(&temporary, &path)?;\n',
+     '            let _ = &temporary;\n',
+     'native_process::channels_tests::reporter_updates_serialize_through_the_shared_lock',
+     '#1725 runtime status file'),
+    # The credentials save's whole write holds the credentials lock, so a
+    # concurrent `save_cursor` cannot read the file this write replaces.
+    ('credentials-save-lock-dropped', weixin / 'mod.rs',
+     '        let _guard = self\n'
+     '            .0\n'
+     '            .credentials_write\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner());\n'
+     '        let write = self.write_credentials_file(creds);\n',
+     '        let write = self.write_credentials_file(creds);\n',
+     'channel::weixin::tests::save_credentials_takes_the_lock_and_publishes_atomically',
+     '#1725 a credentials save blocked on the lock writes nothing'),
+    ('credentials-publish-rename-dropped', weixin / 'mod.rs',
+     '        std::fs::rename(&temporary, &self.0.credentials_path)?;\n',
+     '        let _ = &temporary;\n',
+     'channel::weixin::tests::save_credentials_takes_the_lock_and_publishes_atomically',
+     '#1725 credentials file'),
+    # The cursor save's load must happen inside the lock: loading before it
+    # publishes the stale pre-lock snapshot and resurrects the credentials a
+    # concurrent rewrite had already replaced.
+    ('cursor-save-reads-before-lock', weixin / 'mod.rs',
+     '        let _guard = self\n'
+     '            .0\n'
+     '            .credentials_write\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner());\n'
+     '        if let Some(mut creds) = self.load_credentials() {\n',
+     '        let creds = self.load_credentials();\n'
+     '        let _guard = self\n'
+     '            .0\n'
+     '            .credentials_write\n'
+     '            .lock()\n'
+     '            .unwrap_or_else(|e| e.into_inner());\n'
+     '        if let Some(mut creds) = creds {\n',
+     'channel::weixin::tests::save_cursor_read_modify_write_holds_the_credentials_lock',
+     '#1725 the cursor save re-reads under the lock and keeps the newer credentials'),
+
+    # #1725 fix-r4 items 13/14/16. The two client-level falsy rows bind the
+    # knobs to unit goldens the replay cannot distinguish (its fake server
+    # echoes the cursor back and always answers `tt-1`, so no oracle case can
+    # turn the filters' branches) — the dedicated loopback tests hand the
+    # real client an empty response, the falsifiable golden item 14 asked for.
+    ('empty-buffer-clears-cursor-unit', weixin / 'client.rs',
+     'string_field(&response, "get_updates_buf").filter(|b| !b.units().is_empty())',
+     'string_field(&response, "get_updates_buf")',
+     'channel::weixin::tests::poll_with_an_empty_updates_buf_keeps_the_cursor',
+     '#1725 an empty get_updates_buf is falsy and does not clear the poll cursor'),
+    ('empty-ticket-sends-typing-unit', weixin / 'client.rs',
+     'string_field(&config, "typing_ticket").filter(|ticket| !ticket.units().is_empty())',
+     'string_field(&config, "typing_ticket")',
+     'channel::weixin::tests::send_typing_with_an_empty_ticket_makes_no_request',
+     '#1725 an empty typing_ticket is falsy: no sendtyping request is made'),
+    # auth.js `status.baseurl || baseUrl`: taking the returned baseurl
+    # unconditionally makes the empty (falsy) one win over the passed base.
+    ('login-baseurl-fallback-dropped', weixin / 'client.rs',
+     '                    base_url: if returned_base.is_empty() {\n'
+     '                        base_url.into()\n'
+     '                    } else {\n'
+     '                        returned_base\n'
+     '                    },',
+     '                    base_url: returned_base,',
+     'channel::weixin::tests::login_confirmed_fields_follow_js_falsy_semantics',
+     '#1725 an empty returned baseurl is falsy: the passed base URL stays'),
+    # WeixinChannel.ts:980-988: `!data.baseUrl || ...` — dropping the emptiness
+    # filter lets a `""` field count as present credentials.
+    ('empty-credentials-fields-accepted', weixin / 'mod.rs',
+     '                .and_then(JsValue::as_string)\n'
+     '                .filter(|text| !text.units().is_empty())',
+     '                .and_then(JsValue::as_string)',
+     'channel::weixin::tests::load_credentials_treats_empty_strings_as_absent',
+     '#1725 an empty baseUrl is falsy: the file is not credentials'),
+    # `this.client?.cursor || creds.cursor`: dropping the first filter keeps
+    # the empty live cursor instead of falling through to the saved one.
+    ('rebuild-cursor-fallback-dropped', weixin / 'mod.rs',
+     '            .map(|client| client.cursor())\n'
+     '            .filter(|cursor| !cursor.is_empty())\n'
+     '            .or_else(|| creds.cursor.clone());',
+     '            .map(|client| client.cursor())\n'
+     '            .or_else(|| creds.cursor.clone());',
+     'channel::weixin::tests::rebuild_client_after_poll_error_treats_empty_cursors_as_absent',
+     '#1725 an empty live cursor is falsy: the saved cursor is set instead'),
+    # #1725 item 13: the home knob derives the whole family; splitting the
+    # derived file off the knob is the shape the collapse removed.
+    ('credentials-home-filename-split', weixin / 'mod.rs',
+     '            .unwrap_or_else(|| credentials_home.join("weixin-credentials.json"));',
+     '            .unwrap_or_else(|| credentials_home.join("credentials.json"));',
+     'channel::weixin::tests::credentials_home_derives_the_whole_family',
+     '#1725 the derived credentials file is readable'),
 ]
 
 
 def main():
     guarded = list(weixin.glob('*.rs'))
-    guarded += [native / 'channels.rs', native / 'methods/weixin_login.rs',
+    guarded += [native / 'channels.rs', native / 'channels_tests.rs',
+                native / 'methods/weixin_login.rs',
+                runtime_status,
                 weixin / 'media/tests.rs',
                 root / 'src/pilotdeck-gateway/tests/weixin_channel.rs']
     guarded += [attachments, attachment_tests]

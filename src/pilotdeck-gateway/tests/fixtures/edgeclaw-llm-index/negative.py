@@ -23,7 +23,8 @@ import subprocess
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (dead_stream_print, mutating_sources,
+                               run_owned, wait_for_slot)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/index.rs'
@@ -130,12 +131,19 @@ def anchors(texts):
             stale.append((name, count))
     assert set(messages) == {case[0] for case in cases}, 'every mutant needs its own named assertion'
     if stale:
+        # Template-pinned (#1087 fix-r8, S1-a exemption): this helper must stay
+        # byte-identical to anchor_selfcheck's SNAPSHOT_ANCHOR_HELPER — the
+        # read-only snapshot view `anchors(originals)` is trusted only because
+        # the exact code matches, so this one refusal print is not converted
+        # to dead_stream_print here (the sibling family is; see the matrix).
         for name, count in stale: print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
         raise SystemExit(2)
 
 anchors({path: path.read_text() for path in (source, text)})
 if sys.argv[1:] == ['--check-anchors']:
-    print(f'{len(cases)} unique anchors; no mutation')
+    # #1087 fix-r8 (S1-a, sibling #1): the green preflight keeps exit 0
+    # under a dead stdout.
+    dead_stream_print(f'{len(cases)} unique anchors; no mutation')
     raise SystemExit(0)
 assert os.environ.get('CARGO_TARGET_DIR'), 'CARGO_TARGET_DIR must be supplied by caller'
 assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | --check-anchors'

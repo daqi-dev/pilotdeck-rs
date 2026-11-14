@@ -355,8 +355,27 @@ def _publish(path, value):
     temporary.replace(path)
 
 
+# #2929 fix-r2: the parity-lease acquire budget for this runner: the shared
+# branch's mutating_sources window and the non-shared branch's own
+# parity_lease() both acquire the same host-wide /tmp/pdrs-parity.lock.
+# FAMILY_MAX -- the family roster's largest whole-round hold bound
+# (gateway-batch; the live value is the roster's FAMILY_MAX) -- plus this runner's own restore tail and one
+# stage of handoff margin, rounded up to the 900 s family unit.  One
+# derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.  A live holder always carries
+# cleanupPending and no taker takes such an owner over, so the budget
+# deliberately exceeds common.MAX_AGE -- MAX_AGE only ages out
+# never-published stale locks; a published owner, dead pid included, keeps
+# the cleanupPending protection and is never taken over automatically
+# (fix-r3: such a residual now fails the acquire fast with a diagnostic
+# instead of waiting the budget out) -- and just has to cover the family's
+# largest live hold (#1528/#1529).
+LEASE_ACQUIRE_BUDGET_SECONDS = 65700
+
+
 @contextmanager
-def parity_lease(lock=LOCK, timeout=60):
+def parity_lease(lock=LOCK, timeout=LEASE_ACQUIRE_BUDGET_SECONDS):
     """Hold the family directory lease while mutating frozen apparatus.
 
     The control runner is not product code, so this is a small, fail-closed
@@ -513,6 +532,12 @@ def main():
         # /tmp/pdrs-parity.lock.guard until the 60s bound, voiding every row
         # (DS r2 sibling#1). The lease is not reentrant: when mutating_sources
         # holds it, we must not hold it too (#1398).
+        # The non-shared branch's own parity_lease() does NOT wait the host-wide
+        # lease out: it polls only the .guard flock (a lease-holding peer
+        # leaves that guard free), and the first lease-directory check after
+        # it fails immediately (#2929 fix-r3: fail-fast -- a queued --only
+        # run INVALIDs in seconds instead of waiting; the family budget
+        # bounds only the millisecond-scale guard contention).
         def _parity_relative(path):
             try:
                 return path.resolve().relative_to(ROOT).as_posix()
@@ -522,7 +547,8 @@ def main():
         shared = any(rel is not None and parity_guarded(rel)
                      for rel in map(_parity_relative, paths))
         lease = nullcontext() if shared else parity_lease()
-        with lease, mutating_sources(ROOT, paths, baseline=args.baseline) as originals:
+        with lease, mutating_sources(ROOT, paths, baseline=args.baseline,
+                                    lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
             for name, source, old, new in selected:
                 status, reason = 'INVALID', 'not executed'
                 test, message = CHECKS[name]

@@ -3,12 +3,14 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 77; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 79; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
 `sms-oracle-signed-signature-header`, `#1913` added
 `sms-oracle-recorded-version`, `#2152` added
 `sms-oracle-recorded-omit-host`, `#2691` added the three port-guard
-switches — the `switches` table is the truth source). `#1879` only
+switches, `#2461` fix-r6 added `sms-replay-connect-unknown-as-refused`
+and `sms-raw-request-connect-unknown-as-refused` — the `switches` table is
+the truth source). `#1879` only
 rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring
@@ -162,6 +164,19 @@ switches = [
     ('sms-v4-probe-unknown-as-unshared', SMS / 'mod.rs',
      'classify_v4_probe_other_errors_stay_unknown',
      '#1589 v4 probe must keep unattributable errors Unknown'),
+    # #2461 fix-r6 (review P2#5 / structural #3): the replay connect arm folds
+    # every error kind into `refused: true` (the pre-#2462 shape) — a false
+    # refused passes the oracle comparison while the listener is still up.
+    # Killed by the pure classifier test, no real port held.
+    ('sms-replay-connect-unknown-as-refused', SMS / 'tests.rs',
+     'replay_connect_probe_unknown_errors_stay_named',
+     '#2462 the replay connect probe must fail by name, not as refused'),
+    # #2461 fix-r6 (review P2#5 / structural #3): the raw_request connect
+    # mapping folds every transport failure into ConnectRefused (the pre-#2462
+    # shape) — same masquerade, pinned by its own pure-function test.
+    ('sms-raw-request-connect-unknown-as-refused', SMS / 'mod.rs',
+     'raw_request_connect_mapping_keeps_unknown_errors_named',
+     '#2462 a non-refused connect stays a named raw-request failure'),
     # #1729: recording type drift must fail before replay can use defaults.
     ('sms-oracle-recorded-header-map', SMS / 'tests.rs', 'recorded_header_map_rejects_wrong_type',
      '#1339 #1729 rejects headers type drift'),

@@ -34,7 +34,8 @@ from pathlib import Path
 import re
 import unittest
 
-from negative_panic import (marker_kills_named_test, named_test_failed,
+from negative_panic import (SUMMARY_FAILED, classify_bound_run,
+                            marker_kills_named_test, named_test_failed,
                             named_test_killed, panic_evidence,
                             single_failed_test_run)
 from negative_suite import declares_test
@@ -682,6 +683,44 @@ class PanicBlockCriterion(unittest.TestCase):
         self.assertFalse(marker_kills_named_test(raw, NAMED, marker,
                                                 target='tail payload sees done'),
                          'a target without an issue prefix is not pinned')
+
+    def test_named_test_killed_requires_the_libtest_summary_by_default(self):
+        """#1087 fix-r5 (simplify #2): an aborted run is not a kill.
+
+        The ``--nocapture`` SIGKILL shape measured on a real libtest process
+        already printed the named test's FAILED line and its own panic
+        payload but never reached libtest's own summary; the shared default
+        must reject it, and only an explicit waiver may accept it.
+        """
+        complete = log('FAILED', '', named_panic=MARKER)
+        aborted = complete.replace(SUMMARY_FAILED, 'aborted before summary')
+        self.assertIn('panicked at', aborted)
+        self.assertNotIn(SUMMARY_FAILED, aborted)
+        self.assertFalse(named_test_killed(aborted, NAMED, MARKER),
+                          'a partial transcript without the summary line must '
+                          'not kill')
+        self.assertTrue(named_test_killed(aborted, NAMED, MARKER,
+                                          require_summary=False),
+                        'an explicit waiver must judge only the panic evidence')
+
+    def test_classify_bound_run_routes_the_three_outcomes(self):
+        """The shared bound-run classifier (simplify #1) keeps its contract."""
+        killed = log('FAILED', '', named_panic=MARKER)
+        self.assertEqual(classify_bound_run(101, killed, NAMED, MARKER),
+                         ('KILLED', 'named assertion failed'))
+        self.assertEqual(classify_bound_run(0, killed, NAMED, MARKER),
+                         ('SURVIVED', 'bound test stayed green'))
+        self.assertEqual(classify_bound_run(101, killed, NAMED, 'other marker'),
+                         ('INVALID', 'test failed outside the named assertion'))
+        aborted = killed.replace(SUMMARY_FAILED, 'aborted before summary')
+        self.assertEqual(classify_bound_run(101, aborted, NAMED, MARKER),
+                         ('INVALID', 'no libtest FAILED summary line '
+                          '(aborted run or harness error)'))
+        self.assertEqual(
+            classify_bound_run(0, killed, NAMED, MARKER,
+                               survived_reason='named test stayed green'),
+            ('SURVIVED', 'named test stayed green'),
+            'an explicit survived reason must survive the dedup')
 
     def test_libtest_reports_detached_panics_after_the_failed_line(self):
         # P2-2 constraint cannot be implemented: libtest streams the detached

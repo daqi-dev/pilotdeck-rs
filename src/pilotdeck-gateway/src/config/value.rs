@@ -54,7 +54,7 @@ pub(super) fn js_string(v: &JsValue) -> String {
             // see an array checks the bound first (#1550 修 r5).
             Err(crate::js_value::StackOverflow) => String::new(),
         },
-        JsValue::Object(o) => format!("[object {}]", o.native_tag().unwrap_or("Object")),
+        JsValue::Object(o) => format!("[object {}]", crate::js_value::object_tag(o)),
         _ => stringify_json(v).ok().flatten().unwrap_or_default(),
     }
 }
@@ -163,4 +163,14 @@ pub(super) fn coercion_error(kind: crate::js_value::ToStringError) -> super::Err
     let mut e = super::Error::new("gateway_request_failed", kind.message());
     e.name = kind.name();
     e
+}
+/// The one check-and-map every config read face that coerces with
+/// `String(value)` goes through (`schemaVersion`, `alwaysOn.language`,
+/// `encodeURIComponent(agentId)`): the walk's error kind maps to the JS error
+/// class, never a collapsed one. A single helper keeps the three call sites
+/// from re-collapsing the class on their own (#1833 B1 — each site used to be
+/// free to hardcode the kind, and only `NotPrimitive` was reachable through a
+/// real YAML load, so a collapsed mapping stayed green).
+pub(super) fn require_string_coercible(v: &JsValue) -> Result<(), super::Error> {
+    string_coercible(v).map_err(coercion_error)
 }

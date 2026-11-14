@@ -363,4 +363,28 @@ mod tests {
             "distinct sessions must stay distinct files"
         );
     }
+
+    /// #1623 (方案 B residual): the stored identity stays lossy — a lone
+    /// surrogate and an explicit U+FFFD are still one file, because
+    /// `sanitize_session_id` renders through `String::from_utf16_lossy`. The
+    /// human decision kept this alias (no sanitize injectivity change, no
+    /// migration); the `require_session_key` entry guards are the defense.
+    /// This pins the residual, so a future change to the derivation shows up
+    /// against the registered divergence
+    /// (`A7-W5-SESSION-KEY-SURROGATE-REJECT-001`).
+    #[test]
+    fn session_transcript_path_keeps_the_surrogate_fffd_alias() {
+        let home = Path::new("/tmp/pdrs-1623-home");
+        let project = Path::new("/project");
+        let lone = session_transcript_path(
+            home,
+            project,
+            &pilotdeck_protocol::JsString::from_utf16(vec![0x73, 0xd800]),
+        );
+        let repl = session_transcript_path(home, project, &"s\u{fffd}".into());
+        assert_eq!(
+            lone, repl,
+            "#1623 the lossy stored identity keeps the surrogate/FFFD alias (方案 B residual)"
+        );
+    }
 }

@@ -2022,6 +2022,50 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
     );
 }
 
+/// #2462: `raw_request` failures split by meaning — a refused port is the
+/// generator's `{"refused": true}` outcome, while every other transport or
+/// parse failure must fail the replay by name instead of masquerading as a
+/// refused port (a false `refused: true` passes the oracle comparison even
+/// though the listener is still up).
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) enum RawRequestError {
+    ConnectRefused,
+    Failed(String),
+}
+
+/// #2461 fix-r6 (review P2#5 / structural #3): the connect half's judgment,
+/// extracted as a pure function so the unknown arm has an observable
+/// injection point (#1589 issue #6 shape). #2461 fix-r7 (review MM
+/// boundary#1): the function consumes the shared [`FixedPortProbe`] itself,
+/// and `raw_request` obtains it from the shared *bounded*
+/// `probe_fixed_port` — the judgment and the bound travel together now (the
+/// pre-r7 call fed a bare, unbounded `TcpStream::connect` through this pure
+/// function, so a connect that never answered hung the whole replay with no
+/// named failure — exactly the "a probe that never answers is an unknown,
+/// not a pass" the shared module documents). The switch
+/// `sms-raw-request-connect-unknown-as-refused` restores the pre-#2462 fold
+/// where every transport failure masqueraded as a refused port — a false
+/// `{"refused": true}` passes the oracle comparison even though the listener
+/// is still up.
+#[cfg(test)]
+fn raw_request_connect_outcome<T>(
+    probe: crate::test_fixed_port_probe::FixedPortProbe<T>,
+) -> Result<T, RawRequestError> {
+    use crate::test_fixed_port_probe::FixedPortProbe;
+    match probe {
+        FixedPortProbe::Accepted(stream) => Ok(stream),
+        FixedPortProbe::Refused => Err(RawRequestError::ConnectRefused),
+        FixedPortProbe::Unknown(error) => {
+            if crate::mutants::on("sms-raw-request-connect-unknown-as-refused") {
+                Err(RawRequestError::ConnectRefused)
+            } else {
+                Err(RawRequestError::Failed(error.to_string()))
+            }
+        }
+    }
+}
+
 /// Raw-socket HTTP probe client used by the replay tests (`Connection: close`,
 /// full response bytes, minimal status/content-type/body parse). `half_close`
 /// mirrors the generator's `socket.end()`: the write side finishes after the
@@ -2031,11 +2075,20 @@ pub(crate) async fn raw_request(
     port: u16,
     raw: &[u8],
     half_close: bool,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, RawRequestError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .map_err(|error| error.to_string())?;
+    // #2461 fix-r7 (review MM boundary#1): the connect itself is the shared
+    // bounded probe — the same 5-second bound and refusal judgment every
+    // other fixed-port criterion in this crate uses, so an unanswered connect
+    // is a named `Failed` outcome instead of an unbounded hang.
+    let mut stream = raw_request_connect_outcome(
+        crate::test_fixed_port_probe::probe_fixed_port(
+            "raw-request connect",
+            ("127.0.0.1", port),
+            std::time::Duration::from_secs(5),
+        )
+        .await,
+    )?;
     // A destroyed connection (oversized payload) surfaces as a write or read
     // error with zero response bytes, same as the probe client's `closed`.
     let _ = stream.write_all(raw).await;
@@ -2048,20 +2101,22 @@ pub(crate) async fn raw_request(
     if text.is_empty() {
         return Ok(serde_json::json!({"closed": true}));
     }
-    let split = text
-        .find("\r\n\r\n")
-        .ok_or("#1339 response without header end")?;
+    let split = text.find("\r\n\r\n").ok_or(RawRequestError::Failed(
+        "#1339 response without header end".to_owned(),
+    ))?;
     let (head, body) = text.split_at(split);
     let body = &body[4..];
     let status: u16 = head
         .split("\r\n")
         .next()
-        .ok_or("#1339 empty response head")?
+        .ok_or(RawRequestError::Failed(
+            "#1339 empty response head".to_owned(),
+        ))?
         .split(' ')
         .nth(1)
-        .ok_or("#1339 status line")?
+        .ok_or(RawRequestError::Failed("#1339 status line".to_owned()))?
         .parse()
-        .map_err(|_| "#1339 status code")?;
+        .map_err(|_| RawRequestError::Failed("#1339 status code".to_owned()))?;
     // The probe's `/^content-type:\s*(.*)$/im`: the header name matches
     // case-insensitively, the value is captured verbatim.
     let content_type = head.split("\r\n").skip(1).find_map(|line| {

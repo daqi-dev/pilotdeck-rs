@@ -181,8 +181,13 @@ impl Temp {
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir(&path).unwrap();
-        Self(fs::canonicalize(path).unwrap())
+        // #3143 fix-r2 (DS sibling#5, #2335): the guard exists before the
+        // first fallible disk op; the canonical path is written back into
+        // the guard, never a second `Temp(...)`.
+        let mut temp = Self(path);
+        fs::create_dir(&temp.0).unwrap();
+        temp.0 = fs::canonicalize(&temp.0).unwrap();
+        temp
     }
 }
 impl Drop for Temp {
@@ -632,15 +637,12 @@ fn special_files_do_not_block_and_unreadable_files_still_list() {
     } else {
         // #1525 / #1263: the EACCES mapping never ran; say so and fail when the
         // CI switch says it is mandatory.
-        assert!(
-            !crate::test_permission_faults::require_permission_faults(),
-            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a chmod(0) file is still \
-             readable (root or CAP_DAC_OVERRIDE); the read_native EACCES arm needs an \
-             unprivileged host (需要非特权宿主)"
-        );
-        crate::test_skip_line::stderr_skip_line(
+        crate::test_permission_faults::skip_or_require(
             "#1263 skip: read_native: a chmod(0) file is still readable (root or \
              CAP_DAC_OVERRIDE); the EACCES arm needs an unprivileged host\n",
+            "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a chmod(0) file is still \
+             readable (root or CAP_DAC_OVERRIDE); the read_native EACCES arm needs an \
+             unprivileged host (需要非特权宿主)",
         );
     }
 }
@@ -800,16 +802,17 @@ fn native_read_errors_match_node_ws_responses() {
         if path == "unreadable" && File::open(root.join(path)).is_ok() {
             // #1525 / #1263: this record could not be compared at all; say so
             // and fail when the CI switch says the comparison is mandatory.
-            assert!(
-                !crate::test_permission_faults::require_permission_faults(),
-                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the readErrors/{path} \
-                 probe file is still readable (root or CAP_DAC_OVERRIDE); the Node EACCES \
-                 record can only be compared on an unprivileged host (需要非特权宿主)"
+            crate::test_permission_faults::skip_or_require(
+                &format!(
+                    "#1263 skip: readErrors/{path}: the probe file is still readable (root or \
+                     CAP_DAC_OVERRIDE); the Node EACCES record needs an unprivileged host\n"
+                ),
+                &format!(
+                    "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the readErrors/{path} \
+                     probe file is still readable (root or CAP_DAC_OVERRIDE); the Node EACCES \
+                     record can only be compared on an unprivileged host (需要非特权宿主)"
+                ),
             );
-            crate::test_skip_line::stderr_skip_line(&format!(
-                "#1263 skip: readErrors/{path}: the probe file is still readable (root or \
-                 CAP_DAC_OVERRIDE); the Node EACCES record needs an unprivileged host\n"
-            ));
             continue;
         }
         let expected: Value = serde_json::from_str(
@@ -1112,16 +1115,13 @@ fn node_round4_unreadable_huge_file_reports_open_error_first() {
         if mode == 0 && File::open(&path).is_ok() {
             // #1525 / #1263: the Node `denied` record could not be compared at
             // all; say so and fail when the CI switch says it is mandatory.
-            assert!(
-                !crate::test_permission_faults::require_permission_faults(),
-                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a chmod(0) huge file is \
-                 still readable (root or CAP_DAC_OVERRIDE); the Node largeFile/denied \
-                 open-error record needs an unprivileged host (需要非特权宿主)"
-            );
-            crate::test_skip_line::stderr_skip_line(
+            crate::test_permission_faults::skip_or_require(
                 "#1263 skip: largeFile/denied: a chmod(0) huge file is still readable (root \
                  or CAP_DAC_OVERRIDE); the Node open-error record needs an unprivileged \
                  host\n",
+                "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but a chmod(0) huge file is \
+                 still readable (root or CAP_DAC_OVERRIDE); the Node largeFile/denied \
+                 open-error record needs an unprivileged host (需要非特权宿主)",
             );
             continue;
         }

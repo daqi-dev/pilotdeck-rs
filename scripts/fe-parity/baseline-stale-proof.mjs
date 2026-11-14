@@ -1,8 +1,9 @@
 // Reproducible source execution only: no browser, process spawn, or listener.
 import assert from 'node:assert/strict';
+import { realpathSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { proveFilesBaselineStale } from './files-stale-proof.mjs';
 import { proveReplacementBaselineStale } from './replacement-stale-proof.mjs';
 import { baseline, requireUI } from './env.mjs';
@@ -102,7 +103,10 @@ export async function proveBaselineStale(catalog) {
   return { status: 'PASS', scope: 'OFFLINE_SOURCE_EXECUTION_ONLY', frozenHelperExecuted: true,
     frozenComponentsRendered: true, executableBackToAppReferences: references, proofs };
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// fix-r11（DS r10 sibling#2，P1）：本脚本是 baseline-stale.json 冻结基线的 proofScript（README:296 直跑即
+// 离线证明），symlink 入口下 argv[1] 保留链接路径、import.meta.url 被 Node 归一 realpath，单侧
+// pathToFileURL 归一化即静默 no-op、exit 0、零 JSON——「冻结尺子证明被当作 PASS」的失火面，同 fix-r10 家族。
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const { BASELINE_STALE, validateBaselineStale } = await import('./baseline-stale.mjs');
   await validateBaselineStale();
   console.log(JSON.stringify(await proveBaselineStale(BASELINE_STALE), null, 2));

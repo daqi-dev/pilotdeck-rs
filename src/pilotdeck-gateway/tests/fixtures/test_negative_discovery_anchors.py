@@ -76,9 +76,12 @@ join, a display string that only looks like a path, a package initialiser whose
 own imports must be keyed, and new blind, import-only or unresolvable tables
 appearing outside both registers.
 
-Scope: the four tables named by #2133 are the ones that carried anchors first,
-and ``parity-env-isolation`` (#2513 fix-r1) joined them with its two import
-keys. Adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
+Scope: the four tables named by #2133 are the ones that carried anchors first;
+``parity-env-isolation`` (#2513 fix-r1) joined them with its two import
+keys, and #3043 fix-r3 promoted ``close-order-reader-failclosed`` out of
+``KNOWN_BLIND`` the same way (its fix-r2 roster guard had added a second
+import key, which is what the register's re-measure is for), so six carry
+them today. Adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
 ``DISCOVERY_ANCHORS`` match its own keys. Everything else that already builds
 repository paths from bare file names, or imports a shared helper without
 spelling its key, is listed in ``KNOWN_BLIND`` with a measured reason (the register's own
@@ -130,6 +133,12 @@ TABLES = (
     # instead of KNOWN_BLIND — a change to negative_process/negative_selection
     # schedules it instead of passing silently.
     'parity-env-isolation/negative_controls.py',
+    # #3043 fix-r3：fix-r2 的名册守卫给该表带来第 2 条 import 键
+    # （negative_selection），KNOWN_BLIND 的 '1 key' 随之过期（三家独立
+    # 撞同一条）；按「register 是修表清单，不是豁免」彻底修——补
+    # DISCOVERY_ANCHORS 移入本登记，改 negative_process /
+    # negative_selection 任一执行器从此会排程该表。
+    'close-order-reader-failclosed/negative_controls.py',
 )
 
 
@@ -145,7 +154,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 279 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 3 with unresolvable shapes only, 73 in both; 1475 keys: 415 bare-filename joins and 1060 shared-helper import keys.
+# 282 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 2 with unresolvable shapes only, 77 in both; 1547 keys: 417 bare-filename joins and 1130 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -155,7 +164,7 @@ KNOWN_BLIND = {
     '_negkit/negative_contract.py': '4 keys',
     '_negkit/negative_non_head.py': '5 keys',
     '_negkit/negative_submit_migration.py': '10 keys',
-    '_shared/negative_control.py': '4 keys + 6 unresolvable',
+    '_shared/negative_control.py': '6 keys + 6 unresolvable',
     '_shared/negative_sqlite_header.py': '6 keys',
     '_shared/regeneration-negative.py': '6 keys',
     'agent-event-projector/negative.py': '5 keys',
@@ -185,7 +194,9 @@ KNOWN_BLIND = {
     'cli-parity-mock-gateway/negative_controls.py': '1 key + 1 unresolvable',
     'closure_guard_negative.py': '3 keys + 2 unresolvable',
     'commands-catalog/negative_controls.py': '4 keys',
+    'console-panic-safety/negative_controls.py': '4 keys + 2 unresolvable',
     'config-changes/negative_coverage.py': '6 keys',
+    'config-error-names/negative_controls.py': '4 keys + 1 unresolvable',
     'config-store/negative_controls.py': '6 keys',
     'connection-context/negative.py': '7 keys + 3 unresolvable',
     'cron-schedule/negative_controls.py': '8 keys',
@@ -195,10 +206,10 @@ KNOWN_BLIND = {
     'edgeclaw-accessors/negative.py': '5 keys',
     'edgeclaw-capture-turn/negative.py': '6 keys',
     'edgeclaw-dangling-links/negative.py': '3 keys',
-    'edgeclaw-dream-run/negative.py': '1 key',
-    'edgeclaw-dream-runner/negative.py': '1 key',
-    'edgeclaw-dream/negative.py': '1 key',
-    'edgeclaw-dream/negative_shapes.py': '2 keys',
+    'edgeclaw-dream-run/negative.py': '3 keys',
+    'edgeclaw-dream-runner/negative.py': '3 keys',
+    'edgeclaw-dream/negative.py': '3 keys',
+    'edgeclaw-dream/negative_shapes.py': '4 keys',
     'edgeclaw-entries/negative.py': '1 key',
     'edgeclaw-entries/negative_fix1.py': '1 key + 1 unresolvable',
     'edgeclaw-entries/negative_ids.py': '1 key',
@@ -206,43 +217,44 @@ KNOWN_BLIND = {
     'edgeclaw-entries/negative_round7.py': '1 key',
     'edgeclaw-export/negative_locks.py': '2 keys',
     'edgeclaw-file-memory/negative.py': '3 keys',
-    'edgeclaw-heartbeat-indexer/negative.py': '2 keys',
+    'edgeclaw-heartbeat-indexer/negative.py': '4 keys',
     'edgeclaw-heartbeat-isolation/negative.py': '10 keys',
-    'edgeclaw-heartbeat/negative.py': '2 keys',
-    'edgeclaw-llm-config/negative.py': '2 keys',
-    'edgeclaw-llm-dream/negative.py': '1 key',
-    'edgeclaw-llm-envelope/negative.py': '1 key',
+    'edgeclaw-heartbeat/negative.py': '4 keys',
+    'edgeclaw-llm-config/negative.py': '4 keys',
+    'edgeclaw-llm-dream/negative.py': '3 keys',
+    'edgeclaw-llm-envelope/negative.py': '3 keys',
     'edgeclaw-llm-index/negative.py': '1 key',
-    'edgeclaw-llm-recall/negative.py': '1 key',
+    'edgeclaw-llm-recall/negative.py': '3 keys',
     'edgeclaw-llm-telemetry/negative.py': '6 keys',
     'edgeclaw-llm/negative.py': '1 key',
-    'edgeclaw-messages/negative.py': '2 keys',
+    'edgeclaw-messages/negative.py': '4 keys',
     'edgeclaw-native-default/negative.py': '11 keys',
     'edgeclaw-provider/negative.py': '11 keys',
     'edgeclaw-real-provider/negative.py': '2 keys',
-    'edgeclaw-retrieval-helpers/negative.py': '1 key',
-    'edgeclaw-retriever/negative.py': '2 keys',
+    'edgeclaw-retrieval-helpers/negative.py': '3 keys',
+    'edgeclaw-retriever/negative.py': '4 keys',
     'edgeclaw-same-root-generation/negative.py': '12 keys',
     'edgeclaw-service-facade/negative.py': '6 keys',
     'edgeclaw-service-facade/switch_negative.py': '8 keys',
-    'edgeclaw-service-orchestration/negative.py': '1 key',
+    'edgeclaw-service-orchestration/negative.py': '3 keys',
     'edgeclaw-service-orchestration/switch_negative.py': '7 keys',
     'edgeclaw-text/negative.py': '4 keys',
     'exact-receipt-yaml/negative_controls.py': '1 key',
     'exact-rerun-receipt/negative_controls.py': '1 key',
     'failure-guard/negative.py': '7 keys',
-    'fe-baseline-report/negative_controls.py': '2 unresolvable',
-    'fe-coexist/negative_controls.py': '1 key',
+    'fe-baseline-report/negative_controls.py': '2 keys + 2 unresolvable',
+    'fe-coexist/negative_controls.py': '2 keys',
     'file-history-cwd/negative_controls.py': '9 keys',
+    'fixed-port-region/negative_controls.py': '6 keys',
     'flake-progress/negative_controls.py': '6 keys',
     'frozen-manifest/negative_controls.py': '2 keys',
     'frozen-reinsert-guard/negative_controls.py': '8 keys',
-    'gateway-batch/negative_controls.py': '2 keys',
+    'gateway-batch/negative_controls.py': '8 keys',
     'grep-etxtbsy/negative_controls.py': '7 keys',
     'handle-path-macos/negative_controls.py': '6 keys',
     'hooks-output/negative.py': '1 key',
     'host-event-pump/negative_controls.py': '1 key',
-    'html-timing/negative_controls.py': '3 keys + 1 unresolvable',
+    'html-timing/negative_controls.py': '5 keys + 1 unresolvable',
     'http-store-park/negative_controls.py': '6 keys + 1 unresolvable',
     'interaction-bus/negative_controls.py': '4 keys + 1 unresolvable',
     'interaction-values/negative_controls.py': '4 keys',
@@ -252,18 +264,18 @@ KNOWN_BLIND = {
     'issue-2495/negative_controls.py': '6 keys',
     'issue-297-domain-fold/negative_controls.py': '6 keys',
     'issue-297/negative_controls.py': '6 keys',
-    'js-math-zero/negative.py': '2 keys',
+    'js-math-zero/negative.py': '4 keys',
     'ledger-diffs/negative_controls.py': '2 keys + 1 unresolvable',
     'live-e2e-tmpdir/negative_controls.py': '6 keys',
     'live-e2e/negative_controls.py': '6 keys + 4 unresolvable',
-    'live-history/negative.py': '1 key',
+    'live-history/negative.py': '6 keys',
     'locale-adaptive/negative_controls.py': '7 keys',
     'locale-contract/negative_controls.py': '6 keys',
     'locked-storage/negative_controls.py': '6 keys',
     'manager-gateway/negative_controls.py': '7 keys + 2 unresolvable',
     'mcp-detached-dispatch/negative_controls.py': '6 keys',
     'mcp-gateway/negative_controls.py': '6 keys',
-    'mcp-hooks-spawn/negative_controls.py': '1 key + 2 unresolvable',
+    'mcp-hooks-spawn/negative_controls.py': '6 keys + 2 unresolvable',
     'mcp-http-corrupt-body/negative_controls.py': '6 keys',
     'mcp-http-encoding/negative.py': '6 keys',
     'mcp-resolver-lease/negative_controls.py': '7 keys',
@@ -287,7 +299,7 @@ KNOWN_BLIND = {
     'native-entry-authority/negative_controls.py': '8 keys',
     'native-http-basic/negative_controls.py': '10 keys',
     'native-loop-stimulus/negative_controls.py': '7 keys',
-    'native-management/negative_controls.py': '8 keys',
+    'native-management/negative_controls.py': '8 keys + 3 unresolvable',
     'native-metadata-cwd/negative_controls.py': '7 keys',
     'native-metadata-cwd/negative_regeneration.py': '6 keys',
     'native-process/negative_controls.py': '6 keys',
@@ -380,7 +392,7 @@ KNOWN_BLIND = {
     'session-lease/negative.py': '3 keys',
     'session-reservation-2391/negative_controls.py': '6 keys',
     'settings-gateway/negative_controls.py': '5 keys + 1 unresolvable',
-    'settings/negative_controls.py': '2 keys',
+    'settings/negative_controls.py': '4 keys',
     'shared-runner-failclosed/negative_controls.py': '2 keys',
     'sidecar-liveness-1891/negative_controls.py': '6 keys',
     'sidecar-payload/negative.py': '1 key + 1 unresolvable',
@@ -397,7 +409,7 @@ KNOWN_BLIND = {
     'switch-state-machine/negative_controls.py': '7 keys + 1 unresolvable',
     'task-budget-zero/negative.py': '2 keys',
     'tool-budget/negative_project.py': '1 key + 1 unresolvable',
-    'transcript-resolve/negative_controls.py': '1 key',
+    'transcript-resolve/negative_controls.py': '3 keys',
     'transcript-trim/negative_controls.py': '6 keys',
     'treelock-budget/negative_controls.py': '7 keys',
     'turn-gateway-clock-edge/negative_controls.py': '6 keys',
@@ -431,7 +443,7 @@ KNOWN_BLIND = {
     'web-conversion-lifecycle/negative.py': '7 keys',
     'webhook-channel/negative_controls.py': '10 keys',
     'wecom-callback/negative_controls.py': '12 keys + 2 unresolvable',
-    'weixin-channel/negative_controls.py': '15 keys + 2 unresolvable',
+    'weixin-channel/negative_controls.py': '16 keys + 2 unresolvable',
     'workspace-pristine/negative_controls.py': '7 keys',
     'workspace-snapshot-gate/negative_controls.py': '1 key + 1 unresolvable',
     'workspace-snapshot-nonutf8/negative_controls.py': '1 key + 1 unresolvable',
@@ -4397,7 +4409,7 @@ def sweep(root=FIXTURES):
             # that helper only if the helper's key occurs in its own text; the
             # import line spells the module name, not the key. This is the same
             # blind spot as a bare file name, one level up, and it applies to
-            # every table — not just the four that declare anchors.
+            # every table — not just the five that declare anchors.
             keys.setdefault(key, [IMPORTED_HELPER_REASON])
         # "Blind" is exactly the loop's condition: the literal key does not
         # occur anywhere in the table, so ``git grep -F`` cannot find it. A key
@@ -4894,6 +4906,12 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'overlap with the first set': (
                 sum(1 for rel in measured
                     if blind.get(rel) and unresolvable.get(rel)),),
+            # fix-r5 (#2558 review P2): the derived union count ("并集才是
+            # N", gap totals minus the overlap, which is also the registered
+            # file count) was the one numeric copy in this paragraph no
+            # pattern re-measured — the r4 regeneration updated the split
+            # around it but not the union, and nothing went red.
+            'union of the two sets': (len(measured),),
             'keys total and import': (total_keys, import_keys),
             'bare keys': (total_keys - import_keys,),
             'unresolvable files and places': (
@@ -4910,6 +4928,13 @@ class DiscoveryAnchorTests(unittest.TestCase):
                         (FIXTURES / name).read_text(encoding='utf-8')))[0])
                     for name in TABLES),),
             'registered table count': (len(TABLES),),
+            # fix-bump (#1087 reanchor review, DS sibling#3): the "#2133 名字
+            # 后的 4 张"是同段唯一没被任何 pattern 绑定的数字副本——某张 #2133
+            # 表被换掉而总数不变时它会静默过期，按同段同法绑定。
+            # 真合并轮（#2513 重锚收货）：TABLES 现有 #2513 fix-r1 与 #3043
+            # fix-r3 两张后补表，#2133 出生表数 = 总数减 2；再补一张时同步
+            # 改这个减数并同段更新 README 的「点名的 N 张」。
+            'registered #2133 table count': (len(TABLES) - 2,),
             'head-timeout split': (
                 len(blind['channel-sms-head-timeout/negative_controls.py']),
                 sum(1 for rows in blind['channel-sms-head-timeout/'
@@ -4939,6 +4964,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
                               r' \+ (\d+) 个两者都有\*\*'),
             'gap totals': r'合计 (\d+) 个文件存在字面缺失、(\d+) 个文件含不可解形状',
             'overlap with the first set': r'——后者有 (\d+) 个与前者重叠',
+            'union of the two sets': r'并集才是 (\d+)',
             'keys total and import': (r'字面缺失合计 \*\*(\d+) 条键\*\*'
                                       r'（其中 \*\*(\d+) 条是共享助手 import 键\*\*'),
             'bare keys': r'余下 (\d+) 条是裸文件名拼接',
@@ -4950,6 +4976,9 @@ class DiscoveryAnchorTests(unittest.TestCase):
             # on the whole register (the rewording rewrote this parse, which
             # is the binding the docstring above promises).
             'registered table count': r'本闸门当前登记 \*\*(\d+) 张表\*\*',
+            # 真合并轮（#2513 重锚收货）：#3043 的表经同款加注并入后，#2133
+            # 名册数按「点名的 N 张——」钉，与上面总数各自绑定。
+            'registered #2133 table count': r'点名的 (\d+) 张——',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

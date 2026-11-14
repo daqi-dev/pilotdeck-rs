@@ -182,12 +182,21 @@ fn assert_parser_admission_cell_records_its_knob(id: &str, case: &Value) {
 /// `parser_admission_cells_cover_exactly_the_oracle_bare_400s` guard carries.
 /// The api-server set is not "exactly the bare 400s"
 /// — `missing-host` is registered but inert (its 400 is date+chunked, never a
-/// length line) — so the two directions are: every entry exists in the oracle
+/// length line) — so the directions are: every entry exists in the oracle
 /// and none of its recorded expectations carries a `content-length` the mask
-/// could hide (the exemption is needed-or-inert, never harmful), and every
+/// could hide (the exemption is needed-or-inert, never harmful), every
 /// cell whose recorded rejection is the bare parser shape (a 400 whose only
 /// header is `connection`) is registered, so a future bare-400 cell replays
-/// red with hyper's line unmasked instead of silently needing the exemption.
+/// red with hyper's line unmasked instead of silently needing the exemption,
+/// and — fix-r1 (#2775 review, DS sibling#1 + MM boundary#1) — the registered
+/// set is exactly the bare cells plus the inert entry, so a stale widening
+/// fails here by name instead of only at the knob guard's indirect
+/// `other => panic!` arm. fix-r2 (#2775 review, MM sibling#1 + MM boundary#1 +
+/// DS sibling#3) adds the through-the-predicate leg: the admission set
+/// derived from `fn parser_admission` — the one function the replay's
+/// selection point reads — must be that same bare ∪ inert set, so widening
+/// the predicate fails here instead of silently re-widening the mask (the
+/// constant comparison stays the stale-entry leg).
 #[test]
 fn parser_admission_cells_stay_justified_by_the_oracle() {
     let recorded = oracle();
@@ -212,11 +221,13 @@ fn parser_admission_cells_stay_justified_by_the_oracle() {
     let mut bare: Vec<&str> = cases
         .iter()
         .filter(|case| {
-            case["expect"]
-                .as_array()
-                .expect("#1333 expectations")
-                .iter()
-                .all(|expected| {
+            let expectations = case["expect"].as_array().expect("#1333 expectations");
+            // #2775 fix-r1 (MM boundary#2 / DS boundary#1): an empty
+            // expectation list is not a bare 400 — `all` over zero entries is
+            // vacuously true, which would demand the mask for a cell that
+            // recorded no rejection evidence at all.
+            !expectations.is_empty()
+                && expectations.iter().all(|expected| {
                     expected["status"].as_u64() == Some(400)
                         && expected["body"].as_str() == Some("")
                         && expected["headers"]
@@ -237,6 +248,112 @@ fn parser_admission_cells_stay_justified_by_the_oracle() {
     assert!(
         unregistered.is_empty(),
         "#2153 every bare parser-400 cell must be registered for the content-length exemption: {unregistered:?}"
+    );
+    // #2775 fix-r1: the upper bound. The registered list is exactly the
+    // oracle's bare 400s plus the explicit inert exemption below, so
+    // widening it with a cell that never exhibits the registered shape
+    // (say `body-read-timeout`) fails here with its id, not only at the
+    // knob guard's `other => panic!` arm — the guard is self-sufficient.
+    let mut justified = bare
+        .iter()
+        .copied()
+        .chain(INERT_PARSER_ADMISSION_CELLS.iter().copied())
+        .collect::<Vec<&str>>();
+    justified.sort_unstable();
+    let mut registered = PARSER_ADMISSION_CELLS.to_vec();
+    registered.sort_unstable();
+    assert_eq!(
+        registered, justified,
+        "#2775 the registered parser-admission cells must be exactly the oracle's bare 400s plus the inert {INERT_PARSER_ADMISSION_CELLS:?} exemption: a stale entry must fail here, not only at the knob guard"
+    );
+    // #2775 fix-r2 (review r2, MM sibling#1 + MM boundary#1 + DS sibling#3):
+    // through the same `fn parser_admission` the replay's selection point
+    // reads, so widening the predicate fails here instead of silently
+    // re-widening the mask — the constant comparison above stays the
+    // stale-entry leg.
+    let mut admitted: Vec<&str> = cases
+        .iter()
+        .map(|case| case["id"].as_str().expect("#1333 case id"))
+        .filter(|id| parser_admission(id))
+        .collect();
+    admitted.sort_unstable();
+    assert_eq!(
+        admitted, justified,
+        "#2775 the parser-admission predicate must admit exactly the oracle's bare 400s plus the inert {INERT_PARSER_ADMISSION_CELLS:?} exemption: widening the mask's selection point must fail here instead of silently re-widening the mask"
+    );
+}
+
+/// #2775 fix-r1 (review r1, MM sibling#1 / DS sibling#2): the
+/// `content-length: 0` exemption `PARSER_ADMISSION_CELLS` grants is the
+/// only one left — an injected `content-length: 0` on an unregistered cell
+/// must survive `actual_headers` (a grown length line replays red instead
+/// of the mask normalizing it away), while the registered bare 400's line
+/// stays masked. Sibling lanes carry the same leg (`native_http`,
+/// `native_ws`, `webhook`, `api_web`); this is the api-server lane's.
+/// fix-r2 (review r2, MM boundary#1): the exemption flag is derived from
+/// the same `fn parser_admission` the replay's selection point reads, not a
+/// literal, so widening the predicate turns this test red too (the
+/// unregistered leg's two sides become equal) instead of only the guard.
+#[test]
+fn only_the_registered_cells_mask_a_content_length_zero() {
+    let recorded = oracle();
+    // The recorded first expectation of a cell, rebuilt as the raw side the
+    // replay compares: `stream` is the unregistered host (it records no
+    // length line), `unknown-method` the registered bare 400.
+    let response = |id: &str, inject: bool| {
+        let expected = recorded["cases"]
+            .as_array()
+            .expect("#1333 oracle cases")
+            .iter()
+            .find(|case| case["id"].as_str() == Some(id))
+            .and_then(|case| case["expect"].as_array())
+            .and_then(|expect| expect.first())
+            .unwrap_or_else(|| panic!("#1333 {id}: the oracle cell is missing"));
+        let mut headers = expected["headers"]
+            .as_object()
+            .expect("#1333 oracle headers")
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.clone(),
+                    value
+                        .as_str()
+                        .expect("#1333 oracle header value")
+                        .to_owned(),
+                )
+            })
+            .collect::<BTreeMap<String, String>>();
+        if inject {
+            headers.insert("content-length".to_owned(), "0".to_owned());
+        }
+        RawResponse {
+            status: expected["status"].as_u64().map(|status| status as u16),
+            headers,
+            body: expected["body"]
+                .as_str()
+                .expect("#1333 oracle body")
+                .as_bytes()
+                .to_vec(),
+            error: None,
+        }
+    };
+    assert_ne!(
+        actual_headers(&response("stream", true), parser_admission("stream")),
+        actual_headers(&response("stream", false), parser_admission("stream")),
+        "#2775 an injected content-length: 0 on an unregistered cell must not normalize away"
+    );
+    // The registered direction stays masked: hyper's line on the bare 400 is
+    // the one exemption left, so the TS-shaped headers still compare equal.
+    assert_eq!(
+        actual_headers(
+            &response("unknown-method", true),
+            parser_admission("unknown-method")
+        ),
+        actual_headers(
+            &response("unknown-method", false),
+            parser_admission("unknown-method")
+        ),
+        "#2775 the registered bare-400 exemption still masks hyper's content-length: 0"
     );
 }
 
@@ -858,14 +975,38 @@ fn mask_text(text: &str) -> String {
 /// date+chunked on both sides and never carries a length line, so the mask
 /// cannot fire — kept registered because #1683 scoped the pair together).
 /// `parser_admission_cells_stay_justified_by_the_oracle` holds the list
-/// against the oracle in both directions: every entry exists and none can
-/// mask a TS-recorded length line, and every cell whose recorded rejection
-/// is the bare parser shape is in the list, so a future bare-400 cell cannot
-/// replay green with the line unmasked.
+/// against the oracle in all four directions: every entry exists and none
+/// can mask a TS-recorded length line, every cell whose recorded rejection
+/// is the bare parser shape is in the list, the list is exactly those bare
+/// cells plus the inert entry below, and — #2775 fix-r2 — the admission set
+/// `fn parser_admission` derives from it is that same set, so neither a stale
+/// widening entry nor a widened predicate can hide behind the knob guard's
+/// panic or a still-narrow constant.
 const PARSER_ADMISSION_CELLS: &[&str] = &["unknown-method", "missing-host"];
 
-/// #1683: `parser_admission` scopes the one registered transport difference to
-/// the two cells that actually exhibit it. hyper adds `content-length: 0` to
+/// #2775 fix-r1: the inert half of `PARSER_ADMISSION_CELLS` — `missing-host`
+/// is registered (the #1683 pair) but its 400 is date+chunked and never
+/// carries a length line, so it is not a bare 400. Written as an explicit
+/// set so the guard's upper bound can compare `bare ∪ inert` as an equality
+/// instead of a subset. fix-r4: the "never carries a length line" premise is
+/// product-pinned — `parser_rejections_keep_the_registered_transport_shape`
+/// asserts the missing-Host 400 carries no content-length at all, so a hyper
+/// that grew the line there fails the raw pin instead of silently widening
+/// the mask's exemption face.
+const INERT_PARSER_ADMISSION_CELLS: &[&str] = &["missing-host"];
+
+/// #2775 fix-r2: the predicate that grants the `content-length: 0` exemption.
+/// The replay's selection point (`compare_response`) and the knob guard both
+/// go through this one function, and the coverage guard derives its admission
+/// set from it too, so widening it (the pre-#1683 blanket shape) fails the
+/// guard's through-the-predicate leg instead of silently re-widening the mask.
+fn parser_admission(id: &str) -> bool {
+    PARSER_ADMISSION_CELLS.contains(&id)
+}
+
+/// #1683: the `parser_admission` flag — `fn parser_admission` at the
+/// replay's selection point — scopes the one registered transport difference
+/// to the two cells that actually exhibit it. hyper adds `content-length: 0` to
 /// the parser-level bare 400 where Node writes no length at all (the same
 /// registered diff the native-http and webhook lanes already normalize —
 /// A8.4-NATIVE-HTTP-001, extended to this lane by A8.3-API-SERVER-005). The
@@ -1176,7 +1317,7 @@ fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResp
         })
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
-        actual_headers(actual, PARSER_ADMISSION_CELLS.contains(&case)),
+        actual_headers(actual, parser_admission(case)),
         expected_headers,
         "#1333 {case} request {index}: headers differ"
     );
@@ -1595,7 +1736,9 @@ async fn replays_real_ts_api_server_cells() {
         assert_boundary_body_len(id, case);
         // #1683: the two parser-admission cells must keep the knobs that make
         // them rejections (FROB / `setHost: false`), not drift into controls.
-        if PARSER_ADMISSION_CELLS.contains(&id) {
+        // #2775 fix-r2: through the same predicate the replay's selection
+        // point reads, so the knob scope and the mask scope cannot drift apart.
+        if parser_admission(id) {
             assert_parser_admission_cell_records_its_knob(id, case);
         }
         // #1606 r3: `compare_response` walks `expect` by request index, so a
@@ -1796,6 +1939,18 @@ async fn parser_rejections_keep_the_registered_transport_shape() {
     assert!(
         missing_host.headers.contains_key("date"),
         "#1683 the missing-Host 400 carries a Date, got {:?}",
+        missing_host.headers
+    );
+    // #2775 fix-r4: the inert premise — the missing-Host 400 never carries a
+    // length line — has to be pinned on the product side too (native-http
+    // pins the same direction for its unregistered cells): the mask applies
+    // to this cell, so a hyper that grew `content-length: 0` here would
+    // replay green and silently widen the exemption face to a second bare
+    // 400. Pinned before the chunked framing below so the drift fails here
+    // by name, not as a framing mismatch.
+    assert!(
+        !missing_host.headers.contains_key("content-length"),
+        "#2775 pin missing-host: the inert 400 carries no content-length at all, got {:?}",
         missing_host.headers
     );
     assert_eq!(
@@ -3390,8 +3545,100 @@ async fn loader_mount_builds_api_server_channel() {
         "#2428 the configured Bearer key answers 200"
     );
     handle.stop("test").await.expect("#2301 api_server stop");
-    assert!(
-        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
-        "#2301 the listener is gone after stop"
+    // #2462: only `ConnectionRefused` proves the listener is gone — any other
+    // connect error (fd exhaustion and the like) must fail the test by name
+    // instead of reading as "closed", and the probe itself is bounded.
+    // #2461 fix-r6: the judgment goes through the shared fixed-port probe
+    // instead of this site's own four-arm match.
+    let probe = crate::test_fixed_port_probe::probe_fixed_port(
+        "close probe",
+        ("127.0.0.1", port),
+        std::time::Duration::from_secs(5),
+    )
+    .await;
+    if let Some(failure) =
+        crate::test_fixed_port_probe::fixed_port_probe_failure("#2301", port, "closed", &probe)
+    {
+        panic!("{failure}");
+    }
+}
+
+/// #1833 C2: `parseCorsOrigins` maps array entries with `String`
+/// (ApiServerChannel.ts:458, Node v22.22.0 probe:
+/// `_tmp/20261112-issue-1833/impl-r1/node-probe/c2-parse-cors-probe.out`): a
+/// class-tagged object keeps its tag (`[object Set]` / `[object Map]`), a
+/// nested array joins (`["https://b", 2]` → `"https://b,2"`), an empty
+/// coercion drops. `String({toString: null})` throws `TypeError`
+/// (`Cannot convert object to primitive value`, fix-r2 probe:
+/// `_tmp/20261026-issue-1833/fix-r2/node-probe/tostring-null-entry.out`), which
+/// the TS constructor propagates; resolve is infallible, so the entry drops
+/// instead. The array branch used to hardcode `[object Object]` — a third
+/// `[object …]` implementation beside `js_value`'s joiner and the config
+/// diagnostics; `corsOrigins` is only constructed by tests today, so this pins
+/// the potential surface before the loader starts passing it.
+#[test]
+fn parse_cors_origins_stringifies_entries_through_the_shared_joiner() {
+    let mut set = JsObject::new();
+    set.set_native_tag("Set");
+    let mut map = JsObject::new();
+    map.set_native_tag("Map");
+    let entries = JsValue::Array(vec![
+        JsValue::String(JsString::from("https://a")),
+        JsValue::Number(5.0),
+        JsValue::Number(-0.0),
+        JsValue::Number(1e21),
+        JsValue::Bool(true),
+        JsValue::Bool(false),
+        JsValue::Null,
+        JsValue::Undefined,
+        JsValue::Array(vec![
+            JsValue::String(JsString::from("https://b")),
+            JsValue::Number(2.0),
+        ]),
+        JsValue::Array(vec![JsValue::Array(vec![])]),
+        JsValue::Object(Default::default()),
+        JsValue::Object(set),
+        JsValue::Object(map),
+        // An own non-callable `toString` shadows the inherited one, so
+        // `String(item)` throws (fix-r2): the entry must drop out, not stay
+        // as a literal `[object Object]` origin.
+        crate::metadata::object([("toString", JsValue::Null)]),
+        JsValue::String(JsString::from("")),
+    ]);
+    assert_eq!(
+        parse_cors_origins(&entries),
+        [
+            "https://a",
+            "5",
+            "0",
+            "1e+21",
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "https://b,2",
+            "[object Object]",
+            "[object Set]",
+            "[object Map]",
+        ],
+        "#1833 entries must stringify like TS's value.map(String)"
     );
+    // The string split and the falsy shapes stay as they were.
+    assert_eq!(
+        parse_cors_origins(&JsValue::from(" https://x , ,y ")),
+        ["https://x", "y"],
+        "#1833 a string still splits, trims and drops empties"
+    );
+    for value in [
+        JsValue::Number(0.0),
+        JsValue::Bool(false),
+        JsValue::Null,
+        JsValue::Undefined,
+        JsValue::Number(5.0),
+    ] {
+        assert!(
+            parse_cors_origins(&value).is_empty(),
+            "#1833 {value:?} must force no CORS"
+        );
+    }
 }

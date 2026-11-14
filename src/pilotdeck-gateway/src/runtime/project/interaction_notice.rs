@@ -82,7 +82,11 @@ impl DiscardNotice {
     /// gateway has no tracing subscriber, and a log line must not be lost just
     /// because no next turn binds this session again.
     pub fn log(&self) {
-        eprintln!("{}", self.log_line());
+        // #2558: the outlet itself must not panic on the write (std panics
+        // when a raw console write fails) — the callers log while holding the
+        // interaction state lock, before the notice is pushed, so a panicking
+        // write would poison the lock and drop the very notice reported here.
+        crate::native_process::channels::console_log_line(&mut std::io::stderr(), &self.log_line());
     }
     /// Next-turn visible outlet. The active turn identity satisfies the event
     /// sink's identity gate; the discarded identity stays in `metadata`.

@@ -16,7 +16,7 @@
 //! depths between it and V8's real limit throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
-use pilotdeck_protocol::{JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 /// Deepest array nesting that converts; conservative against V8's 2515.
 pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;
@@ -87,6 +87,29 @@ pub(crate) fn expand_replacement(
     }
     out.push_str(&replacement[copied..]);
     out
+}
+
+/// The JS string iterator (ECMAScript `String.prototype[Symbol.iterator]`):
+/// each yield is one code point — a well-formed surrogate pair is one
+/// two-unit chunk, and everything else (a lone surrogate included) is its own
+/// single-unit chunk. Every port that spreads or iterates a JS string shares
+/// this one walk: permission denials, the web fileArtifact finalize and the
+/// module host's stream events. Real TS/Node v22.22.0:
+/// `[...'a\u{1F600}\uD800b']` yields `'a'`, `'\u{1F600}'`, `'\uD800'`, `'b'`.
+pub(crate) fn code_point_chunks(units: &[u16]) -> Vec<&[u16]> {
+    let mut chunks = Vec::new();
+    let mut rest = units;
+    while let Some((&first, tail)) = rest.split_first() {
+        // The pairing read: a high surrogate followed by a low one.
+        let paired = (0xd800..=0xdbff).contains(&first)
+            && tail
+                .first()
+                .is_some_and(|&next| (0xdc00..=0xdfff).contains(&next));
+        let (chunk, remainder) = rest.split_at(usize::from(paired) + 1);
+        chunks.push(chunk);
+        rest = remainder;
+    }
+    chunks
 }
 
 /// Why a full `String(value)` (with `ToPrimitive`) throws.
@@ -227,11 +250,19 @@ fn scalar_units(value: &JsValue, out: &mut Vec<u16>) {
         // (#1550 修 r6).
         JsValue::Object(o) => {
             out.extend("[object ".encode_utf16());
-            out.extend(o.native_tag().unwrap_or("Object").encode_utf16());
+            out.extend(object_tag(o).encode_utf16());
             out.push(u16::from(b']'));
         }
         JsValue::Array(_) => unreachable!("arrays are joined by to_string_units"),
     }
+}
+
+/// The tag `String(object)` prints inside `[object <tag>]`: a collapsed YAML
+/// collection keeps its class (`[object Set]`), anything else is a plain
+/// `Object`. One source for this joiner and the config layer's `format!`
+/// diagnostics — the two copies drifted once already (#1833 C1, #1550 修 r6).
+pub(crate) fn object_tag(object: &JsObject) -> &str {
+    object.native_tag().unwrap_or("Object")
 }
 
 /// `String(value)` with lone surrogates as U+FFFD (for Rust-side messages).

@@ -1313,6 +1313,224 @@ async fn next_request_headers_timeout_starts_at_first_byte() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// #1517 fix-r3 (rev2 条 2, the R5 scope measurement): this lane's own
+/// `headersTimeout` path with the previous response fully handed to the write
+/// side but undelivered — the client reads nothing, its receive window is
+/// pinned small, so the kernel send queue (and hyper's write buffer) holds
+/// the whole tail. The three #1517 quadrant shapes R4's lane analysis could
+/// only derive from the code, measured on the real server (measured outputs
+/// in `_tmp/20261026-issue-1517/fix-r3/lane-probe/`):
+///
+/// * stalled follow-up head (no more bytes): every byte resets the 300 ms
+///   idle, which beats the 1 s head deadline and closes silently — no 408;
+///   the queued tail still delivers once the client resumes (full response +
+///   terminator + EOF);
+/// * dribbled follow-up head (one byte every 150 ms keeps the idle reset,
+///   1 s head deadline fires at +1.15 s while the tail is still stuck, the
+///   drain starts at +1.35 s): the lane's raw 51-byte 408 never reaches the
+///   client — the teardown at the deadline resets the connection (the next
+///   dribble write is refused with ECONNRESET) and the reset discards the
+///   stuck tail together with the 408; the client keeps only the prefix
+///   already in its receive buffer, then the stream ends;
+/// * dribbled follow-up head, resume before the deadline (1.5 s head
+///   deadline, drain starts at +1.35 s): the tail flushes first, then the
+///   408 lands after the complete response (offset = the full body length),
+///   then a clean EOF.
+///
+/// An ignored characterization in the #1395 pattern: it records the measured
+/// behavior backing `A8.4-NATIVE-HTTP-002-R5`'s scope sentence (the lane is
+/// not in the `write_pending` flag family, never consults a
+/// response-started mirror at its expiry, and its raw 408 never overtakes
+/// the tail); it is not a required contract.
+#[tokio::test]
+#[ignore = "#1517 R5 范围实测诊断，非行为契约"]
+async fn issue_1517_unflushed_tail_head_timeout_shapes() {
+    let (store, directory) = file_store("1517-lane-shapes");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_millis(1_000),
+        keep_alive_timeout: Duration::from_millis(300),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store.clone(), limits).await;
+    // One large entry: the `list` response (~60 KiB) exceeds the tiny receive
+    // window plus the send buffer, so with the client reading nothing the
+    // response hands off completely (the body ends, the phase leaves
+    // `Request`) while most of it never reaches the client.
+    let mut big = put_body();
+    let pad = format!("\"prompt\":\"{}\"", "x".repeat(60 * 1024));
+    let text = String::from_utf8_lossy(&big).replace("\"prompt\":\"p\"", &pad);
+    big = text.into_bytes();
+    let mut setup = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}put HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n",
+        big.len()
+    );
+    setup.write_all(head.as_bytes()).await.unwrap();
+    setup.write_all(&big).await.unwrap();
+    let response = read_response(&mut setup).await;
+    assert_eq!(status(&response), 200, "{response:?}");
+    drop(setup);
+
+    fn record(note: &str, seen: &[u8], expected: usize) {
+        let saw_408 = seen.windows(NODE_408.len()).any(|w| w == NODE_408);
+        let offset = seen
+            .windows(NODE_408.len())
+            .position(|w| w == NODE_408)
+            .map(|at| at.to_string())
+            .unwrap_or_else(|| "absent".into());
+        println!(
+            "#1517-lane {note}: delivered={} expected~{} saw408={saw_408} 408_offset={offset} starts_200={}",
+            seen.len(),
+            expected,
+            seen.starts_with(b"HTTP/1.1 200")
+        );
+    }
+    // Reads everything reachable before EOF or a 4 s quiet stretch, printing
+    // the elapsed time of every event so the ordering is on record.
+    async fn drain(stream: &mut TcpStream, note: &str) -> Vec<u8> {
+        let started = Instant::now();
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            match tokio::time::timeout(Duration::from_secs(4), stream.read(&mut chunk)).await {
+                Ok(Ok(0)) => {
+                    println!(
+                        "#1517-lane {note}: EOF at {} ms ({} bytes)",
+                        started.elapsed().as_millis(),
+                        seen.len()
+                    );
+                    break;
+                }
+                Err(_) => {
+                    println!(
+                        "#1517-lane {note}: quiet at {} ms ({} bytes)",
+                        started.elapsed().as_millis(),
+                        seen.len()
+                    );
+                    break;
+                }
+                Ok(Ok(read)) => {
+                    seen.extend_from_slice(&chunk[..read]);
+                    println!(
+                        "#1517-lane {note}: read {read} at {} ms ({} total)",
+                        started.elapsed().as_millis(),
+                        seen.len()
+                    );
+                }
+                Ok(Err(error)) => {
+                    println!(
+                        "#1517-lane {note}: error {error} at {} ms ({} bytes)",
+                        started.elapsed().as_millis(),
+                        seen.len()
+                    );
+                    break;
+                }
+            }
+        }
+        seen
+    }
+    fn pinned(port: u16) -> TcpStream {
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .expect("#1517-lane create socket");
+        // The kernel doubles the requested value; either way the window is a
+        // few KiB, so the ~60 KiB response cannot be delivered.
+        socket
+            .set_recv_buffer_size(4096)
+            .expect("#1517-lane set recv buffer");
+        socket
+            .connect(
+                &format!("127.0.0.1:{port}")
+                    .parse::<std::net::SocketAddr>()
+                    .unwrap()
+                    .into(),
+            )
+            .expect("#1517-lane pinned-rcvbuf connect");
+        socket
+            .set_nonblocking(true)
+            .expect("#1517-lane set non-blocking");
+        TcpStream::from_std(socket.into()).expect("#1517-lane adopt socket2 stream")
+    }
+    // The big-response request: POST list with the stored key so the answer
+    // echoes the ~60 KiB dialog.
+    let list_body = r#"{"version":1,"key":{"projectRoot":"/p","pilotHome":"/h","sessionId":"s"}}"#;
+    let list = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n{list_body}",
+        list_body.len()
+    );
+
+    // One dribbled-head shape against a given server: the list response hands
+    // off, settles for 150 ms, then the partial follow-up head dribbles one
+    // byte every 150 ms — every byte resets the 300 ms idle while the head
+    // deadline stays anchored at the first byte — and the drain (starting
+    // +1.35 s) reads whatever the connection still offers.
+    async fn dribbled_shape(port: u16, note: &str, request: &str, expected: usize) {
+        let mut stream = pinned(port);
+        stream.write_all(request.as_bytes()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let started = Instant::now();
+        for byte in b"GET /v1/g".iter() {
+            if let Err(error) = stream.write_all(&[*byte]).await {
+                println!(
+                    "#1517-lane {note}: dribble write refused at {} ms: {error}",
+                    started.elapsed().as_millis()
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        let seen = drain(&mut stream, note).await;
+        record(note, &seen, expected);
+    }
+
+    // Shape 1 — the stalled follow-up head: the idle timer wins, silently.
+    let mut stalled = pinned(port);
+    stalled.write_all(list.as_bytes()).await.unwrap();
+    // Settle for 150 ms: the response hands off and the kernel stalls, but
+    // the partial head must arrive before the 300 ms idle deadline, so it
+    // owns the timing instead of arriving at an already closed connection.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    stalled
+        .write_all(b"GET /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nX-Partial: ")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let seen = drain(&mut stalled, "stalled-head").await;
+    record("stalled-head", &seen, big.len());
+
+    // Shape 2 — the dribbled follow-up head with the head deadline (+1.15 s)
+    // firing while the tail is still stuck (the drain starts at +1.35 s).
+    dribbled_shape(port, "dribbled-head", &list, big.len()).await;
+
+    // Shape 3 — the same dribbled head, but the resume beats the deadline:
+    // a 1.5 s head deadline lands at +1.65 s, after the +1.35 s drain has
+    // un-stuck the tail, so the 408 can actually reach the client.
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_millis(1_500),
+        keep_alive_timeout: Duration::from_millis(300),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let (resumed, resumed_port) = start_limited(store, limits).await;
+    dribbled_shape(resumed_port, "dribbled-head-resumed", &list, big.len()).await;
+
+    tokio::time::timeout(Duration::from_secs(5), server.close())
+        .await
+        .expect("#1517-lane server close budget");
+    tokio::time::timeout(Duration::from_secs(5), resumed.close())
+        .await
+        .expect("#1517-lane resumed server close budget");
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// The keep-alive timer must not run while a request is in flight: a body that
 /// arrives after more than `keepAliveTimeout` must still be accepted, until the
 /// separate `requestTimeout` bound.

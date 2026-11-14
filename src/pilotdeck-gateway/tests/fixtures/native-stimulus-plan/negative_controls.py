@@ -9,6 +9,7 @@ import argparse
 import importlib.machinery
 import importlib.util
 import os
+from contextlib import suppress
 from pathlib import Path
 import re
 import unittest
@@ -29,6 +30,15 @@ runner = Path(__file__).resolve()
 e2e_runner = fixture.parent.parent / 'native-session-e2e/negative_controls.py'
 r11 = fixture.parent.parent / 'native-witness/test_r11.py'
 PUBLISH_DIR = root / '.negctl-publish'
+# fix-r2 (#1528 review): the guarded branch below holds only this tree's
+# .negative-source.lock, acquired by mutating_sources' internal tree lock
+# with the shared default budget (900 s). Every path it guards is outside
+# scripts/gateway-parity/, so the shared parity lease is a nullcontext for
+# this runner and no cross-tree window can starve the acquire -- same
+# lock and same budget as the memory rehearsal below.
+SLOT_WAIT_SECONDS = 900
+BUILD_SECONDS = 900
+BOUND_TEST_SECONDS = 30
 
 
 def write_atomic(path, data):
@@ -52,7 +62,11 @@ def write_atomic(path, data):
         os.chmod(tmp, mode)
         os.replace(tmp, path)
     finally:
-        tmp.unlink(missing_ok=True)
+        # fix-r12 (review DS r11 sibling #1, same family as write_source_atomic):
+        # the cleanup unlink is the only swallowed error, so a failed publish
+        # always surfaces its own error instead of a PermissionError here.
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
 
 
 cases = [
@@ -86,6 +100,13 @@ cases = [
     ('empty-before-control-skipped', measurement, '                        witnessed(damaged, timeline)\n                    except ValueError as error:', "                        raise ValueError('#1368 missing required order edges: ' + target['name'])\n                    except ValueError as error:", 'test_measurement_empty_order_controls'),
     ('empty-before-count-omitted', measurement, 'empty_before_controls += 1', 'empty_before_controls += 0', 'test_measurement_empty_order_controls'),
     ('hardcoded-unchecked-count', fixture, "len(result['uncheckedBoundaries']) == case_count * repeats", "len(result['uncheckedBoundaries']) == 360", 'test_measurement_unchecked_not_pass'),
+    # #1530: the literals above track the frozen calibration total; the pin
+    # test fails the moment they go stale, and this mutant proves it can fail.
+    ('stale-hardcoded-count', runner, 'len(se' + 'en) != 360', 'len(seen) != 361', 'test_hardcoded_counts_track_calibration'),
+    # fix-r1 (#1528 review): the stale-literal proof above only covered the
+    # measurement half of the pin; the unchecked half needs its own, or
+    # weakening that comparison alone would keep every control green.
+    ('stale-hardcoded-unchecked-count', runner, "len(result['uncheckedBoundar" + "ies']) == 360", "len(result['uncheckedBoundaries']) == 361", 'test_hardcoded_counts_track_calibration'),
     ('registry-wait-control-without-mock', r11, 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=True)', 'fixture._collect(output, real_settle=True, after_final=after_final,\n                                 synthetic_stimuli=False)', 'test_registry_free_settle_synthetic_control'),
     ('memory-plan-launches-cargo', runner, '            if not args.memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
     ('memory-e2e-launches-cargo', e2e_runner, '            if not memory:\n                slot = wait_for_slot(', '            if True:\n                slot = wait_for_slot(', 'test_memory_runners_do_not_compile_tree'),
@@ -133,6 +154,8 @@ messages = {
     'empty-before-control-skipped': '#1368 empty-before data controls cover every ordered measurement',
     'empty-before-count-omitted': '#1368 empty-before data controls cover every ordered measurement',
     'hardcoded-unchecked-count': '#1368 unchecked measurement boundaries cannot report PASS',
+    'stale-hardcoded-count': '#1530 hardcoded count mutants track the frozen calibration total',
+    'stale-hardcoded-unchecked-count': '#1530 hardcoded count mutants track the frozen calibration total',
     'registry-wait-control-without-mock': '#1368 registry-free settle controls explicitly attest synthetic stimuli',
     'memory-plan-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
     'memory-e2e-launches-cargo': '#1368 memory runners never launch cargo or claim a mutated build',
@@ -216,7 +239,15 @@ def execution_environment():
         raise SystemExit('CARGO_TARGET_DIR must be supplied by caller')
     # #1402: this guard pair is byte-duplicated in native-session-e2e's
     # runner; consolidating it means changing the shared negative_process.py,
-    # which belongs to the M6 lane (#1099) and is out of scope here.
+    # which belongs to the M6 lane (#1099). The #1528 family batch did
+    # change that shared file once, under coordinator dispensation (the
+    # parity-lease acquire budget, min(lock_timeout, 60) -> the caller's
+    # value, for the e2e runner's queueing budget); every path this runner
+    # guards is outside scripts/gateway-parity/, so that acquire is a
+    # nullcontext here (see the fix-r2 note above the constants). M6 #1099
+    # has no active lane and no sibling branch edits that file, so no
+    # parallel conflict; coordinator-approved 2026-11-13, retained pending
+    # human re-review.
     return target_environment(root)
 
 
@@ -240,7 +271,7 @@ def main():
     def run(label, test, mutant=None):
         command = ([sys.executable, '-I', __file__, '--memory-run', mutant] if mutant else
                    [sys.executable, '-I', str(fixture), full_test(test)])
-        result = run_owned(command, cwd=root, env=env, timeout=30)
+        result = run_owned(command, cwd=root, env=env, timeout=BOUND_TEST_SECONDS)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
 
@@ -258,11 +289,11 @@ def main():
             if not args.memory:
                 write_atomic(path, changed.encode())
             if not args.memory:
-                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
+                slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=SLOT_WAIT_SECONDS)
                 (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
                 build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                                    '-p', 'pilotdeck-gateway', '--test', 'native_stimulus_plan', '--no-run'],
-                                  cwd=root, env=env, timeout=900)
+                                  cwd=root, env=env, timeout=BUILD_SECONDS)
                 (out / (name + '-compile.log')).write_text(build.stdout + build.stderr)
                 if build.returncode != 0:
                     raise ValueError('no-run failed')

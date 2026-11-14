@@ -206,8 +206,14 @@ mutations = [
      'storage::stimulus_tests::invalid_control_directory_fails_closed', '#1370 malformed stimulus.json fails the writer closed'),
     # The construction receipt is the stimulus boundary witness: the assembly
     # must state the resolved control directory on stderr at startup.
+    # Re-anchored to the #2558 fix-r2 shape (the same receipt line, now
+    # through the non-panicking `console_log_line` writer instead of
+    # `eprintln!`).
     ('assembly-receipt-not-published', ASSEMBLY,
-     'eprintln!("native storage stimulus on {}", dir.display());',
+     '''super::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!("native storage stimulus on {}", dir.display()),
+        );''',
      'let _ = dir;',
      'executable_native_storage_stimulus', '#1370 executable armed stimulus receipt'),
     # Fail closed: a value that does not name an existing directory is

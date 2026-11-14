@@ -17,9 +17,6 @@ mod test_permission_faults;
 #[allow(dead_code)]
 #[path = "../src/test_process.rs"]
 mod test_process;
-#[allow(dead_code)]
-#[path = "common/skip_line.rs"]
-mod test_skip_line;
 // Kept for the `#[path]`-included test_process.rs above, whose own tests
 // resolve `crate::test_scratch` through this crate root; this file's own
 // tests stopped using it (#1401 item 5).
@@ -154,8 +151,9 @@ async fn explicit_entry_selects_parser() {
 }
 
 // The child's own stderr line once it is serving, exactly as the product
-// writes it (`eprintln!("native listening {address}")` in
-// src/native_process.rs). Observations anchor on the whole line (see
+// writes it (`console_log_line` on stderr in src/native_process.rs; the
+// #2558 fix changed only the panic behavior of the write, not the bytes).
+// Observations anchor on the whole line (see
 // `advertises`): a substring match would also fire on a diagnostic that merely
 // mentions the phrase.
 const NATIVE_LISTENING: &str = "native listening";
