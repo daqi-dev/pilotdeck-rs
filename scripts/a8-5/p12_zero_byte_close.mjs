@@ -10,11 +10,25 @@
  * 观察窗有界：P12_WINDOW_MS 毫秒，须为 (0, 300000] 内安全整数（未设置或
  * 空串回退默认 70_000；非法值 stderr 一句原因 + exit 2，不落盘任何证据）。
  * 端口默认 39891，可用 --port <N> 或 P12_PORT 改（非法值同 exit 2）；占用
- * 预检失败受控快速失败（exit 3，不落观测记录，照 p16 fix-r4 EADDRINUSE
- * 受控 FAIL 形态）。证据名带窗长+时间戳+pid（run 唯一，tmp 名随之唯一，
- * 不覆写既有证据）；结束时收尸（销毁 socket、若 close 已 settle 则等待完成）。
+ * 预检失败与 bind 失败（EADDRINUSE——预检→import→bind 间 TOCTOU 竞态败者，
+ * fix-r5 concurrency#1）都受控快速失败（exit 3，不落观测记录，照 p16 fix-r4
+ * EADDRINUSE 受控 FAIL 形态 + 进程级 uncaughtException/unhandledRejection
+ * 兜底）。证据名带窗长+时间戳+pid（run 唯一，tmp 名随之唯一，不覆写既有
+ * 证据）；结束时收尸（销毁 socket、若 close 已 settle 则等待完成）。
+ * 判据登记（fix-r5 boundary#1，判废条件照 A8.3-CH-SMS-012-R1.md:121-134
+ * 逐字段对齐）：产物首条 scenario 记录含 headersTimeout（server 对象实读
+ * 的实测值，须 =60000；读不到记 null——判废面，不硬编）/requestTimeout/
+ * connectionsCheckingInterval；observation 行时间字段——closeCalledMs/
+ * elapsedMs 恒有限数值，closeResolvedMs/connectionEndedMs 事件发生才为
+ * 有限数值（「窗内不 settle」正是观察对象，与 R1「必须有限」的差异点；
+ * connectionEndedMs 终值在 cleanup 行恒有限）；有效性只看产物条件、不看退出码。
+ * note 结论谓词（fix-r5 boundary#2）：判「支持『close 清 checker ⇒ 永不
+ * settle』」前须同 observation 行核「bytes=0 且窗内无 end/close/error 服务端
+ * 事件（socketEventsFromServerSide 空）且 socketLocalStillOpen===true」；
+ * 不满足时只报事实（bytes/firstByteMs/closeSettled + 服务端事件清单）、
+ * 不作机制归因。
  * 退出码：0 成功；1 运行失败（落失败记录）；2 非法参数/env（不落盘）；
- * 3 端口占用预检失败（不落盘）。
+ * 3 端口占用/bind 失败（不落观测记录）。
  */
 import { writeSync } from "node:fs";
 import { connect } from "node:net";
@@ -71,12 +85,36 @@ const log = (k, d) => {
   rec.log(k, d);
 };
 
+// fix-r5 concurrency#1（TOCTOU 实测后修，实测原始输出见本单证据目录）：预检→
+// import→bind 之间存在竞态窗（import 的 ESM 图加载耗时不可忽略），两轮并发同
+// 端口时败者的 bind 撞 EADDRINUSE——实测败者走未捕获 'error' 裸崩路径（非文档
+// 承诺的受控 exit 3）。基线 startPilotDeckServer 的 listen 在黑盒内、无法像
+// p16_stop_acceptance.mjs:534-540 那样在 listen 前挂 error 监听，受控路径的
+// 等价面 = 此处进程级兜底 + main().catch 的 EADDRINUSE 分支（同受控 FAIL：
+// exit 3、不落观测产物）。非 EADDRINUSE 的迟到异常仍 exit 1（与 main().catch
+// 同语义；不在此落盘——任意上下文落盘有覆写竞态风险）。
+const eaddrInuseFail = (origin) => {
+  writeSync(2, `P12 FAIL: 端口 ${port} bind 失败（EADDRINUSE，${origin}——预检与 bind 之间端口被占，TOCTOU 竞态败者受控快速失败，不落观测记录）\n`);
+  process.exit(3);
+};
+process.on("uncaughtException", (e) => {
+  if (e?.code === "EADDRINUSE") eaddrInuseFail("uncaughtException 路径");
+  writeSync(2, `P12 FAILED (uncaughtException): ${e?.stack ?? e}\n`);
+  process.exit(1);
+});
+process.on("unhandledRejection", (e) => {
+  if (e?.code === "EADDRINUSE") eaddrInuseFail("unhandledRejection 路径");
+  writeSync(2, `P12 FAILED (unhandledRejection): ${e?.stack ?? e}\n`);
+  process.exit(1);
+});
+
 // 证据名带窗长+时间戳+pid：run 唯一，杜绝两轮互覆（fix-r3 concurrency#3；
 // Recorder.dump 的 tmp 名 = 本名 + ".tmp"，随之唯一）
 const RUN_STAMP = `${new Date().toISOString().replace(/[:.]/g, "")}-${process.pid}`;
 const EVIDENCE_NAME = `p12_zero_byte_close-${WINDOW_MS}ms-${RUN_STAMP}.json`;
 
 async function main() {
+  const runStartAt = Date.now();
   // 端口占用预检（fix-r3 concurrency#3）：占用时受控快速失败（exit 3、不落观测
   // 记录），不把失败记录伪装成观测、也不让零字节 client 连到别人的 server。
   if (!(await tcpRefused(port))) {
@@ -90,6 +128,21 @@ async function main() {
     staticAssetsPath: makeStaticDir(RAW_DIR), pilotHome: makeHome(RAW_DIR, "p12"),
   });
 
+  // fix-r5 boundary#1：首条 scenario 记录（判据对齐 R1:121-134——「产物至少
+  // 一行 scenario」+「首行 headersTimeout 须 =60000」的 p12 对应面）。三个超时
+  // 字段从 startPilotDeckServer 返回的 server 对象实读（实测值，不硬编）；
+  // 读不到（非有限数值，如包装层未透出）记 null——判废面，复跑人可据此作废。
+  const finiteNumOrNull = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  log("scenario", {
+    scenario: "p12-zero-byte-close",
+    port,
+    windowMs: WINDOW_MS,
+    windowEnvRaw: rawWindowEnv ?? null,
+    headersTimeout: finiteNumOrNull(server?.headersTimeout),
+    requestTimeout: finiteNumOrNull(server?.requestTimeout),
+    connectionsCheckingInterval: finiteNumOrNull(server?.connectionsCheckingInterval),
+  });
+
   // 零字节连接：建连成功后不发任何字节
   const connectedAt = Date.now();
   const zeroByte = await new Promise((res, rej) => {
@@ -98,10 +151,14 @@ async function main() {
   });
   log("zero-byte-connected", { localPort: zeroByte.localPort, wroteBytes: 0 });
   const socketEvents = [];
+  let socketCloseAt = null;
   let firstByteMs = null;
   let bytes = 0;
   let hex = null;
-  zeroByte.on("close", () => socketEvents.push({ event: "close", at: Date.now() }));
+  zeroByte.on("close", () => {
+    socketCloseAt = Date.now();
+    socketEvents.push({ event: "close", at: socketCloseAt });
+  });
   zeroByte.on("error", (e) => socketEvents.push({ event: "error", code: e.code, at: Date.now() }));
   zeroByte.on("end", () => socketEvents.push({ event: "end", at: Date.now() }));
   // 判别观测面（fix-r3 P1#2a）：服务端若发 408（或任何字节），data 监听落
@@ -115,20 +172,31 @@ async function main() {
   });
 
   const t0 = Date.now();
+  const closeCalledMs = t0 - runStartAt;
   let closeSettled = false;
+  let closeResolvedAt = null;
   const closePromise = server.close().then(
-    () => { closeSettled = true; },
-    () => { closeSettled = true; },
+    () => { closeSettled = true; closeResolvedAt = Date.now(); },
+    () => { closeSettled = true; closeResolvedAt = Date.now(); },
   );
 
   // 观测窗（默认 70 s 只证右删失下界——未覆盖最坏相位 408 落点，见 #2259 头注）
   while (Date.now() - t0 < WINDOW_MS && !closeSettled) {
     await sleep(500);
   }
+  // fix-r5 boundary#2：结论谓词——「支持②（close 清 checker ⇒ 永不 settle）」
+  // 须同时核同一 observation 行：bytes=0、窗内无 end/close/error 服务端事件、
+  // socket 本地仍开；不满足时只报事实、不作机制归因（两分支措辞都在 note 模板）。
+  const supportsNeverSettle = bytes === 0
+    && socketEvents.length === 0
+    && !zeroByte.destroyed;
   log("observation", {
     windowMs: WINDOW_MS,
     windowEnvRaw: rawWindowEnv ?? null, // 原始 env 字符串（复算用；null = 未设置）
     port,
+    closeCalledMs,
+    closeResolvedMs: closeResolvedAt !== null ? closeResolvedAt - runStartAt : null,
+    connectionEndedMs: socketCloseAt !== null ? socketCloseAt - runStartAt : null,
     connectToCloseMs: t0 - connectedAt,
     elapsedMs: Date.now() - t0,
     closeSettled,
@@ -136,25 +204,46 @@ async function main() {
     bytes,
     hex,
     note: closeSettled
-      ? "close 在观测窗内 settle（时间见 elapsedMs）"
+      ? "close 在观测窗内 settle（时间见 elapsedMs/closeResolvedMs）"
       : firstByteMs !== null
         ? `${WINDOW_S}s 窗内不 settle，但服务端字节已到达（firstByteMs/bytes/hex 见本行）——排除「close 清 checker ⇒ 408 不发」，settle 等待另有原因，见 #2259`
-        : COVERS_WORST_PHASE
-          ? `${WINDOW_S}s 窗内不 settle 且零字节 socket 未收到任何服务端字节——窗已覆盖最坏相位 408 落点（相位窗 (60, 90] s + 毫秒级 tick 抖动），支持「close 清 checker ⇒ 永不 settle」（SmsChannel 实例机制链 A8.3-CH-SMS-014-R2；GatewayServer 实例路径以本观测为准），见 #2259`
-          : `${WINDOW_S}s 窗内不 settle（右删失下界 ${WINDOW_S}s；窗未覆盖最坏相位 408 落点（落点随网格相位在 (60, 90] s 窗内、含毫秒级 tick 抖动），区分不了「408 才 settle」与「永不 settle」，见 #2259）`,
-    socketEventsFromServerSide: socketEvents,
+        : COVERS_WORST_PHASE && supportsNeverSettle
+          ? `${WINDOW_S}s 窗内不 settle，且零字节 socket 未收到任何服务端字节（bytes=0、窗内无 end/close/error 服务端事件、socket 本地仍开——谓词字段见本行）——窗已覆盖最坏相位 408 落点（相位窗 (60, 90] s + 毫秒级 tick 抖动），支持「close 清 checker ⇒ 永不 settle」（SmsChannel 实例机制链 A8.3-CH-SMS-014-R2；GatewayServer 实例路径以本观测为准），见 #2259`
+          : COVERS_WORST_PHASE
+            ? `${WINDOW_S}s 窗内不 settle 且零字节 socket 未收到服务端字节，但结论谓词不成立（窗内服务端事件=${JSON.stringify(socketEvents.map((e) => e.event))}、socket 本地${zeroByte.destroyed ? "已关" : "仍开"}）——只报事实：bytes=${bytes}、firstByteMs=${firstByteMs}、closeSettled=${closeSettled}、服务端事件清单见本行 socketEventsFromServerSide，不作机制归因，见 #2259`
+            : `${WINDOW_S}s 窗内不 settle（右删失下界 ${WINDOW_S}s；窗未覆盖最坏相位 408 落点（落点随网格相位在 (60, 90] s 窗内、含毫秒级 tick 抖动），区分不了「408 才 settle」与「永不 settle」，见 #2259）`,
+    // .slice() 快照：cleanup 的 destroy() 会再 push close 事件，而 Recorder 落的是
+    // 对象引用——不快照会把窗后事件混进「窗内」清单（证据完整性，fix-r5 实测发现）
+    socketEventsFromServerSide: socketEvents.slice(),
     socketLocalStillOpen: !zeroByte.destroyed,
   });
 
   // 收尾：销毁零字节 socket；若 close 已 settle 则 closePromise 已完成，否则进程显式退出
   zeroByte.destroy();
-  log("cleanup", { destroyed: true, closeSettledAtExit: closeSettled });
+  if (socketCloseAt === null) {
+    // fix-r5 boundary#1：connectionEndedMs 终值收进 cleanup 行（有界等待 200 ms，
+    // 事件不达如实记 null——判废面），observation 行内的值为窗内实际发生值。
+    await Promise.race([
+      new Promise((res) => zeroByte.once("close", () => res())),
+      sleep(200),
+    ]);
+  }
+  log("cleanup", {
+    destroyed: true,
+    closeSettledAtExit: closeSettled,
+    connectionEndedMs: socketCloseAt !== null ? socketCloseAt - runStartAt : null,
+  });
   rec.dump(EVIDENCE_NAME);
   say("P12 DONE");
   process.exit(0);
 }
 
 main().catch((e) => {
+  // fix-r5 concurrency#1：TOCTOU 竞态败者的 bind 失败（startPilotDeckServer 以
+  // reject 落定的形态）收进受控路径——exit 3、不落观测记录（照 p16 fix-r4 形态）。
+  if (e?.code === "EADDRINUSE") {
+    eaddrInuseFail("startPilotDeckServer reject 路径");
+  }
   say(`P12 FAILED: ${e?.stack ?? e}`);
   rec.dump(EVIDENCE_NAME);
   process.exit(1);
