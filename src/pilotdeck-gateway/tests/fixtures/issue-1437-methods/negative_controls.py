@@ -21,12 +21,14 @@ full run, and an explicit subset) before anything runs, so a row dropped from
 never-started refusal (exit 2), not a shorter run that still reads green.
 """
 import os
+import re
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_selection import refuse, registered
+from negative_selection import (claim_dir, missing_target, refuse,
+                                 refuse_unusable_target, registered)
 from negative_suite import Case, run_cases
 
 USER_DIALOG = root / 'src/pilotdeck-gateway/src/native_process/methods/user_dialog.rs'
@@ -36,6 +38,7 @@ PERMISSION = root / 'src/pilotdeck-gateway/src/native_process/methods/permission
 # fixture used to mutate were folded into it.
 METHODS_MOD = root / 'src/pilotdeck-gateway/src/native_process/methods/mod.rs'
 DISPATCH = root / 'src/pilotdeck-gateway/src/dispatch.rs'
+TESTS = root / 'src/pilotdeck-gateway/src/native_process/methods/tests.rs'
 
 TEST = 'native_process::methods::tests::'
 
@@ -298,15 +301,120 @@ def mutate(content, scope, replacements):
     return content
 
 
+def test_body(test, texts=None):
+    """The one top-level definition of the bound test in methods/tests.rs.
+
+    The bound tests are top-level `#[test]` / `#[tokio::test]` functions of
+    that file, so a column-zero closing brace is the end of the function and
+    a sibling's assertion cannot satisfy the binding (same shape as the
+    native-storage-stimulus checker).
+    """
+    if texts is None:
+        texts = {TESTS: TESTS.read_text()}
+    pattern = r'^(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^}'
+    bodies = re.findall(pattern, texts[TESTS], re.M | re.S)
+    return bodies[0] if len(bodies) == 1 else ''
+
+
+# A quoted literal of the bound test's own body (raw strings and escapes kept
+# verbatim; a newline inside a literal is impossible in this file's payloads).
+_LITERALS = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+
+
+def _template_covers(template, assertion):
+    """True when the assertion is a prefix of some instantiation of template.
+
+    Static chunks must appear in order; a `{placeholder}` absorbs anything
+    between them, and the assertion may stop inside a chunk. The tail after
+    the last matched chunk must be empty or land inside a trailing
+    `{placeholder}` -- the same rule native-management carries (its fix-r5 /
+    #3143 fix-r1 hardening), so a drifted assertion with an invented tail or a
+    bare `{}` template cannot read as anchored.
+    """
+    chunks = re.split(r'\{[^{}]*\}', template)
+    if not any(chunks):
+        return False
+    trailing = chunks[-1] == ''
+    position = 0
+    for index, chunk in enumerate(chunks):
+        if not chunk:
+            continue
+        found = assertion.find(chunk, position)
+        if found < 0:
+            remainder = assertion[position:]
+            if index == 0:
+                return bool(remainder) and chunk.startswith(remainder)
+            return any(remainder.endswith(chunk[:length])
+                       for length in range(1, len(chunk) + 1))
+        position = found + len(chunk)
+    return trailing or not assertion[position:]
+
+
+def anchored(body, assertion):
+    """True when the assertion (or every alternative in a list) is anchored.
+
+    This fixture's bound tests assert through `format!` templates
+    (`"#1437 {label} ttlMs is rejected"` with label=below), so a literal-only
+    `f'"{assertion}"' in body` scan (the two argparse siblings' form) would
+    report most rows stale on a clean tree. The anchor is the text the kill
+    judge requires in the panic payload, so the binding accepts the two
+    spellings the table uses: the literal itself (or a substring of a
+    literal's static text), and an instantiation of a `{placeholder}` template
+    the body carries (native-management's `_anchored` semantics).
+    """
+    if isinstance(assertion, list):
+        return all(anchored(body, one) for one in assertion)
+    for literal in _LITERALS.findall(body):
+        content = literal[1:-1]
+        if assertion in content:
+            return True
+        if '{' in content and _template_covers(content, assertion):
+            return True
+    return False
+
+
+def check_binding_scope():
+    fixture = ('fn target() {\n'
+               '    panic!("#1437 plain anchor");\n'
+               '    panic!("#1437 {label} template anchor");\n'
+               '}\n'
+               'fn sibling() {\n    panic!("#1437 sibling anchor");\n}\n')
+    body = test_body('native_process::methods::tests::target', {TESTS: fixture})
+    if '#1437 sibling anchor' in body:
+        raise RuntimeError('#1437 binding checker accepted a sibling function')
+    if not anchored(body, '#1437 plain anchor'):
+        raise RuntimeError('#1437 binding checker lost a literal assertion')
+    if not anchored(body, '#1437 below template anchor'):
+        raise RuntimeError('#1437 binding checker lost a template instantiation')
+    if anchored(body, '#1437 absent anchor'):
+        raise RuntimeError('#1437 binding checker anchored a missing assertion')
+    if anchored(body, '#1437 plain anchor invented tail'):
+        raise RuntimeError('#1437 binding checker accepted a tail-extending anchor')
+
+
 def main():
+    check_binding_scope()
     # #2572: every mode verifies the table against the static roster first, so
     # a dropped row refuses to start instead of shrinking the run.
     check_roster()
     if sys.argv[1:] == ['--check']:
-        for name, path, old, new, _test, _assertion in mutations:
-            mutate(path.read_text(), None, [(old, new)])
-        print(f'#1437 {EXPECTED_TOTAL} registered mutation anchors OK '
-              f'(EXPECTED_NAMES roster matched)')
+        # #2856 fix-r3 (MM boundary#2, a档): the --check used to verify only
+        # the anchors; the two argparse siblings also scan the bound test
+        # bodies for the assertion, so a renamed test or a drifted assertion
+        # string stayed green here and only surfaced in the host's full round.
+        stale = []
+        for name, path, old, new, test, assertion in mutations:
+            text = path.read_text()
+            body = test_body(test)
+            if (text.count(old) != 1 or old == new or
+                    not body or not anchored(body, assertion)):
+                stale.append(name)
+        if stale:
+            raise SystemExit('#1437 stale anchor/test/assertion bindings: '
+                             + ', '.join(stale))
+        print(f'#1437 {EXPECTED_TOTAL} registered mutations present '
+              f'(EXPECTED_NAMES roster matched); {EXPECTED_TOTAL} unique anchors '
+              f'and assertion bindings: OK')
         return 0
     # #2572 fix-r2 (both review families): the exact-match above let
     # `--check NAME` fall through to the run path and create a directory
@@ -339,9 +447,17 @@ def main():
     unknown = sorted(set(selected_names) - {row[0] for row in mutations})
     if unknown:
         refuse('#1437 unknown mutation name: ' + ', '.join(unknown))
+    # #2856 fix-r3 (MM boundary#1 ≡ sibling#2): the last two rc 1 edges of the
+    # startup contract move to the shared helpers -- an absent/empty/blank/dot
+    # CARGO_TARGET_DIR and an existing output directory are never-started
+    # refusals (rc 2, no evidence directory), the same shape
+    # native-registry-switch carries. `raise SystemExit(str)` exits 1 and a
+    # bare `mkdir(exist_ok=False)` dies on FileExistsError, and both read as
+    # "it ran and was not green" when nothing had started.
+    if missing_target():
+        refuse('#1437 set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse_unusable_target()
     env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
     # `run_cases` runs plain cases with no receipt protocol of its own (the
     # #946 ReceiptRun lives in `matrix_main`, negative_suite.py, not here), so
     # anything inherited from a caller shell is stale config: `record_failure`
@@ -352,8 +468,7 @@ def main():
         env.pop(key, None)
     selected = [Case(*row) for row in mutations
                 if not selected_names or row[0] in selected_names]
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = claim_dir(sys.argv[1])
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     return run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)

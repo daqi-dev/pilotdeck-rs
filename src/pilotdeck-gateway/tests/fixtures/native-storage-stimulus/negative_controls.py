@@ -31,7 +31,8 @@ PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_storage_stimulus.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import refuse, registered, verdict_exit
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 # The entry-tick receipt write, and the lazy variant of it that defers the
@@ -413,11 +414,20 @@ def main():
               f'(EXPECTED_NAMES roster matched); {EXPECTED_TOTAL} unique anchors '
               f'and assertion bindings: OK')
         return 0
+    # #2856 fix-r3 (MM boundary#1 ≡ sibling#2): the last two rc 1 edges of the
+    # startup contract move to the shared helpers -- an absent/empty/blank/dot
+    # CARGO_TARGET_DIR and an existing output directory are never-started
+    # refusals (rc 2, no evidence directory), the same shape
+    # native-registry-switch carries. The combined `raise SystemExit(str)`
+    # used to exit 1 and read as "it ran and was not green", and the bare
+    # `mkdir(exist_ok=False)` died on an uncaught FileExistsError.
+    if not args.output:
+        refuse('usage: negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    if missing_target():
+        refuse('#1370 set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse_unusable_target()
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#1370 output and caller CARGO_TARGET_DIR required')
-    output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)

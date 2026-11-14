@@ -128,6 +128,14 @@ SCRIPTS = (
     # roster drift itself is pinned by its own test_protocol.py, like the
     # other registered entries.
     ('native-dispatch/negative_controls.py', (), ()),
+    # #2856 fix-r3 (MM boundary#1 ≡ sibling#2): the two roster fixtures whose
+    # remaining rc 1 startup edges moved to the shared helpers this round
+    # (absent/empty/blank/dot target and an existing output directory ->
+    # missing_target()/refuse_unusable_target()/claim_dir() rc 2, never a
+    # bare SystemExit string or an uncaught FileExistsError), so their
+    # startup matrix is machine-checked like the other migrated entries.
+    ('issue-1437-methods/negative_controls.py', (), ()),
+    ('native-storage-stimulus/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
