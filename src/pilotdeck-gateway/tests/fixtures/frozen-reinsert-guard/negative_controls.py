@@ -10,13 +10,12 @@ import argparse
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, refuse, registered
+from negative_selection import claim_dir, refuse, registered, withdraw_claim
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -628,23 +627,18 @@ def main():
         # lock) is a startup refusal, not a red run -- rc 2, no summary, and
         # the claim claim_dir made is withdrawn so the host re-running the
         # same output path is not refused on a leftover directory that never
-        # ran (rmdir only removes the empty case -- a run that already wrote
-        # logs keeps them).
+        # ran.
         # #1642 fix-r5 (review concurrency P1#1): the withdrawal is ONE
         # atomic visibility step, not two destructive calls. The r4 shape
         # unlinked `.claim` and only then rmdir'd the directory, so a
         # concurrent run claiming the path in that window owned a directory
-        # the first runner's rmdir then deleted. The rename removes the path
-        # in a single syscall (a later claimant can only mkdir a directory
-        # the withdrawal has already let go of), and the rmtree cleans the
-        # renamed directory, never the claimable path.
+        # the first runner's rmdir then deleted.
+        # #3143 fix-r1 (simplify#6): the r5 rename + rmtree moved into the
+        # shared ``negative_selection.withdraw_claim`` (the same contract
+        # the other three runners now carry); the semantics live in the
+        # helper's docstring.
         if phase == 'enter':
-            try:
-                withdrawn = out.with_name(out.name + f'.withdrawn-{os.getpid()}')
-                os.rename(out, withdrawn)
-                shutil.rmtree(withdrawn)
-            except OSError:
-                pass
+            withdraw_claim(out)
             refuse(f'guard refused to start: {error!r}')
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)

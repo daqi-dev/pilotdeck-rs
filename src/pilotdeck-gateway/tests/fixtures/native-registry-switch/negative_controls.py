@@ -26,7 +26,7 @@ PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_registry_switch.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, withdraw_claim
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 # Discovery anchor: fixtures/rust_binding_views.py (the shared binding-scan
 # views this table's test_body reads; without the literal a change to the
@@ -358,10 +358,10 @@ def main():
         # (utf16-residual-sort's startup_refusal precedent; rmdir only
         # removes the empty case -- a run that already wrote logs keeps them).
         if phase == 'enter':
-            try:
-                output.rmdir()
-            except OSError:
-                pass
+            # #3143 fix-r1 (simplify#6): the shared atomic withdrawal, the
+            # same contract the other three runners carry (rename + rmtree
+            # in one helper, never a bare rmdir that races a later claimant).
+            withdraw_claim(output)
             refuse(f'guard refused to start: {error!r}')
         invalidate_completed(results, reason)
         for name, _, _, _, test, assertion in selected[len(results):]:
