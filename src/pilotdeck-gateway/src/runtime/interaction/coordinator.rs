@@ -162,18 +162,16 @@ impl GatewayInteractionCoordinator {
         (entry.resolve)(decision.to_value());
         true
     }
-    /// `owner` is `None` when the wire `sessionKey` is not a string, or is the
-    /// empty string. TS keys `permissionGrants` by the raw `input.sessionKey`,
-    /// so a non-string value (`5` / `{}` / `true` / `undefined`) is an entry of
-    /// its own that no Rust turn can ever look up — turns always acquire with a
-    /// string key (`runtime/turn/submit.rs:330`). `""` is the one string key
-    /// that is lossy here: that same `string()` maps a missing or non-string
-    /// turn `sessionKey` to `""`, and a turn acquires by it
-    /// (`native_process/assembly.rs:247`), so storing a grant there would put an
-    /// allow rule in front of unrelated sessionless turns. Every other string —
-    /// including whitespace-only values, which the turn side keeps verbatim —
-    /// is stored under its own key exactly like TS. A skipped grant still
-    /// answers with the shape the TS probe captures (`{granted:true, entry}`,
+    /// `owner` is the router-domain key of the wire `sessionKey`
+    /// (`js_value::router_key_of`), the same key the turn side acquires by
+    /// (`native_process/assembly.rs`, `context.session_key`). TS keys
+    /// `permissionGrants` by the raw `input.sessionKey` (#1465 probes), and
+    /// #2692 made Rust turns carry the raw-value domain too, so a non-string
+    /// value (`5` / `null` / `true` / missing) is a bucket of its own that
+    /// exactly the turn born under that raw value reads, and `""` matches only
+    /// a genuinely-`""`-keyed turn. `None` — a spelling that throws (a
+    /// too-deep array) — cannot be stored; that grant is skipped, still
+    /// answering the shape the TS probe captures (`{granted:true, entry}`,
     /// #1465 `_tmp/20261106-issue-1465/ts-probe/output.txt` req-22 / req-6).
     pub fn grant_session_permission(&self, owner: Option<&JsString>, entry: &JsString) -> JsValue {
         let rule = entry_to_rule(entry);

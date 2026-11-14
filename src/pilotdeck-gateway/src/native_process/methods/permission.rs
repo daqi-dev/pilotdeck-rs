@@ -91,23 +91,26 @@ impl Requests {
                     Some(JsValue::String(value)) => value.clone(),
                     Some(_) => return Err(RequestError::new("entry.trim is not a function")),
                 };
-                // TS keys the grant Map by the raw sessionKey, so a non-string
-                // value (`5`, `{}`, `true`, missing) is an entry of its own
-                // that no turn can ever look up — Rust turns always carry a
-                // string key (`runtime/turn/submit.rs:330`). Only one *string*
-                // key is lossy here: `""`, because that same `string()` maps a
-                // missing or non-string turn sessionKey to `""`
-                // (`native_process/assembly.rs:247` acquires by that key), so a
-                // grant stored under `""` would whitelist tools for unrelated
-                // sessionless turns. Skip exactly those two cases; every other
-                // string — including a whitespace-only `"   "`, which the turn
-                // side preserves verbatim — is written to its own bucket
-                // exactly like TS (`coordinator.rs:grant_session_permission`).
-                let owner = params
-                    .get("sessionKey")
-                    .and_then(JsValue::as_string)
-                    .filter(|value| !value.units().is_empty());
-                Ok(self.interactions.grant_session_permission(owner, &entry))
+                // #2692 (DS 全量块 sibling#2): TS keys the grant Map by the
+                // raw sessionKey, and the turn side now acquires in the router
+                // domain (`native_process/assembly.rs` acquires by
+                // `context.session_key`, the `router_key` tag), so the grant
+                // must land under the same key — `5` / `null` / `true` /
+                // missing each become their own tagged bucket that exactly the
+                // turn born under that raw value reads, and a `""` grant now
+                // only matches a genuinely-`""`-keyed turn (the old
+                // skip-the-empty-string argument died with the single-domain
+                // acquire: a turn without a sessionKey acquires
+                // `\0\0raw:undefined`, never `""`). A spelling that throws (a
+                // too-deep array) is a reference key in TS; Rust cannot store
+                // it, so it is skipped like the other read faces (registered
+                // R15 divergence family). The response keeps the TS probe
+                // shape (`{granted:true, entry}`) either way
+                // (`coordinator.rs:grant_session_permission`).
+                let owner = crate::js_value::router_key_of(params.get("sessionKey")).ok();
+                Ok(self
+                    .interactions
+                    .grant_session_permission(owner.as_ref(), &entry))
             }
         })
     }

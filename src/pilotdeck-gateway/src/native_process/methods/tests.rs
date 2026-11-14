@@ -982,19 +982,18 @@ async fn permission_errors_carry_domain_codes() {
         .expect("#1309 permission fixture project shutdown");
 }
 
-/// #1465 / #1593 gate: a grant whose `sessionKey` is not a string, or is
-/// exactly `""`, must not land in the `""` rule set. TS keys
-/// `permissionGrants` by the raw value, so `5` and `undefined` are entries of
-/// their own and never alias a real session. This registry is keyed by the
-/// lossy string form instead and a turn sent without a `sessionKey` acquires
-/// `""` (`runtime/turn/submit.rs:330` → `native_process/assembly.rs:247`), so
-/// writing there would let malformed input whitelist tools for unrelated
-/// sessionless turns (measured before the fix: the `""` allow list grew by one
-/// entry per malformed grant). `""` is the only *string* key with that problem;
-/// a whitespace-only key is a bucket of its own on both the grant and the turn
-/// side, so it must still be written.
+/// #1465 / #1593 / #2960 gate: the grant Map is keyed by the router domain —
+/// the same key the turn side acquires by. TS keys `permissionGrants` by the
+/// raw `input.sessionKey` (probe `_tmp/20261106-issue-1465/ts-probe/
+/// output.txt` req-22 / req-6), and #2692 made Rust turns carry the raw-value
+/// domain (`router_key`), so every category below lands in a bucket of its
+/// own: `5` / `undefined` / `true` under their raw-value tags, `""` under the
+/// empty-string key that only a genuinely-`""`-keyed turn acquires (a turn
+/// without a `sessionKey` acquires `\0\0raw:undefined`, never `""` — the old
+/// single-domain alias that used to justify dropping the `""` grant is gone).
+/// A whitespace-only key keeps its own bucket on both sides, as before.
 #[tokio::test]
-async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
+async fn grants_key_their_own_router_buckets() {
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1465 malformed grant fixture setup");
     let empty = pilotdeck_protocol::JsString::from("");
@@ -1005,41 +1004,59 @@ async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
             .snapshot()
             .len(),
         0,
-        "#1465 the sessionless rule set starts empty"
+        "#1465 the empty-string rule set starts empty"
     );
 
-    for (label, session_key) in [
-        ("number", JsValue::Number(5.0)),
-        ("undefined", JsValue::Undefined),
-        ("bool", JsValue::Bool(true)),
-        ("empty string", JsValue::String(empty.clone())),
+    let router_key =
+        |value: &JsValue| crate::js_value::router_key(value).expect("#2960 the router key spells");
+    let number_bucket = router_key(&JsValue::Number(5.0));
+    let undefined_bucket = router_key(&JsValue::Undefined);
+    let bool_bucket = router_key(&JsValue::Bool(true));
+    for (label, session_key, bucket) in [
+        ("number", JsValue::Number(5.0), &number_bucket),
+        ("undefined", JsValue::Undefined, &undefined_bucket),
+        ("bool", JsValue::Bool(true), &bool_bucket),
+        ("empty string", JsValue::String(empty.clone()), &empty),
     ] {
         let granted = requests
             .permission_request(
                 "grant_session_permission".into(),
-                crate::metadata::object([("sessionKey", session_key), ("entry", "Bash".into())]),
+                crate::metadata::object([
+                    ("sessionKey", session_key.clone()),
+                    ("entry", "Bash".into()),
+                ]),
             )
             .await
             .unwrap_or_else(|_| panic!("#1465 {label} grant keeps the TS response"));
         negative_assert_eq!(
             granted.get("granted"),
             Some(&JsValue::Bool(true)),
-            "#1465 malformed grant still answers granted:true like TS"
+            "#1465 {label} grant still answers granted:true like TS"
+        );
+        negative_assert_eq!(
+            requests
+                .interactions
+                .session_allow_rules(bucket)
+                .snapshot()
+                .len(),
+            1,
+            "#2960 {label} grant lands in its own router bucket"
         );
     }
+    // None of the four buckets alias each other: the empty-string set stays
+    // untouched by the tagged grants, and vice versa.
     negative_assert_eq!(
         requests
             .interactions
-            .session_allow_rules(&empty)
+            .session_allow_rules(&router_key(&JsValue::Null))
             .snapshot()
             .len(),
         0,
-        "#1465 malformed grants must not reach the sessionless rule set"
+        "#2960 the tagged grants never reach a bucket they do not own"
     );
 
-    // A whitespace-only key is NOT the sessionless alias: the turn side keeps
-    // it verbatim (`runtime/turn/submit.rs:330`), so TS and Rust both store and
-    // read it under its own key. Dropping it would be an over-narrowing.
+    // A whitespace-only key is NOT an alias of anything: the turn side keeps
+    // it verbatim, so TS and Rust both store and read it under its own key.
     let spaces = pilotdeck_protocol::JsString::from("   ");
     let spaced = requests
         .permission_request(
@@ -1071,8 +1088,8 @@ async fn malformed_grant_does_not_reach_the_sessionless_bucket() {
             .session_allow_rules(&empty)
             .snapshot()
             .len(),
-        0,
-        "#1465 whitespace grant must not alias the sessionless bucket"
+        1,
+        "#2960 the \"\" bucket holds only the empty-string grant, not the whitespace one"
     );
 
     // Blank entry is the `granted:false` arm (TS probe output.txt req-26).
@@ -2418,11 +2435,9 @@ fn permission_user_dialog_methods_stay_outside_local_dispatch() {
 //   (InProcessGateway.ts:2781-2783), so a blank key keeps the domain
 //   rejection;
 // * `grant_session_permission` performs no such guard (`#1465`): the
-//   coordinator keys the grant Map by the raw sessionKey, so a whitespace-only
-//   key is stored in its own bucket. Only the exact `""` string is suppressed,
-//   because the turn side maps a missing/non-string sessionKey onto `""`
-//   (`native_process/assembly.rs:247`) and would otherwise whitelist tools for
-//   unrelated sessionless turns.
+//   coordinator keys the grant Map by the raw sessionKey (#2960 fix-r5: the
+//   router-domain key the turn side acquires by), so a whitespace-only key is
+//   stored in its own bucket and never reaches the `""` one.
 #[tokio::test]
 async fn permission_blank_session_key_splits_by_surface() {
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
@@ -4415,6 +4430,117 @@ async fn steer_family_dropped_guards_follow_the_ts_lookup_semantics() {
         .dispose()
         .await
         .expect("#1604 registry fixture project shutdown");
+}
+
+/// #2960 fix-r5 (DS 全量块 sibling#1): the steer family's admission read is
+/// the router domain. The submit side stores the run under `router_key`
+/// (`runtime/turn/submit.rs`), and TS feeds the raw `input.sessionKey` into
+/// the SameValueZero `activeTurnRunId` Map (InProcessGateway.ts:1860-1862;
+/// probe `_tmp/20261115-2960-fixr5/ts-steer-probe.out` cells b–e). Two
+/// shapes: a string key consults its own spelling exactly as before, while a
+/// null-keyed live turn is reachable — a wrong runId answers `turn_mismatch`
+/// and the right one reaches the steer slot, never the old
+/// `Some(JsValue::String)` guard's blanket `no_active_turn`. The steer slot
+/// itself stays in the persistent-identity (template) domain: the null-born
+/// turn's slot is bound under the spelling "null".
+#[tokio::test]
+async fn steer_family_reads_admission_in_the_router_domain() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#2960 router-domain steer fixture setup");
+    let steer_params = |session_key: JsValue, run_id: JsValue| {
+        crate::metadata::object([
+            ("sessionKey", session_key),
+            ("runId", run_id),
+            ("itemId", "i".into()),
+            ("message", "m".into()),
+        ])
+    };
+    // The null-born turn: admission under the router tag, steer slot under
+    // the template spelling — the same split the submit pump's
+    // `SessionContext` hands the session factory.
+    let router_null =
+        crate::js_value::router_key(&JsValue::Null).expect("#2960 the null router key spells");
+    let _reservation = requests
+        .owner
+        .begin_turn(&router_null, &"r".into())
+        .expect("#2960 null-keyed admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "null", "t", "r");
+    // Wrong runId on a null-keyed live turn: the runId comparison branch the
+    // old string guard made unreachable (the DS scenario — `turn_mismatch`,
+    // not `no_active_turn`).
+    for method in ["steer_turn", "cancel_steer"] {
+        let result = requests
+            .request(method.into(), steer_params(JsValue::Null, "wrong".into()))
+            .await
+            .unwrap_or_else(|_| panic!("#2960 null key with a live turn stays Ok ({method})"));
+        let field = if method == "steer_turn" {
+            "accepted"
+        } else {
+            "cancelled"
+        };
+        negative_assert_eq!(
+            result.get(field),
+            Some(&JsValue::Bool(false)),
+            "#2960 null key with a wrong runId takes the mismatch branch ({method})"
+        );
+        negative_assert_eq!(
+            result.get("reason").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from("turn_mismatch")),
+            "#2960 null key with a wrong runId reports turn_mismatch ({method})"
+        );
+    }
+    // Right runId: the dispatch reaches the slot (template spelling "null")
+    // and the round trip mirrors the string-key shape above.
+    let result = requests
+        .request("steer_turn".into(), steer_params(JsValue::Null, "r".into()))
+        .await
+        .expect("#2960 null key with the right runId steers");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#2960 the null-born turn is steerable"
+    );
+    let result = requests
+        .request(
+            "cancel_steer".into(),
+            steer_params(JsValue::Null, "r".into()),
+        )
+        .await
+        .expect("#2960 null key with the right runId cancels");
+    negative_assert_eq!(
+        result.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#2960 the steered item is cancelled on the null-born turn"
+    );
+    // The string "null" is another router key entirely: it misses the
+    // null-born turn even with the right runId (probe cell c).
+    let result = requests
+        .request("steer_turn".into(), steer_params("null".into(), "r".into()))
+        .await
+        .expect("#2960 the string spelling stays Ok");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(false)),
+        "#2960 the string \"null\" misses the null-born turn"
+    );
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+        "#2960 the string \"null\" reports no_active_turn"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2960 router-domain steer fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2960 router-domain steer fixture project shutdown");
 }
 
 #[tokio::test]

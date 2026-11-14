@@ -116,14 +116,21 @@ impl Requests {
     async fn handle_steer_turn(&self, params: JsValue) -> Result<JsValue, RequestError> {
         // TS `steerTurn` has no input guard: `input.sessionKey` is read
         // straight into the `activeTurnRunId` lookup (InProcessGateway.ts:
-        // 1860-1862). A nullish params throws on the property read; every
-        // non-string key is a Map miss exactly like a blank or absent one
-        // (#1604 probes, `_tmp/20261026-issue-1604/ts-probe/output.txt` s1-s3).
+        // 1860-1862). A nullish params throws on the property read. #2692
+        // (DS 全量块 sibling#1): the admission Map is the router domain — the
+        // submit side stores the run under `router_key`, and TS feeds the raw
+        // value into the SameValueZero `Map.get`, so a null/number/bool-keyed
+        // live turn is found here too, not answered `no_active_turn` (probe
+        // `_tmp/20261115-2960-fixr5/ts-steer-probe.out` cells b/c: wrong runId
+        // answers `turn_mismatch`, the string `"null"` misses the null-born
+        // turn). A spelling that throws (a too-deep array) is a reference key
+        // in TS; Rust cannot consult it, so it answers the miss shape (the
+        // registered R15 divergence family).
         let session_key = input_property(&params, "sessionKey")?;
-        let Some(JsValue::String(session_key)) = session_key.as_ref() else {
+        let Some(admission_key) = js_value::router_key_of(session_key.as_ref()).ok() else {
             return Ok(no_active_turn("accepted"));
         };
-        let active_run = self.owner.active_turn_run_id(session_key);
+        let active_run = self.owner.active_turn_run_id(&admission_key);
         let Some(active_run) = active_run else {
             return Ok(no_active_turn("accepted"));
         };
@@ -152,12 +159,28 @@ impl Requests {
         // `submitTurn` consumes uploads): a non-empty payload is accepted
         // and ignored here, matching the baseline.
 
+        // The steer slot (InteractionSteer's session map) lives in the
+        // persistent-identity domain, not the router domain: the submit pump
+        // binds it by the SessionContext's `session_id` — the template
+        // spelling of the submitted key (`runtime/turn/submit.rs` pump →
+        // `factory.rs` OwnedSession::submit's `sessionId` option →
+        // `interaction.rs` `bind_session(identity.session_id, …)`), so the
+        // wire value's own spelling, never its router tag, addresses the slot
+        // (a null-keyed turn's slot is "null"). Admission already proved the
+        // spelling converts — both spellings walk the same coercion — so a
+        // `None` here is only the slot miss.
+        let slot_key =
+            js_value::template_key_checked(session_key.as_ref().unwrap_or(&JsValue::Undefined))
+                .ok();
+        let Some(slot_key) = slot_key else {
+            return Ok(no_active_turn("accepted"));
+        };
         // Same shared lookup as the async-hook registry's turn resolution:
         // fetch the steer slot and guard it against the admission run ID
         // already checked above (`active_turn_for` performs the guard).
         let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
             &self.project,
-            session_key,
+            &slot_key,
             Some(&active_run),
         );
         let Some(steer_info) = steer_info else {
@@ -168,7 +191,7 @@ impl Requests {
         // by the time this handler resumes, the steer target may have closed
         // and restarted under the same textual turn ID. Inert unless armed.
         #[cfg(test)]
-        race_hook::pause(session_key).await;
+        race_hook::pause(&slot_key).await;
 
         // Canonical TS steer message format (InProcessGateway.ts:1871-1883).
         // The composer passes the raw wire message through as the text block
@@ -229,12 +252,14 @@ impl Requests {
         // is compared with strict equality, and the item id is embedded
         // verbatim on the TS side (`cancel` of an unknown id — including a
         // non-string one — records the cancellation and answers
-        // `{cancelled: true}`; probe m2).
+        // `{cancelled: true}`; probe m2). #2692 (DS 全量块 sibling#1): same
+        // router-domain admission read as `steer_turn` — see the probe cells
+        // above (`_tmp/20261115-2960-fixr5/ts-steer-probe.out` e1/e2/e3).
         let session_key = input_property(&params, "sessionKey")?;
-        let Some(JsValue::String(session_key)) = session_key.as_ref() else {
+        let Some(admission_key) = js_value::router_key_of(session_key.as_ref()).ok() else {
             return Ok(no_active_turn("cancelled"));
         };
-        let active_run = self.owner.active_turn_run_id(session_key);
+        let active_run = self.owner.active_turn_run_id(&admission_key);
         let Some(active_run) = active_run else {
             return Ok(no_active_turn("cancelled"));
         };
@@ -243,9 +268,16 @@ impl Requests {
             return Ok(turn_mismatch("cancelled"));
         }
 
+        // Same persistent-identity steer-slot domain as `steer_turn` above.
+        let slot_key =
+            js_value::template_key_checked(session_key.as_ref().unwrap_or(&JsValue::Undefined))
+                .ok();
+        let Some(slot_key) = slot_key else {
+            return Ok(no_active_turn("cancelled"));
+        };
         let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
             &self.project,
-            session_key,
+            &slot_key,
             Some(&active_run),
         );
         let Some(steer_info) = steer_info else {
