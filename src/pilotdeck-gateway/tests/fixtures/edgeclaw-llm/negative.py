@@ -11,7 +11,8 @@ import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (dead_stream_print, mutating_sources,
+                               run_owned, wait_for_slot)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/transport.rs'
@@ -140,12 +141,21 @@ def anchors(text):
             stale.append((name, contents.count(before)))
     assert set(messages) == {case[0] for case in cases}, 'every mutant needs its own named assertion'
     if stale:
-        for name, count in stale: print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
+        # #1087 fix-r8 (S1-a): the shared guarded print — a dead stderr must
+        # not turn this exit-2 refusal into a crash (rc=1, an exec-time
+        # ``2>&-`` reroute, or a shutdown-flush 120); the code is the
+        # contract.
+        for name, count in stale:
+            dead_stream_print(f'STALE ANCHOR {name}: {count} matches',
+                              stream='stderr')
         raise SystemExit(2)
 
 anchors(source.read_text())
 if sys.argv[1:] == ['--check-anchors']:
-    print(f'{len(cases)} unique anchors; no mutation')
+    # #1087 fix-r8 (S1-a): the shared guarded print — the green
+    # --check-anchors preflight must keep exit 0 under a dead stdout (no
+    # crash, no reroute, no shutdown-flush 120).
+    dead_stream_print(f'{len(cases)} unique anchors; no mutation')
     raise SystemExit(0)
 assert os.environ.get('CARGO_TARGET_DIR'), 'CARGO_TARGET_DIR must be supplied by caller'
 assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | --check-anchors'

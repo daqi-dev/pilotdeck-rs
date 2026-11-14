@@ -76,10 +76,10 @@ PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 3 * BOUND_TEST_SECONDS
 # cover the family's largest live hold (#1528/#1529).
 # test_negative_parity_acquire_budget_follows_lock_timeout pins the
 # forwarding and the shared default.
-LEASE_ACQUIRE_SECONDS = 63900
+LEASE_ACQUIRE_SECONDS = 66600
 # fix-r3 (#2929 review): the whole round gets ONE monotonic deadline, and
 # each per-case acquire passes the remaining time, not the full constant
-# -- 34 cases each handing the full 63,900 s to a lease they can never
+# -- 34 cases each handing the full acquire constant to a lease they can never
 # get multiplies the acquire budget into an unbounded round wait.  The
 # clamp keeps the value positive: parity_lock refuses a non-positive
 # timeout, and an exhausted round must fail through the TimeoutError path.

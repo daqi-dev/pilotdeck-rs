@@ -154,46 +154,46 @@ RUNNERS = {
     # fix-r1's eight members, re-derived from the family max (sibling#1).
     'native-witness/negative.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 30, 'guarded': static_guarded, 'budget': 63900},
+        'stage': 30, 'guarded': static_guarded, 'budget': 65700},
     'native-witness/negative_authentication.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 60, 'guarded': static_guarded, 'budget': 66600},
+        'stage': 60, 'guarded': static_guarded, 'budget': 68400},
     'native-witness/negative_boundary.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 60, 'guarded': static_guarded, 'budget': 63900},
+        'stage': 60, 'guarded': static_guarded, 'budget': 65700},
     'session-domain-lock-release/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
-        'stage': 180, 'guarded': static_guarded, 'budget': 63000},
+        'stage': 180, 'guarded': static_guarded, 'budget': 65700},
     'session-domain-native/negative_controls.py': {
         # baseline + mutant + unaffected + restored: every mutation but the
         # batch bypass has an unaffected control, so four is the worst case.
         'bounded_runs': lambda m: 4 * len(m.MUTATIONS),
-        'stage': 300, 'guarded': static_guarded, 'budget': 63900},
+        'stage': 300, 'guarded': static_guarded, 'budget': 65700},
     'session-domain-expectations/negative_controls.py': {
         # 2 * len(BOUND[name]) baseline+mutant runs plus one unaffected and
         # one restored run per mutation -- the BOUND sizes are read live.
         'bounded_runs': lambda m: sum(2 * len(m.BOUND[row[0]]) + 2
                                       for row in m.MUTATIONS),
-        'stage': 300, 'guarded': static_guarded, 'budget': 63000},
+        'stage': 300, 'guarded': static_guarded, 'budget': 65700},
     'gateway-batch/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 120,
         'guarded': lambda m, t: len({m.COMMON} | {row[1] for row in m.MUTATIONS}),
-        'budget': 64800},
+        'budget': 66600},
     'gateway-entry-guard/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 300,
         'guarded': lambda m, t: len({m.COMMON} | {row[1] for row in m.MUTATIONS}),
-        'budget': 65700},
+        'budget': 67500},
     # boundary#3's four call sites: the shared default 900 and an explicit 60.
     'session-lease/negative.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 30, 'guarded': static_guarded, 'budget': 63900},
+        'stage': 30, 'guarded': static_guarded, 'budget': 65700},
     'parity-lock-release/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 180,
         'guarded': lambda m, t: len({m.RUNNER} | {row[1] for row in m.MUTATIONS}),
-        'budget': 63900},
+        'budget': 65700},
     'frozen-manifest/negative_controls.py': {
         # #2929 fix-r3: the gateway-parity rows share ONE window (they guard
         # the same file pair, with a per-row restore between rows); every
@@ -210,24 +210,24 @@ RUNNERS = {
         'guarded': lambda m, t: len(m.window_paths(
             [row for row in m.mutations
              if row[1].parent.name == 'gateway-parity'])) or 1,
-        'budget': 63000},
+        'budget': 64800},
     'frozen-reinsert-guard/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 60,
         'guarded': lambda m, t: len({row[1] for row in m.MUTATIONS}
                                     | {m.COMMON, m.TEST, m.PROBE, Path(m.__file__)}),
-        'budget': 66600},
+        'budget': 69300},
     # the three pre-existing own-constant holders (sibling#6/#7/#8).
     'same-json-surfaces/negative_controls.py': {
         'hold': lambda m: m.LEASE_BUDGET_SECONDS,
         'stage': ('RUN_TIMEOUT_SECONDS', 60),
-        'guarded': static_guarded, 'budget': 63000},
+        'guarded': static_guarded, 'budget': 65700},
     'session-domain-cleanup/negative_controls.py': {
         'hold': lambda m: m.LEASE_BUDGET_SECONDS,
         'stage': ('CHECK_TIMEOUT_SECONDS', 180),
         'guarded': lambda m, t: len({m.COMMON_SOURCE}
                                      | {Path(row[1]) for row in m.MUTATIONS}),
-        'budget': 63900},
+        'budget': 65700},
     'native-session-e2e/negative_controls.py': {
         # fix-r3 (#2929 review): the round passes each per-case acquire the
         # remaining time of one monotonic deadline, not the full constant --
@@ -236,7 +236,7 @@ RUNNERS = {
         'call_shape': 'round_deadline',
         'hold': lambda m: m.PER_CASE_LEASE_SECONDS,
         'stage': ('BOUND_TEST_SECONDS', 300),
-        'guarded': static_guarded, 'budget': 63900},
+        'guarded': static_guarded, 'budget': 66600},
 }
 
 # Scan candidates that never take the host-wide lease (boundary#6): their
@@ -1001,8 +1001,11 @@ class LeaseAcquireBudgetTests(unittest.TestCase):
                 # fix-r3 (MM sibling#3/#7): the family maximum is derived
                 # live, above -- a hand-copied number in a runner comment
                 # silently drifted once already (62,460 -> 62,320), so no
-                # roster member may carry the number in prose.
-                self.assertNotIn('62,320', source,
+                # roster member may carry the number in prose.  fix-bump
+                # (#1087 reanchor review, DS sibling#2): the pin follows the
+                # live family_max instead of a frozen literal -- a stale
+                # literal only ever blocked the deprecated old number.
+                self.assertNotIn(f'{family_max:,}', source,
                                  marker + f': {relative}: the family maximum '
                                  'is derived live here, not restated in prose')
                 # The stage timeout must still be the runner's own literal

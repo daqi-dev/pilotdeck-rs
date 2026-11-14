@@ -5,8 +5,11 @@ Every row changes one existing anchor in `heartbeat/indexer.rs`, runs the one
 named integration test and restores the original bytes in `finally`. A stale
 anchor aborts with status 2 instead of being reported as SURVIVED, and the
 runner never stops at the first non-kill: it records every KILLED / SURVIVED /
-SKIPPED row. The exit code reuses `negative_selection.verdict_exit`: rc=0
-only when at least one row ran and every row was actually KILLED, so any
+SKIPPED row. A kill is the shared #813 criterion (#1087): the bound test's own
+`FAILED` status line plus the recorded anchor inside that test's own panic
+payload — a marker anywhere else in the log (a sibling's panic, captured
+stdout) is not evidence. The exit code reuses `negative_selection.verdict_exit`:
+rc=0 only when at least one row ran and every row was actually KILLED, so any
 SURVIVED or SKIPPED row — and a selection that killed nothing — exits
 non-zero. A row is SKIPPED when its bound test printed the `#1263 skip:` line:
 the 0444 write probe found a caller that writes through the mode
@@ -32,7 +35,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (dead_stream_print, mutating_sources,
+                              new_run_token, run_owned,
+                              wait_for_slot, write_source_atomic)
 from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
@@ -44,6 +50,10 @@ target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
 out.mkdir(parents=True, exist_ok=True)
+# #1087 fix-r8 (S1-b/S2-c): the per-run token keeps the evidence log names
+# of two overlapping runs on this reused directory from truncating each
+# other, and survives pid recycling (time_ns component).
+run_token = new_run_token()
 
 # #917 fix-r1: the two recheck layers (the pre-loop `session_cleared` helper
 # call and the in-lock per-candidate recheck) plus the commit-segment scope
@@ -896,16 +906,20 @@ def cargo_test(test):
     return run_owned(command, cwd=root, env=env, timeout=600)
 
 
-def assertion_failure(log, anchor):
+def assertion_failure(log, test, anchor):
+    # #1087: only the named test's own FAILED status line plus the marker
+    # inside that test's own panic payload kills (negative_panic judges
+    # both); the old `anchor in log` also matched a sibling's panic or
+    # captured stdout.
     return ('could not compile' not in log and 'test result: FAILED.' in log
-            and anchor in log)
+            and named_test_killed(log, test, anchor))
 
 
 killed, survived, skipped = [], [], []
 with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) as originals:
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     run = cargo_test(None)
-    (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
+    (out / f'baseline.{run_token}.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
     if run.returncode != 0:
         print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
         sys.exit(1)
@@ -927,11 +941,17 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
                         '(expected 1); update negative.py')
                 texts[path] = text.replace(before, after)
             for path, text in texts.items():
-                path.write_text(text)
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_text`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(
+                    root, path, text.encode(),
+                    mode=path.stat().st_mode & 0o7777)
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             run = cargo_test(test)
             log = run.stdout + run.stderr
-            (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
+            (out / f'{name}.{run_token}.log').write_text(slots.stdout + slots.stderr + log)
             if run.returncode == 0 and '#1263 skip:' in log:
                 # The bound test's native write probe (#1263) found a caller
                 # that writes through the 0444 mode; see the docstring. The
@@ -939,18 +959,27 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
                 reason = 'skipped'
             elif run.returncode == 0:
                 reason = 'bound test still passed'
-            elif not assertion_failure(log, anchor):
+            elif not assertion_failure(log, test, anchor):
                 reason = 'did not fail at the bound assertion'
         except AnchorExpired as error:
             for original, data in originals.items():
-                original.write_bytes(data)
-            print(f'ANCHOR EXPIRED: {error}', flush=True)
+                # Same #1087 fix-r2 window: this restore is also one rename,
+                # never a truncating write_bytes.
+                write_source_atomic(root, original, data,
+                                    mode=original.stat().st_mode & 0o7777)
+            # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout
+            # must not turn this exit-2 refusal into a crash (rc=1) or a
+            # shutdown-flush 120; the code is the contract.
+            dead_stream_print(f'ANCHOR EXPIRED: {error}')
             sys.exit(2)
         except Exception as error:
             reason = f'{type(error).__name__}: {error}'
         finally:
             for original, data in originals.items():
-                original.write_bytes(data)
+                # Same #1087 fix-r2 window: the in-loop restore is also one
+                # rename, never a truncating write_bytes.
+                write_source_atomic(root, original, data,
+                                    mode=original.stat().st_mode & 0o7777)
         if reason is None:
             killed.append(name)
             print(f'KILLED   {name}: {anchor}', flush=True)
@@ -967,7 +996,7 @@ with mutating_sources(root, [indexer, entries, file_memory], baseline=baseline) 
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     run = cargo_test(None)
     restored = slots.stdout + slots.stderr + run.stdout + run.stderr
-    (out / 'restored.log').write_text(restored)
+    (out / f'restored.{run_token}.log').write_text(restored)
     if run.returncode != 0 or 'test result: ok.' not in restored:
         print('RESTORED FAILED: the suite does not pass after restoring the original bytes',
               flush=True)

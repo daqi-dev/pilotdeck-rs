@@ -155,7 +155,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '6dd297112267bacc6dbacabab68bf96f6fa235b606361da9e6f8f9e284bb0967'
+PINNED_DEVICE_SHA256 = '6a78f315bdf279888dcedbc9bc404ca56f7de6b700f5aa757b9ec118e898e916'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',

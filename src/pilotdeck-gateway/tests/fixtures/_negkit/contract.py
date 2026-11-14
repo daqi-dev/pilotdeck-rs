@@ -246,13 +246,29 @@ def _document(rows, mode, selected, total):
 
 def _revoke(output, identity):
     # Only our own inode is eligible. Never erase somebody else's file.
+    # #1087 fix-r9 (review DS sibling #2): this runs from publish_summary's
+    # ``except BaseException`` — a cleanup failure here (an unwritable
+    # directory raising PermissionError) would replace the original publish
+    # error, the same escape refuse_summary's cleanup closes. Swallow the
+    # whole OSError family, FileNotFoundError included.
+    #
+    # #1087 fix-r11 (review MM boundary #3 / concurrency #2, two
+    # lineages): swallowing must not go silent — return the cleanup failure
+    # as a note so ``run()`` can append it to the failure text, restoring
+    # the "publication rollback: …" signal the FileNotFoundError-only era
+    # raised. Returns ``None`` when the cleanup ran (or had nothing to
+    # remove under either name).
+    note = None
     for path in (output / 'summary.json.tmp', output / 'summary.json'):
         try:
             stat = path.lstat()
             if identity == (stat.st_dev, stat.st_ino):
                 path.unlink()
         except FileNotFoundError:
-            pass
+            pass  # nothing to revoke under this name
+        except OSError as error:
+            note = f'publication rollback: {type(error).__name__}: {error}'
+    return note
 
 
 def publish_summary(output, document, *, owner=None):
@@ -320,7 +336,13 @@ def run(cases, output, *, guard, execute, oracle, selected=None, environ=None):
         if failure:
             try:
                 if owner:
-                    _revoke(out, owner.get('identity'))
+                    # fix-r11 (review MM boundary #3 / concurrency #2): the
+                    # revoke's own failure is a note, not an exception —
+                    # append it so a leftover summary on disk is never a
+                    # silent "looks like success" read.
+                    note = _revoke(out, owner.get('identity'))
+                    if note:
+                        failure += f'; {note}'
             except BaseException as error:
                 failure += f'; publication rollback: {type(error).__name__}: {error}'
             _invalid(rows, failure)

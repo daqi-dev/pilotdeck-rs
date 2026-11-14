@@ -1547,7 +1547,12 @@ def run_locked(args, out_root):
                 # 原子发布：先写 *.tmp 再 replace，两步都相对**同一个** fd。
                 os.replace(tmp, 'summary.json', src_dir_fd=out_fd, dst_dir_fd=out_fd)
             except OSError as error:
-                remove_at(out_fd, tmp)  # 失败路径不把半成品留在目录里
+                # fix-r15（DS r14 sibling#2 P2a，与 check_frozen write_manifest r14 同族）：
+                # remove_at 自身的 OutputError 是清理错——不得顶掉「cannot publish」的原发布错。
+                try:
+                    remove_at(out_fd, tmp)  # 失败路径不把半成品留在目录里
+                except OutputError:
+                    pass
                 raise OutputError(f'cannot publish {target}: {error}') from error
         finally:
             os.close(out_fd)

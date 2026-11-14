@@ -9,6 +9,7 @@ this is not a checkout and cannot run apparatuses. Real CLI checks are separate.
 """
 import ast
 import hashlib
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -233,6 +234,43 @@ class Manifest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'differs from HEAD', msg='#1089 dirty writer source rejected'):
             checker.generated_manifest(self.root, self.raw, head='base-commit')
         self.assertEqual(self.manifest.read_bytes(), self.raw, '#1089 rejected writer leaves manifest untouched')
+
+    def test_writer_cleanup_suppress_success(self):
+        self.files[self.names[0]].write_bytes(b'cleanup probe bytes')
+        expected = checker.generated_manifest(self.root, self.raw)
+        original = Path.unlink
+
+        def guarded(self_path, missing_ok=False):
+            if self_path.name.startswith('.FROZEN-'):
+                raise OSError('#1089 cleanup boom')
+            return original(self_path, missing_ok=missing_ok)
+
+        with patch.object(Path, 'unlink', guarded):
+            try:
+                checker.write_manifest(self.root)
+            except OSError:
+                self.fail('#1089 cleanup failure must not fail a successful publish')
+        self.assertEqual(self.manifest.read_bytes(), expected,
+                         '#1089 successful publish is not undone by a cleanup failure')
+        self.assertFalse(list(self.folder.glob('.FROZEN-*')),
+                         '#1089 published manifest leaves no partial temporary')
+
+    def test_writer_cleanup_suppress_failure(self):
+        self.files[self.names[0]].write_bytes(b'publish probe bytes')
+        original = Path.unlink
+
+        def guarded(self_path, missing_ok=False):
+            if self_path.name.startswith('.FROZEN-'):
+                raise OSError('#1089 cleanup boom')
+            return original(self_path, missing_ok=missing_ok)
+
+        with patch.object(Path, 'unlink', guarded), \
+                patch.object(os, 'fchmod', side_effect=OSError('#1089 publish boom')):
+            with self.assertRaisesRegex(OSError, 'publish boom',
+                                        msg='#1089 publish failure must surface its own error'):
+                checker.write_manifest(self.root)
+        self.assertEqual(self.manifest.read_bytes(), self.raw,
+                         '#1089 failed publish leaves manifest untouched')
 
     def test_addition_and_deletion(self):
         name = 'm.txt' if KIND != 'ui-server-parity' else '../../specs/ui-server-parity/m.txt'

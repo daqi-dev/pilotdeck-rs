@@ -34,7 +34,12 @@ Each driver loads the real entry source (never a copy) and runs its real
   temporary evidence directory). A guarded ``write_text`` is a mutant
   publish (the next bound run is the negative), a guarded ``write_bytes``
   its restore (the next bound run is the re-verify), so baseline and
-  restored runs report green and mutant runs report the kill.
+  restored runs report green and mutant runs report the kill. Their kill
+  judgment is the module-level ``classify_bound_run`` (#1087 fix-r5 moved
+  it into ``negative_panic``), so that import is the seam the driver
+  stubs -- patching ``module.named_test_killed`` stopped reaching the
+  judgment when the entry stopped calling it inline, and the driven clean
+  run then judged every stubbed kill INVALID (the post-merge CI red).
 
 No cargo, no slot, no tree mutation: the stubbed window hands out the real
 bytes it would snapshot. A stale anchor in an entry's table turns the
@@ -401,6 +406,35 @@ def _reorder_roster(names):
     return tuple(names[-1:]) + tuple(names[:-1])
 
 
+def _stubbed_bound_run_classifier(module):
+    """The write_text/write_bytes family's kill judge, on its live seam.
+
+    #1087 fix-r5 moved these entries' inline judgment into the shared
+    ``negative_panic.classify_bound_run``, which resolves ``named_test_killed``
+    in ``negative_panic``'s own globals -- the pre-merge driver stubbed
+    ``module.named_test_killed``, a global the entry no longer calls, so
+    every stubbed kill was judged INVALID by the real classifier and the
+    driven clean run exited 1 (the post-merge CI red). The seam the entry
+    calls now is the imported ``classify_bound_run`` itself; this stub keeps
+    the same judgment the entries made inline before that change: a green
+    run survives, the named assertion kills (through the stubbed
+    ``module.named_test_killed``), anything else is invalid. The real
+    classifier keeps its own controls in each family's
+    ``test_negative_controls.py``; this one only stands in for it while the
+    roster re-check is what is under test.
+    """
+    def classify(returncode, log, test, marker, **kwargs):
+        if returncode == 0:
+            return "SURVIVED", kwargs.get("survived_reason",
+                                          "bound test stayed green")
+        if module.named_test_killed(log, test, marker):
+            return "KILLED", kwargs.get("killed_reason",
+                                        "named assertion failed")
+        return "INVALID", kwargs.get("unbound_reason",
+                                     "test failed outside the named assertion")
+    return classify
+
+
 def _drive_memory(testcase, *, perturbed=False, renamed=False,
                   reordered=False, shrink_roster=False, argv=()):
     """Run memory-gateway's real ``main()``; return the Drive of that run."""
@@ -453,6 +487,8 @@ def _drive_memory(testcase, *, perturbed=False, renamed=False,
          patch.object(module, 'run_bound_test', fake_run_bound), \
          patch.object(module, 'compile_check', fake_compile), \
          patch.object(module, 'named_test_killed', lambda log, test, marker: True), \
+         patch.object(module, 'classify_bound_run',
+                      _stubbed_bound_run_classifier(module)), \
          patch.object(module, 'EXPECTED_NAMES',
                       _shrunk(module.EXPECTED_NAMES) if shrink_roster
                       else module.EXPECTED_NAMES), \
@@ -522,6 +558,8 @@ def _drive_snapshot(testcase, *, perturbed=False, renamed=False,
          patch.object(module, 'node_version', fake_node_version), \
          patch.object(module, 'run_owned', fake_run_owned), \
          patch.object(module, 'named_test_killed', lambda log, test, marker: True), \
+         patch.object(module, 'classify_bound_run',
+                      _stubbed_bound_run_classifier(module)), \
          patch.object(module, 'EXPECTED_NAMES',
                       _shrunk(module.EXPECTED_NAMES) if shrink_roster
                       else module.EXPECTED_NAMES), \

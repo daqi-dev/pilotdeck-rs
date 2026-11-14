@@ -167,7 +167,11 @@ with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as sn
                 raise RuntimeError(f'{name}: mutant does not compile')
             code, log = cargo(test, [])
             (out / f'{name}.log').write_text(log)
-            killed = (code != 0 and named_test_failed(log, test)
+            # #1087 fix-r5 (simplify #2): the FAILED summary requirement
+            # moved into the shared named_test_killed default
+            # (require_summary=True).
+            killed = (code != 0
+                      and named_test_failed(log, test)
                       and named_test_killed(log, test, marker))
             status = 'KILLED' if killed else (
                 'SURVIVED' if code == 0 else 'INVALID')

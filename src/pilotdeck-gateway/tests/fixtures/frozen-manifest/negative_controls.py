@@ -89,6 +89,30 @@ mutations = [
      '#1089 production writer requires HEAD binding'),
     ('parity-row-history', root / 'scripts/parity/check_frozen.py',
      "if name in after_tails):", "if False):", 'test_row_metadata', '#1089 table prose drift rejected'),
+    ('parity-writer-cleanup-success', root / 'scripts/parity/check_frozen.py',
+     '        finally:\n            with suppress(OSError):\n                temporary.unlink(missing_ok=True)',
+     '        finally:\n            temporary.unlink(missing_ok=True)',
+     'test_writer_cleanup_suppress_success', '#1089 cleanup failure must not fail a successful publish'),
+    ('gateway-parity-writer-cleanup-success', root / 'scripts/gateway-parity/check_frozen.py',
+     '        finally:\n            with suppress(OSError):\n                temporary.unlink(missing_ok=True)',
+     '        finally:\n            temporary.unlink(missing_ok=True)',
+     'test_writer_cleanup_suppress_success', '#1089 cleanup failure must not fail a successful publish'),
+    ('ui-server-parity-writer-cleanup-success', root / 'scripts/ui-server-parity/check_frozen.py',
+     '        finally:\n            with suppress(OSError):\n                temporary.unlink(missing_ok=True)',
+     '        finally:\n            temporary.unlink(missing_ok=True)',
+     'test_writer_cleanup_suppress_success', '#1089 cleanup failure must not fail a successful publish'),
+    ('parity-writer-cleanup-failure', root / 'scripts/parity/check_frozen.py',
+     '            except BaseException:\n                with suppress(OSError):\n                    temporary.unlink()\n                raise',
+     '            except BaseException:\n                temporary.unlink()\n                raise',
+     'test_writer_cleanup_suppress_failure', '#1089 publish failure must surface its own error'),
+    ('gateway-parity-writer-cleanup-failure', root / 'scripts/gateway-parity/check_frozen.py',
+     '            except BaseException:\n                with suppress(OSError):\n                    temporary.unlink()\n                raise',
+     '            except BaseException:\n                temporary.unlink()\n                raise',
+     'test_writer_cleanup_suppress_failure', '#1089 publish failure must surface its own error'),
+    ('ui-server-parity-writer-cleanup-failure', root / 'scripts/ui-server-parity/check_frozen.py',
+     '            except BaseException:\n                with suppress(OSError):\n                    temporary.unlink()\n                raise',
+     '            except BaseException:\n                temporary.unlink()\n                raise',
+     'test_writer_cleanup_suppress_failure', '#1089 publish failure must surface its own error'),
 ]
 
 
@@ -109,7 +133,7 @@ mutations = [
 # they all guard the same file pair, so ten windows behind an ungettable
 # lease used to multiply one acquire budget into ten; they now share one
 # window (window_paths below feeds it) with a per-row restore between rows.
-LEASE_ACQUIRE_BUDGET_SECONDS = 63000
+LEASE_ACQUIRE_BUDGET_SECONDS = 64800
 
 
 def save(out, name, result):
