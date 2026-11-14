@@ -64,7 +64,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p9_background_descendants | #2251 条目 3 | 同组 TERM 免疫后代零残留（组 SIGKILL 覆盖）；setsid 跨组后代逃逸存活（ppid→1、自有 pgid；任务 pid 锚定的 ppid 链漏检） |
 | p10_background_hangs | #2251 条目 4 | start 永不 settle ⇒ dispose 卡 whenStartsDrained（3s 窗右删失）；快照写挂起 ⇒ TERM 已杀、dispose 卡 `await done`（settleEntry 停 store.write） |
 | p11_child/p11_driver | §4.5 S1–S3 接纳 + 连接两态 | closing 窗口内 E5 新任务被接纳（running）；断开 ⇒ dispose 杀（码 0 零残留）；保持 ⇒ close 永不 settle，SIGKILL 后 detached 任务成孤儿 |
-| p12_zero_byte_close | A4 零字节，70 s 窗（右删失下界；#2259，见结论 6） | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（窗未覆盖最坏相位 408 落点，见结论 6）、服务端不主动断该连接 |
+| p12_zero_byte_close | A4 零字节，70 s 窗（右删失下界；#2259，见结论 6） | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（窗未覆盖最坏相位 408 落点，见结论 6）、服务端不主动断该连接（fix-r4 限定：旧 70 s run 无字节观测面——探针只挂 close/error，只证窗内无 close/error 事件；字节面（408 是否发）由 p12 fix-r3 判别面判别，≥95 s 观测待复跑。fix-r3 登记：≥95 s 合规复跑 `P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`，判别面 = observation 行 `firstByteMs`/`bytes`/`hex` 与 `closeSettled`；端口默认 39891、可 `--port`/`P12_PORT` 改（非法值 exit 2、占用预检失败 exit 3）；`P12_WINDOW_MS` 取值域 (0, 300000] 安全整数毫秒（未设置/空串回退 70_000、非法值 exit 2 不落盘）；证据名带窗长+时间戳+pid，run 唯一不覆写） |
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
