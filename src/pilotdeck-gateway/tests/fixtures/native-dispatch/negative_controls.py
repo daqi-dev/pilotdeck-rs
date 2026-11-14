@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
-from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, withdraw_claim
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -205,13 +205,12 @@ def main():
         # busy lock) is a startup refusal, not a red run: rc 2, no summary, and
         # the claim claim_dir made is withdrawn so the host re-running the same
         # output path is not refused on a leftover directory that never ran
-        # (same shape as native-management:1163-1184; rmdir only removes the
-        # empty case -- a run that already wrote logs keeps them).
+        # (same shape as native-management:1163-1184).
         if phase == 'enter':
-            try:
-                out.rmdir()
-            except OSError:
-                pass
+            # #3143 fix-r1 (simplify#6): the shared atomic withdrawal, the
+            # same contract the other three runners carry (rename + rmtree
+            # in one helper, never a bare rmdir that races a later claimant).
+            withdraw_claim(out)
             refuse(f'guard refused to start: {error!r}')
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)

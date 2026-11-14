@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -43,8 +44,6 @@ class Protocol(unittest.TestCase):
             # inside this temporary root, and the writes counter below is what
             # makes the patch load-bearing (dropping it empties the counter).
             writes = []
-            publish = RUNNER.ROOT / '.negctl-publish'
-            publish_existed = publish.exists()
 
             def plain_writer(_root, path, data, **_kwargs):
                 path = Path(path)
@@ -131,21 +130,15 @@ class Protocol(unittest.TestCase):
                                 '#1642 fix-r4 the batch must publish its mutant bytes through '
                                 'the patched writer (the writes counter is what makes the '
                                 'plain_writer patch load-bearing)')
-            self.assertTrue(publish_existed == publish.exists(),
-                            '#1642 fix-r4 the protocol must not create or remove the real '
-                            'tree\'s .negctl-publish staging directory')
-            # #1642 fix-r5 (review concurrency P2#1): "existence unchanged"
-            # degenerated into an empty assertion once another suite's
-            # unpatched writer had created the directory first
-            # (native-management's exercise() did exactly that before its
-            # own plain_writer patch). On a tree where the staging directory
-            # did not exist, this run must not be the one that creates it; a
-            # pre-existing directory is host residue this test cannot
-            # attribute to any single suite.
-            if not publish_existed:
-                self.assertFalse(publish.exists(),
-                                 '#1642 fix-r5 the protocol must not create the real '
-                                 'tree\'s .negctl-publish staging directory')
+            # #3143 fix-r1 (P2#4, review concurrency#2): the shared
+            # staging directory is no longer observed across the run. Its
+            # existence is a cross-process fact -- a concurrent unpatched
+            # writer (another suite's full negative-control round) can create
+            # `.negctl-publish` between two looks and false-red this suite.
+            # The load-local facts above already pin what this run does:
+            # every write the batch made stayed inside the temporary root
+            # (plain_writer's own assertion), and the writes counter
+            # catches a dropped writer patch.
             return code, summary, restored, compilations, claimed, stderr.getvalue()
 
     def test_restored_runs_inside_lease(self):
@@ -313,22 +306,40 @@ class Protocol(unittest.TestCase):
                         '#1642 fix-r5 the roster drift probe must replace exactly one '
                         'EXPECTED_NAMES entry')
         drifted = source.replace(pattern, "'management-phase-swap-renamed',\n)", 1)
-        # The drifted copy sits beside the original negative_controls.py, not
-        # in a shallow TemporaryDirectory: the copy runs the module-level
-        # `ROOT = Path(__file__).resolve().parents[5]` at import time, and a
-        # CI /tmp path (3 levels) died with an IndexError before the roster
-        # refusal could even raise (r3 P1-1, job 131861169897); beside the
-        # original the depth shape is identical by construction. mkstemp
-        # keeps the name out of the tree's scans, the finally unlinks it, and
-        # bytecode caching is off so the fixtures directory gains no
-        # __pycache__ from the copy.
-        descriptor, copy_name = tempfile.mkstemp(dir=Path(RUNNER.__file__).parent,
-                                                 prefix='drifted-1642-', suffix='.py')
-        copy = Path(copy_name)
+        # #3143 fix-r1 (P1#3, review concurrency#1): the copy can no longer
+        # sit beside the original -- ``mkstemp(dir=RUNNER.__file__.parent)``
+        # put it inside ``src/``, which the clean-tree preflight scans with
+        # ``git ls-files --others`` (ignored files count), so a copy alive
+        # while a concurrent guarded round preflights the tree read as an
+        # "untracked build input" and refused that real round (a false
+        # rc 2), and a SIGKILL inside the mkstemp-unlink window left the
+        # residue there permanently locking the worktree out. ``_tmp/`` is
+        # gitignored and outside every scanned area; the three padding
+        # levels keep the copy at the original's directory depth, so the
+        # module-level ``ROOT = Path(__file__).resolve().parents[5]`` still
+        # resolves the repo root (a shallow CI /tmp path died with an
+        # IndexError before the roster refusal could even raise, job
+        # 131861169897), and the real fixtures directory is already on
+        # sys.path -- this module's own import put it there -- so the
+        # copy's sibling imports resolve unchanged. Bytecode caching is
+        # off so the scratch tree gains no __pycache__ from the copy.
+        root = Path(RUNNER.__file__).resolve().parents[5]
+        (root / '_tmp').mkdir(exist_ok=True)
+        scratch = Path(tempfile.mkdtemp(dir=root / '_tmp', prefix='pdrs-3143-drift-'))
+        copy_dir = scratch / 'a' / 'b' / 'c'
+        copy = None
         stderr = io.StringIO()
         previous = sys.dont_write_bytecode
         sys.dont_write_bytecode = True
         try:
+            # The fallible setup lives under the guard too: a mkdir or
+            # mkstemp failure must unwind through this block's cleanup
+            # instead of leaking the scratch tree (#3143 fix-r1 P1#3
+            # residue case).
+            copy_dir.mkdir(parents=True)
+            descriptor, copy_name = tempfile.mkstemp(dir=copy_dir,
+                                                      prefix='drifted-1642-', suffix='.py')
+            copy = Path(copy_name)
             with os.fdopen(descriptor, 'w') as handle:
                 handle.write(drifted)
             spec = importlib.util.spec_from_file_location('drifted_native_dispatch_controls', copy)
@@ -341,7 +352,9 @@ class Protocol(unittest.TestCase):
                     code = refusal.code
         finally:
             sys.dont_write_bytecode = previous
-            copy.unlink(missing_ok=True)
+            if copy is not None:
+                copy.unlink(missing_ok=True)
+            shutil.rmtree(scratch, ignore_errors=True)
         self.assertTrue(code == 2,
                         '#1642 fix-r5 roster drift is a refusal (rc 2, never started), '
                         'never a failed control (rc 1) or a silent pass')
