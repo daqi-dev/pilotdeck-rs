@@ -138,21 +138,38 @@ EXPECTED_NAMES = (
 # turn-submit shape, whose rows key on the effective assertion string;
 # check_row_pins stays the fifth same-shaped copy -- the three-way
 # convergence is the simplify#1 P2 follow-up, not this round).
+# fix-merge-r4 (MM tests2 boundary#1, P1): pins used to cover only the
+# shared-test rows, so a row whose bound test name no sibling carries could
+# be deleted from `mutants` AND `EXPECTED_NAMES` together -- `registered()`
+# stayed aligned, the reverse rule below saw no sharing, and `--check`
+# stayed green having simply lost one control. Every row is pinned now, so
+# any both-tables drop refuses (the native-blankkey LITERAL_ANCHORS shape,
+# keyed here on the row name).
 ROW_PINS = (
     'drop-event',
     'duplicate-event',
     'visible-before-durable',
     'early-terminal-before-session-end',
+    'missing-result-unknown',
+    'repeated-result-unknown',
+    'close-with-append-pending',
+    'duplicate-replay-lost',
+    'conflict-treated-as-unknown',
+    'accept-failure-as-conflict',
+    'preflight-failure-exposes-original',
+    'reverse-visible-order',
+    'late-append-not-awaited',
+    'duplicate-terminal-suppressed',
     'ws-seq-confused-with-module',
     'ws-final-too-early',
+    'storage-failure-exposes-original',
     'external-emitter-skipped',
-    'reverse-visible-order',
     'file-adapter-skips-durable',
 )
 
 
 def check_row_pins(rows):
-    """Refuse a run whose shared-test rows lost one to a both-tables edit.
+    """Refuse a run whose rows lost one to a both-tables edit.
 
     The forward loop catches a pinned row that disappeared; the reverse
     direction is computed from this runtime table: every row whose bound test
@@ -160,7 +177,10 @@ def check_row_pins(rows):
     sibling's test name without a ROW_PINS entry refuses here instead of
     silently widening the pool a both-tables drop can shrink unnoticed (the
     closure-r2 turn-submit shape; this family keys on the test name because
-    its rows have no assertion column).
+    its rows have no assertion column). fix-merge-r4 (MM tests2 boundary#1):
+    with every row pinned (not just the shared-test ones), the forward loop
+    is the per-row backstop -- a unique-test row dropped from both tables
+    refuses here exactly like a shared one.
     """
     names = {row[0] for row in rows}
     for name in ROW_PINS:

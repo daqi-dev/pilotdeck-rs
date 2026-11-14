@@ -10,7 +10,7 @@ coordinator / busy 门预检）按原始值本身索引（`router_key`：字符�
 `RunAcceptInput.session_key_raw` 保持原始值；读取面把请求自己的 `sessionKey` 回显进
 snapshot（miss 也回显）。
 
-## 变异名册（15 行，逐行绑死测试）
+## 变异名册（16 行，逐行绑死测试）
 
 - `submit-owner-uses-template-key` —— owner 各 Map 回退模板拼法，null 回合对
   router 域查找不可见（admit 截止期先死）；
@@ -29,9 +29,13 @@ snapshot（miss 也回显）。
 - `registry-skip-reverted` —— 折叠带跳过被整个去掉，深键记录越过带也跳过，load
   不再像 TS 那样失败（fix-r5 起带判据按 `array_nesting` 数组嵌套层数计，锚点
   随迁）；
-- `registry-skip-silent`（fix-r5，评审 boundary#3 P0）—— 生产信号面（累计计数器
-  增量 + 每读 stderr 行）被整体去掉，带内跳过回到只有 `#[cfg(test)]` 访问器可见
-  的静默形状；
+- `registry-skip-silent`（fix-r5，评审 boundary#3 P0）—— 生产信号面的累计计数器
+  增量被去掉，带内跳过回到只有 `#[cfg(test)]` 访问器可见的静默形状（fix-merge-r4
+  起信号行移出锁临界区、每路径/每进程一次，写侧另立一行，见下）；
+- `registry-skip-writer-silent`（fix-merge-r4，条2 / MM sibling#1 b 档按 P1）—— 只删
+  `console_log_line` 写：计数器照常前进、每条计数断言照常绿，而操作员的那行
+  stderr 再也到不了管道。绑定测试以 #2301 探针形态 re-exec 本测试二进制，父进程
+  持子进程 stderr 管道并断言该行在场；
 - `registry-band-leaf-depth`（fix-r6，评审 sibling#2）—— 带判据变异回旧的最深
   叶/节点深口径（container_depth），空内叶形状恰少计 1，带外第一层空内叶记录
   （2561）被跳过而不是 load 失败；旧口径代码下该变异是恒等（SURVIVED），杀灭即
@@ -51,7 +55,8 @@ snapshot（miss 也回显）。
 `storage::run_registry_tests::null_session_key_body_keeps_json_null_while_the_key_spells_null`
 （记录体）、`storage::run_registry_tests::deep_session_key_record_reopens_without_bricking_the_other_records`
 （折叠带）、`storage::run_registry_tests::unrekeyable_skips_advances_in_production_on_every_read`
-（生产信号面，fix-r5）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
+（生产信号面计数侧，fix-r5）、`storage::run_registry_tests::unrekeyable_skip_logs_the_stderr_signal_once_per_path`
+（生产信号面写侧 stderr 探针，fix-merge-r4 条2）、`runtime::turn::read::tests::read_session_messages_reads_the_router_domain_and_echoes_the_raw_key`
 （回显）、`runtime::turn::read::tests::deep_session_key_echo_survives_the_response_serializer`
 （深键回显两口径分工，fix-r6 评审 sibling#1）、`native_process::methods::config::tests::real_services_null_session_key_turn_dies_at_model_resolution`
 （SessionContext 双域键，fix-r3 条1）。
@@ -59,8 +64,8 @@ snapshot（miss 也回显）。
 扫描面（fix-r5，评审 P3#5）：SOURCE_TEXTS 除五个被变异源码（submit / config /
 run_registry / js_value / read）外，纳入断言所在的两个测试模块
 （`run_registry_tests.rs`、`read_tests.rs`）——先前只住在测试文件里的断言不在
-字面锚覆盖内，纳入后按「断言逐字出现于被扫源 → 必须有 pin」规则补齐（14 个
-字面锚；fix-r6 增 read_tests 的两口径 pin）。`--check` 除锚点/名册外还核每行
+字面锚覆盖内，纳入后按「断言逐字出现于被扫源 → 必须有 pin」规则补齐（15 个
+字面锚；fix-r6 增 read_tests 的两口径 pin，fix-merge-r4 条2 增写侧行 pin）。`--check` 除锚点/名册外还核每行
 绑定测试名仍在声明它的那个文件里（`negative_suite.bind_module_file` +
 `declares_test`，fix-r6 评审 boundary#5）。这条门禁的红侧由同目录
 `test_bound_test_gate.py` 钉住（#2692 fix-r9，评审 sibling#3：正控跑真 `--check`

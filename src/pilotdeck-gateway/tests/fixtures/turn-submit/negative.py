@@ -191,23 +191,71 @@ EXPECTED_NAMES = (
 # audited. ROW_PINS is a third denominator outside both tables: every
 # shared-assertion row must be present, so a both-tables drop refuses like a
 # one-sided one (the native-blankkey fix-r12 shape).
+# fix-merge-r4 (MM tests2 boundary#1, P1): pins used to cover only the
+# shared-assertion rows, so a row whose effective assertion no sibling
+# carries could be deleted from `mutants` AND `EXPECTED_NAMES` together --
+# `registered()` stayed aligned, the reverse rule in check_row_pins saw no
+# sharing, and `--check` stayed green having simply lost one control. Every
+# row is pinned now, so any both-tables drop refuses (the native-blankkey
+# LITERAL_ANCHORS shape, keyed here on the row name).
 ROW_PINS = (
+    'permission-check-skipped',
+    'run-id-check-skipped',
+    'budget-check-skipped',
+    'trusted-context-check-skipped',
+    'busy-code-changed',
+    'sdk-capability-ignored',
+    'sdk-validation-ignored',
+    'sdk-dirty-skipped',
+    'sdk-abort-ignored',
+    'refresh-error-propagated',
+    'accepted-commit-skipped',
+    'projection-drop-event',
+    'projection-duplicate-event',
+    'early-terminal-before-session-end',
+    'finally-error-swallowed',
+    'input-ack-before-native-durable',
+    'stale-completion-filter-skipped',
     'model-selection-event-skipped',
     'request-started-fold-leaked',
     'actual-text-model-skipped',
-    'projection-drop-event',
-    'projection-duplicate-event',
-    'input-ack-before-native-durable',
-    'failureguard-model-observe-skipped',
-    'guard-config-not-provided',
+    'lease-release-skipped',
+    'fingerprint-includes-reconnect-metadata',
+    'explicit-null-sdk-treated-absent',
+    'cancel-hides-recovery-failure',
+    'history-epoch-error-hidden',
+    'utf16-mode-lossy',
+    'utf16-busy-lossy',
+    'workspace-reservation-skipped',
+    'workspace-release-skipped',
+    'cwd-update-skipped',
     'timeout-disabled',
     'timeout-status-skipped',
     'timeout-error-skipped',
     'timeout-abort-skipped',
     'timeout-close-skipped',
+    'timeout-prepare-revived',
+    'deadline-skipped',
+    'timeout-status-record-error-ignored',
+    'snapshot-pre-skipped',
+    'snapshot-pre-error-ignored',
+    'snapshot-post-skipped',
+    'snapshot-success-post-added',
+    'snapshot-timeout-kind-wrong',
     'timeout-live-close-skipped',
+    'invalid-deadline-accepted',
+    'failureguard-model-observe-skipped',
+    'snapshot-capability-refusal-skipped',
+    'snapshot-cwd-refusal-skipped',
     'cwd-capability-error-ignored',
+    'guard-config-not-provided',
+    'host-lease-release-skipped',
     'cwd-host-unavailable-ok',
+    'lease-poison-unwrap-finish',
+    'lease-poison-unwrap-prepare',
+    'lease-order-records-swapped',
+    'lease-acquisition-skipped',
+    'always-acquire-lease',
 )
 
 
@@ -275,6 +323,10 @@ def check_row_pins(rows):
     poison pair asserts a computed site, so their marker slot (which holds a
     test name) is not a shareable assertion. Every row whose effective
     assertion string another row also carries must be pinned.
+    fix-merge-r4 (MM tests2 boundary#1): with every row pinned (not just the
+    shared-assertion ones), the forward loop is the per-row backstop -- a
+    unique-assertion row dropped from both tables refuses here exactly like
+    a shared one.
     """
     names = {row[0] for row in rows}
     for name in ROW_PINS:

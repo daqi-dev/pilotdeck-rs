@@ -351,6 +351,15 @@ pub(crate) fn router_key(value: &JsValue) -> Result<JsString, ToStringError> {
     })
 }
 
+/// fix-merge-r4 (MM src2 simplify#1, a 档): the four router-domain lookups
+/// used to spell "a missing field keys like an explicit `undefined`" three
+/// different ways (an Option match in active_turn, an `unwrap_or_else` chain
+/// in read, and two `unwrap_or(&UNDEFINED)`s in config). One spelling now —
+/// a present value keys by [`router_key`], a missing one by `undefined`.
+pub(crate) fn router_key_of(value: Option<&JsValue>) -> Result<JsString, ToStringError> {
+    router_key(value.unwrap_or(&JsValue::Undefined))
+}
+
 /// `JSON.stringify` with the same conservative container-depth bound as
 /// [`to_string_units`]. The serializer itself walks iteratively; this guard
 /// makes a too-deep input report V8's `RangeError` instead of silently

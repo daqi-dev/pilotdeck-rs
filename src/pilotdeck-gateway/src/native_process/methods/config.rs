@@ -288,9 +288,9 @@ impl Requests {
         // narrowed to string requests — a null/absent request never answers
         // for a busy owner session (TS answers INVALID_SESSION_KEY, probe
         // cell c owner 格).
-        let request_session_key = params.get("sessionKey").unwrap_or(&UNDEFINED);
-        let string_request = matches!(request_session_key, JsValue::String(_));
-        let request_key = crate::js_value::router_key(request_session_key);
+        let request_session_key = params.get("sessionKey");
+        let string_request = matches!(request_session_key, Some(JsValue::String(_)));
+        let request_key = crate::js_value::router_key_of(request_session_key);
         if match &request_key {
             Ok(key) => self.owner.has_active_turn(key),
             Err(_) => false,
@@ -556,8 +556,7 @@ impl Requests {
         // (probe cell F) and the string `"null"` meets only a
         // `"null"`-born turn (cell c). A value whose spelling throws
         // consults nothing and falls through to the sessionKey gate.
-        let request_key =
-            crate::js_value::router_key(params.get("sessionKey").unwrap_or(&UNDEFINED));
+        let request_key = crate::js_value::router_key_of(params.get("sessionKey"));
         if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {
             return Err(gateway_error(
                 "SESSION_BUSY",

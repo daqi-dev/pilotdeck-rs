@@ -13,6 +13,7 @@ use crate::{js_value, metadata::object};
 use pilotdeck_protocol::{CodecError, JsObject, JsString, JsValue, parse_json, stringify_json};
 use regex::Regex;
 use std::{
+    collections::HashSet,
     fmt,
     fs::{self, File},
     io::{self, Write},
@@ -438,8 +439,13 @@ impl FileRunRegistry {
 
     /// RunRegistry.ts:266-272.
     pub fn get(&self, run: &RunRef) -> Result<Option<RunRecord>> {
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let snapshot = read_snapshot(&self.path)?;
+        let snapshot = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            read_snapshot(&self.path)?
+        };
+        // fix-merge-r4 (MM src2 concurrency#1): the skip signal is emitted
+        // after the chain guard drops, never inside it.
+        report_unrekeyable(&self.path, snapshot.unrekeyable);
         Ok(snapshot
             .records
             .get_key(&run.key())
@@ -457,8 +463,13 @@ impl FileRunRegistry {
         after_seq: Option<f64>,
         limit: Option<f64>,
     ) -> Result<Vec<JsValue>> {
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let snapshot = read_snapshot(&self.path)?;
+        let snapshot = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            read_snapshot(&self.path)?
+        };
+        // fix-merge-r4 (MM src2 concurrency#1): the skip signal is emitted
+        // after the chain guard drops, never inside it.
+        report_unrekeyable(&self.path, snapshot.unrekeyable);
         let key = run.key();
         if snapshot.records.get_key(&key).is_none() {
             return Ok(vec![]);
@@ -540,24 +551,32 @@ impl FileRunRegistry {
         operation: impl FnOnce(&mut Snapshot) -> Result<(T, bool)>,
         stimulus_key: Option<&str>,
     ) -> Result<T> {
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let _lock = self.acquire_file_lock()?;
-        let mut snapshot = read_snapshot(&self.path)?;
-        let (value, changed) = operation(&mut snapshot)?;
-        if changed {
-            let mut blocked = None;
-            if let Some(key) = stimulus_key
-                && let Some(stimulus) = self.stimulus.as_ref()
-                && stimulus.before_write(super::stimulus::Site::Registry, key)?
-                    == super::stimulus::Applied::Blocked
-            {
-                blocked = Some((stimulus, key));
+        let (value, unrekeyable) = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            let _lock = self.acquire_file_lock()?;
+            let mut snapshot = read_snapshot(&self.path)?;
+            let (value, changed) = operation(&mut snapshot)?;
+            if changed {
+                let mut blocked = None;
+                if let Some(key) = stimulus_key
+                    && let Some(stimulus) = self.stimulus.as_ref()
+                    && stimulus.before_write(super::stimulus::Site::Registry, key)?
+                        == super::stimulus::Applied::Blocked
+                {
+                    blocked = Some((stimulus, key));
+                }
+                self.persist(&snapshot)?;
+                if let Some((stimulus, key)) = blocked {
+                    stimulus.completed(super::stimulus::Site::Registry, key);
+                }
             }
-            self.persist(&snapshot)?;
-            if let Some((stimulus, key)) = blocked {
-                stimulus.completed(super::stimulus::Site::Registry, key);
-            }
-        }
+            (value, snapshot.unrekeyable)
+        };
+        // fix-merge-r4 (MM src2 concurrency#1, P1): the skip signal is emitted
+        // after both the chain mutex and the cross-process file lock have
+        // dropped — a full stderr pipe can no longer wedge every later
+        // registry read behind the locks.
+        report_unrekeyable(&self.path, unrekeyable);
         Ok(value)
     }
 
@@ -752,28 +771,15 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
         };
         snapshot.records.insert(key, record.clone());
     }
-    // #2692 fix-r5 (review boundary#3, P0): the in-band skip used to be
-    // silent in production — the only observable was a `#[cfg(test)]`
-    // accessor. One stderr line per read that skipped (plus the cumulative
-    // counter below) is the registered signal surface (R17): the next
-    // mutation rewrites the file without the skipped records, so an operator
-    // sees the drop coming on every read, not after the bytes are gone.
-    if snapshot.unrekeyable > 0 {
-        // #2692 fix-merge (DS sibling#1, P1): the merge brought #2558's
-        // production `eprintln!` scan and this is a production path —
-        // `eprintln!` panics when the write fails (std behavior), so the
-        // skip signal itself could kill the read. Same non-panicking
-        // writer the other library call sites share
-        // (`production_tree_stays_eprintln_free` pins it).
-        crate::native_process::channels::console_log_line(
-            &mut std::io::stderr(),
-            &format!(
-                "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
-                path.display(),
-                snapshot.unrekeyable
-            ),
-        );
-    }
+    // #2692 fix-merge-r4 (MM src2 concurrency#1, P1): the skip signal used to
+    // be written right here — inside `read_snapshot`, so on the mutate path it
+    // ran while the caller held both the in-process chain mutex and the
+    // cross-process file lock, once per read with no bound (#1429's
+    // "per-acquire stderr write 无上限" shape; a full stderr pipe would then
+    // wedge every later registry read behind the locks). The counter stays
+    // here (inside the lock, where the skip is counted); the line itself moved
+    // to `report_unrekeyable`, which the read faces call after their guards
+    // drop, once per path per process.
     // Object.entries(snapshot.events). Load order is irrelevant to the bytes:
     // persist re-serializes with JS key order, as Object.fromEntries does.
     match field(&value, "events") {
@@ -814,6 +820,51 @@ pub fn unrekeyable_skips() -> usize {
 /// #2692 fix-r5: backs [`unrekeyable_skips`]; incremented once per skipped
 /// record per read, so re-reading a registry with one deep record counts up.
 static UNREKEYABLE_SKIPPED: AtomicUsize = AtomicUsize::new(0);
+/// #2692 fix-merge-r4 (MM src2 concurrency#1, P1): paths whose skip signal has
+/// already been written by this process — the line is once per path per
+/// process, never per read (#1429's bounded-per-assembly precedent).
+static UNREKEYABLE_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// #2692 fix-r5 (review boundary#3, P0): the skip's production signal —
+/// `read_snapshot` counts inside the caller's locks, and the read faces call
+/// this once those guards have dropped, so the write can never wedge the
+/// chain mutex or the cross-process file lock behind a full stderr pipe
+/// (fix-merge-r4, MM src2 concurrency#1). Once per path per process: the
+/// first read that skips announces the coming drop, later reads stay quiet
+/// and the cumulative counter carries the per-read half.
+fn report_unrekeyable(path: &Path, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let reported = first_report_for(path);
+    if !reported {
+        return;
+    }
+    // #2692 fix-merge (DS sibling#1, P1): the merge brought #2558's production
+    // `eprintln!` scan and this is a production path — `eprintln!` panics when
+    // the write fails (std behavior), so the skip signal itself could kill the
+    // read. Same non-panicking writer the other library call sites share
+    // (`production_tree_stays_eprintln_free` pins it).
+    crate::native_process::channels::console_log_line(
+        &mut std::io::stderr(),
+        &format!(
+            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
+            path.display(),
+            count
+        ),
+    );
+}
+
+/// Inserts `path` into [`UNREKEYABLE_REPORTED`] and returns whether this call
+/// is the first for it. The set lock is released before any write happens, so
+/// a blocked stderr never holds it.
+fn first_report_for(path: &Path) -> bool {
+    let mut reported = UNREKEYABLE_REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    reported.insert(path.to_path_buf())
+}
 
 /// `${projectKey ?? ""}\0${sessionKey}\0${runId}` (RunRegistry.ts:70).
 fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsString> {

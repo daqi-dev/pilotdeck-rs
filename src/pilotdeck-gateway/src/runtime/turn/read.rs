@@ -309,10 +309,9 @@ pub async fn read_session_messages(
     // reference key in TS that no Rust spelling can consult, so it answers
     // the miss shape on both snapshots (registered divergence).
     let raw_key = input.get("sessionKey");
-    let session_key = raw_key
-        .map(js_value::router_key)
-        .unwrap_or_else(|| js_value::router_key(&JsValue::Undefined))
-        .ok();
+    // fix-merge-r4 (MM src2 simplify#1): a missing field keys like an explicit
+    // `undefined` — the shared `router_key_of` spelling.
+    let session_key = js_value::router_key_of(raw_key).ok();
     let snapshot = |include_events: bool| ActiveTurnSnapshotInput {
         session_key: session_key.clone().unwrap_or_default(),
         include_events,

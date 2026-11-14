@@ -41,10 +41,10 @@ impl Requests {
                 miss.push(("events", JsValue::Array(vec![])));
                 object(miss)
             };
-            let lookup = match raw_key.as_ref() {
-                None | Some(JsValue::Undefined) => crate::js_value::router_key(&JsValue::Undefined),
-                Some(value) => crate::js_value::router_key(value),
-            };
+            // fix-merge-r4 (MM src2 simplify#1): the missing and the explicit
+            // `undefined` cases key alike (`\0\0raw:undefined`), so the old
+            // four-arm match is the shared `router_key_of` spelling.
+            let lookup = crate::js_value::router_key_of(raw_key.as_ref());
             let Some(session_key) = lookup.ok() else {
                 return Ok(miss(raw_key));
             };

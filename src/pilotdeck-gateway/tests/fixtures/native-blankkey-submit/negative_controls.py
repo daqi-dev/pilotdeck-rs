@@ -32,7 +32,16 @@ test that must die:
 - `registry-skip-silent` (fix-r5): the production signal surface — the
   cumulative counter and the per-read stderr line — is removed, so the
   in-band skip goes back to being observable only through the
-  `#[cfg(test)]` accessor (review boundary#3's P0 shape).
+  `#[cfg(test)]` accessor (review boundary#3's P0 shape). fix-merge-r4
+  split the surface: this row now deletes the counter half, and the
+  stderr half has its own row below (the line moved out of the lock
+  critical section and is once per path per process, MM src2
+  concurrency#1).
+- `registry-skip-writer-silent` (fix-merge-r4, 条2 / MM sibling#1 b 档按
+  P1): only the `console_log_line` write is deleted — the counter still
+  advances, so every counter assertion stays green while the line never
+  reaches an operator. Bound to the re-exec'd stderr probe test, whose
+  parent owns the child's stderr pipe and demands the line be there.
 - `registry-band-leaf-depth` (fix-r6, review sibling#2): the band criterion
   reverts to the old leaf/node-depth caliber, which under-reports the
   empty-innermost-array shape by exactly one, so the band's first
@@ -107,6 +116,8 @@ reopen_test = ('storage::run_registry_tests::'
                'deep_session_key_record_reopens_without_bricking_the_other_records')
 signal_test = ('storage::run_registry_tests::'
                'unrekeyable_skips_advances_in_production_on_every_read')
+writer_test = ('storage::run_registry_tests::'
+               'unrekeyable_skip_logs_the_stderr_signal_once_per_path')
 echo_test = ('runtime::turn::read::tests::'
              'read_session_messages_reads_the_router_domain_and_echoes_the_raw_key')
 deep_echo_test = ('runtime::turn::read::tests::'
@@ -167,10 +178,14 @@ mutations = [
                   '#2692 control code']),
     # session_model_set's busy gate goes back to string keys only: a null
     # request skips the gate and answers the sessionKey gate instead.
+    # fix-merge-r4 (条6 / MM src2 simplify#1, a 档): the old anchor spelled
+    # "missing ≡ undefined" with `unwrap_or(&UNDEFINED)`; the four router
+    # lookups now share `router_key_of(Option<&JsValue>)`, so the anchor
+    # follows the new spelling. Behavior is unchanged.
     ('model-set-gate-string-only', GATES,
-     '        let request_session_key = params.get("sessionKey").unwrap_or(&UNDEFINED);\n'
-     '        let string_request = matches!(request_session_key, JsValue::String(_));\n'
-     '        let request_key = crate::js_value::router_key(request_session_key);\n'
+     '        let request_session_key = params.get("sessionKey");\n'
+     '        let string_request = matches!(request_session_key, Some(JsValue::String(_)));\n'
+     '        let request_key = crate::js_value::router_key_of(request_session_key);\n'
      '        if match &request_key {\n'
      '            Ok(key) => self.owner.has_active_turn(key),\n'
      '            Err(_) => false,\n'
@@ -185,9 +200,10 @@ mutations = [
      '        {',
      null_test, '#2692 cell F code'),
     # set_permission_mode's busy gate goes back to string keys only.
+    # fix-merge-r4 (条6 / MM src2 simplify#1, a 档): same `router_key_of`
+    # re-anchor as the model-set row above — behavior unchanged.
     ('permission-gate-string-only', GATES,
-     '        let request_key =\n'
-     '            crate::js_value::router_key(params.get("sessionKey").unwrap_or(&UNDEFINED));\n'
+     '        let request_key = crate::js_value::router_key_of(params.get("sessionKey"));\n'
      '        if request_key.is_ok_and(|key| self.owner.has_active_turn(&key)) {',
      '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
      '            && self.owner.has_active_turn(key)\n'
@@ -236,51 +252,42 @@ mutations = [
     # fix-r5 (review boundary#3, P0): the production signal surface — the
     # cumulative counter increment and the per-read stderr line — is removed,
     # restoring the silent skip the review graded P0 (the only observable
-    # left is the #[cfg(test)] per-file accessor). The log block sits right
-    # after the records loop, so one span covers both halves of the surface.
+    # left is the #[cfg(test)] per-file accessor).
     # fix-merge-r3 (DS sibling#1/concurrency#1/boundary#1, P1 三撞): the old
     # span re-anchored to the console_log_line shape — the #2558 tree scan
     # reached this path, so the log line moved onto the shared non-panicking
-    # writer (the native-registry-switch re-anchor precedent). The deleted
-    # surface is unchanged: the counter increment and the per-read stderr line.
+    # writer (the native-registry-switch re-anchor precedent).
+    # fix-merge-r4 (MM src2 concurrency#1, P1): the signal moved out of
+    # `read_snapshot` (out of the lock critical section, once per path per
+    # process), so the counter and the line no longer sit in one span — this
+    # row keeps the counter half; the writer half is the row right below.
     ('registry-skip-silent', REGISTRY,
      '                snapshot.unrekeyable += 1;\n'
      '                UNREKEYABLE_SKIPPED.fetch_add(1, Ordering::Relaxed);\n'
-     '                continue;\n'
-     '            }\n'
-     '        };\n'
-     '        snapshot.records.insert(key, record.clone());\n'
-     '    }\n'
-     '    // #2692 fix-r5 (review boundary#3, P0): the in-band skip used to be\n'
-     '    // silent in production — the only observable was a `#[cfg(test)]`\n'
-     '    // accessor. One stderr line per read that skipped (plus the cumulative\n'
-     '    // counter below) is the registered signal surface (R17): the next\n'
-     '    // mutation rewrites the file without the skipped records, so an operator\n'
-     '    // sees the drop coming on every read, not after the bytes are gone.\n'
-     '    if snapshot.unrekeyable > 0 {\n'
-     '        // #2692 fix-merge (DS sibling#1, P1): the merge brought #2558\'s\n'
-     '        // production `eprintln!` scan and this is a production path —\n'
-     '        // `eprintln!` panics when the write fails (std behavior), so the\n'
-     '        // skip signal itself could kill the read. Same non-panicking\n'
-     '        // writer the other library call sites share\n'
-     '        // (`production_tree_stays_eprintln_free` pins it).\n'
-     '        crate::native_process::channels::console_log_line(\n'
-     '            &mut std::io::stderr(),\n'
-     '            &format!(\n'
-     '                "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",\n'
-     '                path.display(),\n'
-     '                snapshot.unrekeyable\n'
-     '            ),\n'
-     '        );\n'
-     '    }\n',
+     '                continue;',
      '                snapshot.unrekeyable += 1;\n'
-     '                continue;\n'
-     '            }\n'
-     '        };\n'
-     '        snapshot.records.insert(key, record.clone());\n'
-     '    }\n',
+     '                continue;',
      signal_test,
      '#2692 the production counter moved — the skip is not a test-only observable'),
+    # fix-merge-r4 (条2 / MM sibling#1, b 档按 P1): the writer half of the
+    # signal surface — `registry-skip-silent` used to cover counter + line in
+    # one span, so deleting only the `console_log_line` call kept every
+    # counter assertion green while the operator's line vanished. The bound
+    # test re-execs this very test binary with the probe env var, the child
+    # performs one read that skips, and the parent — owning the child's
+    # stderr pipe — demands the throttled line be there (#2301 probe shape).
+    ('registry-skip-writer-silent', REGISTRY,
+     '    crate::native_process::channels::console_log_line(\n'
+     '        &mut std::io::stderr(),\n'
+     '        &format!(\n'
+     '            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",\n'
+     '            path.display(),\n'
+     '            count\n'
+     '        ),\n'
+     '    );',
+     '    let _ = (path, count);',
+     writer_test,
+     '#2692 the skip\'s stderr signal never reached the pipe'),
     # fix-r6 (review sibling#2): the band criterion mutates back to the old
     # leaf/node-depth caliber (container_depth), which counts the deepest
     # NODE depth — the empty-innermost-array shape under-reports by exactly
@@ -366,6 +373,9 @@ LITERAL_ANCHORS = [
     (REGISTRY_TESTS, "past V8's fold band and must fail the load"),
     (REGISTRY_TESTS,
      '#2692 the production counter moved — the skip is not a test-only observable'),
+    # fix-merge-r4 (条2): the writer-half row's own assertion — the stderr
+    # probe's second negative_assert.
+    (REGISTRY_TESTS, '#2692 the skip\'s stderr signal never reached the pipe'),
     (READ_TESTS, '#2692 the miss echoes the raw request value'),
     # fix-r6 (review sibling#1): the deep-echo test's caliber pin.
     (READ_TESTS, '#2692 the capped provider-body serializer refuses the same value'),
@@ -388,6 +398,7 @@ EXPECTED_NAMES = (
     'submit-raw-spelling',
     'registry-skip-reverted',
     'registry-skip-silent',
+    'registry-skip-writer-silent',
     'registry-band-leaf-depth',
     'echo-drops-raw-key',
     'echo-capped-serializer',
@@ -411,6 +422,11 @@ ROW_PINS = (
     'submit-raw-spelling',
     'registry-skip-reverted',
     'registry-band-leaf-depth',
+    # fix-merge-r4 (条2): the writer-half row's assertion is unique, so the
+    # shared-assertion rule above would never force its pin — a both-tables
+    # drop of exactly that row is the hole the pin closes (the turn-read
+    # fix-merge-r4 shape).
+    'registry-skip-writer-silent',
 )
 
 

@@ -1171,3 +1171,77 @@ fn unrekeyable_skips_advances_in_production_on_every_read() {
         "#2692 the production counter moves on every read that skips"
     );
 }
+
+// fix-merge-r4 (MM sibling#1, b 档按 P1): the counter half of the signal
+// surface is bound above, but the stderr line had no kill point — deleting
+// only the `console_log_line` write kept every counter assertion green, so
+// the writer half was unaudited. fix-merge-r4 also moved the write out of the
+// lock critical section and made it once per path per process (MM src2
+// concurrency#1), so this owns the writer half of exactly that shape. Direct
+// `std::io::stderr()` writes bypass libtest's capture, so the line is
+// observed in a re-exec'd child of this very test binary (the #2301
+// failing-console probe shape): the child takes the probe branch, performs
+// one read that skips, and the parent — which owns the child's stderr pipe —
+// demands the line be there.
+const UNREKEYABLE_STDERR_PROBE: &str = "PDRS_2692_UNREKEYABLE_STDERR_PROBE";
+
+#[test]
+fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
+    if std::env::var_os(UNREKEYABLE_STDERR_PROBE).is_some() {
+        // The child half: one in-band deep record, one read that skips. The
+        // skip's own `console_log_line` lands on this process's real stderr
+        // — the pipe the parent holds — so reaching the end quietly is all
+        // this half has to do (the parent asserts the line). Opening alone
+        // is the first (and, once-per-path, only) signal this child emits.
+        let scratch = Scratch::new();
+        let path = scratch.path();
+        let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
+        fs::write(
+            &path,
+            format!(
+                r#"{{"schemaVersion":1,"records":[{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+            ),
+        )
+        .unwrap();
+        let registry = FileRunRegistry::open(&path).unwrap();
+        assert_eq!(
+            registry.skipped_unrekeyable(),
+            1,
+            "#2692 the probe's deep record sits inside the fold band, so the read skips it"
+        );
+        return;
+    }
+    let child = std::process::Command::new(
+        std::env::current_exe().expect("#2692 the probe binary path"),
+    )
+    .args([
+        "--exact",
+        // `--exact` matches the full libtest path, not the bare name.
+        "storage::run_registry_tests::unrekeyable_skip_logs_the_stderr_signal_once_per_path",
+        // libtest's capture must stay off so the child's real stderr carries
+        // the line to the parent's pipe (the #2301 probe precedent).
+        "--nocapture",
+        "--test-threads=1",
+    ])
+    .env_clear()
+    .env(UNREKEYABLE_STDERR_PROBE, "probe")
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .expect("#2692 the stderr-line probe spawns");
+    let output = child
+        .wait_with_output()
+        .expect("#2692 the stderr-line probe is waitable");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    crate::negative_assert!(
+        output.status.success(),
+        "#2692 the stderr-line probe itself must pass (exit {}):\n{stderr}",
+        output.status
+    );
+    crate::negative_assert!(
+        stderr.contains(
+            "skipped 1 un-rekeyable record(s); the next persist rewrites the file without them"
+        ),
+        "#2692 the skip's stderr signal never reached the pipe — the writer half was deleted:\n{stderr}"
+    );
+}
