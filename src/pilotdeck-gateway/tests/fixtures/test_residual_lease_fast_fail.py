@@ -26,7 +26,13 @@ only (never ``/tmp/pdrs-parity.lock``):
   when the lock directory simply exists (it never waits the family out).
 
 ``scripts/parity/round.py`` refuses to import without ``-I``; run this file
-as CI does: ``python3 -I <this file>``.
+as CI does: ``python3 -I <this file>``.  ``round.py`` also pulls in
+``scripts/parity/g03_compare.py`` at import time, whose top level resolves
+the PilotDeck baseline and even loads ``tools/agent-loop-parity/trace.py``
+from it; CI checkouts have no ``resources/PilotDeck`` (the baseline stays
+repo-external), so ``load_round`` below imports it under a throwaway
+baseline stub -- none of these lock-semantics probes call any comparison
+helper, and the stub keeps the real ``parity_lock`` semantics under test.
 """
 
 import contextlib
@@ -53,6 +59,41 @@ def load(name, path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+# #2929 fix-r7 (CI run 43548179459): g03_compare.py's module top level runs
+# BASELINE = baseline_path() AND T = load_original_trace(), the latter reading
+# <baseline>/tools/agent-loop-parity/trace.py -- an empty stub directory is
+# NOT enough.  CI has no resources/PilotDeck and no PDRS_BASELINE, which made
+# this file fail at import instead of running the probes.  A stub directory
+# with an import-only trace.py lets round.py load everywhere; the probes only
+# exercise round.parity_lock, which never touches G.*/T.* comparison state.
+STUB_TRACE_PY = (
+    '# import-only stub written by test_residual_lease_fast_fail.py;\n'
+    '# the lock-semantics probes never call any T.* helper.\n'
+)
+
+
+def load_round():
+    """Load round.py under a scoped throwaway PDRS_BASELINE stub.
+
+    The env var is set only around the exec so the other probes (common.py,
+    the lock-release runner) keep loading exactly as before, and a developer
+    PDRS_BASELINE in the environment is restored afterwards.
+    """
+    with tempfile.TemporaryDirectory() as stub:
+        tools = Path(stub) / 'tools' / 'agent-loop-parity'
+        tools.mkdir(parents=True)
+        (tools / 'trace.py').write_text(STUB_TRACE_PY)
+        saved = os.environ.get('PDRS_BASELINE')
+        os.environ['PDRS_BASELINE'] = stub
+        try:
+            return load('residual_round', ROUND)
+        finally:
+            if saved is None:
+                os.environ.pop('PDRS_BASELINE', None)
+            else:
+                os.environ['PDRS_BASELINE'] = saved
 
 
 def dead_pid():
@@ -152,7 +193,7 @@ class ResidualLeaseFastFailTests(unittest.TestCase):
             faulthandler.dump_traceback_later(15, exit=True)
             try:
                 with self.assertRaises(TimeoutError) as caught:
-                    with load('residual_round', ROUND).parity_lock(lock=lock):
+                    with load_round().parity_lock(lock=lock):
                         pass
             finally:
                 faulthandler.cancel_dump_traceback_later()
