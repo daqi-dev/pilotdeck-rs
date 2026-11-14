@@ -54,7 +54,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, write_source_atomic  # noqa: E402
+from negative_process import (dead_stream_print, mutating_sources,  # noqa: E402
+                              run_owned, write_source_atomic)
 from negative_selection import verdict_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -335,7 +336,12 @@ def main():
     selected = set(sys.argv[2:])
     unknown = selected - {row[0] for row in mutations}
     if unknown:
-        print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
+        # #3094 (#3178): the shared guarded print — a dead stderr must not
+        # re-route this never-started refusal reason to stdout while the host
+        # watches stderr, nor let the shutdown flush rewrite exit 2 (the
+        # fix-r8 S1-a family contract).
+        dead_stream_print(f"unknown mutation names: {sorted(unknown)}",
+                          stream='stderr')
         return 2
     rows = [row for row in mutations if not selected or row[0] in selected]
     paths = sorted({row[1] for row in rows})
@@ -366,7 +372,6 @@ def main():
                 # or half-written product source.
                 write_source_atomic(
                     ROOT, path, content.replace(before, after, 1).encode("utf-8"),
-                    mode=path.stat().st_mode & 0o7777,
                 )
                 checked = run_owned([NODE, "--check", str(path)], cwd=ROOT, timeout=60)
                 log = checked.stdout + checked.stderr
@@ -399,7 +404,6 @@ def main():
                 # rename, never a truncating write_bytes.
                 write_source_atomic(
                     ROOT, path, original,
-                    mode=path.stat().st_mode & 0o7777,
                 )
                 if hashlib.sha256(path.read_bytes()).hexdigest() != before_bytes:
                     record(name, "INVALID", "restore mismatch")

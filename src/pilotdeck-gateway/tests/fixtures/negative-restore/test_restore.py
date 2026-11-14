@@ -9,6 +9,7 @@ requires the exact regression tests to fail at their dedicated assertions.
 The simulated source guard only owns TemporaryDirectory files; it is never a
 replacement for the HEAD guard when running product mutations.
 """
+import ast
 import contextlib
 import importlib.util
 import io
@@ -659,8 +660,221 @@ class SessionFactoryTests(unittest.TestCase):
                              f'#1037 an unset or empty baseline ({value!r}) must fall back to HEAD')
 
 
+# #3001 item 3 (#3178): the migrated-table sweep. The MODULES harness above
+# drives restore faults through three runners only; the other migrated family
+# tables had no revert-to-truncating-write red until this scan.
+MIGRATION_MARKER_ROUNDS = ('#1087 fix-r1', '#1087 fix-r2')
+MIGRATION_EXCLUDED_DIRS = ('_shared/', '_negkit/', 'negative-restore/')
+
+
+def migration_files(root=FIXTURES):
+    """Yield (relative path, text) for every migrated family table.
+
+    The population is directory-derived the way ``_shared/test_compile_inputs.py``
+    derives its compile sweep: a family table is a fixtures subdirectory runner
+    carrying the #1087 fix-r1/fix-r2 atomic-write migration marker (#1903 rule).
+    Unit tests quote those markers in assertions, root-level modules are the M6
+    lane's shared machinery, and the ``_``-prefixed kit dirs are shared — none
+    of them are family tables. Marker-less runners are the #1908 unmigrated
+    backlog and deliberately stay out until they are migrated.
+    """
+    for path in sorted(root.rglob('*.py')):
+        rel = path.relative_to(root)
+        rel_posix = rel.as_posix()
+        if path.name.startswith('test_') or '/' not in rel_posix:
+            continue
+        if rel_posix.startswith(MIGRATION_EXCLUDED_DIRS):
+            continue
+        try:
+            text = path.read_text(encoding='utf-8', errors='surrogateescape')
+        except OSError:
+            continue
+        if any(marker in text for marker in MIGRATION_MARKER_ROUNDS):
+            yield rel_posix, text
+
+
+def _receiver_root(node):
+    """The leftmost name of a receiver expression (``out`` in ``out / 'x.log'``)."""
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        node = node.left
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _is_call_to(node, name):
+    return (isinstance(node, ast.Call)
+            and ((isinstance(node.func, ast.Name) and node.func.id == name)
+                 or (isinstance(node.func, ast.Attribute) and node.func.attr == name)))
+
+
+def _guarded_names(call):
+    """The names a mutating_sources call declares as its guarded paths."""
+    values = list(call.args[1:2]) + [kw.value for kw in call.keywords
+                                     if kw.arg in ('sources', 'paths')]
+    names = set()
+    for value in values:
+        if isinstance(value, ast.Name):
+            names.add(value.id)
+        elif isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            names.update(item.id for item in value.elts if isinstance(item, ast.Name))
+    return names
+
+
+def scan_migration(text, rel):
+    """Report every departure from the atomic-write migration in one table.
+
+    Inside a ``mutating_sources`` window a truncating ``write_text`` or
+    ``write_bytes`` may only ever target the evidence output — never a name
+    guarded by the window, and never a ``write_source_atomic`` target (the
+    guarded product source). No ``write_source_atomic`` call may stat its
+    target at call time for the ``mode=`` argument either: the helper already
+    falls back to 0o644 for a deleted target, while a call-time stat raises
+    FileNotFoundError and aborts the sequential restore loop, skipping every
+    later file. Snapshot-recorded modes (``mode=modes[path]``) stay allowed.
+    """
+    violations = []
+    tree = ast.parse(text)
+    atomic_targets = set()
+    for node in ast.walk(tree):
+        if not _is_call_to(node, 'write_source_atomic'):
+            continue
+        for arg in list(node.args[1:2]) + [kw.value for kw in node.keywords
+                                           if kw.arg == 'path']:
+            atomic_targets.add(ast.unparse(arg))
+        for kw in node.keywords:
+            if kw.arg == 'mode':
+                for sub in ast.walk(kw.value):
+                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) \
+                            and sub.func.attr == 'stat':
+                        violations.append(
+                            f'{rel}: line {kw.lineno}: write_source_atomic passes a '
+                            'call-time mode= stat (a deleted target would abort the '
+                            'restore loop; record the mode in the snapshot instead)')
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        guarded = set()
+        for item in node.items:
+            if _is_call_to(item.context_expr, 'mutating_sources'):
+                guarded |= _guarded_names(item.context_expr)
+        if not guarded:
+            continue
+        for sub in ast.walk(node):
+            if not (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr in ('write_text', 'write_bytes')):
+                continue
+            receiver = ast.unparse(sub.func.value)
+            if _receiver_root(sub.func.value) in guarded:
+                violations.append(
+                    f'{rel}: line {sub.lineno}: truncating {sub.func.attr} on the '
+                    'guarded source itself (a kill mid-write leaves an empty or '
+                    'half-written source; use write_source_atomic)')
+            elif receiver in atomic_targets:
+                violations.append(
+                    f'{rel}: line {sub.lineno}: truncating {sub.func.attr} on a '
+                    'write_source_atomic target (the guarded source; use '
+                    'write_source_atomic)')
+    return violations
+
+
+SWEEP_FAMILY = '''\
+import sys
+from pathlib import Path
+from negative_process import mutating_sources, write_source_atomic
+
+out = Path(sys.argv[1]).resolve()
+root = Path(__file__).resolve().parents[5]
+src = root / 'src/thing.rs'
+
+# #1087 fix-r2: every guarded-source write in the window is one
+# atomic rename (#1903 rule, shared with ``mutating_sources``).
+with mutating_sources(root, [src]) as originals:
+    mutant = originals[src].replace(b'left', b'right', 1)
+    write_source_atomic(root, src, mutant)
+{body}'''
+
+
+class MigrationWindowSweepTests(unittest.TestCase):
+    """#3001 item 3: every migrated family table keeps the #1903 shape."""
+
+    def test_family_windows_never_truncate_guarded_sources(self):
+        population = dict(migration_files())
+        self.assertTrue(len(population) >= 20,
+                        '#3001 the migrated family must stay discoverable by its marker')
+        for required in ('fe-coexist/negative_controls.py',
+                         'live-history/negative.py',
+                         'edgeclaw-heartbeat/negative.py',
+                         'edgeclaw-heartbeat-indexer/negative.py',
+                         'gateway-batch/negative_controls.py',
+                         'ledger-diffs/negative_controls.py'):
+            self.assertIn(required, population,
+                          f'#3001 the sweep must cover the migrated table {required}')
+        self.assertNotIn('negative_suite.py', population,
+                         '#3001 the M6 shared harness stays outside this sweep; its '
+                         'remaining call-time mode= sites belong to the M6 lane')
+        for rel, text in sorted(population.items()):
+            with self.subTest(table=rel):
+                self.assertEqual(scan_migration(text, rel), [],
+                                 '#3001 a migrated table left the atomic-write shape')
+
+    def _family(self, body):
+        return SWEEP_FAMILY.format(body=body)
+
+    def test_scan_flags_a_reverted_guarded_write(self):
+        """The #3001 red side: a table reverted to write_text must go red."""
+        source = self._family("    src.write_text('mutated')")
+        self.assertTrue(any('truncating write_text on the guarded source' in v
+                            for v in scan_migration(source, 'probe/table.py')),
+                        '#3001 a guarded write reverted to write_text must red')
+
+    def test_scan_flags_a_write_targeting_an_atomic_target(self):
+        """The loop-variable shape (``for target, data in ...``) must red too."""
+        source = self._family(
+            "    for target, data in [(src, b'x')]:\n"
+            "        write_source_atomic(root, target, data)\n"
+            "        target.write_text('mutated')")
+        self.assertTrue(any('write_source_atomic target' in v
+                            for v in scan_migration(source, 'probe/table.py')),
+                        '#3001 a truncating write on a write_source_atomic target must red')
+
+    def test_scan_flags_call_time_mode_and_allows_snapshot_mode(self):
+        source = self._family('')
+        reverted = source.replace('write_source_atomic(root, src, mutant)',
+                                  'write_source_atomic(root, src, mutant,\n'
+                                  '                    mode=src.stat().st_mode & 0o7777)')
+        self.assertTrue(any('call-time mode=' in v
+                            for v in scan_migration(reverted, 'probe/table.py')),
+                        '#3001 a call-time mode= stat must red')
+        snapshotted = source.replace('write_source_atomic(root, src, mutant)',
+                                    'write_source_atomic(root, src, mutant, mode=modes[src])')
+        self.assertEqual(scan_migration(snapshotted, 'probe/table.py'), [],
+                         '#3001 a snapshot-recorded mode stays allowed')
+
+    def test_scan_allows_evidence_writes_and_population_follows_the_marker(self):
+        self.assertEqual(
+            scan_migration(self._family("    (out / 'row.log').write_text('log')"),
+                           'probe/table.py'),
+            [], '#3001 evidence output is never a guarded source')
+        with tempfile.TemporaryDirectory(prefix='pdrs-3001-sweep-') as temp:
+            root = Path(temp)
+            marked = root / 'marked' / 'negative.py'
+            marked.parent.mkdir()
+            marked.write_text(self._family("    src.write_text('mutated')"))
+            for rel in ('backlog/negative_controls.py', 'negative_suite.py',
+                        'test_marked.py', '_shared/kit.py', 'negative-restore/own.py'):
+                probe = root / rel
+                probe.parent.mkdir(parents=True, exist_ok=True)
+                # The #1908 backlog shape: same violating write, no migration
+                # marker — it must stay outside the sweep until it is migrated.
+                probe.write_text(self._family("    src.write_text('mutated')")
+                                 .replace('#1087 fix-r2', '#1908 backlog'))
+            self.assertEqual([rel for rel, _ in migration_files(root)],
+                             ['marked/negative.py'],
+                             '#3001 only marked family tables enter the sweep')
+
+
 TEST_CLASSES = (McpRestoreTests, MasksRestoreTests, NodeRestoreTests, RealGuardTests,
-                SharedInvalidationTests, SessionFactoryTests, SessionRunnerTests)
+                SharedInvalidationTests, SessionFactoryTests, SessionRunnerTests,
+                MigrationWindowSweepTests)
 
 
 def tests(test_class):

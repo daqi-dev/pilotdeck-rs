@@ -365,8 +365,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
                 # ``mutating_sources``) — a truncating ``write_text`` killed
                 # mid-write leaves an empty or half-written product source.
                 write_source_atomic(
-                    root, path, source.replace(before, after).encode(),
-                    mode=path.stat().st_mode & 0o7777)
+                    root, path, source.replace(before, after).encode())
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             run = cargo_test(test)
             log = run.stdout + run.stderr
@@ -377,8 +376,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: this restore is also one rename,
                 # never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
             # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout
             # must not turn this exit-2 refusal into a crash (rc=1) or a
             # shutdown-flush 120; the code is the contract.
@@ -390,8 +388,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: the in-loop restore is also one
                 # rename, never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
         if reason is None:
             killed.append(name)
             print(f'KILLED   {name}: {anchor}', flush=True)
@@ -399,8 +396,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             survived.append((name, reason))
             print(f'SURVIVED {name}: {reason}', flush=True)
     for path, data in originals.items():
-        write_source_atomic(root, path, data,
-                            mode=path.stat().st_mode & 0o7777)
+        write_source_atomic(root, path, data)
         assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     # #831: the mutation loop restores after every case; run the suite once
     # more under the same tree lock so the green-after-restore half of the

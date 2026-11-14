@@ -244,8 +244,7 @@ def main(argv=None):
                 # a truncating ``write_text`` killed mid-write leaves an empty
                 # or half-written product source.
                 write_source_atomic(
-                    root, path, source.replace(before, after).encode(),
-                    mode=path.stat().st_mode & 0o7777)
+                    root, path, source.replace(before, after).encode())
                 try:
                     cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages', test, '--', '--exact']
@@ -258,8 +257,7 @@ def main(argv=None):
                     # Same #1087 fix-r2 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes.
                     write_source_atomic(
-                        root, path, originals[path],
-                        mode=path.stat().st_mode & 0o7777)
+                        root, path, originals[path])
             except Exception as error:
                 reason = f'{type(error).__name__}: {error}'
             if reason is None:
@@ -269,8 +267,7 @@ def main(argv=None):
                 survived.append((name, reason))
                 print(f'SURVIVED {name}: {reason}', flush=True)
         for path, data in originals.items():
-            write_source_atomic(root, path, data,
-                                mode=path.stat().st_mode & 0o7777)
+            write_source_atomic(root, path, data)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))

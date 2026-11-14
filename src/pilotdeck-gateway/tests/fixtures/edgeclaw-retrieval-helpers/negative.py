@@ -207,8 +207,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
             # a truncating ``write_text`` killed mid-write leaves an empty
             # or half-written product source.
             write_source_atomic(
-                root, path, source.replace(before, after).encode(),
-                mode=path.stat().st_mode & 0o7777)
+                root, path, source.replace(before, after).encode())
             try:
                 cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                        '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_retrieval_helpers',
@@ -222,8 +221,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
                 # Same #1087 fix-r2 window: the in-loop restore is also one
                 # rename, never a truncating write_bytes.
                 write_source_atomic(
-                    root, path, originals[path],
-                    mode=path.stat().st_mode & 0o7777)
+                    root, path, originals[path])
         except Exception as error:
             reason = f'{type(error).__name__}: {error}'
         if reason is None:
@@ -233,8 +231,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
             survived.append((name, reason))
             print(f'SURVIVED {name}: {reason}', flush=True)
     for path, data in originals.items():
-        write_source_atomic(root, path, data,
-                            mode=path.stat().st_mode & 0o7777)
+        write_source_atomic(root, path, data)
         assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     # The restored bytes must pass the same unmutated suite that gated the run.
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')

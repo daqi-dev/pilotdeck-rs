@@ -510,8 +510,7 @@ def main(argv=None):
                 # ``mutating_sources``) — a truncating ``write_text`` killed
                 # mid-write leaves an empty or half-written product source.
                 write_source_atomic(root, helpers,
-                                     source.replace(before, after).encode(),
-                                     mode=helpers.stat().st_mode & 0o7777)
+                                     source.replace(before, after).encode())
                 try:
                     cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers',
@@ -529,8 +528,7 @@ def main(argv=None):
                 finally:
                     # Same #1087 fix-r2 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes.
-                    write_source_atomic(root, helpers, originals[helpers],
-                                        mode=helpers.stat().st_mode & 0o7777)
+                    write_source_atomic(root, helpers, originals[helpers])
             except Exception as error:
                 reason = f'{type(error).__name__}: {error}'
             if reason is None:
@@ -541,8 +539,7 @@ def main(argv=None):
                 print(f'SURVIVED {name}: {reason}', flush=True)
         # Same #1087 fix-r2 window: the final restore is also one rename,
         # never a truncating write_bytes.
-        write_source_atomic(root, helpers, originals[helpers],
-                            mode=helpers.stat().st_mode & 0o7777)
+        write_source_atomic(root, helpers, originals[helpers])
         assert helpers.read_bytes() == originals[helpers], 'restoration failed'
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))

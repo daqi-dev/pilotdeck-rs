@@ -440,8 +440,7 @@ try:
                     # ``mutating_sources``) — a truncating ``write_bytes`` killed
                     # mid-write leaves an empty or half-written product source.
                     write_source_atomic(root, path,
-                                         original.replace(before, after).encode(),
-                                         mode=path.stat().st_mode & 0o7777)
+                                         original.replace(before, after).encode())
                     try:
                         run = run_owned(command, cwd=root, env=env, timeout=600)
                         log = run.stdout + run.stderr
@@ -449,8 +448,7 @@ try:
                     finally:
                         # Same #1087 fix-r2 window: the in-loop restore is also
                         # one rename, never a truncating write_bytes.
-                        write_source_atomic(root, path, originals[path],
-                                            mode=path.stat().st_mode & 0o7777)
+                        write_source_atomic(root, path, originals[path])
                 except subprocess.TimeoutExpired as error:
                     log = (error.stdout or '') + (error.stderr or '')
                     returncode = None
@@ -472,8 +470,7 @@ try:
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: the final restore is also one rename,
                 # never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
                 if path.read_bytes() != data:
                     raise RuntimeError('restoration failed: ' + str(path))
 except SystemExit as error:

@@ -324,6 +324,81 @@ def _assert_emit_publish_failure_surface(checker=None):
             Path.unlink = original_unlink
 
 
+def _assert_negctl_publish_failure_surface(controls=None):
+    """negctl summary 发布失败孪生（#3109 ②，#3178）：失败路径清理错不得顶掉原发布错。
+
+    emit 侧同款孪生见 `_assert_emit_publish_failure_surface`；negctl 的发布段
+    （fix-r15 写好的吞清理错）此前内联在 run_locked 里，进程内无法驱动——#3109 ②
+    把它原样提出 `_publish_summary` 后这里驱动两半：
+    - 发布失败 + 清理也失败：冒出来的必须是「cannot publish」自己的错（裸
+      remove_at 会把清理错顶上去＝r15 修掉的归因掩蔽形态），且失败不得发布
+      summary.json；
+    - 发布成功：金样字节落地，目录里只剩 summary.json（预清 + rename 收走 tmp）。
+    remove_at 的第 1 次调用是发布前的残留清理（成功路径的一部分），必须放行；
+    只有失败路径的清理调用（第 2 次）挂掉。
+    牙齿由 control_negctl 的「裸化 remove_at」变异提供（--self-check-controls）。
+    """
+    saved_prefix = sys.pycache_prefix
+    try:
+        spec = importlib.util.spec_from_file_location(
+            'negctl_publish_probe', controls or CONTROLS)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except SystemExit as error:
+            raise CheckFailure(
+                'cannot load the executor for the publish-failure twin: '
+                f'{(controls or CONTROLS).name} exited during import with '
+                f'rc={error.code!r}'
+            ) from error
+    finally:
+        sys.pycache_prefix = saved_prefix
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-negctl-twin-') as tmp:
+        out_root = Path(tmp) / 'out'
+        target = out_root / 'summary.json'
+        summary = {'probe': 'negctl'}
+        original_replace = os.replace
+        original_remove_at = module.remove_at
+        calls = {'remove_at': 0}
+
+        def failing_replace(src, dst, **kwargs):
+            raise OSError('#negctl-twin publish boom')
+
+        def hostile_remove_at(dir_fd, name):
+            calls['remove_at'] += 1
+            if calls['remove_at'] >= 2:
+                raise module.OutputError('#negctl-twin cleanup boom')
+            return original_remove_at(dir_fd, name)
+
+        try:
+            # ① 失败路径：发布错必须冒自己的错——裸 remove_at 的清理错会顶掉它。
+            os.replace = failing_replace
+            module.remove_at = hostile_remove_at
+            module._publish_summary(out_root, target, summary)
+        except module.OutputError as error:
+            message = str(error)
+            if '#negctl-twin publish boom' not in message:
+                raise CheckFailure(
+                    'the negctl publish failure surfaced the wrong error (a '
+                    f'cleanup failure must not mask it): {error!r}') from error
+        else:
+            raise CheckFailure('the negctl publish failure was swallowed entirely')
+        finally:
+            os.replace = original_replace
+            module.remove_at = original_remove_at
+        if target.exists():
+            raise CheckFailure('the negctl publish failure still published a summary')
+
+        # ② 成功路径：字节照常落地，目录里只剩 summary.json。
+        module._publish_summary(out_root, target, summary)
+        expected = json.dumps(summary, ensure_ascii=False, indent=2) + '\n'
+        if not target.is_file() or target.read_text(encoding='utf-8') != expected:
+            raise CheckFailure('the negctl publish did not land the summary bytes')
+        leftovers = sorted(entry.name for entry in out_root.iterdir())
+        if leftovers != ['summary.json']:
+            raise CheckFailure(f'the negctl publish left extra files: {leftovers}')
+
+
 def _provenance_original_digests(fixtures=None):
     """解析 `fixtures/PROVENANCE.md` 登记的**原始采集** sha256 表（methods + frames）。
 
@@ -549,6 +624,9 @@ def check_negctl():
     if positive_ids != sorted(EXPECTED_POSITIVE_IDS):
         raise CheckFailure(f'summary positive ids {positive_ids} do not match the '
                            f'registered roster {sorted(EXPECTED_POSITIVE_IDS)} (#2378)')
+    # #3109 ②（#3178）：子进程金样全绿之外，发布失败面也在进程内钉住（同 check_emit
+    # 在金样复算后调 `_assert_emit_publish_failure_surface` 的口径）。
+    _assert_negctl_publish_failure_surface()
     return (f'{counts["KILLED"]}/{EXPECTED_CONTROLS} KILLED, '
             f'{positive_counts["HELD"]}/{EXPECTED_POSITIVES} HELD, '
             '0 SURVIVED/INVALID/BROKEN')
@@ -3154,10 +3232,55 @@ def control_emit():
     return 'the bare cleanup-unlink mutant is rejected by the publish twin'
 
 
+def control_negctl():
+    """negctl 发布失败孪生的牙齿（#3109 ②，#3178）：把清理 remove_at 裸化的
+    变异必须让孪生红在专属判定上。
+
+    与 control_emit 的裸化 unlink 变异同一形态：临时副本退回 r15 之前的口径
+    （失败路径清理错顶掉「cannot publish」的原发布错），孪生必须红在
+    「surfaced the wrong error」的专属文案上——裸 remove_at 变异下①的
+    `except OutputError` 收到的是清理错 `#negctl-twin cleanup boom`，不含
+    `#negctl-twin publish boom`。正控只跑进程内孪生本身（check_negctl 的
+    子进程全量负控在七项自检里已跑，这里不重复起子进程，预算行无新增贡献）。
+    变异副本必须连同 check_outcome_parity.py 一起拷贝：负控模块体在导入期
+    经 HERE 相对路径加载 checker。
+    """
+    _assert_negctl_publish_failure_surface()
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-negctl-') as tmp:
+        source = CONTROLS.read_text(encoding='utf-8')
+        mutation = ('            try:\n'
+                    '                remove_at(out_fd, tmp)  # 失败路径不把半成品留在目录里\n'
+                    '            except OutputError:\n'
+                    '                pass\n')
+        if source.count(mutation) != 1:
+            raise CheckFailure('the negctl cleanup-suppress anchor is not uniquely '
+                               f'present in {CONTROLS.name} to mutate; update this '
+                               'control with the current anchor')
+        weakened = source.replace(
+            mutation, '            remove_at(out_fd, tmp)\n')
+        mutated = Path(tmp) / 'negative_controls.py'
+        mutated.write_text(weakened, encoding='utf-8')
+        shutil.copyfile(CHECKER, mutated.with_name(CHECKER.name))
+        try:
+            _assert_negctl_publish_failure_surface(mutated)
+        except CheckFailure as error:
+            if 'surfaced the wrong error' not in str(error):
+                raise CheckFailure(
+                    'the bare-remove_at mutant was rejected by the wrong judgment: '
+                    f'{error}') from error
+        else:
+            raise CheckFailure(
+                'the negctl publish twin did not reject a bare cleanup remove_at '
+                '(the failure-path cleanup error masks the original publish error; '
+                'the r15 invariant has rotted)')
+    return 'the bare cleanup-remove_at mutant is rejected by the publish twin'
+
+
 CONTROLS_FOR_CHECK = {
     'budget': control_budget,
     'emit': control_emit,
     'check': control_check,
+    'negctl': control_negctl,
     'lock': control_lock,
     'wiring': control_wiring,
 }

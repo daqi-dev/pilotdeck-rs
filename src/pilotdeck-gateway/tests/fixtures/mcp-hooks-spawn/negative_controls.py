@@ -142,8 +142,7 @@ def main(argv=None):
                     # killed mid-write leaves an empty or half-written
                     # product source.
                     write_source_atomic(
-                        root, path, changed.encode(),
-                        mode=path.stat().st_mode & 0o7777)
+                        root, path, changed.encode())
                     result = run(out, name, test)
                     save(out, name + '.log', result.stdout + result.stderr)
                     status, reason = classify(result, test, anchor)

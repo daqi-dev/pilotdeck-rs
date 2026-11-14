@@ -464,12 +464,14 @@ MUTATIONS = [
     # a write killed mid-flight leaves a 0-byte runner that exits 0 without
     # running any row (#1903 rule).
     ('runner-truncating-mutant-write', NEGATIVE,
-     "                    write_source_atomic(ROOT, source, mutant.encode(),\n"
-     "                                        mode=source.stat().st_mode & 0o7777)",
+     "                    # guarded-source write is one atomic rename (#1903 rule).\n"
+     "                    write_source_atomic(ROOT, source, mutant.encode())",
+     "                    # guarded-source write is one atomic rename (#1903 rule).\n"
      "                    source.write_text(mutant)"),
     ('runner-truncating-restore-write', NEGATIVE,
-     "                    write_source_atomic(ROOT, source, originals[source],\n"
-     "                                        mode=source.stat().st_mode & 0o7777)",
+     "                    # be one rename, never a truncating write_bytes.\n"
+     "                    write_source_atomic(ROOT, source, originals[source])",
+     "                    # be one rename, never a truncating write_bytes.\n"
      "                    source.write_bytes(originals[source])"),
 ]
 CHECKS = {
@@ -739,8 +741,7 @@ def main():
                     # leave a 0-byte runner that exits 0 without running any
                     # row (or a half file that cannot even preflight) — every
                     # guarded-source write is one atomic rename (#1903 rule).
-                    write_source_atomic(ROOT, source, mutant.encode(),
-                                        mode=source.stat().st_mode & 0o7777)
+                    write_source_atomic(ROOT, source, mutant.encode())
                     negative = run(out, name + '-negative', test)
                     text = negative.stdout + negative.stderr
                     if negative.returncode == 0:
@@ -754,8 +755,7 @@ def main():
                 finally:
                     # Same #1087 fix-r1 window: the in-loop restore must also
                     # be one rename, never a truncating write_bytes.
-                    write_source_atomic(ROOT, source, originals[source],
-                                        mode=source.stat().st_mode & 0o7777)
+                    write_source_atomic(ROOT, source, originals[source])
                 try:
                     restored = run(out, name + '-restored', test)
                     if restored.returncode != 0:

@@ -1434,6 +1434,37 @@ def main(argv=None):
         return 2
 
 
+def _publish_summary(out_root, target, summary):
+    """原子发布 summary.json：tmp 带 pid，先写 *.tmp 再相对同一 fd rename（#1903 口径）。
+
+    #3109 ②（#3178）：这段原先内联在 run_locked 里——失败路径的清理守卫（remove_at
+    自己的 OutputError 是清理错，不得顶掉「cannot publish」的原发布错，fix-r15）因此
+    无法在进程内驱动。原样提出为模块级函数，语句逐条等价；self_check 的
+    `_assert_negctl_publish_failure_surface` 孪生据此驱动失败面。
+    """
+    # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
+    # 会把另一进程写了一半的内容发布成最终文件）。
+    tmp = f'summary.json.{os.getpid()}.tmp'
+    out_fd = open_output_dir(out_root)
+    try:
+        remove_at(out_fd, tmp)  # 只删链接自己/残留，绝不跟随
+        write_at(out_fd, tmp, json.dumps(summary, ensure_ascii=False, indent=2) + '\n',
+                 exclusive=True)
+        try:
+            # 原子发布：先写 *.tmp 再 replace，两步都相对**同一个** fd。
+            os.replace(tmp, 'summary.json', src_dir_fd=out_fd, dst_dir_fd=out_fd)
+        except OSError as error:
+            # fix-r15（DS r14 sibling#2 P2a，与 check_frozen write_manifest r14 同族）：
+            # remove_at 自身的 OutputError 是清理错——不得顶掉「cannot publish」的原发布错。
+            try:
+                remove_at(out_fd, tmp)  # 失败路径不把半成品留在目录里
+            except OutputError:
+                pass
+            raise OutputError(f'cannot publish {target}: {error}') from error
+    finally:
+        os.close(out_fd)
+
+
 def run_locked(args, out_root):
     if not invalidate_stale_summary(out_root):
         return 2
@@ -1535,27 +1566,7 @@ def run_locked(args, out_root):
                    'counts': counts, 'positiveCounts': positive_counts,
                    'oracle': str(args.oracle), 'data': str(args.data)}
         target = out_root / 'summary.json'
-        # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
-        # 会把另一进程写了一半的内容发布成最终文件）。
-        tmp = f'summary.json.{os.getpid()}.tmp'
-        out_fd = open_output_dir(out_root)
-        try:
-            remove_at(out_fd, tmp)  # 只删链接自己/残留，绝不跟随
-            write_at(out_fd, tmp, json.dumps(summary, ensure_ascii=False, indent=2) + '\n',
-                     exclusive=True)
-            try:
-                # 原子发布：先写 *.tmp 再 replace，两步都相对**同一个** fd。
-                os.replace(tmp, 'summary.json', src_dir_fd=out_fd, dst_dir_fd=out_fd)
-            except OSError as error:
-                # fix-r15（DS r14 sibling#2 P2a，与 check_frozen write_manifest r14 同族）：
-                # remove_at 自身的 OutputError 是清理错——不得顶掉「cannot publish」的原发布错。
-                try:
-                    remove_at(out_fd, tmp)  # 失败路径不把半成品留在目录里
-                except OutputError:
-                    pass
-                raise OutputError(f'cannot publish {target}: {error}') from error
-        finally:
-            os.close(out_fd)
+        _publish_summary(out_root, target, summary)
     except OutputError as error:
         # 这里只兜 summary 发布的写盘失败：是「跑不了」（rc2），不是「某个控件的判据
         # FAIL」（rc1）；逐控件的写盘失败已在控件循环里收成该控件 INVALID（#2573）。

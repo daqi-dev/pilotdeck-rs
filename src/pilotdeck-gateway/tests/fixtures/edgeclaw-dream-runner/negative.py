@@ -361,8 +361,7 @@ def main(argv=None):
                 # ``mutating_sources``) — a truncating ``write_text`` killed
                 # mid-write leaves an empty or half-written product source.
                 write_source_atomic(root, path,
-                                     source.replace(before, after).encode(),
-                                     mode=path.stat().st_mode & 0o7777)
+                                     source.replace(before, after).encode())
                 slots, run, log = run_suite(test)
                 (out / f'{name}.{run_token}.log').write_text(slots.stdout + slots.stderr + log)
                 if 'could not compile' in log:
@@ -378,8 +377,7 @@ def main(argv=None):
             finally:
                 # Same #1087 fix-r2 window: the in-loop restore is also one
                 # rename, never a truncating write_bytes.
-                write_source_atomic(root, path, originals[path],
-                                     mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, originals[path])
             if killed and killed[-1] == name:
                 print(f'KILLED   {name}: {fragments[name]}', flush=True)
             elif survived and survived[-1][0] == name:
@@ -390,8 +388,7 @@ def main(argv=None):
         for path, data in originals.items():
             # Same #1087 fix-r2 window: the final restore is also one rename,
             # never a truncating write_bytes.
-            write_source_atomic(root, path, data,
-                                 mode=path.stat().st_mode & 0o7777)
+            write_source_atomic(root, path, data)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
 
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))

@@ -13,7 +13,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 
 root = Path(__file__).resolve().parents[5]
 mutations = [
@@ -97,14 +97,20 @@ def main():
                 mutated = text.replace(old, new, 1)
                 compile(mutated, str(path), 'exec')
                 compiled = True
-                path.write_text(mutated)
+                # #1087 fix-r2: every guarded-source write in the window is one
+                # atomic rename (#1903 rule, shared with ``mutating_sources``) —
+                # a truncating ``write_text`` killed mid-write leaves an empty
+                # or half-written product source.
+                write_source_atomic(root, path, mutated.encode())
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
                 raw = originals[manifest].decode()
                 original_hash = hashlib.sha256(originals[path]).hexdigest()
                 if raw.count(original_hash) != 1:
                     raise RuntimeError('#1088 checker self-hash anchor must occur once')
                 changed = raw.replace(original_hash, digest, 1)
-                manifest.write_text(changed)
+                # Same #1087 fix-r2 window: the refreshed FROZEN pin is also
+                # one rename, never a truncating write_text.
+                write_source_atomic(root, manifest, changed.encode())
                 negative = run_owned(command, cwd=root, timeout=60)
                 save(out, name + '-negative', negative)
                 log = negative.stdout + negative.stderr

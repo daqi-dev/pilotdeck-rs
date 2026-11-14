@@ -39,6 +39,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_selection import verdict_exit
 from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -386,7 +387,12 @@ def main():
     write_summary(out, results)
     counts = _counts(results)
     print(json.dumps(counts), flush=True)
-    return 0 if counts['KILLED'] == len(results) else 1
+    # #3178 item 7 (#2973 sibling): the old `0 if counts['KILLED'] ==
+    # len(results) else 1` is vacuously true on a zero-row run (a lost
+    # mutation table, a misparsed selection) — 0 == 0 read as all-green.
+    # The family contract (fixtures/README.md「零行永不返回 0」) is
+    # negative_selection.verdict_exit: empty is a failure.
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':

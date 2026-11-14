@@ -77,3 +77,29 @@ A per-mutant timeout or spawn failure is recorded as TIMEOUT/INVALID and the
 sweep continues; only a source-restore failure aborts. `index.rs` is a new
 file, so `mutating_sources` refuses to run before the coordinator commits it;
 `--check-anchors` runs pre-commit and the full executor runs post-commit.
+
+## Not in the #3094 dead-stream twin family (#3178, item 4)
+
+This directory deliberately ships no `test_*.py` and joins neither the
+process-level dead-stream twin family nor the atomic-write sweep of this
+round. The choice, with the basis:
+
+* The one refusal print that a ClosedStderr twin would exercise is the
+  STALE ANCHOR refusal in `anchors()` — and that exact helper is template
+  pinned (#1087 fix-r8, S1-a exemption): `anchors(originals)` is trusted as
+  a read-only snapshot view only because the code stays byte-identical to
+  anchor_selfcheck's `SNAPSHOT_ANCHOR_HELPER`. Converting its print to
+  `dead_stream_print` would break that byte-identity contract, so a
+  ClosedStderr twin here would be red by design.
+* The green path is already guarded: `--check-anchors` (the pre-commit lane
+  that runs when the executor cannot, since `mutating_sources` refuses the
+  uncommitted `index.rs`) exits 0 through `dead_stream_print`, and the
+  process-level stale-anchor refusal twin for the sibling shape of this
+  exact family lives in `../edgeclaw-messages/test_negative.py`
+  (`MessagesRefusalProcessControls`, #3178 item 3).
+* The judge this runner shares (`anchors`/stale-anchor counting) binds to the
+  Rust oracle `tests/edgeclaw_llm_index.rs` run post-commit; a Python-side
+  twin would duplicate the messages-family twin without new coverage.
+* The in-window truncating writes are the unmigrated #1908 backlog shape
+  (this file carries no `#1087 fix-r1`/`fix-r2` migration marker), so the
+  `negative-restore` sweep excludes it by design.

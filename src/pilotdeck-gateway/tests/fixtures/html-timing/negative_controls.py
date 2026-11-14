@@ -312,8 +312,7 @@ def main(argv=None):
                     # one atomic rename (#1903 rule, shared with
                     # ``mutating_sources``) — a truncating ``write_text`` killed
                     # mid-write leaves an empty or half-written product source.
-                    write_source_atomic(root, path, changed.encode(),
-                                        mode=path.stat().st_mode & 0o7777)
+                    write_source_atomic(root, path, changed.encode())
                     mutated = True
                     # Same sample count as CI: this red run must exercise the median
                     # criterion, not a degenerate one-sample path (#978 first review).
@@ -344,8 +343,7 @@ def main(argv=None):
                     if mutated:
                         # Same #1087 fix-r1 window: the in-loop restore is also one
                         # rename, never a truncating write_bytes.
-                        write_source_atomic(root, path, original,
-                                           mode=path.stat().st_mode & 0o7777)
+                        write_source_atomic(root, path, original)
                         if hashlib.sha256(path.read_bytes()).hexdigest() != before:
                             entry.update(outcome='INVALID', reason='restore failed')
 
