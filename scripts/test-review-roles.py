@@ -1300,12 +1300,19 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not any("fix-r5" in e and "fixtype" in e for e in errs) or not any("pdrs-residual" in e for e in errs):
             fails.append(f"fix-r5 修4 正控：无 --head 时 badge 首行 + 非首行结构化回显应按修复轮 5 "
                          f"要求 fixtype+residual（本地过、CI 双保险）：{errs}")
-        # 修 4 配对负控（本地形态）：回显行 #N 配不到本 PR 关联单 → 不计 → 非修复轮整体过闸
+        # 修 4 配对负控（本地形态）：回显行 #N 配不到本 PR 关联单 → 不计 → 义务不触发；
+        # fix-r14 起正文回显 foreign 半边与标题路径同口径（P0 修的必然结果——同串作
+        # 提交标题自 fix-r5 修2 起即按异单旁路拒收，旧正文路径静默不计是半边不对称）
+        # → 整体带异单旁路 fail-closed 拒收，不是无错过闸
         nohead_neg = ("![ci](https://example.com/b.svg)\n\nfix(scripts): #3074 fix-r3：修闸门\n\n"
                       + blk_t.format(h="") + "Refs #1\n")
-        if gate.check(nohead_neg, "", "", "", ""):
-            fails.append(f"fix-r5 修4 负控：本地回显行 #3074 配不到本 PR 单（Refs #1）不应判修复轮："
-                         f"{gate.check(nohead_neg, '', '', '', '')}")
+        neg_errs = gate.check(nohead_neg, "", "", "", "")
+        if any("须带 fixtype" in e or "pdrs-residual" in e for e in neg_errs):
+            fails.append(f"fix-r5 修4 负控：本地回显行 #3074 配不到本 PR 单（Refs #1）不触发"
+                         f"修复轮义务（不计入）：{neg_errs}")
+        if not any("异单旁路" in e and "正文回显行" in e for e in neg_errs):
+            fails.append(f"fix-r14 P0 扩面钉：回显行链 #3074 ∉ 本 PR 关联单（#1）须异单旁路"
+                         f"fail-closed 拒收（同串作标题自 fix-r5 起即拒收）：{neg_errs}")
         # git 失败 fail-closed（集合路径，任务书验 6）：head/base 未知提交、repo 不是 git 仓库
         # （目录存在但不 init——不存在的路径连 chdir 都失败，测不到「不是仓库」本身），都不得当
         # 「非修复轮」放行
@@ -1756,11 +1763,14 @@ def _run(gate, rrr, out_base: Path) -> int:
                          "异单失配仍进 foreign（fix-r5 P0 封堵原形）")
         # 锚点不过宽 pinning：散文 rN（后不接冒号）不作锚——`r4 01:10` 的时间冒号不被
         # 误当代号（误锚会切 enum_end ⇒ 其后 {1305}/{1318} 链退出枚举 ⇒ 合法 board 形
-        # foreign 误报＝假 FAIL）；anchor 扩成未过滤裸 RSHORT 时此断言必红
+        # foreign 误报＝假 FAIL）；anchor 扩成未过滤裸 RSHORT 时此断言必红。
+        # fix-r14 加固：整元组钉 ([], [])——旧断言只查 foreign 空，r13 曾让 rounds 静默
+        # 变 [4]（无链前导简写 SELF，fix-r14 P1 修回不计），此处不再留半边盲区
         if gate._scan_pairs("chore(state) r4 01:10 #1305 fix-r3 交付；#1318 缺第二家",
-                           frozenset({"3056"}))[1]:
+                           frozenset({"3056"})) != ([], []):
             fails.append("fix-r8 sibling P1 pinning：散文 rN（后不接冒号）不作锚，01:10 时间冒号"
-                         "不切 enum_end，board 双链仍按枚举抑制（不误报 foreign）")
+                         "不切 enum_end，board 双链仍按枚举抑制（不误报 foreign、无链前导"
+                         "简写不计入 rounds）")
         # concurrency P1（链尾裸号整条丢弃）：`#3056+3074 fix-r5`（issues={3056}）旧口径
         # rounds=[] foreign=[]——轮号既不计入也不拒收，fixtype/residual/多块一致整段跳过
         # ＝假 PASS。修法＝裸号判据与链成员判据分家：与最近前方 hash 只隔链分隔符
@@ -2220,6 +2230,80 @@ def _run(gate, rrr, out_base: Path) -> int:
                             frozenset({"9999"})) != ([], []):
             fails.append("fix-r13 P2-6：不相交半边 enum 抑制保留（抑制面缩小后不回宽——"
                         "board 并记形态保护不变）")
+
+        # —— #3074 fix-r14（r13 引入的 P0/P1 当轮修；协调者仲裁正本
+        # _tmp/20261114-3074-fixr13-ds/coord-arbitration.md，三向探针
+        # _tmp/20261114-3074-fixr14/probe-smoke.out）——
+        # P0（正文回显兜底假 PASS）：enum 相交半边散文间隔简写 token 在正文路径既不
+        # 计入也不拒收——fix_round_from_body 的 ECHO_HEAD 扫描只用 _paired_rounds
+        # （丢 foreign），旧 :1431 拒收只吃 titles → fixtype / N≥4 residual / 多块一致
+        # 义务整段跳过（r12 计 5，r13 退化 None 且无错）。修法＝check() 在兜底块对
+        # 正文 ECHO_HEAD 行同跑 foreign_fixround_pairs（fail-closed 拒收）
+        if gate.fix_round_from_body("## 概述\n\nfix(scripts) #3056+3074 补 r5 修闸门 #2957 P1×3\n",
+                                   echo_scan=True, issues=frozenset({"3056"})) is not None:
+            fails.append("fix-r14 P0 预置：归属存疑 token 的 _paired_rounds 半边为空（非空＝"
+                         "钉错形或计入半边回退）")
+        if not any("归属存疑" in e and "正文回显行" in e and "r5" in e
+                   for e in gate.check(
+                       "## 概述\n\nfix(scripts) #3056+3074 补 r5 修闸门 #2957 P1×3\n\nCloses #3056\n",
+                       "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "", "", "")):
+            fails.append("fix-r14 P0：正文回显兜底路径对归属存疑 token 须 fail-closed 拒收"
+                         "（修前 None 且无错＝假 PASS；验收钉「非 None 或被 check() 拒收」）")
+        if gate.fix_round_from_body("## 概述\n\nfix(scripts) #3056+3074 补 fix-r5 修闸门 #2957 P1×3\n",
+                                   echo_scan=True, issues=frozenset({"3056"})) != 5:
+            fails.append("fix-r14 P0 对照：全拼 token 不经收集臂守卫，正文回显照计 5（r12 基线）")
+        # P1（无链前导简写 SELF 假 FAIL 面）：r13 删 i<0: continue 后题头区前导简写
+        # rN 无 #N 链也进 SELF 计入 → 非修复轮标题被判修复轮（义务误触发）。修法＝
+        # i<0 前导简写不 SELF 也不走 not hashes 兜底，交后向臂（要求后方真实链且
+        # 与 token 同侧于题头区界）
+        if gate._scan_pairs("chore(state) r4 01:10 #1305 fix-r3 交付；#1318 缺第二家",
+                            frozenset({"3056"})) != ([], []):
+            fails.append("fix-r14 P1：无链前导简写回到不计不拒（修前 rounds=[4]＝假 FAIL 面；"
+                         "r8 pinning 只断言 foreign 空、rounds 静默未测——本钉补全 ([], [])）")
+        if gate._scan_pairs("chore(board): 12:15 /loop——pr9 r9 收判", frozenset()) != ([], []):
+            fails.append("fix-r14 P1：散文无链简写不计（修前 rounds=[9]）")
+        if gate._scan_pairs("chore(channels): r4 channel-layer fixes before Codex runtime merge",
+                            frozenset()) != ([], []):
+            fails.append("fix-r14 P1：无链前导简写整族不计（修前 rounds=[4]）")
+        # 后向臂同侧守卫负控：token 在题头区内、后方 #N 在首个全角「：」之后（题头
+        # 区外）→ 不计不拒——守卫缺失时与区外链失配误进 foreign ＝ 新假 FAIL 面
+        # （仲裁 sugg1-battery case 2 实测发现，DS 未预见）
+        if gate._scan_pairs("chore(state) board 12:01 r2：coord 11:4x 增量——#2040 合入计 9 笔 + #2123 入队 + READY 增 #2073/#2126/#2137",
+                            frozenset()) != ([], []):
+            fails.append("fix-r14 P1 同侧守卫：board 尾形 token 与后方链异侧于题头区界，不计"
+                         "不拒（守卫缺失时 foreign=[(2,{2040})]＝新假 FAIL）")
+        # r13 主修面不回退（仲裁「不得回退 r13 主修面」逐形钉）
+        if gate._scan_pairs("fix(scripts) 修 + 2932 r2 交付 + #2957 P1×3",
+                            frozenset({"2957"})) != ([], [(2, frozenset({"2957"}))]):
+            fails.append("fix-r14 不回退 r13：sibling#2 触发形（无链简写+后向链）仍拒收")
+        if gate.fix_round_from_title("fix(gateway) 修 + r5 + #3074",
+                                     frozenset({"3074"})) != 5:
+            fails.append("fix-r14 不回退 r13：后向简拼+本单链计入 5（r13 增益保留）")
+        # 窄窗登记钉（P1 取舍）：无链简拼真修复轮回到不计——简拼/全拼 no-chain 分裂
+        # 复开是「无链前导简写不计」的必然取舍，_scan_pairs docstring ㉓ 已登记；
+        # 修法是写全拼或补 #N 链
+        if gate.fix_round_from_title("chore(gateway) upload 清理 r6：仓库根 _tmp 清出 3.2 GB",
+                                     frozenset()) is not None \
+                or gate.fix_round_from_title("chore(gateway) upload 清理 fix-r6：仓库根 _tmp 清出 3.2 GB",
+                                             frozenset()) != 6:
+            fails.append("fix-r14 窄窗登记：无链简拼不计 / 全拼对照计 6（拼写分裂为登记取舍）")
+        # P3#3 登记钉（非 TITLE_HEAD 散文标题拒收面，DS ds2 boundary#3）：保持 r13 判
+        # （有意 fail-closed，窄窗已登记 foreign_fixround_pairs docstring），钉住不漂移
+        if gate._scan_pairs("交接段、123 r5 交付 + #2957 P1×3",
+                            frozenset({"9999"})) != ([], [(5, frozenset({"2957"}))]):
+            fails.append("fix-r14 P3#3 登记钉：非修复轮散文标题拒收面保持 r13 判不漂移")
+        # fix-r14 A/B（wordlist-ab-r14.txt r14新面/r14改值桶）逐条核实后登记的三条窄窗
+        # （P3#3 同族：散文 rN + 后方链——链配到本单则计入＝r13 增益保留，链异单则拒收
+        # ＝有意 fail-closed；语料 10446 标题中 3 条，近 30 真实 MERGED PR 0 触发）
+        if gate._scan_pairs("r0 #2562 submit 路径 SubmitHostServices::workspace_id 的 projectKey 改 nullish 双臂（附 #2564 三格请求级 null 用例与负控绑定）",
+                            frozenset()) != ([], [(0, frozenset({"2562"}))]):
+            fails.append("fix-r14 窄窗登记·r0形：散文 r0+后方异单链拒收（钉住不漂移）")
+        if gate._scan_pairs("chore(board): 12:15 /loop——pr9 r9 三家同撞 P1 已修（7fcc773）、pr10b 修复轮 8 提交待验、#386 停在选型转人批（决策卡）",
+                            frozenset()) != ([], [(9, frozenset({"386"}))]):
+            fails.append("fix-r14 窄窗登记·board散文Ⅰ：散文 rN+后方异单链拒收（钉住不漂移）")
+        if gate._scan_pairs("chore(board): 15:48——pr10b r10 / gate9；#407 修复轮 1 提交",
+                            frozenset()) != ([], [(10, frozenset({"407"}))]):
+            fails.append("fix-r14 窄窗登记·board散文Ⅱ：散文 rN+后方异单链拒收（钉住不漂移）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
