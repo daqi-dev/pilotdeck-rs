@@ -27,6 +27,7 @@ from negative_process import (
     new_output_directory,
     run_owned,
     wait_for_slot,
+    write_source_atomic,
 )
 from negative_suite import (
     Case,
@@ -749,7 +750,17 @@ def main():
                                 )
                             ),
                         )
-                        path.write_text(changed, encoding="utf-8")
+                        # fix-r9 (DS sibling, the pin fixture's fix-r8
+                        # sibling#1 shape): the publish goes through
+                        # write_source_atomic (temp file + one rename),
+                        # never a truncating in-place write -- a SIGKILL
+                        # mid-write leaves the old or the new bytes, not
+                        # half a file (#1903). This file is the catalog the
+                        # close-order pin fixture mutates round after round,
+                        # so its own publish/restore pair gets the same
+                        # atomic treatment.
+                        write_source_atomic(
+                            root, path, changed.encode("utf-8"))
                         stage = "compile"
                         build = run(name + "-compile", test, compile_only=True)
                         compiled = (
@@ -770,7 +781,11 @@ def main():
                     # Always restore this case before any successor. The outer
                     # guard independently restores and checks HEAD on exit.
                     phase = "restore"
-                    path.write_bytes(originals[path])
+                    # fix-r9: same atomic shape on the way back (one rename,
+                    # never a truncating write_bytes), paired with the
+                    # publish above -- the restore is the half of the window
+                    # a SIGKILL is most likely to land in.
+                    write_source_atomic(root, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError(
                             f"#1145 restoration mismatch: {path.relative_to(root)}"
