@@ -1123,6 +1123,21 @@ def _run(gate, rrr, out_base: Path) -> int:
             "elif mode == 'noissue_multi':\n"
             "    t0 = time.perf_counter(); es = gate.check('<!--no-issue x'*(n//15) + '\\n', '', '', '', '')\n"
             "    print('ELAPSED %.4f %d' % (time.perf_counter() - t0, len(es)))\n"
+            # fix-r21（#3074 簇①②，DS/MM r20 双谱系）：`-->` 前置形（簇①：全文有 `-->`
+            # 但都在候选起点之前——r20 全局预扫绕过形）与 MARKER 多前缀（簇②：finditer
+            # 同源漏改点，r20 预扫根本没盖到）。修法在调用点转有界 span 线性扫描，
+            # 直调 .search/.finditer 量不到修的面，走 check() 端到端；语义结果＝错误
+            # 条数（≥1＝fail-closed 拒收）。修前实测（协调者）：waiver `-->` 前置
+            # m=8000＝3.03 s / marker m=8000＝1.73 s（Θ(M·N)）。
+            "elif mode == 'marker_multi':\n"
+            "    t0 = time.perf_counter(); es = gate.check('<!--pr-gate:v1'*(n//15) + '\\n', '', '', '', '')\n"
+            "    print('ELAPSED %.4f %d' % (time.perf_counter() - t0, len(es)))\n"
+            "elif mode == 'waiver_multi2':\n"
+            "    t0 = time.perf_counter(); es = gate.check('-->\\n' + '<!--pr-gate:waiver x'*(n//21), '', '', '', '')\n"
+            "    print('ELAPSED %.4f %d' % (time.perf_counter() - t0, len(es)))\n"
+            "elif mode == 'noissue_multi2':\n"
+            "    t0 = time.perf_counter(); es = gate.check('-->\\n' + '<!--no-issue x'*(n//15), '', '', '', '')\n"
+            "    print('ELAPSED %.4f %d' % (time.perf_counter() - t0, len(es)))\n"
         )
         _gate_py = str(ROOT / "scripts" / "check-pr-gate.py")
         for _mode, _n, _want, _why in (
@@ -1210,6 +1225,42 @@ def _run(gate, rrr, out_base: Path) -> int:
                 continue
             if _el >= 2.0:
                 fails.append(f"fix-r20 {_mode} 性能钉：N=65514 多前缀 {_el:.3f}s ≥ 2.0s——"
+                             f"{_why}（改动须过 P0/P1 通道重新登记）")
+        # fix-r21（#3074 簇①②，DS/MM r20 双谱系）：`-->` 前置多前缀与 MARKER 多前缀
+        # 计时钉——修前实测（协调者）：waiver `-->` 前置 m=8000＝3.03 s / marker
+        # m=8000＝1.73 s（Θ(M·N)，`--body-file` 无长度上限＝准挂起面；r20 的全局预扫
+        # 只挡「全文无 `-->`」，`-->` 在候选前缀之前即绕过，MARKER 调用点则无任何
+        # 预扫）。修法＝有界 span 线性扫描（_marker_search/_marker_finditer），须
+        # N=65514 <2.0 s（同 r18 口径 5× 余量）＋ fail-closed 拒收（错误条数 ≥1）。
+        for _mode, _why in (
+                ("marker_multi", "MARKER 多前缀（M 个 `<!--pr-gate:v1`、无 `-->`）Θ(M·N)〔簇②：r20 预扫的同源漏改点〕"),
+                ("waiver_multi2", "WAIVER 多前缀 `-->` 前置形（`-->` 在全部候选起点之前，r20 全局预扫绕过）Θ(M·N)〔簇①〕"),
+                ("noissue_multi2", "NO_ISSUE 多前缀 `-->` 前置形（同簇①）Θ(M·N)")):
+            try:
+                _cp = subprocess.run([sys.executable, "-I", "-c", _probe, _gate_py, _mode, "65514"],
+                                     capture_output=True, text=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                fails.append(f"fix-r21 簇①②计时护栏：{_mode} 探针超时（>5s）——{_why}，"
+                             "闸门会挂起（作者可控正文），修法见 check-pr-gate.py fix-r21 span 扫描")
+                continue
+            if _cp.returncode != 0:
+                fails.append(f"fix-r21 探针异常退出 {_signame(_cp.returncode)}: {_cp.stderr[-300:]}")
+                continue
+            _parts = _cp.stdout.strip().split()
+            if len(_parts) != 3 or _parts[0] != "ELAPSED" or not _parts[2].isdigit():
+                fails.append(f"fix-r21 {_mode} 探针输出不解析：{_cp.stdout.strip()!r}")
+                continue
+            if int(_parts[2]) < 1:
+                fails.append(f"fix-r21 {_mode} 语义钉：多前缀正文须 fail-closed 拒收"
+                             f"（不得静默放行）：{_cp.stdout.strip()!r}")
+                continue
+            try:
+                _el = float(_parts[1])
+            except ValueError:
+                fails.append(f"fix-r21 {_mode} 探针计时不解析：{_cp.stdout.strip()!r}")
+                continue
+            if _el >= 2.0:
+                fails.append(f"fix-r21 {_mode} 性能钉：N=65514 {_el:.3f}s ≥ 2.0s——"
                              f"{_why}（改动须过 P0/P1 通道重新登记）")
         # fix-r14（DS r13 sibling#1 P2）：类型词表单源——ECHO_HEAD 与 TITLE_HEAD 只准引
         # `_TYPE_WORDS`，一处加词另一处漏改会让 CI 路径与本地回显路径的修复轮判定分裂
@@ -2922,6 +2973,102 @@ def _run(gate, rrr, out_base: Path) -> int:
                       "", "", "", ""):
             fails.append("fix-r20 正常态对照：含 `-->` 的合法豁免不得被预扫/收口破坏"
                          "（r19 正常路径钉同轴复钉）")
+
+        # —— #3074 fix-r21（DS/MM r20 双谱系评审三簇同根：簇①② marker 提取转有界
+        # span 线性扫描＋簇③ P0 未闭合空白 marker 拒收；协调者实测仲裁
+        # _tmp/20261114-3074-fixr21/review.md）——
+        # (1) 簇③位形两向钉（P0 主修面）：r20 实测 `<!--pr-gate:waiver   <!--no-issue
+        # 纯文档说明 -->` 经 WAIVER 跨界命中以「下一条 marker 的文本」当豁免理由放行＝
+        # rc0 假通过；修后 _blank_waiver_marker 按自身边界判空白 → 置空 reason 走
+        # 「豁免理由太短」拒收。对照向：合法豁免（理由含非空白）不受空白判定影响；
+        # 单独闭合空白 marker 照走「缺结果块」（r19 收窄面保持）；未闭合空白 marker
+        # 与合法豁免并存同样拒收（r20 的 WAIVER_BLANK 收不到的形，宁拒不漏）。
+        _c3_errs = gate.check("<!--pr-gate:waiver   <!--no-issue 纯文档说明 -->", "", "", "", "")
+        if not _c3_errs or not any("豁免理由太短" in e for e in _c3_errs):
+            fails.append(f"fix-r21 簇③：未闭合空白 marker + 下一条 marker 位形必须走"
+                         f"「豁免理由太短」拒收（r20 实测 rc0 假通过＝尺子假通过面）：{_c3_errs}")
+        if gate.check("<!-- pr-gate:waiver 纯文档变更无需角色审计结果块 -->\nCloses #3056\n",
+                      "", "", "", ""):
+            fails.append("fix-r21 簇③对照：合法豁免不得被空白判定破坏（判定按自身边界、"
+                         "理由含非空白即豁免照常）")
+        _c3_lone = gate.check("<!--pr-gate:waiver   -->\nCloses #3056\n", "", "", "", "")
+        if not any("缺角色审计结果块" in e for e in _c3_lone) or any("豁免理由太短" in e for e in _c3_lone):
+            fails.append(f"fix-r21 簇③对照：单独闭合空白 marker 照走「缺结果块」通道"
+                         f"（r19 收窄面保持，不得改走理由太短）：{_c3_lone}")
+        _c3_unclosed = gate.check("<!--pr-gate:waiver 合法理由足够长 -->\n<!--pr-gate:waiver   \nCloses #3056\n",
+                                  "", "", "", "")
+        if not any("豁免理由太短" in e for e in _c3_unclosed):
+            fails.append(f"fix-r21 簇③：未闭合空白 marker（其后无 `-->`）与合法豁免并存时"
+                         f"同样拒收（r20 的 WAIVER_BLANK 只收紧邻闭合子形，本形收不到）：{_c3_unclosed}")
+        if not gate._blank_waiver_marker("<!--pr-gate:waiver   <!--no-issue x -->"):
+            fails.append("fix-r21 簇③直调钉：_blank_waiver_marker 须命中「空白 + 下一条 marker」形"
+                         "（自身边界＝最近的 `<!--`，不是紧邻 `-->`）")
+        if gate._blank_waiver_marker("<!--pr-gate:waiver 理由足够长 -->"):
+            fails.append("fix-r21 簇③直调钉：_blank_waiver_marker 不得命中合法豁免"
+                         "（理由含非空白字符即非空白 marker）")
+        if not gate._blank_waiver_marker("<!-- pr-gate:waiver   "):
+            fails.append("fix-r21 簇③直调钉：_blank_waiver_marker 须命中未闭合空白 marker"
+                         "（其后无 `-->`，边界＝串尾）")
+        # (2) 新旧差分钉（安全子集，r19 口径扩位形）：随机位形对拍「旧全文 search 语义」
+        # （＝未改的 MARKER/WAIVER/NO_ISSUE 正则直调——本轮不改正则只改调用点）vs 有界
+        # span 版（_marker_finditer/_marker_search）。位形补 r19/r20 生成器都没有的
+        # 多 marker / 嵌套候选 / `-->` 前置 / 未闭合 marker。断言：MARKER 逐条相等
+        # （组 `[^>]*` 不含 `>` 不可能跨界＝零差异）；WAIVER/NO_ISSUE 命中时 span/组
+        # 与旧完全一致（只收紧不放宽），旧命中而新不命中的必须是「理由到自身最近
+        # `-->` 全空白」的有意收紧形（旧 group 以 `-->` 字面起＝收紧形的机器可判特征，
+        # 逐条登记进计数）；收紧形计数 >0（生成器须真覆盖到簇③位形，否则夹具失效）。
+        _rng21 = _rnd.Random(307421)
+        _pieces21 = ["<!--", "-->", "<!--pr-gate:waiver", "pr-gate:waiver ", "<!--no-issue",
+                     "no-issue ", "<!-- pr-gate:v1 roles=x -->", " ", "\n", "x", "理由文字",
+                     "<!--pr-gate:v1", "  ", "--", ">", "<!--no-issue 纯文档说明 -->",
+                     "Closes #3056\n", "waiver ", "v1", "<!--pr-gate:waiver  -->",
+                     "<!--pr-gate:waiver  ", "<!--no-issue  -->"]
+        _d21 = {"marker": 0, "waiver": 0, "noissue": 0, "waiver_tight": 0, "noissue_tight": 0}
+        for _ in range(4000):
+            _body = "".join(_rng21.choice(_pieces21) for _ in range(_rng21.randrange(0, 10)))
+            if [(m.span(), m.group(1)) for m in gate.MARKER.finditer(_body)] \
+                    != [(m.span(), m.group(1)) for m in gate._marker_finditer(gate.MARKER, _body)]:
+                _d21["marker"] += 1
+            for _pat, _key in ((gate.WAIVER, "waiver"), (gate.NO_ISSUE, "noissue")):
+                _o21, _n21 = _pat.search(_body), gate._marker_search(_pat, _body)
+                if _o21 is None and _n21 is not None:
+                    _d21[_key] += 1      # 放宽方向（旧无命中而新命中）＝绝不许
+                    continue
+                if _n21 is not None and not (_n21.span() == _o21.span()
+                                            and _n21.group(1) == _o21.group(1)):
+                    # new 命中与旧首个不同：只允许「旧首个是跨界垃圾命中（簇③形）被
+                    # 跳过、new 落到更后的合法 marker」——旧首个的组以 `-->` 字面起
+                    # （收紧特征），且 new 的命中与「旧语义在同一起点」完全一致（不放宽）
+                    _o_at = _pat.match(_body, _n21.start())
+                    if not (_o21.group(1).startswith("-->") and _o_at is not None
+                            and _o_at.span() == _n21.span()
+                            and _o_at.group(1) == _n21.group(1)):
+                        _d21[_key] += 1
+                    else:
+                        _d21[_key + "_tight"] += 1
+                if _o21 is not None and _n21 is None:
+                    if _o21.group(1).startswith("-->"):
+                        _d21[_key + "_tight"] += 1   # 簇③有意收紧形（旧跨界命中），登记
+                    else:
+                        _d21[_key] += 1  # 安全子集外的意外差异
+        if _d21["marker"] or _d21["waiver"] or _d21["noissue"]:
+            fails.append(f"fix-r21 差分钉：安全子集外差异 {_d21}（MARKER 须与 finditer"
+                         " 零差异；WAIVER/NO_ISSUE 命中须与旧全文 search 同 span 同组——"
+                         "新命中是旧命中的子集，差异只允许出现在收紧形）")
+        if not (_d21["waiver_tight"] or _d21["noissue_tight"]):
+            fails.append("fix-r21 差分钉生成器失效：4000 随机位形未覆盖到簇③收紧形"
+                         "（旧跨界命中/新拒收）——位形须补足再钉")
+        # (3) MARKER 嵌套/非重叠直调钉：finditer 非重叠语义在 span 版保持（嵌套候选
+        # 被外层匹配吞掉后不再产出；两个成功匹配不重叠）。
+        if [(m.span(), m.group(1)) for m in gate._marker_finditer(
+                gate.MARKER, "<!--pr-gate:v1 <!--pr-gate:v1 x-->")] != [((0, 34), " <!--pr-gate:v1 x")]:
+            fails.append("fix-r21 MARKER 嵌套钉：嵌套候选只产外层匹配（finditer 非重叠"
+                         "语义保持，span 版不得多产内层块）")
+        if [(m.span(), m.group(1)) for m in gate._marker_finditer(
+                gate.MARKER, "<!--pr-gate:v1 a--><!--pr-gate:v1 b-->")] != \
+                [((0, 19), " a"), ((19, 38), " b")]:
+            fails.append("fix-r21 MARKER 相邻钉：两个成功匹配不重叠且不漏（span 版与"
+                         " finditer 同判）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
