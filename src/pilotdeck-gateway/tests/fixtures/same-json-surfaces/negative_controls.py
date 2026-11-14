@@ -102,7 +102,7 @@ TAIL_OVERHEAD_SECONDS = (len(GUARDED_PATHS) * (GIT_TIMEOUT + 2 * KILL_GRACE_SECO
 # a dead cleanupPending residual fails the acquire fast with a diagnostic),
 # so the acquire budget deliberately exceeds common.MAX_AGE and just has to
 # cover the family's largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 63000
+LEASE_ACQUIRE_BUDGET_SECONDS = 65700
 
 
 def lease_budget_left(started, now):

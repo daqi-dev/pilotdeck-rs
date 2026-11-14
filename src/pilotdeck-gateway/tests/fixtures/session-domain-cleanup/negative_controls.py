@@ -7596,7 +7596,7 @@ TAIL_OVERHEAD_SECONDS = 20
 # always carries cleanupPending and no taker takes such an owner over, so
 # the acquire budget deliberately exceeds common.MAX_AGE and just has to
 # cover the family's largest live hold (#1528/#1529, sibling#6).
-LEASE_ACQUIRE_BUDGET_SECONDS = 63900
+LEASE_ACQUIRE_BUDGET_SECONDS = 65700
 
 
 def lease_budget_left(started, now):

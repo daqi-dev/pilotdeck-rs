@@ -216,7 +216,7 @@ class ResidualLeaseFastFailTests(unittest.TestCase):
             owner = publish_residual(lock, dead_pid())
             before = owner.read_bytes()
             started = time.monotonic()
-            # parity_lease's default budget is the whole 63900 s family
+            # parity_lease's default budget is the whole family
             # lease window: a reverted fail-fast would wait it out, so the
             # same watchdog bounds this probe too (#2929 fix-r4, DS
             # boundary#2).

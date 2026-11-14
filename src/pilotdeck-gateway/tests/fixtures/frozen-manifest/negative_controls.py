@@ -133,7 +133,7 @@ mutations = [
 # they all guard the same file pair, so ten windows behind an ungettable
 # lease used to multiply one acquire budget into ten; they now share one
 # window (window_paths below feeds it) with a per-row restore between rows.
-LEASE_ACQUIRE_BUDGET_SECONDS = 63000
+LEASE_ACQUIRE_BUDGET_SECONDS = 64800
 
 
 def save(out, name, result):
