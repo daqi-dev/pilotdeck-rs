@@ -185,7 +185,9 @@ def placeholder_in(text):
 # 容忍大小写、`pdrs-scope` / `pdrs_scope` / `pdrs scope`、半角与全角冒号、半角与全角连字符、冒号前后空格。
 DASHES = r"[\s_\-－—‐‑]"
 SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
-COMMENT = re.compile(r"<!--(?P<body>.*?)-->", re.S)
+# fix-r22（#3074，MM sibling#4）：死常量 COMMENT（`<!--(.*?)-->`，re.S）删除——已被
+# 下方 `_iter_comments` 线性 find 扫描取代（全仓 grep 无引用，只余 _iter_comments
+# docstring 的历史提法，一并改写不再点名常量）。
 # 行内代码（`` `…` `` / ``` ``…`` ```）是第四种「贴示例」形态：示例 scope 写在反引号里同样不是本包声明。
 # 只对 scope 解析屏蔽（人日 / `.rs` 回退、续跑路径仍看原文——反引号里常是真实路径）。
 # 反引号串长度必须配对（CommonMark）：修前只认单反引号，``` ``…`` ``` 里的示例 scope 照样被当前置声明。
@@ -419,8 +421,8 @@ def _parse_scope_body(body):
 def _iter_comments(text):
     """线性扫 `<!-- … -->`，产出 (start, end, body)。body=None 表示没收到 `-->`。
 
-    修前用 `COMMENT`（非贪婪 `.*?` + DOTALL）：每个 `<!--` 都要往后找到 `-->` 或文件尾，
-    50 万个未闭合 `<!--`（2 MiB）就是 O(n²)，闸门挂死。
+    修前用单条非贪婪 `.*?` + DOTALL 正则扫 `<!-- … -->`：每个 `<!--` 都要往后找到 `-->`
+    或文件尾，50 万个未闭合 `<!--`（2 MiB）就是 O(n²)，闸门挂死。
     """
     i = 0
     while True:
