@@ -1713,6 +1713,7 @@ fn quoted(value: &JsString, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_console;
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
@@ -1731,7 +1732,7 @@ mod tests {
         crate::test_write_stage::ignore_sigxfsz_like_gateway();
         let error = write_file(std::path::Path::new(&path), &[b'a'; 4096])
             .expect_err("a write past RLIMIT_FSIZE must fail");
-        println!("WRITE_ERROR={error}");
+        test_console::receipt_line(&format!("WRITE_ERROR={error}"));
     }
 
     /// The snapshot writes go through `writeFile` (node:fs/promises): a

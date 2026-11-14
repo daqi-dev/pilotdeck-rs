@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_console;
 use pilotdeck_protocol::parse_json;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::Instant};
@@ -407,7 +408,7 @@ async fn handshake_execute_ack_and_terminal() {
                 "unbounded cleanup: {mode}"
             );
         }
-        println!("HOST_PASS {mode}");
+        test_console::receipt_line(&format!("HOST_PASS {mode}"));
     }
 }
 #[tokio::test]
@@ -422,7 +423,9 @@ async fn terminal_survives_peer_exit_without_reading_ack() {
     assert!(matches!(result, ExecuteResult::Terminal(_)));
     receipt.assert_pass(mode);
     assert_eq!(handler.events.load(Ordering::SeqCst), 2);
-    println!("HOST_PASS {mode}; applied=2; peer closed stdin before events");
+    test_console::receipt_line(&format!(
+        "HOST_PASS {mode}; applied=2; peer closed stdin before events"
+    ));
 }
 #[tokio::test]
 async fn ack_failures_and_unknown_replies_follow_ts_ignore_behavior() {
@@ -436,7 +439,7 @@ async fn ack_failures_and_unknown_replies_follow_ts_ignore_behavior() {
         assert!(matches!(result, ExecuteResult::Terminal(_)), "{mode}");
         receipt.assert_pass(mode);
         assert_eq!(handler.events.load(Ordering::SeqCst), 2, "{mode}");
-        println!("HOST_PASS {mode}");
+        test_console::receipt_line(&format!("HOST_PASS {mode}"));
     }
 }
 #[tokio::test]
@@ -462,7 +465,7 @@ async fn cancelled_and_failed_terminal_results_are_accepted() {
             ),
             "{mode}"
         );
-        println!("HOST_PASS {mode}");
+        test_console::receipt_line(&format!("HOST_PASS {mode}"));
     }
 }
 #[tokio::test]
@@ -479,7 +482,9 @@ async fn turn_completed_projection_is_neither_applied_nor_acked() {
     // Two text_delta events plus the authoritative final; sequence 1 is suppressed.
     assert_eq!(handler.events.load(Ordering::SeqCst), 3);
     assert_eq!(handler.turn_completed_events.load(Ordering::SeqCst), 0);
-    println!("HOST_PASS {mode}; applied=3; peer checked ACKs 0,2 only");
+    test_console::receipt_line(&format!(
+        "HOST_PASS {mode}; applied=3; peer checked ACKs 0,2 only"
+    ));
 }
 #[tokio::test]
 async fn four_required_negative_controls() {
@@ -508,7 +513,7 @@ async fn four_required_negative_controls() {
         assert_eq!(error.kind, kind, "{mode}: {error}");
         assert_eq!(error.accepted, accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
-        println!("HOST_REJECT {mode}: {error}");
+        test_console::receipt_line(&format!("HOST_REJECT {mode}: {error}"));
     }
 }
 #[tokio::test]
@@ -531,7 +536,7 @@ async fn handshake_and_execute_correlation_negative_controls() {
         assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
         assert!(!error.accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
-        println!("HOST_REJECT {mode}: {error}");
+        test_console::receipt_line(&format!("HOST_REJECT {mode}: {error}"));
     }
     let error = HostClient::spawn(
         &mut command("positive"),
@@ -549,7 +554,7 @@ async fn handshake_and_execute_correlation_negative_controls() {
             .contains("module identity does not match configured implementation"),
         "{error}"
     );
-    println!("HOST_REJECT expected-module-mismatch: {error}");
+    test_console::receipt_line(&format!("HOST_REJECT expected-module-mismatch: {error}"));
 }
 #[tokio::test]
 async fn unknown_fixture_mode_fails_immediately() {
@@ -622,7 +627,7 @@ async fn oversized_limits_are_rejected_before_spawn() {
                     .contains(&format!("{field} exceeds maximum {maximum}")),
                 "{error}"
             );
-            println!("HOST_REJECT {field}={value}: {error}");
+            test_console::receipt_line(&format!("HOST_REJECT {field}={value}: {error}"));
         }
     }
 }
@@ -704,7 +709,7 @@ async fn invalid_frames_sequences_and_terminal_never_succeed() {
     ] {
         let error = run(mode).await.0.expect_err(mode);
         assert!(error.message.contains(reason), "{mode}: {error}");
-        println!("HOST_REJECT {mode}: {error}");
+        test_console::receipt_line(&format!("HOST_REJECT {mode}: {error}"));
     }
 }
 #[tokio::test]
@@ -724,7 +729,7 @@ async fn callbacks_do_not_block_input_or_run_twice() {
             handler.calls.load(Ordering::SeqCst),
             usize::from(mode != "wrong-call")
         );
-        println!("HOST_PASS {mode}");
+        test_console::receipt_line(&format!("HOST_PASS {mode}"));
     }
     let started = Instant::now();
     let error = run("callback-disconnect").await.0.unwrap_err();
@@ -740,7 +745,7 @@ async fn callbacks_do_not_block_input_or_run_twice() {
         error.accepted && started.elapsed() < Duration::from_secs(130),
         "callback-disconnect span: {error}"
     );
-    println!("HOST_REJECT callback-disconnect: {error}");
+    test_console::receipt_line(&format!("HOST_REJECT callback-disconnect: {error}"));
 }
 #[tokio::test]
 async fn timeout_and_frame_limits_close_owned_processes() {
@@ -779,7 +784,7 @@ async fn timeout_and_frame_limits_close_owned_processes() {
     assert_eq!(error.kind, HostErrorKind::Timeout);
     assert!(error.accepted);
     assert_eq!(handler.active_calls.load(Ordering::SeqCst), 0);
-    println!("HOST_REJECT callback-timeout: {error}");
+    test_console::receipt_line(&format!("HOST_REJECT callback-timeout: {error}"));
 }
 
 #[tokio::test]
@@ -828,7 +833,9 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
         .unwrap();
     assert!(matches!(result, ExecuteResult::Terminal(_)));
     receipt.assert_pass("positive");
-    println!("HOST_PASS default-execution-timeout unbounded past 301s virtual time");
+    test_console::receipt_line(
+        "HOST_PASS default-execution-timeout unbounded past 301s virtual time",
+    );
 }
 
 #[tokio::test]
@@ -934,7 +941,7 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         );
         receipt.assert_pass(mode);
         assert_reaped(pid).await;
-        println!("HOST_CANCEL_DEADLINE_PASS {mode}: {error}");
+        test_console::receipt_line(&format!("HOST_CANCEL_DEADLINE_PASS {mode}: {error}"));
     }
 }
 
@@ -1016,7 +1023,9 @@ async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
         "{mode}: cleanup did not run"
     );
     receipt.assert_pass(mode);
-    println!("HOST_PASS {mode}: terminal arriving 3s after cancel won inside the 5s bound");
+    test_console::receipt_line(&format!(
+        "HOST_PASS {mode}: terminal arriving 3s after cancel won inside the 5s bound"
+    ));
 }
 
 #[test]
@@ -1106,7 +1115,9 @@ async fn dropped_execute_reaps_child_and_aborts_callback() {
     })
     .await
     .expect("callback future was not dropped");
-    println!("HOST_PASS dropped execute reaped pid={pid}; callback Drop observed");
+    test_console::receipt_line(&format!(
+        "HOST_PASS dropped execute reaped pid={pid}; callback Drop observed"
+    ));
 }
 #[tokio::test]
 async fn explicit_close_reaps_child() {
@@ -1116,7 +1127,7 @@ async fn explicit_close_reaps_child() {
     let pid = client.child_id().unwrap();
     client.close().await.unwrap();
     assert_reaped(pid).await;
-    println!("HOST_PASS close reaped pid={pid}");
+    test_console::receipt_line(&format!("HOST_PASS close reaped pid={pid}"));
 }
 #[tokio::test]
 async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
@@ -1192,7 +1203,9 @@ async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
         .expect("close did not finish after SIGKILL");
     result.unwrap();
     assert_reaped(pid).await;
-    println!("HOST_PASS close timeout killed and reaped pid={pid}");
+    test_console::receipt_line(&format!(
+        "HOST_PASS close timeout killed and reaped pid={pid}"
+    ));
 }
 
 async fn cancel_run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handler>) {
@@ -1256,7 +1269,9 @@ async fn accepted_then_final_failed_response_matches_ts_rejection() {
     assert!(text_is(raw.get("outcome"), "failed"));
     assert_eq!(handler.applied_events.load(Ordering::SeqCst), 1);
     receipt.assert_pass(mode);
-    println!("TS_REJECTION_PASS acceptance -> applied event 0/ACK -> final failed response");
+    test_console::receipt_line(
+        "TS_REJECTION_PASS acceptance -> applied event 0/ACK -> final failed response",
+    );
 }
 
 #[tokio::test]
@@ -1310,8 +1325,8 @@ async fn close_allows_sigterm_cleanup_after_stdin_eof() {
         .unwrap();
     receipt.assert_pass(mode);
     assert_reaped(pid).await;
-    println!(
-        "CLOSE_TERM_PASS stdin EOF observed before SIGTERM; cleanup receipt persisted; child reaped"
+    test_console::receipt_line(
+        "CLOSE_TERM_PASS stdin EOF observed before SIGTERM; cleanup receipt persisted; child reaped",
     );
 }
 
@@ -1360,7 +1375,9 @@ async fn peer_exits_when_its_host_is_killed() {
     let reason = std::fs::read_to_string(receipt.0.with_extension("orphan"))
         .expect("peer did not record why it exited");
     assert!(reason.contains("parent"), "{reason}");
-    println!("HOST_PASS killed host: peer {pid} exited instead of orphaning");
+    test_console::receipt_line(&format!(
+        "HOST_PASS killed host: peer {pid} exited instead of orphaning"
+    ));
 }
 
 /// #1779: 父死子死 also covers the peer's own descendants. `grandchild-close`
@@ -1437,9 +1454,9 @@ async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
         "the observation window took {:?}; the 60 s descendant may have expired on its own",
         started.elapsed()
     );
-    println!(
+    test_console::receipt_line(&format!(
         "HOST_PASS killed host: peer {peer} and its descendant {grandchild} exited instead of orphaning"
-    );
+    ));
 }
 
 /// #1779 review: the descendant is handed the pid it expects to outlive. If it
@@ -1598,7 +1615,7 @@ async fn cancel_waits_for_acceptance_and_authoritative_terminal_once() {
             "cancelled"
         };
         assert!(text_is(event.get("outcome"), expected), "{mode}");
-        println!("HOST_CANCEL_PASS {mode}: {expected}");
+        test_console::receipt_line(&format!("HOST_CANCEL_PASS {mode}: {expected}"));
     }
 }
 
@@ -1837,7 +1854,7 @@ async fn every_execution_limit_fails_closed_and_drops_callbacks() {
         })
         .await
         .unwrap();
-        println!("HOST_LIMIT_PASS {mode}: {error}");
+        test_console::receipt_line(&format!("HOST_LIMIT_PASS {mode}: {error}"));
     }
 }
 
@@ -1883,7 +1900,7 @@ async fn close_timeout_execute_timeout_drop_and_exited_leader_kill_grandchildren
             client.close().await.unwrap();
         }
         assert_reaped(pid).await;
-        println!("HOST_GROUP_PASS {mode}: grandchild={pid}");
+        test_console::receipt_line(&format!("HOST_GROUP_PASS {mode}: grandchild={pid}"));
     }
 }
 
@@ -1985,7 +2002,9 @@ async fn validate_event_hook_runs_after_suppression_and_skips_finals() {
     // final carries the result and messages. Only the suppressed
     // turn_completed(1) never reaches the handler.
     assert_eq!(handler.applied.load(Ordering::SeqCst), 3);
-    println!("HOST_PASS validate_event ordering: suppressed and final events skipped");
+    test_console::receipt_line(
+        "HOST_PASS validate_event ordering: suppressed and final events skipped",
+    );
 }
 #[tokio::test]
 async fn validate_event_failure_fails_execution_before_application() {
@@ -2054,7 +2073,9 @@ async fn validate_event_rejection_is_never_acked_on_the_wire() {
         "peer received host frames for a validation-rejected event: {text}"
     );
     assert_reaped(pid).await;
-    println!("HOST_REJECT {mode}: wire ACK record empty; applied=0; disposed=1; child reaped");
+    test_console::receipt_line(&format!(
+        "HOST_REJECT {mode}: wire ACK record empty; applied=0; disposed=1; child reaped"
+    ));
 }
 #[tokio::test]
 async fn ack_eof_recorder_records_a_real_ack() {

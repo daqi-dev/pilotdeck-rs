@@ -1,9 +1,4 @@
 use super::*;
-// #2558 fix-r4: the pass markers below go through the shared writer so the
-// widened console-macro scan (`tests/console_panic_safety.rs`) stays green —
-// it cannot see this file's declaration-site `#[cfg(test)]` gating
-// (`host/tests.rs`); the printed text is unchanged.
-use crate::native_process::channels::console_log_line;
 use std::{path::PathBuf, sync::Mutex};
 
 struct ResumeHandler {
@@ -213,11 +208,8 @@ async fn resume_sends_accepted_cursor_and_replays_from_next_sequence() {
         receipt.assert_pass(mode);
         assert_eq!(state(&receipt)["spawns"], 2);
         assert_eq!(state(&receipt)["resumeCursor"], cursor);
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!(
-                "RESUME_PASS {mode}; applied=0..{count}; cursor={cursor}; observations=started,succeeded; spawns=2"
-            ),
+        println!(
+            "RESUME_PASS {mode}; applied=0..{count}; cursor={cursor}; observations=started,succeeded; spawns=2"
         );
     }
 }
@@ -242,9 +234,8 @@ async fn accepted_but_unapplied_events_survive_resume_and_apply_once_in_order() 
     assert_eq!(state["spawns"], 2);
     assert_eq!(state["resumeCursor"], 2);
     assert_eq!(state["replayed"], serde_json::json!([3, 4]));
-    console_log_line(
-        &mut std::io::stdout(),
-        "RESUME_QUEUED_PASS cursor=2 (accepted); queued 1,2 applied once after resume; replay=3,4; applied=0..4 in order",
+    println!(
+        "RESUME_QUEUED_PASS cursor=2 (accepted); queued 1,2 applied once after resume; replay=3,4; applied=0..4 in order"
     );
 }
 
@@ -267,10 +258,7 @@ async fn first_replayed_event_must_be_exactly_next_sequence_like_ts() {
         assert_eq!(*handler.applied.lock().unwrap(), vec![0], "{mode}");
         handler.assert_observations(0.0, true);
         assert_eq!(state(&receipt)["spawns"], 2);
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!("REPLAY_STRICT {mode}: {error}; first replayed frame != next fails closed"),
-        );
+        println!("REPLAY_STRICT {mode}: {error}; first replayed frame != next fails closed");
     }
 }
 
@@ -317,12 +305,7 @@ async fn resume_replays_cached_or_pending_module_response_without_repeating_effe
         );
         handler.assert_observations(0.0, true);
         receipt.assert_pass(mode);
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!(
-                "RESUME_PASS {mode}; effect_count=1; cached response/one pending future retained"
-            ),
-        );
+        println!("RESUME_PASS {mode}; effect_count=1; cached response/one pending future retained");
     }
 }
 
@@ -355,10 +338,7 @@ async fn resume_is_not_attempted_before_acceptance_or_without_capability_or_prov
         assert_eq!(error.last_applied_sequence, accepted.then_some(-1.0));
         assert_eq!(state(&receipt)["spawns"], 1);
         assert!(handler.observations.lock().unwrap().is_empty());
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!("RESUME_FAIL_CLOSED {mode}: {error}; spawns=1; no reconnect observation"),
-        );
+        println!("RESUME_FAIL_CLOSED {mode}: {error}; spawns=1; no reconnect observation");
     }
 }
 
@@ -405,10 +385,7 @@ async fn rejected_resume_or_replacement_handshake_observes_failure_exactly_once(
         assert_eq!(error.last_applied_sequence, Some(0.0));
         assert_eq!(state(&receipt)["spawns"], 2);
         handler.assert_observations(0.0, false);
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!("RESUME_REJECT {mode}: {error}; observations=started,failed (once)"),
-        );
+        println!("RESUME_REJECT {mode}: {error}; observations=started,failed (once)");
     }
 }
 
@@ -443,11 +420,8 @@ async fn reconnect_retains_callback_cache_in_the_same_byte_budget() {
         handler.assert_observations(0.0, true);
         assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
         receipt.assert_pass(mode);
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!(
-                "RECONNECT_BUDGET_PASS {mode}; cached 5000 bytes count across connections; maximum=18000"
-            ),
+        println!(
+            "RECONNECT_BUDGET_PASS {mode}; cached 5000 bytes count across connections; maximum=18000"
         );
     }
 }
@@ -480,10 +454,7 @@ async fn reconnect_preserves_command_environment_clear_removals_and_cwd() {
     handler.assert_observations(0.0, true);
     assert_eq!(state(&receipt)["spawns"], 2);
     receipt.assert_pass(mode);
-    console_log_line(
-        &mut std::io::stdout(),
-        "RECONNECT_COMMAND_PASS both spawns retain env_clear, env_remove, cwd",
-    );
+    println!("RECONNECT_COMMAND_PASS both spawns retain env_clear, env_remove, cwd");
 }
 
 #[tokio::test]
@@ -526,12 +497,7 @@ async fn successful_resume_never_observes_failure_or_retries_after_bad_replay() 
             true,
         );
         assert!(handler.calls.load(Ordering::SeqCst) <= 1);
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!(
-                "REPLAY_REJECT {mode}: {error}; observations=started,succeeded; no third spawn"
-            ),
-        );
+        println!("REPLAY_REJECT {mode}: {error}; observations=started,succeeded; no third spawn");
     }
 }
 
@@ -562,8 +528,7 @@ async fn coalesced_ack_cumulative_cleanup_slow_pipe_disconnect_and_resume_are_lo
     // Cursor = accepted (TS client:859), so replay starts at next=66, no overlap.
     assert_eq!(state["replayed"], serde_json::json!([66, 67]));
     assert_eq!(state["retained"], serde_json::json!([67]));
-    console_log_line(
-        &mut std::io::stdout(),
-        "ACK_REPLAY_PASS slow 2 MiB write; ACK 1..64 coalesced to 64; cumulative cleanup 0..64; ACK 65 lost; resume cursor=65 (accepted); replay=66,67 (no duplicate); applied=0..67 exactly once; effect_count=1",
+    println!(
+        "ACK_REPLAY_PASS slow 2 MiB write; ACK 1..64 coalesced to 64; cumulative cleanup 0..64; ACK 65 lost; resume cursor=65 (accepted); replay=66,67 (no duplicate); applied=0..67 exactly once; effect_count=1"
     );
 }

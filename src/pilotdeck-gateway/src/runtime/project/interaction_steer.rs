@@ -76,22 +76,37 @@ impl Run {
         let run = self.clone();
         crate::runtime::cleanup_task::spawn(&self.executor, self.done.clone(), async move {
             // A dropped consumer cannot abandon an admitted durable write.
-            let _applying = run.applying.lock().await;
-            let result = run.steers.mailbox.close(run.turn_id.clone()).await;
-            if !run.session_finishes {
-                run.steers.mailbox.finish(&run.turn_id);
-            }
+            // #3152 item 12: the applying guard serializes the mailbox
+            // operations only — the notice's stderr line (a blocking
+            // `write(2)`) leaves the guard, so a wedged sink cannot hold
+            // off every apply attempt, while the push below still lands
+            // before `done` resolves (the await boundary).
+            let (discarded_notice, result) = {
+                let _applying = run.applying.lock().await;
+                let result = run.steers.mailbox.close(run.turn_id.clone()).await;
+                if !run.session_finishes {
+                    run.steers.mailbox.finish(&run.turn_id);
+                }
+                if let Ok(discarded) = &result
+                    && !discarded.is_empty()
+                {
+                    (
+                        Some(DiscardNotice::new(
+                            DiscardSource::Steer,
+                            discarded.len(),
+                            run.session_key.clone(),
+                            run.id.clone(),
+                        )),
+                        result,
+                    )
+                } else {
+                    (None, result)
+                }
+            };
             // Record before `done` resolves: `wait_ready` on the next turn is
-            // the barrier that makes the notice visible to that turn.
-            if let Ok(discarded) = &result
-                && !discarded.is_empty()
-            {
-                let notice = DiscardNotice::new(
-                    DiscardSource::Steer,
-                    discarded.len(),
-                    run.session_key.clone(),
-                    run.id.clone(),
-                );
+            // the barrier that makes the notice visible to that turn. The
+            // log write and the push both run outside the applying guard.
+            if let Some(notice) = discarded_notice {
                 notice.log();
                 if let Some(owner) = run.owner.upgrade() {
                     owner.lock().unwrap().notices.push(notice);

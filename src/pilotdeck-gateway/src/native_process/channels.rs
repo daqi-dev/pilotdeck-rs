@@ -101,7 +101,18 @@ pub(crate) fn write_console_line(
 /// the library call sites (`http_proxy`, `upstream`, `native_ws`, the memory
 /// maintenance diagnostic) instead of keeping its own `eprintln!` copies.
 pub fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
-    let _ = writeln!(sink, "{message}");
+    // #3152 item 11: one `write_all`, never `writeln!` through the trait
+    // object. `writeln!` formats through `Write::write_fmt`, whose default
+    // adapter issues the message and the trailing `\n` as two separate
+    // `write` calls — on a raw fd each takes the sink's lock separately
+    // (std's `Stderr`/`Stdout` lock once per call, not per format), so a
+    // concurrent writer can interleave between the two halves and tear the
+    // line, a shape TS's single `console.error` write cannot produce. The
+    // buffer is assembled first and handed over in one call.
+    let mut line = String::with_capacity(message.len() + 1);
+    line.push_str(message);
+    line.push('\n');
+    let _ = sink.write_all(line.as_bytes());
 }
 
 /// The production loader-table mounts (#2301): one per implemented loader

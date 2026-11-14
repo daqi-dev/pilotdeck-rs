@@ -7,6 +7,9 @@ use std::{
     process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, Instant},
 };
+// #3152 item 8: the receipt lines are the parent probes' evidence — a
+// panicking macro would kill the very child carrying them.
+use crate::test_console;
 const LIMIT: usize = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(30);
 
@@ -240,9 +243,9 @@ pub(crate) fn rerun_exact(test: &str, envs: &[(&str, &str)], limit: Duration) ->
             let direct = child.kill();
             let reap = reap_bounded(&mut child, test);
             guard.disarm();
-            eprintln!(
+            test_console::receipt_line_stderr(&format!(
                 "PDRS_RERUN_STOPPED {test}: timeout={timed_out} overflow={overflow} group kill sent, direct kill {direct:?}, reap {reap:?}"
-            );
+            ));
             reaped = Some(reap);
             break;
         }
@@ -317,7 +320,7 @@ pub(crate) fn json_env(value: &serde_json::Value) -> Vec<(String, String)> {
         .collect()
 }
 pub(crate) fn receipt(actual_case: &str) {
-    println!("\nPDRS_CASE_OK {actual_case}");
+    test_console::receipt_line(&format!("\nPDRS_CASE_OK {actual_case}"));
 }
 pub(crate) fn run_cases(test: &str, cases: Vec<(String, Vec<(String, String)>)>) {
     let expected: BTreeSet<_> = cases.iter().map(|(id, _)| id.clone()).collect();
@@ -328,7 +331,7 @@ pub(crate) fn run_cases(test: &str, cases: Vec<(String, Vec<(String, String)>)>)
         .map(|(id, env)| {
             run_case(test, &id, env, DEADLINE, LIMIT)
                 .unwrap_or_else(|e| panic!("{test}/{id}: {e}"));
-            println!("PDRS_VERIFIED_CHILD {id}");
+            test_console::receipt_line(&format!("PDRS_VERIFIED_CHILD {id}"));
             id
         })
         .collect();
@@ -594,7 +597,9 @@ fn owned_rerun_is_not_blocked_by_a_grandchild_holding_the_streams() {
     let started = Instant::now();
     let rerun = rerun_exact(control, &envs, RERUN_LIMIT);
     let bounded = started.elapsed();
-    println!("PDRS_RERUN_TIMING legacy_pipe={blocked:?} owned_files={bounded:?}");
+    test_console::receipt_line(&format!(
+        "PDRS_RERUN_TIMING legacy_pipe={blocked:?} owned_files={bounded:?}"
+    ));
     assert!(
         !rerun.timed_out && !rerun.overflow,
         "the owned rerun was stopped (timeout={} overflow={}):\n{}\n{}",
@@ -713,10 +718,10 @@ fn owned_rerun_kills_the_whole_group_at_the_deadline() {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    println!(
+    test_console::receipt_line(&format!(
         "PDRS_RERUN_GROUP_KILL descendant={descendant} status={:?}",
         rerun.status
-    );
+    ));
 }
 #[test]
 fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
@@ -748,7 +753,7 @@ fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
             if matches!(control, "timeout" | "output") {
                 assert!(error.contains(control), "{error}");
             }
-            println!("PDRS_REJECTED_CHILD {control}");
+            test_console::receipt_line(&format!("PDRS_REJECTED_CHILD {control}"));
         }
     }
     assert!(
@@ -761,7 +766,7 @@ fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
         )
         .is_err()
     );
-    println!("PDRS_REJECTED_CHILD zero-match");
+    test_console::receipt_line("PDRS_REJECTED_CHILD zero-match");
 }
 
 // ---------------------------------------------------------------------------

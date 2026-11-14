@@ -242,6 +242,7 @@ impl InteractionHooks {
         state
             .draining
             .retain(|(_, run)| !matches!(&*run.done.borrow(), Some(Ok(()))));
+        let mut discarded = None;
         if let Some(previous) = state.turns.insert(run.session.clone(), run.clone()) {
             if let Some(pending) = previous.close()
                 && pending > 0
@@ -252,10 +253,17 @@ impl InteractionHooks {
                     previous.session.clone(),
                     previous.run_id.clone(),
                 );
-                notice.log();
-                state.notices.push(notice);
+                state.notices.push(notice.clone());
+                discarded = Some(notice);
             }
             state.draining.push((run.session.clone(), previous));
+        }
+        // #3152 item 12: the stderr line leaves the state lock — a
+        // blocking `write(2)` under it parks every waiter of the hooks
+        // state. The binding's remaining steps hold no guard.
+        drop(state);
+        if let Some(notice) = discarded {
+            notice.log();
         }
         // The externally supplied abort is observed even when no dispatch is pending.
         let monitor = run.clone();
@@ -315,9 +323,12 @@ impl InteractionHooks {
                 ));
             }
         }
+        state.notices.extend(notices.iter().cloned());
+        // #3152 item 12: the stderr lines leave the state lock — every
+        // pushed notice is recorded first, then logged outside it.
+        drop(state);
         for notice in notices {
             notice.log();
-            state.notices.push(notice);
         }
     }
     pub fn is_closed(&self) -> bool {
@@ -397,6 +408,7 @@ impl TurnHooks {
     }
     pub fn close(&self) {
         let mut state = lock(&self.state);
+        let mut discarded = None;
         if let Some(pending) = self.run.close()
             && pending > 0
         {
@@ -406,8 +418,8 @@ impl TurnHooks {
                 self.run.session.clone(),
                 self.run.run_id.clone(),
             );
-            notice.log();
-            state.notices.push(notice);
+            state.notices.push(notice.clone());
+            discarded = Some(notice);
         }
         if state
             .turns
@@ -423,6 +435,11 @@ impl TurnHooks {
                     .draining
                     .push((self.run.session.clone(), self.run.clone()));
             }
+        }
+        // #3152 item 12: the stderr line leaves the state lock.
+        drop(state);
+        if let Some(notice) = discarded {
+            notice.log();
         }
     }
     /// Take this session's pending-discard notices for next-turn delivery.

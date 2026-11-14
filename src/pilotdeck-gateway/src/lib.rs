@@ -88,6 +88,21 @@ mod test_scratch;
 #[cfg(test)]
 #[path = "../tests/common/skip_line.rs"]
 mod test_skip_line;
+// #3152 item 8: the test-support receipt family's best-effort console
+// writes — the test-tree twin of #2558's `console_log_line`.
+#[cfg(test)]
+#[path = "../tests/common/test_console.rs"]
+mod test_console;
+// #3152 items 13+9: the shared parent half of the failed-stderr re-exec
+// probes — the probed dead sink (item 9), the converged 30 s budget and
+// the receipts (item 13; the four sites that include it had drifted
+// apart). Mounted at the crate root because two of the sites sit in
+// inline `mod tests` blocks whose virtual directories a `#[path]`
+// escape cannot traverse (the OS cannot walk `..` through
+// `src/http_proxy/tests/`, which only exists as a path prefix).
+#[cfg(test)]
+#[path = "../tests/common/failed_stderr_probe.rs"]
+mod failed_stderr_probe;
 // fix-r3 review P2: `write_stage` hardcodes `/bin/sh` helpers and calls
 // `rustix::process`, so it is unix-only like `test_scratch` above.
 #[cfg(all(test, unix))]

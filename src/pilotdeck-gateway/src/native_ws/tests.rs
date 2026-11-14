@@ -2802,17 +2802,6 @@ const WS_STDERR_PROBE_ENV: &str = "PDRS_2434_WS_STDERR_PROBE";
 /// Where the child's panic hook leaves its evidence.
 const WS_STDERR_MARKER_ENV: &str = "PDRS_2434_WS_STDERR_MARKER";
 
-fn ws_stderr_probe_token() -> Option<String> {
-    let value = std::env::var_os(WS_STDERR_PROBE_ENV)?.to_str()?.to_owned();
-    let (_, token) = value.split_once(':')?;
-    if token.is_empty() {
-        return None;
-    }
-    std::env::args()
-        .any(|argument| argument == token)
-        .then(|| token.to_owned())
-}
-
 /// #2434: the accept loop's error lines were `eprintln!`, which panics when
 /// the stderr write fails (std behavior). For the connection-error branch
 /// the panic is contained by the JoinSet (the accept loop's `join_next`
@@ -2822,127 +2811,40 @@ fn ws_stderr_probe_token() -> Option<String> {
 /// same panic would take the whole loop down. The fix is the shared
 /// `console_log_line`, which drops the write error. This control drives the
 /// reachable line — the connection error after an invalid upgrade — in a
-/// re-exec'd child whose stderr is a pipe with the read end already dropped
-/// (every write fails with EPIPE); the child installs a panic hook first, so
+/// re-exec'd child whose stderr is the shared module's dead sink: a
+/// socketpair whose peer was dropped and whose probe write failed
+/// `BrokenPipe` on the parent's side before the spawn (#3152 item 9), so
+/// every write fails with EPIPE; the child installs a panic hook first, so
 /// a panicking `eprintln!` leaves a marker file and exits 33 instead of
-/// passing. A read-only fd is not a failing sink for this purpose:
-/// `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and reports
-/// success, so only EPIPE reaches the `eprintln!` panic. The accept-error
-/// line at the same call site got the same shape, but an `accept()` error
-/// that is neither InvalidInput, PermissionDenied nor Unsupported has no
-/// portable trigger, so it is covered by the shared helper's own contract,
-/// not a second child.
+/// passing. The accept-error line at the same call site got the same shape,
+/// but an `accept()` error that is neither InvalidInput, PermissionDenied
+/// nor Unsupported has no portable trigger, so it is covered by the shared
+/// helper's own contract, not a second child.
 #[tokio::test]
 async fn connection_error_lines_survive_a_failed_stderr() {
-    if let Some(token) = ws_stderr_probe_token() {
+    if let Some(token) = crate::failed_stderr_probe::probe_token(WS_STDERR_PROBE_ENV) {
         ws_stderr_probe_child(&token).await;
         return;
     }
-    let token = format!("pdrs-2434-{}", uuid::Uuid::new_v4().simple());
-    let marker = std::env::temp_dir().join(format!("{token}.marker"));
-    let mut child =
-        tokio::process::Command::new(std::env::current_exe().expect("#2434 the probe binary path"))
-            .args([
-                "--exact",
-                "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
-                "--nocapture",
-                "--test-threads=1",
-                &token,
-            ])
-            .env(WS_STDERR_PROBE_ENV, format!("run:{token}"))
-            .env(WS_STDERR_MARKER_ENV, &marker)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("#2434 the failed-stderr probe child spawns");
-    // The failing sink: a pipe whose read end is dropped before the child
-    // writes, so every stderr write fails with EPIPE. (A read-only fd is not
-    // enough: `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and
-    // reports success — only EPIPE reaches the `eprintln!` panic.)
-    drop(child.stderr.take());
-    // The stdout pipe is drained concurrently with the wait, never after it
-    // (the #2301 probe's drain-before-wait shape): a full pipe — a failing
-    // child prints a whole backtrace — would block the child before it could
-    // exit, and the wait below would then report its 30 s deadline as a
-    // false failure of the probe itself.
-    let stdout = child.stdout.take();
-    let console_task = tokio::spawn(async move {
-        let mut out = Vec::new();
-        if let Some(mut pipe) = stdout {
-            let _ = pipe.read_to_end(&mut out).await;
-        }
-        String::from_utf8_lossy(&out).into_owned()
-    });
-    // Every wait states its termination condition: 30 seconds on the child,
-    // then kill + reap before the named failure (the #2301 probe shape).
-    let status = match tokio::time::timeout(DEADLINE * 6, child.wait()).await {
-        Ok(status) => status.expect("#2434 the failed-stderr probe child is waitable"),
-        Err(_) => {
-            child
-                .kill()
-                .await
-                .expect("#2434 the timed-out probe child is killed");
-            let _ = child.wait().await;
-            negative_assert!(
-                false,
-                "#2434 the failed-stderr probe child did not finish within 30s"
-            );
-            unreachable!("negative_assert! panics");
-        }
-    };
-    let console = console_task
-        .await
-        .expect("#2434 the probe's stdout drain finishes");
-    negative_assert!(
-        status.success(),
-        "#2434 the child with a write-failed stderr exits cleanly (exit {status})\n{console}"
-    );
-    // Positive receipt — success alone is not evidence the probe case ran: a
-    // renamed test makes the `--exact` filter match nothing and libtest still
-    // exits 0 with no marker (the vacuous-pass shape `skills_migrate` records
-    // for its own rerun), so a loose contains-check would hold on a child that
-    // executed nothing. The shared exact-receipt criterion — one `running 1
-    // test` banner, the whole per-test line, and the one-test summary — is
-    // what proves the case ran (the child body writes only stderr and the
-    // reached file, so the single-threaded layout cannot splice the line).
-    negative_assert!(
-        crate::test_exact_receipt::single_pass(
-            &status,
-            "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
-            &console,
-        ),
-        "#2434 the child's libtest receipt proves the probe case ran\n{console}"
-    );
-    // The child leaves a reached marker once the invalid upgrade has been
-    // answered — the proof the connection-error line was actually driven, not
-    // merely that one test passed.
-    let reached = std::env::temp_dir().join(format!("{token}.reached"));
-    negative_assert!(
-        reached.exists(),
-        "#2434 the child never reached the invalid-upgrade answer"
-    );
-    let _ = std::fs::remove_file(&reached);
-    negative_assert!(
-        !marker.exists(),
-        "#2434 no panic marker after the connection-error line ({}): {:?}",
-        marker.display(),
-        std::fs::read_to_string(&marker).unwrap_or_default()
-    );
+    crate::failed_stderr_probe::FailedStderrProbe {
+        probe_env: WS_STDERR_PROBE_ENV,
+        marker_env: WS_STDERR_MARKER_ENV,
+        test_path: "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
+        tag: "#2434",
+        token_prefix: "pdrs-2434-",
+        success_line: "the child with a write-failed stderr exits cleanly",
+        marker_line: "no panic marker after the connection-error line",
+        reached: &[("", "the child never reached the invalid-upgrade answer")],
+    }
+    .drive()
+    .await;
 }
 
 /// The child half of [`connection_error_lines_survive_a_failed_stderr`]:
 /// panic hook first (marker + exit 33), then a real listener and the invalid
 /// upgrade that makes `serve_socket` fail, then a clean drain.
 async fn ws_stderr_probe_child(token: &str) {
-    let marker = std::env::var(WS_STDERR_MARKER_ENV)
-        .unwrap_or_else(|_| panic!("#2434 {token} is missing the marker env"));
-    std::panic::set_hook(Box::new(move |info| {
-        // The default hook would print to the failed stderr; the marker is
-        // the parent's evidence instead.
-        let _ = std::fs::write(&marker, format!("{info}"));
-        std::process::exit(33);
-    }));
+    crate::failed_stderr_probe::install_panic_hook(WS_STDERR_MARKER_ENV, "#2434", token);
     let host = native_ws_fixture(Arc::new(Requests::default()));
     let server = NativeWsServer::bind(
         "127.0.0.1:0".parse().expect("#2434 listen address"),

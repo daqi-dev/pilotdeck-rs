@@ -181,19 +181,10 @@ mod tests {
     const UPGRADE_STDERR_PROBE_ENV: &str = "PDRS_2558_UPSTREAM_STDERR_PROBE";
     const UPGRADE_STDERR_MARKER_ENV: &str = "PDRS_2558_UPSTREAM_STDERR_MARKER";
 
-    fn upgrade_stderr_probe_token() -> Option<String> {
-        let value = std::env::var_os(UPGRADE_STDERR_PROBE_ENV)?
-            .to_str()?
-            .to_owned();
-        let (_, token) = value.split_once(':')?;
-        if token.is_empty() {
-            return None;
-        }
-        std::env::args()
-            .any(|argument| argument == token)
-            .then(|| token.to_owned())
-    }
-
+    /// #3152 items 13+9: the parent half is the shared
+    /// `crate::failed_stderr_probe` module — the probed dead sink, the
+    /// converged 30 s budget, the drain-before-wait shape, the receipts.
+    ///
     /// #2558: the spawned connection task's error line was `eprintln!`,
     /// which panics when the stderr write fails (std behavior). Tokio would
     /// contain the panic, but it would still kill this connection task (the
@@ -202,111 +193,41 @@ mod tests {
     /// `console_log_line`, which drops the write error. This control drives
     /// the error the connection task actually owns — an I/O read failure
     /// on the still-live upstream connection, injected by the [`FailReads`]
-    /// wrapper below — in a re-exec'd child whose stderr is a pipe with the
-    /// read end already dropped (every write fails with EPIPE); the child
+    /// wrapper below — in a re-exec'd child whose stderr is the shared
+    /// module's dead sink: a socketpair whose peer was dropped and whose
+    /// probe write failed `BrokenPipe` on the parent's side before the
+    /// spawn (#3152 item 9), so every write fails with EPIPE; the child
     /// installs a panic hook first, so a panicking `eprintln!` leaves a
-    /// marker file and exits 33 instead of passing. A read-only fd is
-    /// not a failing sink for this purpose: `std::io::Stderr` redirects
-    /// EBADF to a fresh `/dev/null` and reports success, so only EPIPE
-    /// reaches the `eprintln!` panic. A malformed response head is not the
-    /// connection task's error either: the parse failure surfaces on the
-    /// handshake's `send_request`, and the connection future then ends
-    /// `Ok` — measured live in this tree (the first negctl round survived
-    /// on that premise). The read failure must also wait until the response
-    /// has settled the request — hyper's dispatch delivers a read error to
-    /// the pending request when one exists, and only with no request left
-    /// does the error surface on the connection future — which is why the
-    /// fake TS answers a complete rejection and the wrapper arms only
-    /// after those bytes were delivered.
+    /// marker file and exits 33 instead of passing. A malformed response
+    /// head is not the connection task's error either: the parse failure
+    /// surfaces on the handshake's `send_request`, and the connection
+    /// future then ends `Ok` — measured live in this tree (the first
+    /// negctl round survived on that premise). The read failure must also
+    /// wait until the response has settled the request — hyper's dispatch
+    /// delivers a read error to the pending request when one exists, and
+    /// only with no request left does the error surface on the connection
+    /// future — which is why the fake TS answers a complete rejection and
+    /// the wrapper arms only after those bytes were delivered.
     ///
     /// [`FailReads`]: Self::FailReads
     #[tokio::test]
     async fn connection_task_error_line_survives_a_failed_stderr() {
-        if let Some(token) = upgrade_stderr_probe_token() {
+        if let Some(token) = crate::failed_stderr_probe::probe_token(UPGRADE_STDERR_PROBE_ENV) {
             upgrade_stderr_probe_child(&token).await;
             return;
         }
-        let token = format!("pdrs-2558-{}", uuid::Uuid::new_v4().simple());
-        let marker = std::env::temp_dir().join(format!("{token}.marker"));
-        let mut child = tokio::process::Command::new(
-            std::env::current_exe().expect("#2558 the probe binary path"),
-        )
-        .args([
-            "--exact",
-            "upstream::tests::connection_task_error_line_survives_a_failed_stderr",
-            "--nocapture",
-            "--test-threads=1",
-            &token,
-        ])
-        .env(UPGRADE_STDERR_PROBE_ENV, format!("run:{token}"))
-        .env(UPGRADE_STDERR_MARKER_ENV, &marker)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("#2558 the failed-stderr probe child spawns");
-        // The failing sink: a pipe whose read end is dropped before the
-        // child writes, so every stderr write fails with EPIPE.
-        drop(child.stderr.take());
-        // The stdout pipe is drained concurrently with the wait, never after
-        // it (the #2301 probe's drain-before-wait shape).
-        let stdout = child.stdout.take();
-        let console_task = tokio::spawn(async move {
-            let mut out = Vec::new();
-            if let Some(mut pipe) = stdout {
-                let _ = pipe.read_to_end(&mut out).await;
-            }
-            String::from_utf8_lossy(&out).into_owned()
-        });
-        // Every wait states its termination condition: 30 seconds on the
-        // child, then kill + reap before the named failure.
-        let status = match timeout(Duration::from_secs(30), child.wait()).await {
-            Ok(status) => status.expect("#2558 the failed-stderr probe child is waitable"),
-            Err(_) => {
-                child
-                    .kill()
-                    .await
-                    .expect("#2558 the timed-out probe child is killed");
-                let _ = child.wait().await;
-                crate::negative_assert!(
-                    false,
-                    "#2558 the failed-stderr probe child did not finish within 30s"
-                );
-                unreachable!("negative_assert! panics");
-            }
-        };
-        let console = console_task
-            .await
-            .expect("#2558 the probe's stdout drain finishes");
-        crate::negative_assert!(
-            status.success(),
-            "#2558 the connection-task error line survives a failed stderr write (exit {status})\n{console}"
-        );
-        // Positive receipt — success alone is not evidence the probe case
-        // ran: a renamed test makes the `--exact` filter match nothing and
-        // libtest still exits 0 (the #273 / fix-r1 lesson).
-        crate::negative_assert!(
-            crate::test_exact_receipt::single_pass(
-                &status,
-                "upstream::tests::connection_task_error_line_survives_a_failed_stderr",
-                &console,
-            ),
-            "#2558 the child's libtest receipt proves the probe case ran\n{console}"
-        );
-        // The child leaves a reached marker once the connection task's error
-        // line has provably run.
-        let reached = std::env::temp_dir().join(format!("{token}.reached"));
-        crate::negative_assert!(
-            reached.exists(),
-            "#2558 the child never reached the connection-task error line"
-        );
-        let _ = std::fs::remove_file(&reached);
-        crate::negative_assert!(
-            !marker.exists(),
-            "#2558 no panic marker after the connection-task error line ({}): {:?}",
-            marker.display(),
-            std::fs::read_to_string(&marker).unwrap_or_default()
-        );
+        crate::failed_stderr_probe::FailedStderrProbe {
+            probe_env: UPGRADE_STDERR_PROBE_ENV,
+            marker_env: UPGRADE_STDERR_MARKER_ENV,
+            test_path: "upstream::tests::connection_task_error_line_survives_a_failed_stderr",
+            tag: "#2558",
+            token_prefix: "pdrs-2558-",
+            success_line: "the connection-task error line survives a failed stderr write",
+            marker_line: "no panic marker after the connection-task error line",
+            reached: &[("", "the child never reached the connection-task error line")],
+        }
+        .drive()
+        .await;
     }
 
     /// A socket wrapper for
@@ -390,14 +311,7 @@ mod tests {
     /// line already ran. Nothing here prints to stdout: the single-threaded
     /// receipt needs the whole test line intact.
     async fn upgrade_stderr_probe_child(token: &str) {
-        let marker = std::env::var(UPGRADE_STDERR_MARKER_ENV)
-            .unwrap_or_else(|_| panic!("#2558 {token} is missing the marker env"));
-        std::panic::set_hook(Box::new(move |info| {
-            // The default hook would print to the failed stderr; the marker
-            // is the parent's evidence instead.
-            let _ = std::fs::write(&marker, format!("{info}"));
-            std::process::exit(33);
-        }));
+        crate::failed_stderr_probe::install_panic_hook(UPGRADE_STDERR_MARKER_ENV, "#2558", token);
         let (socket, mut server) = tokio::io::duplex(4096);
         let fake = tokio::spawn(async move {
             let proxied = request(&mut server).await;

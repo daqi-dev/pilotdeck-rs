@@ -37,6 +37,24 @@
 //! failed write, and the newline-less stderr twin is exactly the face
 //! #2558 started from, so leaving it out re-opened the r3 hole shape
 //! (a green guard beside a panicking stderr write).
+//! #3152 (P2 batch) completes the convergence: the tree scan is the
+//! one lexical guard (the `EPRINTLN_FREE_SOURCES` list and the two
+//! companion tests it anchored are deleted — the list was a strict
+//! subset of the walk, a second word list to keep in sync), the walk's
+//! test-support exemption is the declaration mount closure
+//! ([`test_only_sources`]: a file is production exactly when the
+//! release build compiles it — reachable from the crate roots through
+//! ungated `mod` mounts), the file-internal `#[cfg(test)]` skip and
+//! the declaration gate share one predicate ([`is_cfg_test_attribute`]
+//! delegates to `is_test_gating_predicate`, so the
+//! `cfg(all(test, …))` spelling is one rule, not two word lists), the
+//! transport sidecar twin joins through a cross-crate guard
+//! ([`transport_sidecar_console_writes_stay_non_panicking`]), an
+//! `include!` splice would bypass every rule here and the crate holds
+//! none ([`src_stays_free_of_include_splices`] pins that), and the
+//! entry's failed-stderr probe is deterministic — a socketpair whose
+//! peer is dropped before the spawn ([`Gateway::dead_stderr`]), every
+//! spawn's sink proven dead by a parent-side probe write.
 //! The lib-side probes (`http_proxy::tests`,
 //! `upstream::tests`, `runtime::memory::maintenance::tests`, plus
 //! `native_process::channels_tests`' failing-sink unit case) drive the
@@ -66,82 +84,6 @@ use std::{
     thread::{self, JoinHandle},
     time::Duration,
 };
-
-/// The files that own the #2558 error lines plus the shared writer itself
-/// (its definition in `native_process/channels.rs`, the native entry that
-/// re-exports it, and `native_ws.rs`, which routed its accept-error lines
-/// through the writer in #2434; fix-r2 added the assembly's own
-/// diagnostics, the default tail/debug/log sinks, and the status/dump/
-/// abort/registration lines listed in the module docs; fix-r3 added the
-/// TLS CA warn lines in `runtime/model/http/tls.rs`; fix-r4 added the
-/// three test-support files whose `println!` diagnostics the widened
-/// macro scan reaches although their gating — the `host/tests.rs`
-/// declaration site, the `#[cfg(all(test, unix))]` spelling in
-/// `file_memory.rs` — is invisible to the in-file `#[cfg(test)]` skip:
-/// converted to the writer rather than widening any exemption). Kept
-/// complete against new callers by `shared_writer_call_sites_stay_listed`,
-/// and since fix-r3 every entry is also an anchor of the whole-tree scan in
-/// `production_tree_stays_eprintln_free`. Scanned through the shared
-/// proc-macro2 lexer (`common/source_inputs`), never a text search:
-/// comments and string literals — including the doc comments that quote
-/// the macro — are token kinds there and cannot false-positive.
-const EPRINTLN_FREE_SOURCES: [&str; 23] = [
-    "src/main.rs",
-    "src/http_proxy.rs",
-    "src/upstream.rs",
-    "src/runtime/memory/maintenance.rs",
-    "src/native_process/channels.rs",
-    "src/native_process.rs",
-    "src/native_ws.rs",
-    "src/runtime/refresh.rs",
-    "src/runtime/replacement.rs",
-    "src/runtime/plugins.rs",
-    "src/native_process/assembly.rs",
-    "src/runtime/turn/runner_tail.rs",
-    "src/runtime/turn/submit.rs",
-    "src/runtime/project/interaction_notice.rs",
-    "src/channel/runtime_status.rs",
-    "src/channel/weixin/state.rs",
-    "src/switch.rs",
-    "src/runtime/model/http.rs",
-    "src/lib.rs",
-    "src/runtime/model/http/tls.rs",
-    "src/host/tests/resume.rs",
-    "src/host/tests/cancel_exit.rs",
-    "src/runtime/memory/edgeclaw/file_memory.rs",
-];
-
-/// Lexical guard: none of the #2558 files may write an error console line
-/// with a panicking console macro (`eprintln!`, `println!`, `print!`,
-/// `eprint!`; fix-r4 widened the set from `eprintln!` alone — the entry's
-/// stdout banners had stayed bare on the very file whose stderr lines
-/// were already fixed — and fix-r5 added the fourth macro, `eprint!`)
-/// again. This is the only killable pin for
-/// the two entry lines no child can observe (the accept-error branch has no
-/// portable trigger, and the spawned connection task's panic is contained
-/// by tokio), and it kills every site mutation even where the behavioral
-/// probes already do. Items gated by `#[cfg(test)]` are skipped (fix-r2):
-/// their subtree is libtest-support code that the production build removes
-/// (`assembly.rs`'s embedded-entry `start` keeps one), so a listed file
-/// can carry test-support diagnostics without failing the product scan.
-#[test]
-fn error_console_writes_stay_non_panicking() {
-    for relative in EPRINTLN_FREE_SOURCES {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("#2558 reading {relative}: {error}"));
-        let tokens = source_inputs::lex_source(&source)
-            .unwrap_or_else(|error| panic!("#2558 lexing {relative}: {error}"));
-        // A lexed-to-empty file (truncated or emptied) would pass the scan
-        // vacuously; the scan is only evidence with tokens to scan.
-        assert!(
-            !tokens.is_empty(),
-            "#2558 {relative} lexed to an empty token stream; the guard would \
-             pass without scanning anything"
-        );
-        assert_no_eprintln(&tokens, relative);
-    }
-}
 
 /// The guard must be able to fail (DS r1 boundary#1): an `eprintln!` site
 /// fed to `assert_no_eprintln` has to panic, so an emptied or silently
@@ -312,6 +254,16 @@ fn assert_no_eprintln_skips_only_cfg_test_items() {
             "fn generic<T, U>(one: T, two: U) { eprintln!(\"#2558 test-only line\"); }\n",
             "fn prod() { production_quiet(); }\n",
         ),
+        // #3152 item 14: the `cfg(all(test, unix))` spelling is a test
+        // gate for the in-file skip too — one predicate for the skip
+        // and the declaration gates, not two word lists — so its
+        // module's test-only `eprintln!` is skipped whole.
+        concat!(
+            "#[cfg(all(test, unix))]\n",
+            "mod unix_tests {\n",
+            "    fn helper() { eprintln!(\"#2558 test-only line\"); }\n",
+            "}\n",
+        ),
     ] {
         let tokens = source_inputs::lex_source(gated)
             .unwrap_or_else(|error| panic!("#2558 lexing the gated fixture: {error}"));
@@ -423,6 +375,33 @@ fn assert_no_eprintln_skips_only_cfg_test_items() {
             "    }\n",
             "}\n",
         ),
+        // #3152 item 14's fail-closed edge: an `all(…)` list without
+        // `test` is not a gate — the `eprintln!` behind the
+        // skipped-looking attribute still fails the scan.
+        concat!(
+            "fn prod(mode: u8) {\n",
+            "    match mode {\n",
+            "        #[cfg(all(unix, feature = \"diagnostics\"))]\n",
+            "        0 => helper(),\n",
+            "        _ => eprintln!(\"#2558 production line\"),\n",
+            "    }\n",
+            "}\n",
+        ),
+        // #3152 item 6: the gated arm carries no trailing `,` and the
+        // production arm behind it none either — the terminator search
+        // runs out of slice with nothing found, and the old fail-open
+        // exhaustion returned the slice end, swallowing the production
+        // `eprintln!` whole. The skip must fail closed: the member is
+        // handed back to the scan and the production site fails it.
+        concat!(
+            "fn prod(mode: u8) {\n",
+            "    match mode {\n",
+            "        #[cfg(test)]\n",
+            "        0 => helper()\n",
+            "        _ => eprintln!(\"#2558 production line\")\n",
+            "    }\n",
+            "}\n",
+        ),
     ] {
         let tokens = source_inputs::lex_source(adjacent)
             .unwrap_or_else(|error| panic!("#2558 lexing the adjacent fixture: {error}"));
@@ -442,53 +421,6 @@ fn assert_no_eprintln_skips_only_cfg_test_items() {
     }
 }
 
-/// Every production source file that lexically names the shared writer must
-/// be listed in `EPRINTLN_FREE_SOURCES` (fix-r1 review MM sibling#4's
-/// derived rule): the guard is the only killable pin for sites without a
-/// portable EPIPE trigger, so an unlisted caller would silently escape it
-/// — exactly how `native_ws.rs` (a #2434 caller) sat outside the table
-/// until fix-r1. Naming the writer counts a call, the definition, or a
-/// re-export; comments and doc text quote it only as non-`Ident` tokens.
-/// Test-support files (the crate's three spellings, see
-/// [`is_test_support_source`]) are excluded: their diagnostics are
-/// libtest-support code, not product console lines.
-#[test]
-fn shared_writer_call_sites_stay_listed() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut derived = Vec::new();
-    for relative in production_rust_sources(manifest) {
-        let bytes = fs::read(manifest.join(&relative))
-            .unwrap_or_else(|error| panic!("#2558 reading {relative}: {error}"));
-        let Ok(source) = String::from_utf8(bytes) else {
-            // A non-UTF-8 payload is not Rust source (rustc cannot
-            // compile it either); it cannot name the writer.
-            continue;
-        };
-        let tokens = source_inputs::lex_source(&source).unwrap_or_else(|error| {
-            panic!("#2558 {relative} is not lexable Rust; fail closed: {error}")
-        });
-        if tokens_contain_ident(&tokens, "console_log_line") {
-            derived.push(relative);
-        }
-    }
-    // The walk itself must find callers: a silently broken walk (wrong
-    // root, wrong exclusion) would pass vacuously, so anchor it on a
-    // caller every shape of this crate has had since #2558 r0 — the A4
-    // entry's own file.
-    assert!(
-        derived.iter().any(|caller| caller == "src/main.rs"),
-        "#2558 the walk found no caller in src/main.rs; the derived set is \
-         wrong: {derived:?}"
-    );
-    for caller in &derived {
-        assert!(
-            EPRINTLN_FREE_SOURCES.contains(&caller.as_str()),
-            "#2558 {caller} names the shared writer but is not in \
-             EPRINTLN_FREE_SOURCES; the eprintln-free guard never scans it"
-        );
-    }
-}
-
 /// fix-r3 (review P1): the whole production tree, not only the listed
 /// files, stays `eprintln!`-free. `runtime/model/http/tls.rs` sat outside
 /// both tables while carrying eight production `eprintln!` sites on
@@ -499,28 +431,41 @@ fn shared_writer_call_sites_stay_listed() {
 /// class: any production file under `src/` that writes the panicking
 /// `eprintln!` fails, listed or not. fix-r4 widened the detector's match
 /// set to the panicking console macros (fix-r5 completed the set with
-/// `eprint`, the newline-less stderr twin), so the same scan now polices
-/// the stdout face too — and the widening immediately reached three
-/// test-support files whose gating is invisible to the in-file skip
-/// (`host/tests/resume.rs` / `host/tests/cancel_exit.rs`, gated at the
-/// `host/tests.rs` declaration; `file_memory.rs`'s
-/// `#[cfg(all(test, unix))]` modules): their `println!` diagnostics were
-/// converted to the writer, the fail-closed remedy that widens no
-/// exemption. Items gated by `#[cfg(test)]` inside
-/// a scanned file are skipped by the same detector the listed-file scan
-/// uses; test-support file spellings are excluded by
+/// `eprint`, the newline-less stderr twin), so the same scan polices the
+/// stdout face too. #3152 item 15 made this scan the single lexical gate:
+/// the `EPRINTLN_FREE_SOURCES` list and its two companion tests are
+/// deleted (the list was a strict subset of this walk, a second word
+/// list to keep in sync with no face of its own). #3152 item 14 moved
+/// the walk's test-support exemption to the declaration mount closure
+/// ([`test_only_sources`]) and let the file-internal skip recognize the
+/// `cfg(all(test, …))` spelling ([`is_cfg_test_attribute`]), so the
+/// fix-r4 conversions — `host/tests/resume.rs` /
+/// `host/tests/cancel_exit.rs`, gated at the `host/tests.rs` declaration;
+/// `file_memory.rs`'s `#[cfg(all(test, unix))]` modules — reverted to
+/// the bare macros they always were: test-support code, no longer forced
+/// through the production writer to satisfy a scan that could not see
+/// their gates. Items gated by `#[cfg(test)]` inside a scanned file are
+/// skipped by the same detector; test-only files are excluded by
 /// [`production_rust_sources`]. An unhandled test-gating spelling (a
-/// top-level `#[test] fn`, a `#[cfg(all(test, ...))]` module file with a
-/// production name) fails the scan rather than passing silently — extend
-/// the exclusion consciously then.
+/// top-level `#[test] fn`) fails the scan rather than passing silently —
+/// extend the exclusion consciously then.
 #[test]
 fn production_tree_stays_eprintln_free() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sources = production_rust_sources(manifest);
     // A silently broken walk (wrong root, no descent into subdirectories,
-    // an over-wide exclusion) would pass the scan vacuously; every listed
-    // #2558 file must be reached.
-    for listed in EPRINTLN_FREE_SOURCES {
+    // an over-wide exclusion) would pass the scan vacuously; one file
+    // from every walk boundary must be reached: the crate root itself,
+    // a top-level sibling of the root, a deep submodule, the TLS leaf,
+    // and the shared writer's own file (the deep one is the anchor the
+    // `tree-walk-no-descend` mutant dies on).
+    for listed in [
+        "src/main.rs",
+        "src/http_proxy.rs",
+        "src/runtime/memory/maintenance.rs",
+        "src/runtime/model/http/tls.rs",
+        "src/native_process/channels.rs",
+    ] {
         assert!(
             sources.iter().any(|source| source == listed),
             "#2558 the production walk skipped the #2558 source {listed}; \
@@ -572,9 +517,12 @@ fn production_tree_stays_eprintln_free() {
 /// same-named `*_tests.rs`, so a rogue unmounted `tests.rs` carrying a
 /// production `eprintln!` passed this pin and the tree scan alike. The
 /// synthetic negative self-check below pins that direction against
-/// regression, and since fix-r9 the production walk's exemption
-/// ([`production_rust_sources`]) shares this anchor set, so a
-/// name-exempted file with no mount is scanned, not skipped.
+/// regression. Since #3152 item 14 the production walk's exemption
+/// ([`production_rust_sources`]) is the declaration mount closure,
+/// built from the same harvested mount table this fixpoint reads
+/// ([`test_only_sources`]), so a name-exempted file with no mount at
+/// all is scanned, not skipped — this pin stays the name families'
+/// own gate.
 #[test]
 fn test_family_files_stay_declaration_gated() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -708,6 +656,13 @@ fn anchor_scanner_resolves_rustc_module_semantics() {
             "#[cfg(test)]\n",
             "#[cfg_attr(f, path = \"w_tests.rs\")]\n",
             "mod w_tests;\n",
+            // #3152 item 2: the `cfg(all(test, unix))` spelling is a test
+            // gate here too — the all-arm of `is_test_gating_predicate`
+            // had zero fixture coverage (its only real-tree mounts were
+            // `lib.rs`'s gated `process_spawn` and the `file_memory`
+            // modules, all far outside this fixture).
+            "#[cfg(all(test, unix))]\n",
+            "mod allgate_tests;\n",
             // fix-r11 A1 (DS boundary#3): a `#[path]` on an inline `mod` —
             // the body's directory is the literal's join (rustc E3).
             "#[path = \"custom\"]\n",
@@ -809,6 +764,7 @@ fn anchor_scanner_resolves_rustc_module_semantics() {
         "p_tests.rs",
         "decoy_tests.rs",
         "w_tests.rs",
+        "allgate_tests.rs",
         "foo_tests/bar_tests.rs",
         "custom/child_tests.rs",
         "orphan/orphan_tests.rs",
@@ -833,7 +789,8 @@ fn anchor_scanner_resolves_rustc_module_semantics() {
     // parent exemption's gate through the anchor fixpoint.
     assert!(
         gates("helper_tests.rs"),
-        "#2558 `#[cfg(test)] mod helper_tests;` resolved no mount; the anchor set is wrong"
+        "#2558 `#[cfg(test)] mod helper_tests;` resolved no mount; the \
+         crate-root parent-directory rule regressed; the anchor set is wrong"
     );
     assert!(
         gates("helper_tests/child_tests.rs"),
@@ -854,6 +811,20 @@ fn anchor_scanner_resolves_rustc_module_semantics() {
         "#2558 the anchor set gates `nested_tests.rs`, a path only the \
          double-visit's parent-directory scan could mount; fix-r10 \
          boundary#2 regressed"
+    );
+    // #3152 item 3: the file-form `#[path]` literal mounts its own file —
+    // a readable plain string is a direct mount, never a default
+    // candidate. The paired `file-path-literal-default-fallback` mutant
+    // degrades the literal arm into the default candidates, and this
+    // fixture's tree holds no `linked.rs` for them, so the mount
+    // vanishes here. Pinned before boundary#3 (the inline-literal pin)
+    // so that mutant dies on its own marker, not as a preemption of
+    // the inline one.
+    assert!(
+        gates("linked_tests.rs"),
+        "#2558 the gated `#[path = \"linked_tests.rs\"]` mounted nothing; \
+         the file-form literal must mount its own file, not fall back to \
+         default candidates; the anchor set is wrong"
     );
     // boundary#3 (+ sibling#1): a `#[path]` literal inside an inline
     // `mod` body joins that inline module's directory, not the
@@ -896,6 +867,12 @@ fn anchor_scanner_resolves_rustc_module_semantics() {
         "#2558 the anchor set gates `w_tests.rs` through the unreadable \
          `cfg_attr`-carried `path` key; fix-r10 simplify#1 regressed"
     );
+    // #3152 item 2: the `cfg(all(test, unix))` spelling gates its mount —
+    // the all-arm of the shared gate predicate, not a second word list.
+    assert!(
+        gates("allgate_tests.rs"),
+        "#2558 the `cfg(all(test, unix))` gate resolved no mount; the anchor set is wrong"
+    );
     // sibling#2: a name-exempted file no declaration mounts (the rogue
     // shape) anchors nothing — not itself, and nothing its own
     // declarations name, gated or not.
@@ -929,12 +906,8 @@ fn anchor_scanner_resolves_rustc_module_semantics() {
     // fix-r11 B4 (DS boundary#2, rustc E10/E10b): a `#[path]`-mounted
     // file's own children resolve from the loaded file's directory, the
     // #1180-audited rule — not from the stem directory a default-mounted
-    // file would use.
-    assert!(
-        gates("linked_tests.rs"),
-        "#2558 the gated `#[path = \"linked_tests.rs\"]` mounted nothing; \
-         the anchor set is wrong"
-    );
+    // file would use. (The `linked_tests.rs` mount itself is pinned
+    // above, before boundary#3, where the item-3 mutant dies first.)
     assert!(
         gates("linked_child_tests.rs"),
         "#2558 the `#[path]`-mounted `linked_tests.rs`'s child did not \
@@ -1098,9 +1071,11 @@ struct FileModMounts {
 }
 
 /// Walk the crate sources and collect every file a `mod <name>;`
-/// declaration resolves to, then close the anchor set over the name
-/// exemption's inheritance (fix-r10, MM sibling#2 + boundary#1; fix-r11
-/// B1/B4):
+/// declaration resolves to — the mount table both the name-exemption
+/// fixpoint ([`test_support_declaration_anchors`]) and the production
+/// closure ([`test_only_sources`]) read (fix-r10, MM sibling#2 +
+/// boundary#1; fix-r11 B1/B4; #3152 item 14 split it out of the
+/// fixpoint):
 ///
 /// * harvest — a breadth-first walk of the mount edges out of the
 ///   crate roots (`src/lib.rs`, `src/main.rs`). fix-r11 B1 (MM
@@ -1112,18 +1087,8 @@ struct FileModMounts {
 ///   fix-r11 B4 (DS boundary#2): the per-file directory the walk
 ///   resolves a file's own plain `mod x;` children from is the loaded
 ///   file's own directory when a `#[path]` literal mounted it
-///   (`path_mounted`), and `declaration_module_dir` otherwise;
-/// * seeds — every test-gated declaration's target, from any harvested
-///   (so compiled) file that is not itself name-exempted. A gated
-///   declaration inside a name-exempted file seeds nothing until the
-///   file is anchored: until then its mounts are not provably
-///   test-only code (the production `pub mod …_tests;` shape);
-/// * fixpoint — an anchored name-exempted file contributes every
-///   declaration it holds (fix-r10 boundary#1: a plain `mod x;`
-///   inside an anchored `tests.rs` is an anchored mount), and files
-///   newly anchored this way contribute in turn, until the set stops
-///   growing. The name exemption alone exempts nothing, here too.
-fn test_support_declaration_anchors(manifest: &Path) -> TestSupportAnchors {
+///   (`path_mounted`), and `declaration_module_dir` otherwise.
+fn harvested_mod_mounts(manifest: &Path) -> HashMap<PathBuf, FileModMounts> {
     let mut parsed: Vec<(PathBuf, Vec<SourceToken>)> = Vec::new();
     for relative in src_rust_sources(manifest) {
         let Ok(source) = fs::read_to_string(manifest.join(&relative)) else {
@@ -1183,6 +1148,71 @@ fn test_support_declaration_anchors(manifest: &Path) -> TestSupportAnchors {
         }
         harvested.insert(file, mounts);
     }
+    harvested
+}
+
+/// The test-only sources of the crate (#3152 item 14, merged with the
+/// #3137 item-6 residual): every harvested file NOT reachable from the
+/// crate roots through an ungated `mod` mount. That is the production
+/// closure in rustc's own terms — a file the release build compiles
+/// has a mount chain from a root whose every edge is ungated, and a
+/// file whose every chain crosses a test gate
+/// (`#[cfg(test)]` / `#[cfg(all(test, …))]`, the one predicate
+/// [`is_test_gating_predicate`] defines) is compiled only in test
+/// builds, whatever its name. This replaces the fix-r9 walk rule
+/// (name-exempted ∧ anchor-gated): the three fix-r4 rewrites —
+/// `host/tests/resume.rs`, `host/tests/cancel_exit.rs` (gated at the
+/// `host/tests.rs` declaration), and later `file_memory.rs` — existed
+/// only because that rule could not see a declaration-site gate, and
+/// they are reverted to the bare macros. The name spellings
+/// ([`is_test_support_source`]) exempt nothing here on their own, and
+/// an unmounted file of any name is not in `harvested` at all, so it
+/// stays in the production walk (fail-closed: the rogue-`tests.rs`
+/// shape is scanned, and
+/// [`test_family_files_stay_declaration_gated`] separately pins the
+/// name families to gated mounts).
+fn test_only_sources(manifest: &Path) -> HashSet<PathBuf> {
+    let harvested = harvested_mod_mounts(manifest);
+    let mut production: HashSet<PathBuf> = HashSet::new();
+    let mut queue: VecDeque<PathBuf> = [manifest.join("src/lib.rs"), manifest.join("src/main.rs")]
+        .into_iter()
+        .collect();
+    while let Some(file) = queue.pop_front() {
+        if !production.insert(file.clone()) {
+            continue;
+        }
+        if let Some(mounts) = harvested.get(&file) {
+            let mut targets: Vec<&PathBuf> = mounts.every.iter().collect();
+            targets.sort();
+            for target in targets {
+                if !mounts.gated.contains(target) {
+                    queue.push_back(target.clone());
+                }
+            }
+        }
+    }
+    harvested
+        .into_keys()
+        .filter(|file| !production.contains(file))
+        .collect()
+}
+
+/// Close the anchor set over the name exemption's inheritance (fix-r10,
+/// MM sibling#2 + boundary#1; fix-r11 B1/B4), reading
+/// [`harvested_mod_mounts`]:
+///
+/// * seeds — every test-gated declaration's target, from any harvested
+///   (so compiled) file that is not itself name-exempted. A gated
+///   declaration inside a name-exempted file seeds nothing until the
+///   file is anchored: until then its mounts are not provably
+///   test-only code (the production `pub mod …_tests;` shape);
+/// * fixpoint — an anchored name-exempted file contributes every
+///   declaration it holds (fix-r10 boundary#1: a plain `mod x;`
+///   inside an anchored `tests.rs` is an anchored mount), and files
+///   newly anchored this way contribute in turn, until the set stops
+///   growing. The name exemption alone exempts nothing, here too.
+fn test_support_declaration_anchors(manifest: &Path) -> TestSupportAnchors {
+    let harvested = harvested_mod_mounts(manifest);
     let mut anchored: HashSet<PathBuf> = harvested
         .iter()
         .filter(|(file, _)| {
@@ -1649,35 +1679,21 @@ fn src_rust_sources(manifest: &Path) -> Vec<String> {
 
 /// Every production Rust source under `src/`, as manifest-relative
 /// slash-separated paths, in the lexical guards' vocabulary: all `.rs`
-/// files ([`src_rust_sources`]) except the test-support spellings
-/// ([`is_test_support_source`]). fix-r9: the name exemption is
-/// anchor-aware — a name-exempted file is skipped only when some
-/// test-gated declaration actually mounts it (the same anchor set
-/// [`test_family_files_stay_declaration_gated`] pins). A name-exempted
-/// file no declaration mounts (the rogue-`tests.rs` shape) stays in
-/// the walk, so its `eprintln!` fails the scan instead of escaping it
-/// by spelling alone.
+/// files ([`src_rust_sources`]) except the test-only closure
+/// ([`test_only_sources`], #3152 item 14) — a file is production
+/// exactly when the release build compiles it, reachable from the
+/// crate roots through ungated `mod` mounts. fix-r9's intermediate
+/// rule (name-exempted ∧ anchor-gated) is subsumed: the name spellings
+/// exempt nothing here on their own anymore, and an unmounted file of
+/// any name (the rogue-`tests.rs` shape) is not in the harvest, so it
+/// stays in the walk — its `eprintln!` fails the scan instead of
+/// escaping it.
 fn production_rust_sources(manifest: &Path) -> Vec<String> {
-    let anchors = test_support_declaration_anchors(manifest);
+    let test_only = test_only_sources(manifest);
     src_rust_sources(manifest)
         .into_iter()
-        .filter(|relative| {
-            let file = Path::new(relative);
-            let name_exempted = file
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(is_test_support_source);
-            !(name_exempted && anchors.gates(&manifest.join(relative)))
-        })
+        .filter(|relative| !test_only.contains(&manifest.join(relative)))
         .collect()
-}
-
-fn tokens_contain_ident(tokens: &[SourceToken], word: &str) -> bool {
-    tokens.iter().any(|token| match token {
-        SourceToken::Ident(name) => name == word,
-        SourceToken::Group { tokens, .. } => tokens_contain_ident(tokens, word),
-        _ => false,
-    })
 }
 
 fn assert_no_eprintln(tokens: &[SourceToken], file: &str) {
@@ -1718,12 +1734,18 @@ fn assert_no_eprintln(tokens: &[SourceToken], file: &str) {
     }
 }
 
-/// The `#[cfg(test)]` attribute shape: a `#` followed by the bracket group
-/// holding exactly `cfg ( test )`. Other predicates — `cfg(all(test, ...))`,
-/// `cfg_attr`, — do not match, so the exemption cannot silently widen: a
-/// test-support `eprintln!` under any other predicate still fails the scan
-/// (fail-closed), and only the one predicate rustc actually keys libtest
-/// support on is skipped.
+/// The test-gating attribute shape for the file-internal skip: a `#`
+/// followed by the bracket group holding a predicate
+/// [`is_test_gating_predicate`] recognizes — `cfg(test)` or
+/// `cfg(all(test, …))`. #3152 item 14: one predicate for the in-file
+/// skip and the declaration gates alike, not two word lists — before,
+/// the in-file skip recognized only the exact `cfg(test)` spelling,
+/// so `file_memory.rs`'s `#[cfg(all(test, unix))]` modules were
+/// invisible to it and their diagnostics had been forced through the
+/// production writer. Anything else — `cfg(not(test))`,
+/// `cfg(any(test, …))`, `cfg_attr` — still does not match, so the
+/// exemption cannot silently widen: a test-support `eprintln!` under
+/// any other predicate still fails the scan (fail-closed).
 fn is_cfg_test_attribute(token: Option<&SourceToken>) -> bool {
     let Some(SourceToken::Group {
         delimiter: proc_macro2::Delimiter::Bracket,
@@ -1732,18 +1754,7 @@ fn is_cfg_test_attribute(token: Option<&SourceToken>) -> bool {
     else {
         return false;
     };
-    match predicate.as_slice() {
-        [
-            SourceToken::Ident(name),
-            SourceToken::Group {
-                delimiter: proc_macro2::Delimiter::Parenthesis,
-                tokens: arguments,
-            },
-        ] if name.as_str() == "cfg" => {
-            matches!(arguments.as_slice(), [SourceToken::Ident(subject)] if subject == "test")
-        }
-        _ => false,
-    }
+    is_test_gating_predicate(predicate)
 }
 
 /// Resume the scan past the item a `#[cfg(test)]` attribute gates. The
@@ -1811,6 +1822,13 @@ fn index_past_cfg_test_item(tokens: &[SourceToken], attribute: usize) -> usize {
 /// the member's own `,` instead of swallowing the production arms
 /// behind it. A future keyword shape must fail closed here the same
 /// way: reclassify it as a member rather than trusting the word alone.
+/// #3152 item 14 (the #3137 item-6 residual): the two word lists this
+/// classifier used to carry inline — the item keywords and the follower
+/// blacklist — are named now, beside each other, so both share this one
+/// provenance doc instead of growing as two anonymous tables in the
+/// body below. [`is_gated_item_keyword`] decides the item direction;
+/// [`is_non_item_follower`] keeps keyword-shaped identifiers in member
+/// position. The two are consumed only as a pair, here.
 fn gated_item_is_keyword_led(tokens: &[SourceToken], attribute: usize) -> bool {
     // The caller hands us the `#` whose bracket group is the `cfg(test)`
     // predicate, so the item starts two tokens past it.
@@ -1840,8 +1858,7 @@ fn gated_item_is_keyword_led(tokens: &[SourceToken], attribute: usize) -> bool {
                     }
                 }
                 "async" | "unsafe" | "auto" | "default" => index += 1,
-                "fn" | "mod" | "use" | "struct" | "enum" | "type" | "trait" | "impl" | "union"
-                | "static" | "const" | "extern" | "macro_rules" => {
+                keyword if is_gated_item_keyword(keyword) => {
                     // fix-r9 (DS sibling#2 + DS boundary#2): a whitelist,
                     // not the fix-r8 blacklist. A real item keyword is
                     // followed only by an item name (`Ident`), a string
@@ -1860,32 +1877,15 @@ fn gated_item_is_keyword_led(tokens: &[SourceToken], attribute: usize) -> bool {
                     // swallowing the production arms behind it. The
                     // misclassification cost is one-directional: a real
                     // item treated as a member only ends its skip early
-                    // (more scanning, never less — fail-closed).
+                    // (more scanning, never less — fail-closed). #3152
+                    // item 14: the follower words moved out to
+                    // [`is_non_item_follower`], the keyword list to
+                    // [`is_gated_item_keyword`] — the pair's shared
+                    // provenance doc sits on
+                    // [`gated_item_is_keyword_led`].
                     return match tokens.get(index + 1) {
                         Some(SourceToken::Literal(_)) => true,
-                        Some(SourceToken::Ident(name)) => !matches!(
-                            name.as_str(),
-                            "if" | "else"
-                                | "while"
-                                | "for"
-                                | "loop"
-                                | "match"
-                                | "break"
-                                | "continue"
-                                | "return"
-                                | "in"
-                                | "ref"
-                                | "mut"
-                                | "as"
-                                | "where"
-                                | "move"
-                                | "dyn"
-                                | "self"
-                                | "Self"
-                                | "true"
-                                | "false"
-                                | "await"
-                        ),
+                        Some(SourceToken::Ident(name)) => !is_non_item_follower(name.as_str()),
                         Some(SourceToken::Punct('<' | '!' | '\'')) => true,
                         _ => false,
                     };
@@ -1896,6 +1896,69 @@ fn gated_item_is_keyword_led(tokens: &[SourceToken], attribute: usize) -> bool {
         }
     }
     false
+}
+
+/// The item-keyword half of the [`gated_item_is_keyword_led`] word
+/// lists (#3152 item 14, the #3137 item-6 residual): the words that
+/// lead a gated item — whose subtree the skip may swallow whole (the
+/// first brace group or its own `;`). The fix-r9 rule that consumes it
+/// is the follower whitelist in [`is_non_item_follower`], and a word on
+/// neither list classifies the lead as a `,`-list member (fail-closed:
+/// the member skip only ends early, never swallows past the item).
+fn is_gated_item_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "fn" | "mod"
+            | "use"
+            | "struct"
+            | "enum"
+            | "type"
+            | "trait"
+            | "impl"
+            | "union"
+            | "static"
+            | "const"
+            | "extern"
+            | "macro_rules"
+    )
+}
+
+/// The follower half of the [`gated_item_is_keyword_led`] word lists
+/// (#3152 item 14, the #3137 item-6 residual): the words that cannot
+/// start an item's name, so a keyword followed by one of them is a
+/// pattern binding or path head in member position — the skip ends at
+/// the member's own `,` instead of swallowing the production arms
+/// behind it. fix-r9 (DS sibling#2 + DS boundary#2) inverted the
+/// fix-r8 punct blacklist into this whitelist: a real item keyword is
+/// followed only by an item name, `extern`'s string literal, or one of
+/// the three token shapes an item header can open with (`<` / `!` /
+/// `'` — the puncts stay in the consuming match). A future keyword
+/// shape must land here the same way: reclassify as a follower, never
+/// trust the word alone.
+fn is_non_item_follower(word: &str) -> bool {
+    matches!(
+        word,
+        "if" | "else"
+            | "while"
+            | "for"
+            | "loop"
+            | "match"
+            | "break"
+            | "continue"
+            | "return"
+            | "in"
+            | "ref"
+            | "mut"
+            | "as"
+            | "where"
+            | "move"
+            | "dyn"
+            | "self"
+            | "Self"
+            | "true"
+            | "false"
+            | "await"
+    )
 }
 
 /// The terminator search for a keyword-led gated item: the first brace
@@ -1923,7 +1986,16 @@ fn index_past_keyword_cfg_test_item(tokens: &[SourceToken], attribute: usize) ->
 /// The terminator search for a gated `,`-list member: its own `,` at
 /// angle depth zero, the first brace group (an arm's braced body), or a
 /// `;`. Only a `<` that follows `::` or nests inside an open list opens
-/// one; see [`index_past_cfg_test_item`] for the full rule.
+/// one; see [`index_past_cfg_test_item`] for the full rule. When the
+/// slice runs out with no terminator — a gated arm without its trailing
+/// `,`, the rest of the group behind it ungated — the search fails
+/// closed (#3152 item 6): it returns to the member's own first token
+/// (`attribute + 2`, past the `#` and the bracket group) instead of the
+/// slice end, so the member is handed back to the scan and a
+/// production site behind it can never be swallowed. A gated member
+/// without a terminator whose own body carries a console macro now
+/// fails the scan — the false-positive direction, the same one every
+/// other unhandled shape here takes.
 fn index_past_cfg_test_list_member(tokens: &[SourceToken], attribute: usize) -> usize {
     let mut index = attribute;
     let mut angle_depth = 0usize;
@@ -1943,7 +2015,9 @@ fn index_past_cfg_test_list_member(tokens: &[SourceToken], attribute: usize) -> 
         }
         index += 1;
     }
-    index
+    // No terminator anywhere in the slice: rescan from the member's own
+    // first token — never skip to the slice end.
+    attribute + 2
 }
 
 /// Whether the token at `index` directly follows a `::` path separator
@@ -1972,8 +2046,8 @@ impl Gateway {
     /// Start the real A4 proxy entry (the `pilotdeck-gateway` binary) on an
     /// ephemeral loopback port with a dead upstream, like the
     /// `proxy_listen_address` precedent. `stderr` selects the probe's sink:
-    /// a capture file, or a pipe whose read end
-    /// [`Self::fail_stderr`] then drops.
+    /// a capture file, or the dead socketpair sink [`Self::dead_stderr`]
+    /// builds.
     fn start(home: &Path, stderr: Stdio) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
             .env_clear()
@@ -2013,13 +2087,34 @@ impl Gateway {
         }
     }
 
-    /// The failing sink: a pipe whose read end is dropped before the child
-    /// writes its startup diagnostic, so every stderr write fails with
-    /// EPIPE. (A read-only fd is not a failing sink for this purpose:
-    /// `std::io::Stderr` redirects EBADF to a fresh `/dev/null` and reports
-    /// success — only EPIPE reaches an `eprintln!` panic.)
-    fn fail_stderr(&mut self) {
-        drop(self.child.stderr.take());
+    /// The failing sink (#3152 item 4): a socketpair whose peer end is
+    /// dropped BEFORE the spawn — every write on the surviving half
+    /// fails with EPIPE, from the first line, deterministically. The
+    /// old shape (a piped stderr whose read end the parent dropped
+    /// after the spawn) raced the child's first write against that
+    /// drop, so the sink was only failing-if-lucky; the parent-side
+    /// probe write below proves the sink is already dead before the
+    /// child exists, and the child inherits the same fd. (A read-only
+    /// fd is not a failing sink for this purpose: `std::io::Stderr`
+    /// redirects EBADF to a fresh `/dev/null` and reports success —
+    /// only EPIPE reaches an `eprintln!` panic.)
+    fn dead_stderr() -> Stdio {
+        let (write_half, read_half) = std::os::unix::net::UnixStream::pair()
+            .expect("#2558 create the dead stderr socketpair");
+        drop(read_half);
+        // The sink's own receipt, item 9's shape: the probe write must
+        // fail with EPIPE before the child ever exists, or the spawn
+        // would race the peer drop exactly like the old shape did.
+        let error = (&write_half).write(b"#2558 dead sink probe").expect_err(
+            "#2558 the dead stderr sink accepted a write; the peer drop did not take effect",
+        );
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "#2558 the dead stderr sink's probe write failed with {error:?}"
+        );
+        let owned_fd: std::os::fd::OwnedFd = write_half.into();
+        Stdio::from(owned_fd)
     }
 
     fn line(&self) -> String {
@@ -2098,41 +2193,174 @@ fn startup_metadata_diagnostic_stays_on_stderr() {
     );
 }
 
-/// #2558: the same entry with a failed stderr. The startup line was an
-/// `eprintln!`; a failed write panicked inside the main task, killing the
-/// process right after the banners — the accept loop that follows never
-/// ran, and no HTTP request was ever answered. The non-panicking writer
-/// keeps the entry alive. The receipt is a served 502: this side asks the
-/// dead upstream (`127.0.0.1:1`) for a plain `GET /`, and only the accept
-/// loop — the code after the diagnostic write — can answer it. (A TCP
-/// connect alone would not do: the bind precedes the banners, so the kernel
-/// accepts connections even from a process that panicked at the line in
-/// between.)
+/// The 502 receipt both failed-stderr probes below use: connect, ask the
+/// dead upstream (`127.0.0.1:1`) for a plain `GET /`, and require the
+/// 502 only the accept loop — the code after the diagnostic write — can
+/// serve. `why` names the shared failure marker: under the paired
+/// `metadata-cwd-reverted` mutant the process dies between the banners
+/// and this receipt, and whichever step observes the death (connect
+/// refused, reset answer, empty answer) must fail the test with one
+/// nameable reason.
+fn assert_served_502(address: &SocketAddr, why: &str) {
+    let mut stream = TcpStream::connect_timeout(address, Duration::from_secs(3))
+        .unwrap_or_else(|error| panic!("#2558 {why}: the connect failed: {error}"));
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("#2558 the probe stream gets a read timeout");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap_or_else(|error| panic!("#2558 {why}: the request was not sent: {error}"));
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .unwrap_or_else(|error| panic!("#2558 {why}: the answer is unreadable: {error}"));
+    assert!(
+        response.starts_with("HTTP/1.1 502"),
+        "#2558 {why}: the entry serves HTTP past its failed stderr write, got {response:?}"
+    );
+}
+
+/// #2558: the same entry with a failed stderr — the deterministic sink
+/// ([`Gateway::dead_stderr`], #3152 item 4: the old piped shape dropped
+/// the read end only after the spawn, racing the child's first write).
+/// The startup line was an `eprintln!`; a failed write panicked inside
+/// the main task, killing the process right after the banners — the
+/// accept loop that follows never ran, and no HTTP request was ever
+/// answered. The non-panicking writer keeps the entry alive. (A TCP
+/// connect alone would not be the receipt: the bind precedes the
+/// banners, so the kernel accepts connections even from a process that
+/// panicked at the line in between.)
 #[test]
 fn startup_survives_a_failed_stderr_write() {
     let home = isolated_home();
-    let mut gateway = Gateway::start(&home, Stdio::piped());
-    gateway.fail_stderr();
+    let gateway = Gateway::start(&home, Gateway::dead_stderr());
     let address = listening_address(&gateway.line());
     let ws = gateway.line();
     assert!(
         ws.starts_with("WebSocket: ws://"),
         "#2558 the WS banner line survives the failed write: {ws:?}"
     );
-    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(3))
-        .expect("#2558 the gateway keeps its listener after the failed write");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .expect("#2558 the probe stream gets a read timeout");
-    stream
-        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-        .expect("#2558 the probe request is sent");
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .expect("#2558 the gateway's answer is readable");
-    assert!(
-        response.starts_with("HTTP/1.1 502"),
-        "#2558 the entry serves HTTP past its failed stderr write, got {response:?}"
+    assert_served_502(
+        &address,
+        "#2558 the gateway keeps its listener after the failed write",
     );
+}
+
+/// #3152 item 4: the dead sink must fail EVERY spawn's console writes,
+/// not only a lucky one — under the old piped shape each run tested a
+/// sink that may not have failed yet, so a green run proved nothing
+/// about the next. This probe spawns the real entry on a fresh
+/// pre-dropped socketpair many times over and requires the full
+/// receipt each time; the parent-side probe write inside
+/// [`Gateway::dead_stderr`] proves every sink dead before its child
+/// exists, so the pass rate measures the deterministic mechanism
+/// itself (the raw timing the #3152 RESULT records).
+#[test]
+fn dead_stderr_sink_fails_on_every_spawn() {
+    const SPAWNS: usize = 200;
+    for _ in 0..SPAWNS {
+        let home = isolated_home();
+        let gateway = Gateway::start(&home, Gateway::dead_stderr());
+        let address = listening_address(&gateway.line());
+        let ws = gateway.line();
+        assert!(
+            ws.starts_with("WebSocket: ws://"),
+            "#2558 the WS banner line survives the dead sink: {ws:?}"
+        );
+        assert_served_502(
+            &address,
+            "#2558 the gateway keeps its listener after the failed write",
+        );
+        drop(gateway);
+    }
+}
+
+/// #3152 item 7: the transport sidecar — `pilotdeck-agent-loop-sidecar`,
+/// the #2558 twin entry the gateway assembly launches — writes its
+/// startup/shutdown console lines through its local `console_line`
+/// (transport's best-effort twin of `console_log_line`; the transport
+/// crate must not depend on the gateway's, and its own `--version`
+/// banner goes to stdout exactly like the TS sidecar's did). This
+/// crate's scanner has no authority over another crate's sources, so
+/// the pin reads the twin across the manifest boundary and applies
+/// the same lexical guard; the file is read by path, never mounted.
+#[test]
+fn transport_sidecar_console_writes_stay_non_panicking() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sidecar = manifest.join("../pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs");
+    let source = fs::read_to_string(&sidecar).unwrap_or_else(|error| {
+        panic!(
+            "#2558 reading the transport sidecar twin {}: {error}",
+            sidecar.display()
+        )
+    });
+    let tokens = source_inputs::lex_source(&source)
+        .unwrap_or_else(|error| panic!("#2558 lexing the transport sidecar twin: {error}"));
+    // A lexed-to-empty file (truncated or emptied) would pass the scan
+    // vacuously; the scan is only evidence with tokens to scan.
+    assert!(
+        !tokens.is_empty(),
+        "#2558 the transport sidecar twin lexed to an empty token stream; \
+         the guard would pass without scanning anything"
+    );
+    assert_no_eprintln(
+        &tokens,
+        "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs",
+    );
+}
+
+/// #3152 item 10: every rule above models `mod` declarations. An
+/// `include!` splice — whose target's modules join the includer's own
+/// module scope — would bypass them all: the src walk would not follow
+/// the splice, and the harvest would never see the spliced file's
+/// declarations. The crate holds none today (generated code stays out
+/// of `src/`), so this pin fails the moment one appears, and the
+/// exemption rules must be re-derived against rustc's include
+/// semantics BEFORE any exemption grows — that is the registered
+/// re-check trigger for the `include!` boundary, machine-checked
+/// here rather than only documented.
+#[test]
+fn src_stays_free_of_include_splices() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sources = src_rust_sources(manifest);
+    // Vacuity anchor: the walk must find the crate root, or this pin
+    // would pass without scanning anything.
+    assert!(
+        sources.iter().any(|relative| relative == "src/lib.rs"),
+        "#2558 the walk found no src/lib.rs; the include pin passes vacuously"
+    );
+    for relative in &sources {
+        let Ok(source) = fs::read_to_string(manifest.join(relative)) else {
+            // A non-UTF-8 payload is not Rust source (rustc cannot
+            // compile it either); it cannot hold a splice.
+            continue;
+        };
+        let tokens = source_inputs::lex_source(&source)
+            .unwrap_or_else(|error| panic!("#2558 lexing {relative}: {error}"));
+        assert_no_include_splice(&tokens, relative);
+    }
+}
+
+/// The recursive half of [`src_stays_free_of_include_splices`]: the
+/// splice macro is the exact `include` `!` pair (`include_str!` and
+/// `include_bytes!` are distinct identifiers, so they do not hit), and
+/// the search recurses into groups — a splice inside a function body
+/// counts like any other.
+fn assert_no_include_splice(tokens: &[SourceToken], file: &str) {
+    let mut index = 0;
+    while index < tokens.len() {
+        match &tokens[index] {
+            SourceToken::Ident(word) if word == "include" => {
+                assert!(
+                    tokens.get(index + 1) != Some(&SourceToken::Punct('!')),
+                    "#2558 {file} splices with `include!`; the anchor scanner does \
+                     not model include splices — re-derive the exemption rules \
+                     before adding one"
+                );
+            }
+            SourceToken::Group { tokens, .. } => assert_no_include_splice(tokens, file),
+            _ => {}
+        }
+        index += 1;
+    }
 }

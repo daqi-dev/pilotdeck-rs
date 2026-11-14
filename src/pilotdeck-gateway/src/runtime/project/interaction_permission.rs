@@ -136,6 +136,7 @@ impl InteractionPermission {
             options,
             closed: AtomicBool::new(false),
         });
+        let mut discarded = None;
         if let Some(previous) = state.turns.insert(session, run.clone())
             && let Some(pending) = previous.close()
             && pending > 0
@@ -146,8 +147,8 @@ impl InteractionPermission {
                 previous.session.clone(),
                 previous.run_id.clone(),
             );
-            notice.log();
-            state.notices.push(notice);
+            state.notices.push(notice.clone());
+            discarded = Some(notice);
         }
         let turn = TurnPermission {
             state: self.state.clone(),
@@ -155,6 +156,13 @@ impl InteractionPermission {
         };
         router.permission =
             port::Handler::new(catalog, Arc::new(turn.clone()), Arc::new(turn.clone()));
+        // #3152 item 12: the stderr line leaves the state lock — a
+        // blocking `write(2)` under it parks every waiter of the
+        // permission state.
+        drop(state);
+        if let Some(notice) = discarded {
+            notice.log();
+        }
         Ok(turn)
     }
     pub fn close(&self) {
@@ -177,9 +185,12 @@ impl InteractionPermission {
                 ));
             }
         }
+        state.notices.extend(notices.iter().cloned());
+        // #3152 item 12: the stderr lines leave the state lock — every
+        // pushed notice is recorded first, then logged outside it.
+        drop(state);
         for notice in notices {
             notice.log();
-            state.notices.push(notice);
         }
     }
     pub fn is_closed(&self) -> bool {
@@ -249,6 +260,7 @@ impl TurnPermission {
     }
     pub fn close(&self) {
         let mut state = lock(&self.state);
+        let mut discarded = None;
         if let Some(pending) = self.run.close()
             && pending > 0
         {
@@ -258,8 +270,8 @@ impl TurnPermission {
                 self.run.session.clone(),
                 self.run.run_id.clone(),
             );
-            notice.log();
-            state.notices.push(notice);
+            state.notices.push(notice.clone());
+            discarded = Some(notice);
         }
         if state
             .turns
@@ -267,6 +279,11 @@ impl TurnPermission {
             .is_some_and(|r| Arc::ptr_eq(r, &self.run))
         {
             state.turns.remove(&self.run.session);
+        }
+        // #3152 item 12: the stderr line leaves the state lock.
+        drop(state);
+        if let Some(notice) = discarded {
+            notice.log();
         }
     }
     /// Take this session's pending-discard notices for next-turn delivery.
