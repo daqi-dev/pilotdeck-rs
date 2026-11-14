@@ -181,10 +181,38 @@ def placeholder_in(text):
     return m.group(0) if m else None
 
 
+# fix-r24（#3074 修 1）：`_gate_module()` 从本文件后段（FIXTYPE_VALUES 取件处，原 :1214）
+# 整体上移到这里——scope 关键字片段（SCOPEISH，:187）与 SCOPE_BODY 前缀改经
+# `_marker_kw_re()` 派生，模块级取件须先于使用点定义；函数体一字未改。
+def _gate_module():
+    """懒加载同目录 check-pr-gate.py 取字面三值常量（#3056 fix-r1，DS sibling#8）：run-review-roles.py
+    的 _gate_module() 是先例——三值改名 / 加值时任务书闸门与 PR 闸门用同一对象，不再各写一份
+    （各写一份会在改名后一侧放行另一侧永久拒收，假 FAIL）。加载失败让位后续 FIXTYPE_RE 检查报错
+    （fail-closed：拿不到正本就不做静默放行）。"""
+    import importlib.util
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-pr-gate.py")
+    spec = importlib.util.spec_from_file_location("pdrs_gate_for_taskbook_3056", p)
+    if spec is None or spec.loader is None:
+        print(f"check-taskbook-segments: 加载不了 {p}（字面三值的正本），fail-closed 退出", file=sys.stderr)
+        raise SystemExit(2)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 # ---- scope 行 --------------------------------------------------------------
 # 容忍大小写、`pdrs-scope` / `pdrs_scope` / `pdrs scope`、半角与全角冒号、半角与全角连字符、冒号前后空格。
-DASHES = r"[\s_\-－—‐‑]"
-SCOPEISH = re.compile(rf"pdrs{DASHES}*scope", re.I)
+# fix-r24 修 1（#3074，DS boundary#1 ≡ MM boundary#1/sibling#1 双撞，词表族第 6 次复发）：
+# scope 关键字的拼法族不再本文件手抄（旧 `DASHES` 常量 + 内联 `pdrs{DASHES}*scope`）——从
+# check-pr-gate.py 单源词表经 `_marker_kw_re("pdrs-scope:")` 派生（族正则
+# `(?i:pdrs[\s_\-－—‐‑]*scope)`，DASHES 类与旧常量逐字同源；大小写容忍收进族内 scoped
+# `(?i:...)`，外层 re.I 保留成冗余无害）。旧两侧各写一份：PR 侧借文词表只认精确
+# `pdrs-scope:`，本文件 SCOPEISH 自始认容错拼写 ⇒ `<!-- pdrs_scope: …` 这类借文在
+# PR 侧假 PASS（arb-r24.py 六形在案）。冒号不进族正则——SCOPE_BODY 的冒号槽
+# `\s*(?:[:：]\s*)?` 原样留在族外（族内再带 `[:：]?` 会成双冒号槽，`pdrs-scope:  : x`
+# 的 rest 从 `: x` 变 `x`＝r19 位形钉违反、合法声明面行为变化，任务书停点触发）。
+# 单源钉＝test-review-roles.py fix-r24 块（SCOPEISH.pattern ＝ 派生式整条相等）。
+SCOPEISH = re.compile(_gate_module()._marker_kw_re("pdrs-scope:"), re.I)
 # fix-r22（#3074，MM sibling#4）：死常量 COMMENT（`<!--(.*?)-->`，re.S）删除——已被
 # 下方 `_iter_comments` 线性 find 扫描取代（全仓 grep 无引用，只余 _iter_comments
 # docstring 的历史提法，一并改写不再点名常量）。
@@ -257,7 +285,8 @@ def mask_inline_code(text):
 # 不变（字母表全枚举 1,567,636 串零差异），失败路径每步回溯 O(1)＝线性（实测 0.0028 s）。
 # `:526` 的「body 含换行须报错」判据不受影响：跨行桥形照常命中（`\s*` 含 \n）才走到
 # 该报错，v2 前后同判（见上面探针形状清单 `pdrs-scope:\nfiles=2` 等）。
-SCOPE_BODY = re.compile(rf"^\s*pdrs{DASHES}*scope\s*(?:[:：]\s*)?(?P<rest>(?:[^\s\n][^\n]*)?)$", re.I)
+SCOPE_BODY = re.compile(r"^\s*" + _gate_module()._marker_kw_re("pdrs-scope:")
+                       + r"\s*(?:[:：]\s*)?(?P<rest>(?:[^\s\n][^\n]*)?)$", re.I)
 # 关键字与数字之间允许标点（`工作量：3 人日` / `预计,2 人日`）；「估计」要单列（裸「估」后跟「计」不匹配）。
 # `需(要|投入)?` 跟着关键词：`预计需要 2 人日` / `共需投入 3 人日` 修前接不上数字，人日证据整路丢掉
 # → 退到 `.rs` 回退把大包判成小包（gate19 MiniMax boundary P2）。
@@ -1211,21 +1240,8 @@ def check_segments(text):
 # 非修复轮——PR 侧负控钉死），fullmatch 于路径段等价于词边界匹配。
 
 
-def _gate_module():
-    """懒加载同目录 check-pr-gate.py 取字面三值常量（#3056 fix-r1，DS sibling#8）：run-review-roles.py
-    的 _gate_module() 是先例——三值改名 / 加值时任务书闸门与 PR 闸门用同一对象，不再各写一份
-    （各写一份会在改名后一侧放行另一侧永久拒收，假 FAIL）。加载失败让位后续 FIXTYPE_RE 检查报错
-    （fail-closed：拿不到正本就不做静默放行）。"""
-    import importlib.util
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-pr-gate.py")
-    spec = importlib.util.spec_from_file_location("pdrs_gate_for_taskbook_3056", p)
-    if spec is None or spec.loader is None:
-        print(f"check-taskbook-segments: 加载不了 {p}（字面三值的正本），fail-closed 退出", file=sys.stderr)
-        raise SystemExit(2)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
+# fix-r24（#3074 修 1）：`_gate_module()` 定义已上移至 scope 段（SCOPEISH/SCOPE_BODY
+# 的派生点），本段只留取件行——函数体见上。
 
 # 修法类型只接受字面三值（卡「收口证明义务」节）；「结构派生/自动派生」等子类字样一律写 结构性。
 # 常量不复制：就是 check-pr-gate.py 的同一对象（见 _gate_module；配对测试断言 is 同一）。
@@ -1251,7 +1267,10 @@ class FixRoundOverflow(Exception):
 # FIXTYPE_VALUES/RESIDUAL_RE 的单源手法；两份字面拷贝会在改标记语法时一侧判「缺」
 # 另一侧认声明，仓内 marker 关键字全仓只此一份）。配对一致性钉在 test-review-roles.py
 # fix-r23 块（FIXTYPE_RE.pattern ＝ 派生式整条相等）。
-FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*" + _gate_module()._marker_kw("pdrs-fixtype:")
+# fix-r24（#3074 修 1）：取件从 `_marker_kw()` 升级为 `_marker_kw_re()`（扫描片段）——
+# pdrs-fixtype: 条目当前无族升级，两函数返回同值（字面零收窄）；条目日后升级为拼法族时
+# 两侧自动同步（r24 教训：r23 只钉「字面在表里」，没钉「扫描片段跟族走」）。
+FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*" + _gate_module()._marker_kw_re("pdrs-fixtype:")
                         + r"(.*?)-->[ \t]*$", re.M)
 # residual 标记正则不复制：PR 侧 check-pr-gate.py 的 RESIDUAL_MARKER 是源（#3056 fix-r2 修 7，
 # DS simplify#1 / MM2 sibling#5）——两份同字面拷贝会在改标记语法时一侧判「缺」另一侧认声明。
@@ -1340,7 +1359,12 @@ def check_fix_fields(body, fix_round):
     return problems
 
 
-SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> est_min=<待填> -->
+# fix-r24 修 3（#3074，P2a——MM sibling#2 + DS sibling#4）：产出侧 marker 字面量不再手抄——
+# 骨架里的 pdrs-scope 行 / fixtype 行 / residual 行与 run-review-roles.py 的结果块 marker
+# 同经 `_marker_kw()` 派生（canonical 字面；扫描片段才走 `_marker_kw_re()`，产出给人看的
+# 字面量保持精确拼写——本函数返回值即旧手抄字面，派生后 SKELETON 逐字节不变）。改标记
+# 关键字时骨架与结果块自动同步，不再出现「闸门已改、骨架还在教人写旧关键字」。
+SKELETON = f"""<!-- {_gate_module()._marker_kw('pdrs-scope:')} files=<待填> lines=<待填> modules=<待填> est_min=<待填> -->
 
 ## 分段交付（大包必填：每段一个可独立收货的交付）
 
@@ -1358,14 +1382,14 @@ SKELETON = """<!-- pdrs-scope: files=<待填> lines=<待填> modules=<待填> es
 """
 
 # 骨架是填空题不是答案：修复轮字段段用占位形态写，原样贴进修复轮任务书会被打回（缺字段 / 占位符）。
-SKELETON += """修复轮任务书（路径在 `_tmp/<日期>-issue-<N>/fix-rN/task.md`）另须两件（#3056 长尾收口卡）：
+SKELETON += f"""修复轮任务书（路径在 `_tmp/<日期>-issue-<N>/fix-rN/task.md`）另须两件（#3056 长尾收口卡）：
 
-`<!-- pdrs-fixtype: <枚举式|结构性|不适用> <论证> -->` —— 三选一字面值：`枚举式` 附边界论证
+`<!-- {_gate_module()._marker_kw('pdrs-fixtype:')} <枚举式|结构性|不适用> <论证> -->` —— 三选一字面值：`枚举式` 附边界论证
 （词表封闭性论证，或反向负例清单证明修饰窗/边界不吞真发现）；`结构性` 附词表核验（须核到测试真实
 遍历的词表）；`不适用` 仅当 diff 只触及文档类路径（以 scripts/ci_scope.py 的分类语义为唯一口径，
 其白名单只有 `state/board.md` 一个精确路径）。
 
-`<!-- pdrs-residual: <上轮残差判读> -->` —— fix-rN 的 N≥4 必填：上一轮的洞是边界暴露还是修法
+`<!-- {_gate_module()._marker_kw('pdrs-residual:')} <上轮残差判读> -->` —— fix-rN 的 N≥4 必填：上一轮的洞是边界暴露还是修法
 本身缺陷；无上一轮时写字面值 `无上一轮`。
 """
 

@@ -678,9 +678,13 @@ def main() -> int:
     paths_kv = f" paths={','.join(a.paths)}" if a.paths else ""
     fixtype_kv = f" fixtype={a.fixtype}" if a.fixtype else ""
     rerun_kv = " rerun=true" if a.rerun else ""
+    # fix-r24 修 3（#3074，P2a——MM sibling#2 + DS sibling#4）：结果块 marker 的关键字不再手抄
+    # `pr-gate:v1`——经 `_gate_module()._marker_kw()` 派生（canonical 字面，与 check-pr-gate.py
+    # 单源词表同步；产出侧走 `_marker_kw` 而非 `_marker_kw_re`，给人看的字面保持精确拼写）。
+    # 任务书骨架（check-taskbook-segments.py 的 SKELETON）同轮同款派生。
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- pr-gate:v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv}{fixtype_kv}{rerun_kv} runner={a.runner} model={model} readonly=tools -->", "",
+        f"<!-- {_gate_module()._marker_kw('pr-gate:')}v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv}{fixtype_kv}{rerun_kv} runner={a.runner} model={model} readonly=tools -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:
