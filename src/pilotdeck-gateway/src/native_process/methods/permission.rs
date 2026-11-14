@@ -104,7 +104,13 @@ impl Requests {
                 // `\0\0raw:undefined`, never `""`). A spelling that throws (a
                 // too-deep array) is a reference key in TS; Rust cannot store
                 // it, so it is skipped like the other read faces (registered
-                // R15 divergence family). The response keeps the TS probe
+                // R15 divergence family). The write face inherits R15 差异①
+                // 的标签碰撞/结构键控 unchanged (#2960 fix-r6 增量
+                // boundary#7): the grant Map is one more router-shaped map,
+                // so a literal `"\0\0raw:null"` string grant collides with
+                // the null grant's tag exactly like the read faces do (no
+                // new divergence, no upgrade to the registration). The
+                // response keeps the TS probe
                 // shape (`{granted:true, entry}`) either way
                 // (`coordinator.rs:grant_session_permission`).
                 let owner = crate::js_value::router_key_of(params.get("sessionKey")).ok();

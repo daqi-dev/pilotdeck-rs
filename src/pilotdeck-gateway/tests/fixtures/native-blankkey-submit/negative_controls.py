@@ -38,10 +38,17 @@ test that must die:
   critical section and is once per path per process, MM src2
   concurrency#1).
 - `registry-skip-writer-silent` (fix-merge-r4, 条2 / MM sibling#1 b 档按
-  P1): only the `console_log_line` write is deleted — the counter still
-  advances, so every counter assertion stays green while the line never
-  reaches an operator. Bound to the re-exec'd stderr probe test, whose
-  parent owns the child's stderr pipe and demands the line be there.
+  P1, fix-r6 增量 DS boundary#1/#2 re-anchored): only the stderr write is
+  deleted — the counter still advances, so every counter assertion stays
+  green while the line never reaches an operator. Bound to the re-exec'd
+  stderr probe test, whose parent owns the child's stderr pipe and counts
+  the line (the probe branch is token-gated: a stale env alone can never
+  divert the parent into the child half).
+- `registry-throttle-removed` (fix-r6 增量, DS boundary#2 ≡ concurrency#2
+  P1 / #3197): the once-per-path-per-process throttle is reverted
+  (`already_reported` answers false), so the probe child's second triggering
+  read logs again and the parent's exact count of 1 goes red — the old
+  parent only `contains`-ed, so this half had no kill point.
 - `registry-band-leaf-depth` (fix-r6, review sibling#2): the band criterion
   reverts to the old leaf/node-depth caliber, which under-reports the
   empty-innermost-array shape by exactly one, so the band's first
@@ -271,23 +278,42 @@ mutations = [
      '#2692 the production counter moved — the skip is not a test-only observable'),
     # fix-merge-r4 (条2 / MM sibling#1, b 档按 P1): the writer half of the
     # signal surface — `registry-skip-silent` used to cover counter + line in
-    # one span, so deleting only the `console_log_line` call kept every
-    # counter assertion green while the operator's line vanished. The bound
-    # test re-execs this very test binary with the probe env var, the child
-    # performs one read that skips, and the parent — owning the child's
-    # stderr pipe — demands the throttled line be there (#2301 probe shape).
+    # one span, so deleting only the write kept every counter assertion
+    # green while the operator's line vanished. The bound test re-execs this
+    # very test binary behind a probe token (fix-r6 增量 DS boundary#1: env
+    # `probe:<token>` + an argv positional must name the same token, the
+    # #2301 child_probe_token shape — a stale env alone can no longer divert
+    # the parent into the child half), the child performs reads that skip,
+    # and the parent — owning the child's stderr pipe — counts the line.
+    # fix-r6 增量 (DS concurrency#3 ≡ boundary#3): re-anchored to the
+    # write-then-mark shape (the old console_log_line span left with the
+    # writer call); the mutation deletes only the `writeln!` while keeping
+    # the mark, so the throttle state looks healthy but no line reaches
+    # the pipe.
     ('registry-skip-writer-silent', REGISTRY,
-     '    crate::native_process::channels::console_log_line(\n'
-     '        &mut std::io::stderr(),\n'
-     '        &format!(\n'
-     '            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",\n'
-     '            path.display(),\n'
-     '            count\n'
-     '        ),\n'
-     '    );',
-     '    let _ = (path, count);',
+     '    let written = !inject_failure && writeln!(stderr, "{line}").is_ok();\n',
+     '    let _ = (stderr, line);\n'
+     '    let written = !inject_failure;\n',
      writer_test,
      '#2692 the skip\'s stderr signal never reached the pipe'),
+    # fix-r6 增量 (DS boundary#2 ≡ concurrency#2, P1 / #3197): the throttle
+    # half — the parent used to `contains`-only, so reverting the
+    # once-per-path-per-process set kept the probe green. The mutation makes
+    # `already_reported` answer false, the probe child's two triggering reads
+    # both log, and the parent's exact-count assertion (1) goes red.
+    ('registry-throttle-removed', REGISTRY,
+     'fn already_reported(path: &Path) -> bool {\n'
+     '    let reported = UNREKEYABLE_REPORTED\n'
+     '        .lock()\n'
+     '        .unwrap_or_else(PoisonError::into_inner);\n'
+     '    reported.contains(path)\n'
+     '}\n',
+     'fn already_reported(_path: &Path) -> bool {\n'
+     '    false\n'
+     '}\n',
+     writer_test,
+     '#2692 the skip signal is once per path per process'),
+
     # fix-r6 (review sibling#2): the band criterion mutates back to the old
     # leaf/node-depth caliber (container_depth), which counts the deepest
     # NODE depth — the empty-innermost-array shape under-reports by exactly
@@ -376,6 +402,9 @@ LITERAL_ANCHORS = [
     # fix-merge-r4 (条2): the writer-half row's own assertion — the stderr
     # probe's second negative_assert.
     (REGISTRY_TESTS, '#2692 the skip\'s stderr signal never reached the pipe'),
+    # fix-r6 增量 (DS boundary#2): the throttle row's own assertion —
+    # the probe parent's exact-count negative_assert.
+    (REGISTRY_TESTS, '#2692 the skip signal is once per path per process'),
     (READ_TESTS, '#2692 the miss echoes the raw request value'),
     # fix-r6 (review sibling#1): the deep-echo test's caliber pin.
     (READ_TESTS, '#2692 the capped provider-body serializer refuses the same value'),
@@ -399,6 +428,7 @@ EXPECTED_NAMES = (
     'registry-skip-reverted',
     'registry-skip-silent',
     'registry-skip-writer-silent',
+    'registry-throttle-removed',
     'registry-band-leaf-depth',
     'echo-drops-raw-key',
     'echo-capped-serializer',

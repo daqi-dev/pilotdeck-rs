@@ -26,6 +26,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+// #2692 fix-r6: the fault-injection flag is #[cfg(test)]-only, so its type
+// import rides with it (a plain import would warn in the production build).
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+
 // RunRegistry.ts:43-44. `pub(crate)` so the tool-result spill wait
 // (`runtime/context/tool_budget.rs::SPILL_WAIT_TIMEOUT`, #637 fix-r4) can
 // derive from it instead of keeping a second 30 s copy that could drift.
@@ -837,33 +842,67 @@ fn report_unrekeyable(path: &Path, count: usize) {
     if count == 0 {
         return;
     }
-    let reported = first_report_for(path);
-    if !reported {
+    if already_reported(path) {
         return;
     }
-    // #2692 fix-merge (DS sibling#1, P1): the merge brought #2558's production
-    // `eprintln!` scan and this is a production path — `eprintln!` panics when
-    // the write fails (std behavior), so the skip signal itself could kill the
-    // read. Same non-panicking writer the other library call sites share
-    // (`production_tree_stays_eprintln_free` pins it).
-    crate::native_process::channels::console_log_line(
-        &mut std::io::stderr(),
-        &format!(
-            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
-            path.display(),
-            count
-        ),
+    // #2692 fix-r6 (DS 增量 concurrency#3 ≡ boundary#3, P2 a): the write now
+    // happens before the mark — `writeln!`'s Result decides whether the path
+    // enters the reported set, so a transient stderr failure (EPIPE, a closed
+    // fd) retries on the next read instead of silencing the path for the rest
+    // of the process (the old mark-first shape made "write failed" and
+    // "already reported" indistinguishable). The mark stays out of every
+    // lock the write could hold (fix-merge-r4's out-of-lock property), and
+    // the write keeps the #2558 non-panicking family contract: the error is
+    // consumed here, never unwrapped (`production_tree_stays_eprintln_free`
+    // pins the family; the writer call site itself moved inline so its
+    // Result can be observed).
+    let mut stderr = io::stderr();
+    let line = format!(
+        "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
+        path.display(),
+        count
     );
+    // Test-only fault injection (see `REPORT_WRITE_FAILURES`); a production
+    // build never injects, so the write's own Result is the whole condition.
+    #[cfg(test)]
+    let inject_failure = REPORT_WRITE_FAILURES.load(Ordering::Relaxed);
+    #[cfg(not(test))]
+    let inject_failure = false;
+    let written = !inject_failure && writeln!(stderr, "{line}").is_ok();
+    if written {
+        mark_reported(path);
+    }
 }
 
-/// Inserts `path` into [`UNREKEYABLE_REPORTED`] and returns whether this call
-/// is the first for it. The set lock is released before any write happens, so
-/// a blocked stderr never holds it.
-fn first_report_for(path: &Path) -> bool {
+/// Whether `path`'s skip signal has already been written by this process
+/// (the throttle set's read half). The lock is never held across the write.
+fn already_reported(path: &Path) -> bool {
+    let reported = UNREKEYABLE_REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    reported.contains(path)
+}
+
+/// Records that `path`'s skip signal has been written — called only after a
+/// successful write, so a failed one retries on the next read.
+fn mark_reported(path: &Path) {
     let mut reported = UNREKEYABLE_REPORTED
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    reported.insert(path.to_path_buf())
+    reported.insert(path.to_path_buf());
+}
+
+/// #2692 fix-r6 (DS 增量 concurrency#3): test-only fault injection for
+/// [`report_unrekeyable`]'s write — forced "failures" prove the retry
+/// contract in-process (no mark on a failed write; the next read retries).
+#[cfg(test)]
+pub(crate) static REPORT_WRITE_FAILURES: AtomicBool = AtomicBool::new(false);
+
+/// #2692 fix-r6: test-only read of the throttle set, so the retry test can
+/// observe whether a path is marked without reaching for the private set.
+#[cfg(test)]
+pub(crate) fn unrekeyable_reported(path: &Path) -> bool {
+    already_reported(path)
 }
 
 /// `${projectKey ?? ""}\0${sessionKey}\0${runId}` (RunRegistry.ts:70).

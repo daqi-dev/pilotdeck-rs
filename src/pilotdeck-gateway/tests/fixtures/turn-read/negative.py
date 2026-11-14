@@ -284,6 +284,15 @@ def check_row_pins(rows):
     if unpinned:
         refuse('#2692 turn-read shared-test rows missing from '
                f'ROW_PINS: {", ".join(unpinned)}')
+    # fix-r6 增量 (DS simplify#1): the completeness refuse — a name in the
+    # roster with no pin row used to stay green because the shared-test
+    # reverse rule only ever widens the pool, so the row could sit unpinned
+    # in both tables at once. Every EXPECTED_NAMES entry must now be pinned
+    # (ROW_PINS stays a literal; this refuses, never rewrites).
+    missing = sorted(set(EXPECTED_NAMES) - set(ROW_PINS))
+    if missing:
+        refuse(f'#2692 turn-read roster entries missing from ROW_PINS: '
+               f'{", ".join(missing)}')
 
 
 args = sys.argv[1:]

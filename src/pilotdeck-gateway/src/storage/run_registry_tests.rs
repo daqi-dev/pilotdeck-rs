@@ -1181,18 +1181,50 @@ fn unrekeyable_skips_advances_in_production_on_every_read() {
 // `std::io::stderr()` writes bypass libtest's capture, so the line is
 // observed in a re-exec'd child of this very test binary (the #2301
 // failing-console probe shape): the child takes the probe branch, performs
-// one read that skips, and the parent — which owns the child's stderr pipe —
+// reads that skip, and the parent — which owns the child's stderr pipe —
 // demands the line be there.
+//
+// fix-r6 (DS 增量 boundary#1, P1): the probe branch is taken only when the
+// env value (`probe:<token>`) and an argv positional name the same fresh
+// token — a stale marker left in some earlier run's environment can never
+// match this run's argv, so the harness itself can never be steered into
+// the probe branch (the #2301 / #2558 / #2434 probe-token shape; the old
+// env-existence gating let a residual env alone divert the parent into the
+// child half, which returns green without ever checking the stderr line —
+// the writer half's fake PASS).
+//
+// fix-r6 (DS 增量 boundary#2 ≡ concurrency#2, P1 / #3197): the child now
+// performs TWO triggering reads of the same path and the parent counts the
+// line — exactly once pins the once-per-path-per-process throttle (the old
+// parent only `contains`-ed, so reverting the throttle stayed green).
 const UNREKEYABLE_STDERR_PROBE: &str = "PDRS_2692_UNREKEYABLE_STDERR_PROBE";
+
+/// The probe branch's token: `Some` only in the re-exec'd child this run
+/// spawned — the env value must spell `probe:<token>` and the same token
+/// must ride this process's argv (the #2301 `child_probe_token` shape).
+fn unrekeyable_stderr_probe_token() -> Option<String> {
+    let value = std::env::var_os(UNREKEYABLE_STDERR_PROBE)?
+        .to_str()?
+        .to_owned();
+    let (mode, token) = value.split_once(':')?;
+    if mode != "probe" || token.is_empty() {
+        return None;
+    }
+    std::env::args()
+        .any(|argument| argument == token)
+        .then(|| token.to_owned())
+}
 
 #[test]
 fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
-    if std::env::var_os(UNREKEYABLE_STDERR_PROBE).is_some() {
-        // The child half: one in-band deep record, one read that skips. The
-        // skip's own `console_log_line` lands on this process's real stderr
-        // — the pipe the parent holds — so reaching the end quietly is all
-        // this half has to do (the parent asserts the line). Opening alone
-        // is the first (and, once-per-path, only) signal this child emits.
+    if unrekeyable_stderr_probe_token().is_some() {
+        // The child half: one in-band deep record, TWO reads that skip. The
+        // skip's own line lands on this process's real stderr — the pipe the
+        // parent holds — so reaching the end quietly is all this half has
+        // to do (the parent counts the line). Opening alone is the first
+        // signal this child emits; the `get` re-reads the snapshot, so the
+        // once-per-path-per-process throttle is what keeps the second read
+        // quiet — exactly what the parent's count pins.
         let scratch = Scratch::new();
         let path = scratch.path();
         let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
@@ -1209,39 +1241,134 @@ fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
             1,
             "#2692 the probe's deep record sits inside the fold band, so the read skips it"
         );
+        assert!(
+            registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+            "#2692 the probe's second read also skips the deep record"
+        );
         return;
     }
-    let child = std::process::Command::new(
+    // A fresh token per spawn: the argv positional carries it, and the
+    // child's own probe branch demands the same pair.
+    let token = format!("2692-unrekeyable-probe-{}", std::process::id());
+    let mut child = std::process::Command::new(
         std::env::current_exe().expect("#2692 the probe binary path"),
     )
     .args([
         "--exact",
-        // `--exact` matches the full libtest path, not the bare name.
+        // `--exact` matches the full libtest path, not the bare name; the
+        // token positional matches no test (the #2301 probe precedent).
         "storage::run_registry_tests::unrekeyable_skip_logs_the_stderr_signal_once_per_path",
         // libtest's capture must stay off so the child's real stderr carries
         // the line to the parent's pipe (the #2301 probe precedent).
         "--nocapture",
         "--test-threads=1",
+        &token,
     ])
     .env_clear()
-    .env(UNREKEYABLE_STDERR_PROBE, "probe")
+    .env(UNREKEYABLE_STDERR_PROBE, format!("probe:{token}"))
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::piped())
     .spawn()
     .expect("#2692 the stderr-line probe spawns");
-    let output = child
-        .wait_with_output()
-        .expect("#2692 the stderr-line probe is waitable");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // fix-r6 (DS 增量 concurrency#1, P2 a): a bounded wait — 30 s on the
+    // child, then kill + reap before the named failure, with the partial
+    // console embedded (the #2301 bounded-wait precedent; the old
+    // `wait_with_output` hung forever on a stuck child).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait() {
+            Ok(status) => match status {
+                Some(status) => break status,
+                None => {}
+            },
+            Err(error) => panic!("#2692 the stderr-line probe is not waitable: {error}"),
+        }
+        if std::time::Instant::now() >= deadline {
+            let mut partial = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut partial);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            crate::negative_assert!(
+                false,
+                "#2692 the stderr-line probe child did not finish within 30s (partial stderr):\n{partial}"
+            );
+            unreachable!("negative_assert! panics");
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
     crate::negative_assert!(
-        output.status.success(),
-        "#2692 the stderr-line probe itself must pass (exit {}):\n{stderr}",
-        output.status
+        status.success(),
+        "#2692 the stderr-line probe itself must pass (exit {status}):\n{stderr}"
     );
+    let signal =
+        "skipped 1 un-rekeyable record(s); the next persist rewrites the file without them";
+    let count = stderr.matches(signal).count();
     crate::negative_assert!(
-        stderr.contains(
-            "skipped 1 un-rekeyable record(s); the next persist rewrites the file without them"
-        ),
+        count >= 1,
         "#2692 the skip's stderr signal never reached the pipe — the writer half was deleted:\n{stderr}"
     );
+    crate::negative_assert!(
+        count == 1,
+        "#2692 the skip signal is once per path per process — the second triggering read must stay quiet (found {count} lines):\n{stderr}"
+    );
+}
+
+// #2692 fix-r6 (DS 增量 concurrency#3 ≡ boundary#3, P2 a): the report mark
+// is taken only after the write succeeds. A forced-failed first write must
+// leave the path unmarked (so the next read retries), the retried write must
+// mark it, and a further read must stay quiet — the write-then-mark order,
+// proven in-process through the #[cfg(test)] fault injection.
+#[test]
+fn unrekeyable_report_retries_after_a_failed_write() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
+    fs::write(
+        &path,
+        format!(
+            r#"{{"schemaVersion":1,"records":[{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+        ),
+    )
+    .unwrap();
+    // First read with the write forced to fail: no line, and — the contract
+    // under test — no mark, so the failure is not mistaken for "reported".
+    super::run_registry::REPORT_WRITE_FAILURES.store(true, Ordering::SeqCst);
+    let registry = FileRunRegistry::open(&path).unwrap();
+    assert_eq!(
+        registry.skipped_unrekeyable(),
+        1,
+        "#2692 the first read skips the deep record even with the report write failing"
+    );
+    crate::negative_assert!(
+        !super::run_registry::unrekeyable_reported(&path),
+        "#2692 a failed report write must not mark the path as reported"
+    );
+    // Second read with the write healthy again: the retry lands the line
+    // and takes the mark.
+    super::run_registry::REPORT_WRITE_FAILURES.store(false, Ordering::SeqCst);
+    assert!(
+        registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+        "#2692 the second read still skips the deep record"
+    );
+    crate::negative_assert!(
+        super::run_registry::unrekeyable_reported(&path),
+        "#2692 the retried report write marks the path"
+    );
+    // Third read: the throttle holds — the mark from the successful retry
+    // quiets this one (the once-per-path half, same set).
+    assert!(
+        registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+        "#2692 the third read still skips the deep record"
+    );
+    crate::negative_assert!(
+        super::run_registry::unrekeyable_reported(&path),
+        "#2692 the mark survives further reads (the throttle set is stable)"
+    );
+    super::run_registry::REPORT_WRITE_FAILURES.store(false, Ordering::SeqCst);
 }
