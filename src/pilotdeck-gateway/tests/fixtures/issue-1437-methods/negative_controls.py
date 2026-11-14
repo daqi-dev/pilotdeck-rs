@@ -226,15 +226,15 @@ mutations = [
      '                    "UNWIRED_PERMISSION_LIST",',
      TEST + 'permission_blank_session_key_splits_by_surface',
      ['#1437 permission_list rejects a blank sessionKey', '#1437 permission_list blank sessionKey keeps the domain code']),
-    # grant keys the rule map by the raw sessionKey (#1465): only the exact
-    # `""` alias is suppressed, so a whitespace key must land in its own bucket
-    # and must never reach the sessionless rule set.
-    ('grant-whitespace-bucket', PERMISSION,
-     '                    .filter(|value| !value.units().is_empty());',
-     '                    .filter(|value| value.units().is_empty());',
+    # grant keys the rule map by the router-domain sessionKey (#1465 / #2960
+    # fix-r5): every raw-value spelling is its own bucket, so folding the
+    # owner to a constant empties every bucket but `""` — the whitespace key's
+    # own-bucket assertion fires first (its expected-0 alias assertion would
+    # flip to 1 as well).
+    ('grant-owner-folds-empty', PERMISSION,
+     '                let owner = crate::js_value::router_key_of(params.get("sessionKey")).ok();',
+     '                let owner = Some(JsString::from(""));',
      TEST + 'permission_blank_session_key_splits_by_surface',
-     # Inverting the filter sends the whitespace key to the sessionless bucket,
-     # so the own-bucket assertion fires before the alias one.
      ['#1437 grant keeps a whitespace sessionKey in its own bucket',
       '#1437 grant whitespace sessionKey must not alias the sessionless bucket']),
 ]

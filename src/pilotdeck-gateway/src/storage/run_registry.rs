@@ -13,14 +13,23 @@ use crate::{js_value, metadata::object};
 use pilotdeck_protocol::{CodecError, JsObject, JsString, JsValue, parse_json, stringify_json};
 use regex::Regex;
 use std::{
+    collections::HashSet,
     fmt,
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex, PoisonError},
+    sync::{
+        Arc, LazyLock, Mutex, PoisonError,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+// #2692 fix-r6: the fault-injection flag is #[cfg(test)]-only, so its type
+// import rides with it (a plain import would warn in the production build).
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 
 // RunRegistry.ts:43-44. `pub(crate)` so the tool-result spill wait
 // (`runtime/context/tool_budget.rs::SPILL_WAIT_TIMEOUT`, #637 fix-r4) can
@@ -160,10 +169,15 @@ impl RunRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RunAcceptInput {
     pub run: RunRef,
     pub request_material: JsString,
+    /// The record body keeps the raw `sessionKey` spelling (TS's `...input`
+    /// spread in RunRegistry.ts:221-229): JSON `null` stays `null` on disk
+    /// while the dedupe key and `RunRef::session_key` spell `"null"`. JSON
+    /// encoding drops `Undefined`, matching an absent TS property.
+    pub session_key_raw: JsValue,
 }
 
 /// A stored record exactly as persisted, including fields this port does not
@@ -209,6 +223,11 @@ struct Snapshot {
     /// Keyed like the TS Map: first insertion keeps its position on replace.
     records: JsObject,
     events: JsObject,
+    /// #2692 fix-r1: records `read_snapshot` skipped as un-rekeyable — their
+    /// key template cannot be re-spelled within the shared depth bound. They
+    /// stay invisible to every read (a mutation that persists rewrites the
+    /// file without them); the counter keeps the skip observable for tests.
+    unrekeyable: usize,
 }
 
 /// TS `FileRunRegistry`. Every mutation takes the in-process chain, then the
@@ -278,6 +297,15 @@ impl FileRunRegistry {
     pub fn path(&self) -> &Path {
         &self.path
     }
+    /// #2692 test support: how many records the current disk read skipped as
+    /// un-rekeyable (`Snapshot::unrekeyable`). Reads reload, like every other
+    /// read face, so this counts what the file holds now.
+    #[cfg(test)]
+    pub(super) fn skipped_unrekeyable(&self) -> usize {
+        read_snapshot(&self.path)
+            .map(|snapshot| snapshot.unrekeyable)
+            .unwrap_or(0)
+    }
     /// #1370: the controlled stimulus this registry's persists witness, so the
     /// async port adapter can capture the same entry once at its own
     /// construction.
@@ -305,10 +333,7 @@ impl FileRunRegistry {
                 let now = now()?;
                 // InProcessGateway.ts:906-911 key order, then RunRegistry.ts:221-229.
                 let mut record = JsObject::new();
-                record.insert(
-                    "sessionKey".into(),
-                    JsValue::String(input.run.session_key.clone()),
-                );
+                record.insert("sessionKey".into(), input.session_key_raw.clone());
                 if let Some(project) = &input.run.project_key {
                     record.insert("projectKey".into(), JsValue::String(project.clone()));
                 }
@@ -419,8 +444,13 @@ impl FileRunRegistry {
 
     /// RunRegistry.ts:266-272.
     pub fn get(&self, run: &RunRef) -> Result<Option<RunRecord>> {
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let snapshot = read_snapshot(&self.path)?;
+        let snapshot = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            read_snapshot(&self.path)?
+        };
+        // fix-merge-r4 (MM src2 concurrency#1): the skip signal is emitted
+        // after the chain guard drops, never inside it.
+        report_unrekeyable(&self.path, snapshot.unrekeyable);
         Ok(snapshot
             .records
             .get_key(&run.key())
@@ -438,8 +468,13 @@ impl FileRunRegistry {
         after_seq: Option<f64>,
         limit: Option<f64>,
     ) -> Result<Vec<JsValue>> {
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let snapshot = read_snapshot(&self.path)?;
+        let snapshot = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            read_snapshot(&self.path)?
+        };
+        // fix-merge-r4 (MM src2 concurrency#1): the skip signal is emitted
+        // after the chain guard drops, never inside it.
+        report_unrekeyable(&self.path, snapshot.unrekeyable);
         let key = run.key();
         if snapshot.records.get_key(&key).is_none() {
             return Ok(vec![]);
@@ -521,24 +556,32 @@ impl FileRunRegistry {
         operation: impl FnOnce(&mut Snapshot) -> Result<(T, bool)>,
         stimulus_key: Option<&str>,
     ) -> Result<T> {
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let _lock = self.acquire_file_lock()?;
-        let mut snapshot = read_snapshot(&self.path)?;
-        let (value, changed) = operation(&mut snapshot)?;
-        if changed {
-            let mut blocked = None;
-            if let Some(key) = stimulus_key
-                && let Some(stimulus) = self.stimulus.as_ref()
-                && stimulus.before_write(super::stimulus::Site::Registry, key)?
-                    == super::stimulus::Applied::Blocked
-            {
-                blocked = Some((stimulus, key));
+        let (value, unrekeyable) = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            let _lock = self.acquire_file_lock()?;
+            let mut snapshot = read_snapshot(&self.path)?;
+            let (value, changed) = operation(&mut snapshot)?;
+            if changed {
+                let mut blocked = None;
+                if let Some(key) = stimulus_key
+                    && let Some(stimulus) = self.stimulus.as_ref()
+                    && stimulus.before_write(super::stimulus::Site::Registry, key)?
+                        == super::stimulus::Applied::Blocked
+                {
+                    blocked = Some((stimulus, key));
+                }
+                self.persist(&snapshot)?;
+                if let Some((stimulus, key)) = blocked {
+                    stimulus.completed(super::stimulus::Site::Registry, key);
+                }
             }
-            self.persist(&snapshot)?;
-            if let Some((stimulus, key)) = blocked {
-                stimulus.completed(super::stimulus::Site::Registry, key);
-            }
-        }
+            (value, snapshot.unrekeyable)
+        };
+        // fix-merge-r4 (MM src2 concurrency#1, P1): the skip signal is emitted
+        // after both the chain mutex and the cross-process file lock have
+        // dropped — a full stderr pipe can no longer wedge every later
+        // registry read behind the locks.
+        report_unrekeyable(&self.path, unrekeyable);
         Ok(value)
     }
 
@@ -688,13 +731,60 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
                 "Cannot read properties of null (reading 'projectKey')",
             ));
         }
-        let key = run_key(
-            field(record, "projectKey"),
-            field(record, "sessionKey"),
-            field(record, "runId"),
-        )?;
+        let project = field(record, "projectKey");
+        let session = field(record, "sessionKey");
+        let run_id = field(record, "runId");
+        let key = match run_key(project, session, run_id) {
+            Ok(key) => key,
+            Err(error) => {
+                // #2692 fix-r1 (matrix row 15, ts-prodkey-probe e): TS keys
+                // each loaded record by the same template literal (RunRegistry
+                // .ts:70) and V8's recursive array join folds a nested
+                // container to `""` while it has stack left and throws
+                // "Maximum call stack size exceeded" when it does not. The
+                // boundary is 2560 levels fold, 2561 throws, measured on
+                // every load chain that reaches the template (fix-r7 probe,
+                // Node 22.22.0 / v8 12.4.254.21-node.33: the boot chain
+                // constructor → initialize → withFileLock → refreshFromDisk,
+                // and get / events / accept's own re-reads — the template
+                // runs in refreshFromDisk's post-await resumption frame,
+                // whose stack is caller-independent, and a 50-frame
+                // synchronous prefix under get() leaves it unmoved);
+                // `JSON.parse` itself is iterative and loads any depth. A
+                // record past the shared 2000-level spelling bound but
+                // inside that fold band is skipped here — TS keeps it under
+                // the folded `""` key, where a folded-spelling get returns
+                // it through the record clone up to 2557 levels and the
+                // clone throws the same RangeError from 2558 (fix-r7 probe,
+                // the get call shape), so "single record invisible, the
+                // rest readable" is the registered Rust-side shape
+                // (registered divergence). At or beyond the throw band
+                // every read face fails like TS's does (#251 boundary
+                // oracle: TS `get` rejects with the same RangeError).
+                if [project, session, run_id]
+                    .into_iter()
+                    .map(array_nesting)
+                    .max()
+                    .is_some_and(|depth| depth > TS_KEY_FOLD_DEPTH)
+                {
+                    return Err(error);
+                }
+                snapshot.unrekeyable += 1;
+                UNREKEYABLE_SKIPPED.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+        };
         snapshot.records.insert(key, record.clone());
     }
+    // #2692 fix-merge-r4 (MM src2 concurrency#1, P1): the skip signal used to
+    // be written right here — inside `read_snapshot`, so on the mutate path it
+    // ran while the caller held both the in-process chain mutex and the
+    // cross-process file lock, once per read with no bound (#1429's
+    // "per-acquire stderr write 无上限" shape; a full stderr pipe would then
+    // wedge every later registry read behind the locks). The counter stays
+    // here (inside the lock, where the skip is counted); the line itself moved
+    // to `report_unrekeyable`, which the read faces call after their guards
+    // drop, once per path per process.
     // Object.entries(snapshot.events). Load order is irrelevant to the bytes:
     // persist re-serializes with JS key order, as Object.fromEntries does.
     match field(&value, "events") {
@@ -723,6 +813,98 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
     Ok(snapshot)
 }
 
+/// #2692 fix-r5: cumulative, process-wide count of records every read has
+/// skipped as un-rekeyable (`read_snapshot`'s in-band skip). The per-file
+/// current count stays test-side ([`FileRunRegistry::skipped_unrekeyable`]);
+/// this is the production-visible half of the registered divergence's
+/// signal surface — monotonic, so a reader can take a delta around an
+/// operation instead of trusting an absolute.
+pub fn unrekeyable_skips() -> usize {
+    UNREKEYABLE_SKIPPED.load(Ordering::Relaxed)
+}
+/// #2692 fix-r5: backs [`unrekeyable_skips`]; incremented once per skipped
+/// record per read, so re-reading a registry with one deep record counts up.
+static UNREKEYABLE_SKIPPED: AtomicUsize = AtomicUsize::new(0);
+/// #2692 fix-merge-r4 (MM src2 concurrency#1, P1): paths whose skip signal has
+/// already been written by this process — the line is once per path per
+/// process, never per read (#1429's bounded-per-assembly precedent).
+static UNREKEYABLE_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// #2692 fix-r5 (review boundary#3, P0): the skip's production signal —
+/// `read_snapshot` counts inside the caller's locks, and the read faces call
+/// this once those guards have dropped, so the write can never wedge the
+/// chain mutex or the cross-process file lock behind a full stderr pipe
+/// (fix-merge-r4, MM src2 concurrency#1). Once per path per process: the
+/// first read that skips announces the coming drop, later reads stay quiet
+/// and the cumulative counter carries the per-read half.
+fn report_unrekeyable(path: &Path, count: usize) {
+    if count == 0 {
+        return;
+    }
+    if already_reported(path) {
+        return;
+    }
+    // #2692 fix-r6 (DS 增量 concurrency#3 ≡ boundary#3, P2 a): the write now
+    // happens before the mark — `writeln!`'s Result decides whether the path
+    // enters the reported set, so a transient stderr failure (EPIPE, a closed
+    // fd) retries on the next read instead of silencing the path for the rest
+    // of the process (the old mark-first shape made "write failed" and
+    // "already reported" indistinguishable). The mark stays out of every
+    // lock the write could hold (fix-merge-r4's out-of-lock property), and
+    // the write keeps the #2558 non-panicking family contract: the error is
+    // consumed here, never unwrapped (`production_tree_stays_eprintln_free`
+    // pins the family; the writer call site itself moved inline so its
+    // Result can be observed).
+    let mut stderr = io::stderr();
+    let line = format!(
+        "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
+        path.display(),
+        count
+    );
+    // Test-only fault injection (see `REPORT_WRITE_FAILURES`); a production
+    // build never injects, so the write's own Result is the whole condition.
+    #[cfg(test)]
+    let inject_failure = REPORT_WRITE_FAILURES.load(Ordering::Relaxed);
+    #[cfg(not(test))]
+    let inject_failure = false;
+    let written = !inject_failure && writeln!(stderr, "{line}").is_ok();
+    if written {
+        mark_reported(path);
+    }
+}
+
+/// Whether `path`'s skip signal has already been written by this process
+/// (the throttle set's read half). The lock is never held across the write.
+fn already_reported(path: &Path) -> bool {
+    let reported = UNREKEYABLE_REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    reported.contains(path)
+}
+
+/// Records that `path`'s skip signal has been written — called only after a
+/// successful write, so a failed one retries on the next read.
+fn mark_reported(path: &Path) {
+    let mut reported = UNREKEYABLE_REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    reported.insert(path.to_path_buf());
+}
+
+/// #2692 fix-r6 (DS 增量 concurrency#3): test-only fault injection for
+/// [`report_unrekeyable`]'s write — forced "failures" prove the retry
+/// contract in-process (no mark on a failed write; the next read retries).
+#[cfg(test)]
+pub(crate) static REPORT_WRITE_FAILURES: AtomicBool = AtomicBool::new(false);
+
+/// #2692 fix-r6: test-only read of the throttle set, so the retry test can
+/// observe whether a path is marked without reaching for the private set.
+#[cfg(test)]
+pub(crate) fn unrekeyable_reported(path: &Path) -> bool {
+    already_reported(path)
+}
+
 /// `${projectKey ?? ""}\0${sessionKey}\0${runId}` (RunRegistry.ts:70).
 fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsString> {
     let mut units = match project {
@@ -734,6 +916,59 @@ fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsStri
     units.push(0);
     units.extend(template_units(run)?);
     Ok(JsString::from_utf16(units))
+}
+
+/// The deepest array nesting V8's recursive array join folds before it
+/// throws at the registry's own load call shape (fix-r6, review boundary#1:
+/// the previous 2621 was a probe-harness artifact — a bare `String()` call
+/// on a shallower stack). Measured on the #2692 probe machine, Node 22.22.0
+/// (v8 12.4.254.21-node.33), by driving the baseline's real `FileRunRegistry`
+/// over snapshots with the deep record on disk. fix-r6 bisected the boot
+/// chain — constructor → initialize → withFileLock → refreshFromDisk → the
+/// key template (`_tmp/20261026-issue-2692/fix-r6/node-probe/`
+/// `fold-band-loadpoint.out` and `fold-band-bisect.out`); fix-r7 (review
+/// boundary#1 again) bisected the same edge on every other read chain that
+/// reaches the template — get / events / accept re-reading a snapshot that
+/// appeared after construction, plus a 50-frame synchronous prefix under
+/// get() as the production-request-frames control
+/// (`_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-reads.out`): all
+/// five chains fold 2560 and throw 2561, identical for a scalar leaf and
+/// an empty innermost array. The stack under the template is the post-await
+/// resumption frame of `refreshFromDisk` itself, so it does not depend on
+/// the lexical caller — the prefix control confirms the caller's frames are
+/// popped at the first await. Stack-dependent only through that resumption
+/// shape, like every V8 recursion bound — a shallower direct call measures
+/// higher (2621) — so the constant deliberately tracks the load path; the
+/// #251 boundary fixture ran 10,000, far past it either way.
+/// `read_snapshot` bands an un-rekeyable record on this: inside the band it
+/// skips the record, beyond the band the load fails the way TS's load does
+/// on every read face.
+///
+/// The band counts array nesting levels — one per joined array, the same
+/// caliber as `to_string_units`' frames — not the depth of the deepest leaf
+/// node: fix-r5 measured the throw boundary identical for a scalar leaf and
+/// an empty innermost array at one fixed caller stack depth
+/// (`_tmp/20261026-issue-2692/fix-r5/node-probe/fold-band-stackdep.out`),
+/// and fix-r6 re-measured both shapes sharing the boundary at the real load
+/// call shape too, so a leaf-depth count under-reports the empty-leaf shape
+/// by exactly one and lets one band edge past. [`array_nesting`] holds the
+/// caliber.
+const TS_KEY_FOLD_DEPTH: usize = 2560;
+
+/// The nesting level of the deepest array under `value`, counted the way
+/// `to_string_units` joins: one level per array being joined, with objects
+/// as leaves (`[object Object]` never recurses). Iterative, like the rest
+/// of the depth-bounded walks.
+fn array_nesting(value: &JsValue) -> usize {
+    let mut max = 0;
+    let mut pending = vec![(value, 0usize)];
+    while let Some((value, depth)) = pending.pop() {
+        if let JsValue::Array(items) = value {
+            max = max.max(depth + 1);
+            pending.extend(items.iter().map(|item| (item, depth + 1)));
+        }
+    }
+    max
 }
 /// JS template-literal ToString of a JSON value.
 fn template_units(value: &JsValue) -> Result<Vec<u16>> {

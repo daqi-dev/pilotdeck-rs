@@ -85,7 +85,7 @@ use std::{
 /// proc-macro2 lexer (`common/source_inputs`), never a text search:
 /// comments and string literals — including the doc comments that quote
 /// the macro — are token kinds there and cannot false-positive.
-const EPRINTLN_FREE_SOURCES: [&str; 23] = [
+const EPRINTLN_FREE_SOURCES: [&str; 24] = [
     "src/main.rs",
     "src/http_proxy.rs",
     "src/upstream.rs",
@@ -109,6 +109,9 @@ const EPRINTLN_FREE_SOURCES: [&str; 23] = [
     "src/host/tests/resume.rs",
     "src/host/tests/cancel_exit.rs",
     "src/runtime/memory/edgeclaw/file_memory.rs",
+    // #2692 fix-merge (DS sibling#1, P1): the run-registry skip signal
+    // moved onto the shared writer when #2558's tree scan reached it.
+    "src/storage/run_registry.rs",
 ];
 
 /// Lexical guard: none of the #2558 files may write an error console line

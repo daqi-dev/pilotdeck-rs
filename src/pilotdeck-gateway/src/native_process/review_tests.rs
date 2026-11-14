@@ -19,6 +19,7 @@ fn production_turn_ports_share_cancellation() {
     let binding = SessionBinding {
         context: SessionContext {
             session_key: "session".into(),
+            session_id: "session".into(),
             project_key: None,
             channel_key: "probe".into(),
             allowed_tools: None,
@@ -96,6 +97,7 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
     let binding = || SessionBinding {
         context: SessionContext {
             session_key: "session".into(),
+            session_id: "session".into(),
             project_key: None,
             channel_key: "probe".into(),
             allowed_tools: None,

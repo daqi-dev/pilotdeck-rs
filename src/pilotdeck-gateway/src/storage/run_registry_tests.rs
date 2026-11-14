@@ -67,6 +67,7 @@ fn project_run(run_id: &str) -> RunRef {
 }
 fn accept_input(run: &RunRef, material: &str) -> RunAcceptInput {
     RunAcceptInput {
+        session_key_raw: JsValue::String(run.session_key.clone()),
         run: run.clone(),
         request_material: material.into(),
     }
@@ -182,6 +183,7 @@ fn step_outcome(
     match string(field(step, "op")).as_str() {
         "accept" => registry
             .accept(&RunAcceptInput {
+                session_key_raw: field(input, "sessionKey").clone(),
                 run: ref_of(input),
                 request_material: field(input, "requestMaterial").as_string().unwrap().clone(),
             })
@@ -870,4 +872,503 @@ fn registry_reclaims_dead_stale_lock_like_ts() {
     );
     drop(held);
     assert!(!lock_path.exists());
+}
+
+// #2692: the submit side hands the registry the template spelling as the
+// dedupe key and the raw value as the record body, matching TS's split
+// (RunRegistry.ts:70 key template vs :221-229 `...input` spread). The disk
+// bytes keep JSON null while the key spells "null", and a reopen re-keys from
+// the body so both spellings stay separate (ts-deepkey-probe A/B).
+#[test]
+fn null_session_key_body_keeps_json_null_while_the_key_spells_null() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let registry = FileRunRegistry::open(&path).unwrap();
+    let accepted = registry
+        .accept(&RunAcceptInput {
+            session_key_raw: JsValue::Null,
+            run: run(None, "null", "r"),
+            request_material: "m".into(),
+        })
+        .unwrap();
+    assert!(!accepted.duplicate, "#2692 first accept writes the record");
+    let record = registry
+        .get(&run(None, "null", "r"))
+        .unwrap()
+        .expect("#2692 the null spelling reads the record back");
+    assert_eq!(
+        field(record.as_json(), "sessionKey"),
+        &JsValue::Null,
+        "#2692 the record body keeps the raw JSON null"
+    );
+    // The blank spelling is a different key: no fold, no record.
+    assert!(
+        registry.get(&run(None, "", "r")).unwrap().is_none(),
+        "#2692 the blank spelling does not alias the null spelling"
+    );
+    let bytes = fs::read(&path).unwrap();
+    assert!(
+        String::from_utf8_lossy(&bytes).contains(r#""sessionKey":null"#),
+        "#2692 the disk bytes keep the JSON null body"
+    );
+    drop(registry);
+    // A fresh instance re-keys from the body: `null` templates to "null"
+    // again, so the reopened registry still separates the two spellings.
+    let reopened = FileRunRegistry::open(&path).unwrap();
+    assert!(
+        reopened.get(&run(None, "null", "r")).unwrap().is_some(),
+        "#2692 reopen re-keys the null spelling"
+    );
+    assert!(
+        reopened.get(&run(None, "", "r")).unwrap().is_none(),
+        "#2692 reopen keeps the blank spelling separate"
+    );
+    // An absent sessionKey writes no body property (JSON drops undefined)
+    // while the key spells "undefined".
+    let accepted = reopened
+        .accept(&RunAcceptInput {
+            session_key_raw: JsValue::Undefined,
+            run: run(None, "undefined", "u"),
+            request_material: "m".into(),
+        })
+        .unwrap();
+    assert!(!accepted.duplicate, "#2692 the absent spelling accepts");
+    let bytes = fs::read(&path).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.contains(r#""runId":"u""#),
+        "#2692 the undefined-spelling record is on disk"
+    );
+    assert!(
+        !text.contains("sessionKey\":undefined"),
+        "#2692 the undefined body never serializes"
+    );
+    let record = reopened
+        .get(&run(None, "undefined", "u"))
+        .unwrap()
+        .expect("#2692 the undefined spelling reads back");
+    assert_eq!(
+        field(record.as_json(), "sessionKey"),
+        &JsValue::Undefined,
+        "#2692 the absent body field reads as undefined"
+    );
+}
+
+// #2692 fix-r1 matrix row 15 (ts-prodkey-probe e): a submit accept can land
+// a deep-array sessionKey record (TS persists it before the result clone
+// throws), so one can sit on disk when the registry reopens. V8's key
+// template join folds 2560 levels of nesting (array_nesting caliber) to ""
+// and throws past that, measured at every one of the registry's real load
+// call shapes — the boot chain (constructor → initialize → withFileLock →
+// refreshFromDisk → the key template, fix-r6) and get / events / accept's
+// own re-reads plus a 50-frame synchronous prefix under get() (fix-r7,
+// review boundary#1: all five chains share the edge because the template
+// runs in refreshFromDisk's post-await resumption frame, whose stack is
+// caller-independent), on the baseline's own FileRunRegistry, Node 22.22.0
+// (`_tmp/20261026-issue-2692/fix-r6/node-probe/fold-band-loadpoint.out`,
+// `fold-band-bisect.out`, and
+// `_tmp/20261026-issue-2692/fix-r7/node-probe/fold-band-reads.out`; the
+// previous 2621 was a shallower-stack probe artifact, fix-r6 review
+// boundary#1); Rust cannot re-spell past the shared 2000-level bound at
+// all. Inside the fold band the record is skipped — TS keeps it under the
+// folded "" key, where a folded-spelling get returns it through the record
+// clone up to 2557 levels and the clone throws the same RangeError from
+// 2558 (`fix-r7/node-probe/fold-band-inband-reads.out`), so "single record
+// invisible, the rest readable" is the registered Rust-side shape
+// (registered divergence). Past the band the load fails like TS's get does
+// on every read face (#251 boundary oracle). fix-r5 calibrates the band to
+// the join's own frame count (one per array, `array_nesting`): a scalar
+// leaf and an empty innermost array throw at the same level on a fixed
+// caller stack (`fix-r5/node-probe/fold-band-stackdep.out`), and fix-r6
+// re-measured both shapes sharing the boundary at the real load call shape
+// too, so both leaf shapes share every boundary below.
+#[test]
+fn deep_session_key_record_reopens_without_bricking_the_other_records() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    // `depth` counts arrays — the join-frame caliber — for either leaf shape.
+    let snapshot_with = |depth: usize, empty_leaf: bool| {
+        let deep = if empty_leaf {
+            format!("{}[]{}", "[".repeat(depth - 1), "]".repeat(depth - 1))
+        } else {
+            format!("{}1{}", "[".repeat(depth), "]".repeat(depth))
+        };
+        format!(
+            r#"{{"schemaVersion":1,"records":[{{"sessionKey":null,"runId":"run-a1","state":"completed","requestMaterial":"m1"}},{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+        )
+    };
+    // Inside the fold band, both leaf shapes: the null record stays readable,
+    // the deep record is invisible under every spelling, and the skip is
+    // counted. 2560 is the band's in-edge at every real load call shape
+    // (fix-r7).
+    for (depth, empty_leaf) in [(2001, false), (2560, false), (2560, true)] {
+        let text = snapshot_with(depth, empty_leaf);
+        fs::write(&path, &text).unwrap();
+        let registry = FileRunRegistry::open(&path).unwrap();
+        assert_eq!(
+            registry.skipped_unrekeyable(),
+            1,
+            "#2692 depth {depth} sits inside V8's fold band, so the record is skipped, not fatal"
+        );
+        let record = registry
+            .get(&run(None, "null", "run-a1"))
+            .unwrap()
+            .expect("#2692 the null record survives the deep record on disk");
+        assert_eq!(
+            field(record.as_json(), "sessionKey"),
+            &JsValue::Null,
+            "#2692 the null record keeps its JSON null body"
+        );
+        assert!(
+            registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+            "#2692 the skipped deep record is invisible under the blank spelling"
+        );
+        // A later mutation persists without the skipped record (registered:
+        // TS re-persists it under the folded key; Rust cannot spell it).
+        registry
+            .accept(&accept_input(&run(None, "later", "run-later"), "m2"))
+            .unwrap();
+        let text = String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned();
+        assert!(
+            text.contains(r#""runId":"run-a1""#),
+            "#2692 the null record persists"
+        );
+        assert!(
+            text.contains(r#""runId":"run-later""#),
+            "#2692 the fresh record persists"
+        );
+        assert!(
+            !text.contains(r#""runId":"run-deep""#),
+            "#2692 the rewrite drops the skipped deep record (registered divergence)"
+        );
+    }
+    // Past the fold band the load fails like TS's get (the #251 oracle's
+    // RangeError) for either leaf shape, with the snapshot and the lock left
+    // as they were. 2561 is exactly one past the band's in-edge, so the
+    // empty-leaf case is the one a leaf-depth caliber under-counts (the old
+    // container_depth shape) — the discriminator the registry-band-leaf-depth
+    // negative-control row mutates back.
+    for empty_leaf in [false, true] {
+        let text = snapshot_with(2561, empty_leaf);
+        fs::write(&path, &text).unwrap();
+        let Err(RunRegistryError::Invalid(message)) = FileRunRegistry::open(&path) else {
+            panic!("#2692 depth 2561 is past V8's fold band and must fail the load");
+        };
+        assert_eq!(
+            message, "Maximum call stack size exceeded",
+            "#2692 the load failure carries V8's RangeError text"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        assert!(!lock_path(&path).exists());
+        no_temporaries(&scratch.0);
+    }
+    // fix-r7 (review boundary#1): the band gates every read face, not just
+    // the open — a snapshot that appears after the registry was opened (the
+    // cross-process handoff the lock-and-reload exists for) is loaded by
+    // get / events / accept on their own read chains, and TS measured those
+    // chains sharing the boot boundary (fold-band-reads.out), so every face
+    // bands identically here too: in-band the deep record is skipped and
+    // the anchor stays readable, past the band the read fails with V8's
+    // RangeError text.
+    for empty_leaf in [false, true] {
+        fs::remove_file(&path)
+            .unwrap_or_else(|error| panic!("#2692 the spent snapshot must be removable: {error}"));
+        let registry = FileRunRegistry::open(&path)
+            .unwrap_or_else(|error| panic!("#2692 an empty home must open: {error}"));
+        fs::write(&path, snapshot_with(2560, empty_leaf)).unwrap();
+        let record = registry
+            .get(&run(None, "null", "run-a1"))
+            .unwrap_or_else(|error| {
+                panic!("#2692 depth 2560 after open skips the deep record on the get face: {error}")
+            })
+            .expect("#2692 the anchor survives the deep record on the get face");
+        assert_eq!(
+            field(record.as_json(), "sessionKey"),
+            &JsValue::Null,
+            "#2692 the null record keeps its JSON null body on the get face"
+        );
+        assert!(
+            registry
+                .get(&run(None, "", "run-deep"))
+                .unwrap_or_else(|error| panic!("#2692 the get face must read, not fail: {error}"))
+                .is_none(),
+            "#2692 the skipped deep record is invisible on the get face"
+        );
+        assert_eq!(
+            registry.skipped_unrekeyable(),
+            1,
+            "#2692 the get face's own re-read counted the in-band skip"
+        );
+        fs::write(&path, snapshot_with(2561, empty_leaf)).unwrap();
+        for face in ["get", "events", "accept"] {
+            let result = match face {
+                "get" => registry.get(&run(None, "null", "run-a1")).map(|_| ()),
+                "events" => registry
+                    .events(&run(None, "null", "run-a1"), None, None)
+                    .map(|_| ()),
+                _ => registry
+                    .accept(&accept_input(&run(None, "null", "run-a1"), "m1"))
+                    .map(|_| ()),
+            };
+            match result {
+                Err(RunRegistryError::Invalid(message)) => assert_eq!(
+                    message, "Maximum call stack size exceeded",
+                    "#2692 depth 2561 past the band fails the {face} read with V8's RangeError text"
+                ),
+                _ => panic!("#2692 depth 2561 past the band must fail the {face} read"),
+            }
+        }
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            snapshot_with(2561, empty_leaf),
+            "#2692 the failed read leaves the snapshot bytes as they were"
+        );
+        assert!(!lock_path(&path).exists());
+        no_temporaries(&scratch.0);
+    }
+}
+
+// #2692 fix-r5 (review boundary#3, P0): the in-band skip used to be silent
+// in production — the per-file counter was `#[cfg(test)]`-only. The process
+// cumulative `unrekeyable_skips()` is the production half of the registered
+// signal surface (R17): monotonic, so a reader takes a delta around an
+// operation instead of trusting an absolute. Concurrent tests in this
+// process skip their own records, so the assertions are deltas.
+#[test]
+fn unrekeyable_skips_advances_in_production_on_every_read() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    // In-band at the real load call shape: 2560 arrays (fix-r6; 2621 was
+    // in-band only under the old shallow-probe constant).
+    let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
+    fs::write(
+        &path,
+        format!(
+            r#"{{"schemaVersion":1,"records":[{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+        ),
+    )
+    .unwrap();
+    let before = unrekeyable_skips();
+    let registry = FileRunRegistry::open(&path).unwrap();
+    assert_eq!(
+        registry.skipped_unrekeyable(),
+        1,
+        "#2692 the deep record sits inside the fold band, so the read skips it"
+    );
+    assert!(
+        unrekeyable_skips() > before,
+        "#2692 the production counter moved — the skip is not a test-only observable"
+    );
+    // Every read re-reads the snapshot, so the cumulative count advances
+    // again (a per-read signal, not a once-per-process one).
+    let between = unrekeyable_skips();
+    assert!(
+        registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+        "#2692 the skipped record is invisible under the blank spelling"
+    );
+    assert!(
+        unrekeyable_skips() > between,
+        "#2692 the production counter moves on every read that skips"
+    );
+}
+
+// fix-merge-r4 (MM sibling#1, b 档按 P1): the counter half of the signal
+// surface is bound above, but the stderr line had no kill point — deleting
+// only the `console_log_line` write kept every counter assertion green, so
+// the writer half was unaudited. fix-merge-r4 also moved the write out of the
+// lock critical section and made it once per path per process (MM src2
+// concurrency#1), so this owns the writer half of exactly that shape. Direct
+// `std::io::stderr()` writes bypass libtest's capture, so the line is
+// observed in a re-exec'd child of this very test binary (the #2301
+// failing-console probe shape): the child takes the probe branch, performs
+// reads that skip, and the parent — which owns the child's stderr pipe —
+// demands the line be there.
+//
+// fix-r6 (DS 增量 boundary#1, P1): the probe branch is taken only when the
+// env value (`probe:<token>`) and an argv positional name the same fresh
+// token — a stale marker left in some earlier run's environment can never
+// match this run's argv, so the harness itself can never be steered into
+// the probe branch (the #2301 / #2558 / #2434 probe-token shape; the old
+// env-existence gating let a residual env alone divert the parent into the
+// child half, which returns green without ever checking the stderr line —
+// the writer half's fake PASS).
+//
+// fix-r6 (DS 增量 boundary#2 ≡ concurrency#2, P1 / #3197): the child now
+// performs TWO triggering reads of the same path and the parent counts the
+// line — exactly once pins the once-per-path-per-process throttle (the old
+// parent only `contains`-ed, so reverting the throttle stayed green).
+const UNREKEYABLE_STDERR_PROBE: &str = "PDRS_2692_UNREKEYABLE_STDERR_PROBE";
+
+/// The probe branch's token: `Some` only in the re-exec'd child this run
+/// spawned — the env value must spell `probe:<token>` and the same token
+/// must ride this process's argv (the #2301 `child_probe_token` shape).
+fn unrekeyable_stderr_probe_token() -> Option<String> {
+    let value = std::env::var_os(UNREKEYABLE_STDERR_PROBE)?
+        .to_str()?
+        .to_owned();
+    let (mode, token) = value.split_once(':')?;
+    if mode != "probe" || token.is_empty() {
+        return None;
+    }
+    std::env::args()
+        .any(|argument| argument == token)
+        .then(|| token.to_owned())
+}
+
+#[test]
+fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
+    if unrekeyable_stderr_probe_token().is_some() {
+        // The child half: one in-band deep record, TWO reads that skip. The
+        // skip's own line lands on this process's real stderr — the pipe the
+        // parent holds — so reaching the end quietly is all this half has
+        // to do (the parent counts the line). Opening alone is the first
+        // signal this child emits; the `get` re-reads the snapshot, so the
+        // once-per-path-per-process throttle is what keeps the second read
+        // quiet — exactly what the parent's count pins.
+        let scratch = Scratch::new();
+        let path = scratch.path();
+        let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
+        fs::write(
+            &path,
+            format!(
+                r#"{{"schemaVersion":1,"records":[{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+            ),
+        )
+        .unwrap();
+        let registry = FileRunRegistry::open(&path).unwrap();
+        assert_eq!(
+            registry.skipped_unrekeyable(),
+            1,
+            "#2692 the probe's deep record sits inside the fold band, so the read skips it"
+        );
+        assert!(
+            registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+            "#2692 the probe's second read also skips the deep record"
+        );
+        return;
+    }
+    // A fresh token per spawn: the argv positional carries it, and the
+    // child's own probe branch demands the same pair.
+    let token = format!("2692-unrekeyable-probe-{}", std::process::id());
+    let mut child = std::process::Command::new(
+        std::env::current_exe().expect("#2692 the probe binary path"),
+    )
+    .args([
+        "--exact",
+        // `--exact` matches the full libtest path, not the bare name; the
+        // token positional matches no test (the #2301 probe precedent).
+        "storage::run_registry_tests::unrekeyable_skip_logs_the_stderr_signal_once_per_path",
+        // libtest's capture must stay off so the child's real stderr carries
+        // the line to the parent's pipe (the #2301 probe precedent).
+        "--nocapture",
+        "--test-threads=1",
+        &token,
+    ])
+    .env_clear()
+    .env(UNREKEYABLE_STDERR_PROBE, format!("probe:{token}"))
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .expect("#2692 the stderr-line probe spawns");
+    // fix-r6 (DS 增量 concurrency#1, P2 a): a bounded wait — 30 s on the
+    // child, then kill + reap before the named failure, with the partial
+    // console embedded (the #2301 bounded-wait precedent; the old
+    // `wait_with_output` hung forever on a stuck child).
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait() {
+            Ok(status) => match status {
+                Some(status) => break status,
+                None => {}
+            },
+            Err(error) => panic!("#2692 the stderr-line probe is not waitable: {error}"),
+        }
+        if std::time::Instant::now() >= deadline {
+            let mut partial = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut partial);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            crate::negative_assert!(
+                false,
+                "#2692 the stderr-line probe child did not finish within 30s (partial stderr):\n{partial}"
+            );
+            unreachable!("negative_assert! panics");
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    crate::negative_assert!(
+        status.success(),
+        "#2692 the stderr-line probe itself must pass (exit {status}):\n{stderr}"
+    );
+    let signal =
+        "skipped 1 un-rekeyable record(s); the next persist rewrites the file without them";
+    let count = stderr.matches(signal).count();
+    crate::negative_assert!(
+        count >= 1,
+        "#2692 the skip's stderr signal never reached the pipe — the writer half was deleted:\n{stderr}"
+    );
+    crate::negative_assert!(
+        count == 1,
+        "#2692 the skip signal is once per path per process — the second triggering read must stay quiet (found {count} lines):\n{stderr}"
+    );
+}
+
+// #2692 fix-r6 (DS 增量 concurrency#3 ≡ boundary#3, P2 a): the report mark
+// is taken only after the write succeeds. A forced-failed first write must
+// leave the path unmarked (so the next read retries), the retried write must
+// mark it, and a further read must stay quiet — the write-then-mark order,
+// proven in-process through the #[cfg(test)] fault injection.
+#[test]
+fn unrekeyable_report_retries_after_a_failed_write() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let deep = format!("{}[]{}", "[".repeat(2559), "]".repeat(2559));
+    fs::write(
+        &path,
+        format!(
+            r#"{{"schemaVersion":1,"records":[{{"sessionKey":{deep},"runId":"run-deep","state":"completed"}}],"events":{{}}}}"#
+        ),
+    )
+    .unwrap();
+    // First read with the write forced to fail: no line, and — the contract
+    // under test — no mark, so the failure is not mistaken for "reported".
+    super::run_registry::REPORT_WRITE_FAILURES.store(true, Ordering::SeqCst);
+    let registry = FileRunRegistry::open(&path).unwrap();
+    assert_eq!(
+        registry.skipped_unrekeyable(),
+        1,
+        "#2692 the first read skips the deep record even with the report write failing"
+    );
+    crate::negative_assert!(
+        !super::run_registry::unrekeyable_reported(&path),
+        "#2692 a failed report write must not mark the path as reported"
+    );
+    // Second read with the write healthy again: the retry lands the line
+    // and takes the mark.
+    super::run_registry::REPORT_WRITE_FAILURES.store(false, Ordering::SeqCst);
+    assert!(
+        registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+        "#2692 the second read still skips the deep record"
+    );
+    crate::negative_assert!(
+        super::run_registry::unrekeyable_reported(&path),
+        "#2692 the retried report write marks the path"
+    );
+    // Third read: the throttle holds — the mark from the successful retry
+    // quiets this one (the once-per-path half, same set).
+    assert!(
+        registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
+        "#2692 the third read still skips the deep record"
+    );
+    crate::negative_assert!(
+        super::run_registry::unrekeyable_reported(&path),
+        "#2692 the mark survives further reads (the throttle set is stable)"
+    );
+    super::run_registry::REPORT_WRITE_FAILURES.store(false, Ordering::SeqCst);
 }

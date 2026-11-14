@@ -144,6 +144,19 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
 参数、空输出槽或 `--compile-only` 即拒跑；名册防线由
 `test_negative_roster_guards.py` 机检并进 CI）。
+以及 `native-blankkey-submit`（#2692 fix-r1/fix-r2 起按 `negative_selection`
+契约落形：`EXPECTED_NAMES` 静态名册 + `registered` 启动对表 + `claim_dir` +
+`missing_target`/`refuse_unusable_target` + `verdict_exit`，`--check` 进 CI、
+入口进 `test_negative_optimize_guards.py` 拒跑矩阵；断言字面量以
+`LITERAL_ANCHORS` 逐行绑定被扫源，fix-r3 增 `session-id-uses-router-key` 行，
+钉 SessionContext 路径域与映射域的分离）。
+以及 `turn-submit`（#2692 fix-r12 起名册腿同形：`EXPECTED_NAMES` 静态名册 +
+`registered` 于 `build()` 启动对表，树内红侧 `test_bound_test_gate.py`；
+fix-r13 起加 `ROW_PINS` 行身份分母与双表同删红腿。入口本体仍是 M6 submit
+adapter（`_negkit/submit.py`）契约，故未进 `test_negative_optimize_guards.py`
+拒跑矩阵：其认领语义「目录非空才拒、空目录可认领」与矩阵的 `already exists`
+rc 2 不同形，且 CARGO_HOME/PDRS_BASELINE 守卫先于选择执行，对齐须动 M6 共享件，
+登记 #2133 家族批）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
@@ -156,6 +169,23 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
    `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
    当分母时，删掉一行只是把这一轮悄悄变短：summary 仍报 `N/N killed`；整表被清空则打印
    `0/0 killed` 并退出 0——零分母的运行没有测过任何东西。
+   **行身份分母（#2692 fix-r13，DS+MM 两谱系同撞 P1）**：`registered` 只看得见单侧漂移。
+   一行的断言串若同时被另一行携带（共享锚），从两张表**同时**删掉它仍保持名册对齐、
+   幸存的兄弟行照样绑住共享锚——`--check` 假绿。修法是第三张表 `ROW_PINS`：凡共享身份
+   被 ≥2 行共用的行必须入 pin 表，启动在 `registered` 之后核。closure-r2（MM
+   concurrency #1）起该要求在已迁移入口是**双向**机检的：`check_row_pins` 除核 pin 名
+   指向的行仍在表里，还由运行期表算出「共享身份被 ≥2 行携带」的行集要求 ⊆ `ROW_PINS`，
+   新增一行复用既有共享身份而未入 pin 表即拒跑（closure-r4 起 native-blankkey-submit /
+   native-config / turn-submit / turn-read / turn-publish 五家全覆盖，各配红腿；前三家
+   共享身份是断言串——turn-read / turn-publish 行没有独立断言列，共享身份是绑定的
+   测试名，闭包 r4 补齐）；turn-submit 的 location 形按 computed site 计，
+   marker 槽里的测试名不参与共享判定（毒锁对的标记槽不作为共享断言）；全仓普查面
+   已随撤件移除，未迁移入口暂不在机检覆盖内，重建归 #3069。
+   （r13 曾配 `tests/fixtures/test_shared_assertion_pins.py` 全仓结构普查；fix-r13 评审
+   判其表名白名单有盲区——约 55 张 `MUTATIONS`/`CASES` 等命名的表被判 no-table
+   静默放行，属尺子假通过——普查器组件随收口撤下，债表快照正本见提交 a00925dee，
+   重建归 #3069；重建时表名白名单取 `tests/fixtures/anchor_selfcheck.py` 的 `TABLES`
+   （已含 `cases`/`controls`/`runner_mutations`、匹配大小写无关），勿再自建。）
 2. **空结果永不返回 0**。收尾用 `verdict_exit(rows, key=…)`：至少一行且全部 KILLED 才 0；
    空选择、SURVIVED、INVALID、SKIPPED 一律 1。这是 `0/0 killed` 假绿的正面堵口。
 3. **守卫写成 `raise` / `refuse()`，一个都不依赖 `assert`**。`python3 -O` 与
@@ -173,6 +203,12 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 | 1 | 确实跑过但没拿到全绿结论：SURVIVED / INVALID / SKIPPED / 基线重放不通过 / 收尾恢复校验失败 |
 | 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、`CARGO_TARGET_DIR` 不可用（未设置、空串、纯空白，或 `target_environment` 拒绝的 dot / 文件系统或仓库根 / `src` 内）、树脏或领锁超时、oracle 读不了 |
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
+
+已知家族例外（#2692 closure-r4，P3）：上表 rc 2 一行以 `refuse()` 形态为准；`native-config`
+家族的预检拒绝写的是 `raise SystemExit(str)`，解释器落 **rc 1**（不是 rc 2）。两者都非零、都
+带 stderr 点名、都不是 traceback，语义同层（「从未开跑」）；该家族自管 README 已记，红腿
+`test_literal_anchors.py:217`（`The family envelope raises SystemExit(str), which the
+interpreter turns into rc 1`）钉住该形态，不按本表改判。
 
 分界判据是「有没有真的开始变异」：完整形态下，`mutating_sources` 的取得阶段（领锁等待、
 洁净检查、快照读——任何变异字节落盘之前）返回的都算 2，取得之后（含 `__exit__` 还原窗口）

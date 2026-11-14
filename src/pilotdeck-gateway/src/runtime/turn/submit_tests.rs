@@ -51,6 +51,10 @@ struct Log {
     consumer_hold: Mutex<Option<Arc<Gate>>>,
     /// Observed terminal-writer counts, recorded by interleaving steps.
     observations: Mutex<Vec<usize>>,
+    /// The session keys production passed to `reject_pending`, in call order
+    /// (#2692 fix-r4: the turn_ended rejection at submit.rs:810 keys by the
+    /// run's template spelling, not the raw-value router key).
+    reject_keys: Mutex<Vec<String>>,
 }
 impl Log {
     fn host(&self, value: &str) {
@@ -375,8 +379,14 @@ impl SubmitAdmission for Host {
             Ok(self.session.setup["sdkChanged"] == true)
         })
     }
-    fn reject_pending(&self, _: &JsString, reason: &str) -> Result<(), SubmitError> {
+    fn reject_pending(&self, session: &JsString, reason: &str) -> Result<(), SubmitError> {
         self.session.log.host(&format!("reject:{reason}"));
+        self.session
+            .log
+            .reject_keys
+            .lock()
+            .expect("#748 submit fixture prerequisite")
+            .push(display(session));
         Ok(())
     }
 }
@@ -656,6 +666,7 @@ impl TurnRunRegistry for Registry {
 fn context() -> SessionContext {
     SessionContext {
         session_key: "s".into(),
+        session_id: "s".into(),
         project_key: Some("p".into()),
         channel_key: "test".into(),
         allowed_tools: None,
@@ -817,7 +828,7 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
     }
     log.ended.store(true, Ordering::SeqCst);
 }
-async fn replay_case(case: &Value) {
+async fn replay_case(case: &Value) -> Arc<Log> {
     let name = case["name"]
         .as_str()
         .expect("#748 submit fixture prerequisite");
@@ -1487,6 +1498,7 @@ async fn replay_case(case: &Value) {
     if controlled_clock {
         tokio::time::resume();
     }
+    log
 }
 
 #[tokio::test]
@@ -1908,6 +1920,46 @@ async fn context_budget_cancelled_wait_does_not_retain_admission() {
         .expect("#748 cancelled status bounded turn");
 }
 
+/// #2692 fix-r4: the `turn_ended` rejection (submit.rs:810) keys by the
+/// run's template spelling (`run.session_key`), not the raw-value router
+/// key the owner maps and the coordinator use. For a null sessionKey the two
+/// domains differ — the spelling is "null" while the router key is the
+/// `\0\0raw:null` tag — so the null cell is the one that dies if the
+/// rejection folds back onto `&router_key`.
+#[tokio::test(start_paused = true)]
+async fn turn_ended_rejection_keys_by_the_template_spelling() {
+    let case = json!({"name":"reject-key-template-spelling", "orderOnly":true,
+        "setup":{"input":{"sessionKey":null}},
+        "steps":["observe","accept","terminal","end"], "results":[],
+        "native":[{"type":"turn_started"},{"type":"input_accepted"},
+            {"type":"turn_completed","result":{"type":"success","stopReason":"completed","usage":{}}}]});
+    let log = tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
+        .await
+        .expect("#2692 the null-keyed turn completes");
+    // The rejection runs after the joined manage/consume arms, so it may
+    // land after the stream the test consumer polls has ended: spin for it,
+    // wall-clock bounded (the registry worker is a real OS thread a paused
+    // tokio clock cannot bound).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while log
+        .reject_keys
+        .lock()
+        .expect("#2692 reject key log")
+        .is_empty()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "#2692 the turn_ended rejection never ran (host={:?})",
+            log.host.lock().expect("#748 submit fixture prerequisite")
+        );
+        tokio::task::yield_now().await;
+    }
+    crate::negative_assert_eq!(
+        *log.reject_keys.lock().expect("#2692 reject key log"),
+        vec!["null".to_string()],
+        "#2692 the turn_ended rejection keys by the template spelling, not the router key"
+    );
+}
 // #1623 方案 B at the turn entry (fix-r2): submit_turn is the main write
 // path — the wire sessionKey reaches `RunRef` raw (`string(field(...))` keeps
 // the UTF-16 units) and the assembly storage chain renders it through
@@ -2078,7 +2130,16 @@ async fn submit_turn_keeps_fffd_and_paired_surrogate_keys() {
             .lock()
             .expect("#1623 submit fixture prerequisite")[0]
             .clone();
-        let _ = consumer.await;
+        // #1623 closure-r4 (DS concurrency#1): the raw `let _ =` discarded the
+        // JoinError (a panicking collector kept this green) and had no wall
+        // clock bound (a stream that never ends hung until the job limit) --
+        // bounded like `await_panic_closure` above and expected like the
+        // #748 drain below, so a hang or a collector panic is this assertion,
+        // never a silent skip.
+        tokio::time::timeout(Duration::from_secs(30), consumer)
+            .await
+            .expect("#1623 the accepted-key turn ends within the 30 s bound")
+            .expect("#1623 the collector for the accepted-key turn must not panic");
         negative_assert_eq!(
             captured.units(),
             key.units(),

@@ -18,7 +18,17 @@ use tokio::sync::watch;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionContext {
+    /// Router-domain key: owner map identity, admission, fence and coordinator
+    /// deduplication. Non-string session keys arrive tagged
+    /// (`\0\0raw:<category>:<spelling>`, see `js_value::router_key`) so distinct
+    /// raw JS values keep distinct live sessions.
     pub session_key: JsString,
+    /// Persistent-identity domain: template spelling of the submitted key
+    /// (`String(sessionKey)`, null -> "null", missing -> "undefined"). Derives
+    /// transcript paths, tool-results directories, sessionId/metadata and
+    /// user-facing spellings. Must never carry the router-domain NUL tag: std
+    /// paths reject NUL bytes outright.
+    pub session_id: JsString,
     pub project_key: Option<JsString>,
     pub channel_key: JsString,
     pub allowed_tools: Option<Vec<JsString>>,

@@ -1749,6 +1749,7 @@ async fn a_refused_owner_and_a_hung_cleanup_cost_the_two_bounds_together() {
     // spawned worker) is what the shutdown must wait on.
     drop(owner.get_or_create(SessionContext {
         session_key: "s".into(),
+        session_id: "s".into(),
         project_key: None,
         channel_key: "channel".into(),
         allowed_tools: None,

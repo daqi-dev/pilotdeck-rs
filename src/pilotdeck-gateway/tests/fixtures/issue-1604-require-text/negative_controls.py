@@ -6,9 +6,10 @@ production files that are already on HEAD. Until the #1604 tests themselves
 are committed, the shared source guard refuses to run (the whole src tree
 must equal HEAD), so the coordinator runs this after the commit lands.
 
-Four mutants (taskbook §2.3, PR #1593 review comment #1 item 3; third added
+Six mutants (taskbook §2.3, PR #1593 review comment #1 item 3; third added
 for the r2 ledger machine-criteria requirement; fourth for the r4 claim-gate
-criteria):
+criteria; fifth and sixth for #2960 fix-r6 DS 增量 sibling#1 — the steer /
+active_turn admission reads' String-only revert rows):
   - not-a-string-folds-to-domain: the `TrimGuard::NotAString` arm of
     `require_text` folds back into the domain error instead of the boundary's
     `input.<key>?.trim is not a function` TypeError — the shape the steer /
@@ -25,6 +26,15 @@ criteria):
     (`TurnSteers::on_durable_message`) regains a truthiness-shaped rejection
     of the coerced "undefined"/"null" texts — the claim cells of ledger
     A7.2-STEER-INPUT-001 差异 6 break.
+  - steer-admission-string-only (#2960 fix-r6, DS 增量 sibling#1 / boundary#4):
+    `steer_turn`'s admission read reverts to the old String-only guard, so a
+    null sessionKey misses the null-born turn (`no_active_turn` instead of
+    `turn_mismatch`) — the read-side router-domain migration this round
+    pinned, bound to its own kill test.
+  - active-turn-admission-string-only (#2960 fix-r6, DS 增量 sibling#1 /
+    boundary#4): `active_turn_snapshot`'s admission read reverts to the same
+    String-only guard, so a null request no longer meets the null-born turn
+    (the miss shape instead of the hit).
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
 """
@@ -39,6 +49,7 @@ from negative_suite import Case, run_cases
 METHODS_MOD = root / 'src/pilotdeck-gateway/src/native_process/methods/mod.rs'
 PERMISSION = root / 'src/pilotdeck-gateway/src/native_process/methods/permission.rs'
 STEER = root / 'src/pilotdeck-gateway/src/native_process/methods/steer.rs'
+ACTIVE_TURN = root / 'src/pilotdeck-gateway/src/native_process/methods/active_turn.rs'
 RUNTIME_STEER = root / 'src/pilotdeck-gateway/src/runtime/steer.rs'
 
 TEST = 'native_process::methods::tests::'
@@ -98,6 +109,36 @@ mutations = [
      '                })',
      TEST + 'steer_item_id_coerces_to_text_for_the_mailbox_identity',
      '#1604 the coerced id claims the mailbox entry'),
+    # #2960 fix-r6 (DS 增量 sibling#1 / boundary#4): steer_turn's admission
+    # read is router-domain — reverting to the pre-r5 String-only guard makes
+    # a null sessionKey miss the null-born turn, so the wrong-runId branch
+    # the old guard made unreachable reports `no_active_turn` instead of
+    # `turn_mismatch` and the bound test dies at its reason assert.
+    ('steer-admission-string-only', STEER,
+     '        let session_key = input_property(&params, "sessionKey")?;\n'
+     '        let Some(admission_key) = js_value::router_key_of(session_key.as_ref()).ok() else {\n'
+     '            return Ok(no_active_turn("accepted"));\n'
+     '        };',
+     '        let session_key = input_property(&params, "sessionKey")?;\n'
+     '        let Some(admission_key) = session_key.as_ref().and_then(JsValue::as_string).cloned() else {\n'
+     '            return Ok(no_active_turn("accepted"));\n'
+     '        };',
+     TEST + 'steer_family_reads_admission_in_the_router_domain',
+     '#2960 null key with a wrong runId reports turn_mismatch (steer_turn)'),
+    # #2960 fix-r6 (DS 增量 sibling#1 / boundary#4): active_turn_snapshot's
+    # admission read is the same router-domain migration — reverting to the
+    # String-only guard makes the null request take the miss shape, so the
+    # null-born turn is never met.
+    ('active-turn-admission-string-only', ACTIVE_TURN,
+     '            let lookup = crate::js_value::router_key_of(raw_key.as_ref());\n'
+     '            let Some(session_key) = lookup.ok() else {\n'
+     '                return Ok(miss(raw_key));\n'
+     '            };',
+     '            let Some(session_key) = raw_key.as_ref().and_then(JsValue::as_string).cloned() else {\n'
+     '                return Ok(miss(raw_key));\n'
+     '            };',
+     TEST + 'active_turn_snapshot_reads_the_router_domain_and_echoes_the_raw_key',
+     '#2692 a null request meets the null-born turn'),
 ]
 
 

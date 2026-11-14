@@ -72,21 +72,25 @@ mutations = [
      'storage::stimulus_tests::barrier_and_fault_ids_are_single_shot', '#1370 the fault fires only once'),
     # The registry barrier must hold the mutation chain lock: hoisting the
     # wait outside the lock lets a plain get() proceed while the persist is
-    # held.
+    # held. fix-merge-r4 (#2960 MM src2 concurrency#1): `mutate` wraps its
+    # body in a block so the unrekeyable stderr signal can be emitted after
+    # the guards drop — the span follows the new shape (indent +4), the
+    # mutant still hoists `before_write` above the chain lock.
     ('registry-barrier-outside-lock', RUN_REGISTRY,
-     '''let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let _lock = self.acquire_file_lock()?;
-        let mut snapshot = read_snapshot(&self.path)?;
-        let (value, changed) = operation(&mut snapshot)?;
-        if changed {
-            let mut blocked = None;
-            if let Some(key) = stimulus_key
-                && let Some(stimulus) = self.stimulus.as_ref()
-                && stimulus.before_write(super::stimulus::Site::Registry, key)?
-                    == super::stimulus::Applied::Blocked
-            {
-                blocked = Some((stimulus, key));
-            }''',
+     '''let (value, unrekeyable) = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            let _lock = self.acquire_file_lock()?;
+            let mut snapshot = read_snapshot(&self.path)?;
+            let (value, changed) = operation(&mut snapshot)?;
+            if changed {
+                let mut blocked = None;
+                if let Some(key) = stimulus_key
+                    && let Some(stimulus) = self.stimulus.as_ref()
+                    && stimulus.before_write(super::stimulus::Site::Registry, key)?
+                        == super::stimulus::Applied::Blocked
+                {
+                    blocked = Some((stimulus, key));
+                }''',
      '''let mut pre_blocked = None;
         if let Some(key) = stimulus_key
             && let Some(stimulus) = self.stimulus.as_ref()
@@ -95,22 +99,24 @@ mutations = [
         {
             pre_blocked = Some((stimulus, key));
         }
-        let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
-        let _lock = self.acquire_file_lock()?;
-        let mut snapshot = read_snapshot(&self.path)?;
-        let (value, changed) = operation(&mut snapshot)?;
-        if changed {
-            let blocked = pre_blocked;''',
+        let (value, unrekeyable) = {
+            let _chain = self.chain.lock().unwrap_or_else(PoisonError::into_inner);
+            let _lock = self.acquire_file_lock()?;
+            let mut snapshot = read_snapshot(&self.path)?;
+            let (value, changed) = operation(&mut snapshot)?;
+            if changed {
+                let blocked = pre_blocked;''',
      'storage::stimulus_tests::registry_barrier_holds_chain_lock', "#1370 get() is held behind the barrier's chain lock"),
     # fix-r1 isolation: the registry site must read its instance handle, not the
     # process-wide entry — degraded back to the global, an armed stimulus can
     # never reach the test's registry (env unset in the test process), so no
-    # block receipt ever appears.
+    # block receipt ever appears. fix-merge-r4: re-anchored to the block-wrapped
+    # `mutate` shape (indent +4).
     ('registry-handle-degraded-to-global', RUN_REGISTRY,
      '''&& let Some(stimulus) = self.stimulus.as_ref()
-                && stimulus.before_write(super::stimulus::Site::Registry, key)?''',
+                    && stimulus.before_write(super::stimulus::Site::Registry, key)?''',
      '''&& let Some(stimulus) = super::stimulus::StorageStimulus::global()
-                && stimulus.before_write(super::stimulus::Site::Registry, key)?''',
+                    && stimulus.before_write(super::stimulus::Site::Registry, key)?''',
      'storage::stimulus_tests::registry_barrier_holds_chain_lock', '#1370 registry barrier blocks the in-lock persist'),
     # fix-r1 isolation, writer twin: the store's underlying append must read
     # its instance handle. Degraded to the global, the writer barrier never
