@@ -27,6 +27,10 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   ICU 78.2。
 - **落位**：`scripts/a8-5/`（common.mjs + 各探针；`--base`/`--out` 参数化，默认基线取
   `PILOTDECK_BASE` 或标准 runner 路径）。`node scripts/a8-5/<probe>.mjs --out <证据目录>`。
+  p12 合规复跑（≥95 s 观测窗，#2259）：`P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`
+  （窗长须为 (0, 300000] 内安全整数毫秒，未设置或空串回退默认 70_000，非法值 exit 2 且不落盘；
+  端口默认 39891、可 `--port`/`P12_PORT` 改，占用预检失败受控快速失败 exit 3；证据名带窗长+时间戳+pid，
+  不覆写既有证据）。
 - **必跑（fix-r4 接线登记）**：P16 守门/note 纯函数的入仓负控微测
   `node scripts/a8-5/p16_gate_microtest.mjs`（无参数、无落盘副作用、不依赖 TS 基线 dist，
   端口 39994；退出码 0 = 全过 T1–T16，任一断言失败 exit 1、总时限 watchdog 60s 超时
@@ -80,7 +84,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
    （无二次超时）；是否加界归 #1353 决策卡。
 5. **E5 在 S1–S3 照常接纳 + 孤儿路径**（p11）：接纳面只看运行时自身状态；提交连接保持打开 ⇒
    S4 不可达 ⇒ SIGKILL 旧进程后 detached 任务成孤儿。
-6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s——408 落点为相位窗 (60, 90] s 内的相位值（含毫秒级 tick 执行抖动），随网格相位变化（见 `A7.4-HTTPSTORE-KEEPALIVE-001-R5` / `A8.4-NATIVE-HTTP-002-R2`），70 s 窗未覆盖最坏相位落点，区分「408 才 settle」与「close 清 checker ⇒ 永不 settle」须 ≥95 s（保守 120 s）观测、不得作对拍判 PASS 依据（#2259）。
+6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s——408 落点为相位窗 (60, 90] s 内的相位值（含毫秒级 tick 执行抖动），随网格相位变化（见 `A7.4-HTTPSTORE-KEEPALIVE-001-R5` / `A8.4-NATIVE-HTTP-002-R2`），70 s 窗未覆盖最坏相位落点、不得作对拍判 PASS 依据（#2259）。两说须分列判别：①SmsChannel 实例 close → `httpServerPreClose` 清 connections checker（`A8.3-CH-SMS-014-R2` 机制链，SmsChannel 实例级在档）；②GatewayServer 实例 close 路径是否同样清 checker **未实测**——p12 fix-r3 起零字节 socket 挂 data/end 监听（`firstByteMs`/`bytes`/`hex` 落产物），≥95 s 窗内「不 settle 且无服务端字节」支持②同①（408 不发）、「不 settle 且有字节」则排除①型机制（settle 等待另有原因）。**该 ≥95 s 观测待复跑**（当前未跑，不伪造观测）：`P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`，判据 = 产物 observation 行的 `firstByteMs`/`bytes`/`hex` 与 `closeSettled`。
 7. **空集合不挂起**（p13）：零任务/零 channel/零连接下全部停机面 0–4ms 落定——「空集合快速干净退出」
    断言有基线支撑（A13 同构）。
 8. **半停无重试**（p14）：部分组件停成后失败——已停不回滚、失败组件永不再被停（二次 stop no-op）、
@@ -95,7 +99,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 
 ## 边界（时间与规模）
 
-- P8–P12 的观察窗有界（3–70s），「不落定」均为右删失下界、非「永不」证明；dispose 挂起格以源码
+- P8–P12 的观察窗有界（3–70 s；p12 经 `P12_WINDOW_MS` 可放大，≥95 s（保守 120 s）观测才可立对拍断言；非法值探针拒绝落盘），「不落定」均为右删失下界、非「永不」证明；dispose 挂起格以源码
   无超时逻辑 + 窗口不落定共同支撑。
 - mbp2（Darwin）与 cb8（Linux）行为差异未系统排查；p2b/p1_smoke 复验一致是移植可用性的证据，
   不构成全谱系跨平台等价声明。macOS 无 `setsid` 命令，逃逸用例用 `python3 os.setsid()` 构造。
