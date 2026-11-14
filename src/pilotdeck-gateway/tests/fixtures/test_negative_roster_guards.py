@@ -1731,22 +1731,34 @@ CHECK_MISUSE_EXEMPTIONS = {
     'native-http-basic': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'session-cwd-timing': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'webhook-channel': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    # #2856 fix-r8 (DS r7 boundary#1): the scan pattern covers
+    # negative_controls*.py, and this directory only has numbered
+    # variant files -- _1947 carries the spelling-2 refusal.
+    'user-dialog-http-store': 'spelling-2 in negative_controls_1947.py (numbered variant)',
 }
 # #2856 fix-r5: the sibling-form refusal text the reverse scan keys on --
 # #1437 phrases it without "positional", both spellings count. fix-r6
 # (DS sibling P1) widens the key to the family prefix `--check takes no `
 # instead of one spelling's tail. fix-r7 (DS sibling P1, third round on
-# this lexical position) closes it structurally instead of adding one
-# more word: the alternation below is the COMPLETE census of `--check`
-# misuse-refusal spellings across every negative_controls.py as of
-# 2026-11-15 (`takes no ...` x6, `does not take ...` x11) -- a fixture
-# with a future third spelling falls outside the family until this
-# census is widened, and that boundary plus a behavior-driven denominator
-# (drive each fixture's --check instead of grepping wording) is tracked
-# in the #3189 follow-up. The negative.py / *_negative.py entries stay
-# outside the scan by filename (specs/negative-controls/README.md #1666
-# batch), and non-`--check` refusals (e.g. session-factory's `--audit`)
-# are not this key's family.
+# this lexical position) switches to the two-spelling alternation; fix-r8
+# (DS r7 concurrency#1/boundary#1/#2) corrects its census claim, which was
+# WRONG about the tree: the family boundary is exactly this, no more --
+# (a) the alternation covers the two argparse/ValueError wordings
+#     `--check takes no ...` (x6) and `--check does not take ...` (x12)
+#     across negative_controls*.py as of 2026-11-15;
+# (b) sdk-cli-lifecycle refuses differently --
+#     `raise SystemExit('--check must be the only argument')` -- a
+#     direct-SystemExit shape, not the argparse/ValueError family, and
+#     it is OUT of this scan by design (registered here, not silent);
+# (c) every other filename shape (negative.py, switch_negative.py,
+#     schemata.py, numbered test files, ...) is out by filename
+#     (specs/negative-controls/README.md #1666 batch);
+# (d) non-`--check` refusals (e.g. session-factory's `--audit`) are not
+#     this key's family.
+# A new refusal wording or shape is OUT of the family until it is
+# deliberately registered here; a behavior-driven denominator (drive
+# each entry's --check instead of grepping wording) that removes the
+# lexical boundary entirely is tracked in the #3189 follow-up.
 CHECK_MISUSE_REFUSAL = re.compile(r'--check (?:takes no|does not take) ')
 
 
@@ -1877,7 +1889,7 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         # #2856 fix-r6 (DS sibling P1): the key is the family prefix
         # `--check takes no `, not one spelling's tail -- the message says
         # the same. fix-r7 widens it to both census spellings.
-        matches = [path for path in FIXTURES.rglob('negative_controls.py')
+        matches = [path for path in FIXTURES.rglob('negative_controls*.py')
                    if CHECK_MISUSE_REFUSAL.search(
                        path.read_text(encoding='utf-8'))]
         # #2856 fix-r7 (DS sibling P2c): a refusal nested under a member
@@ -1885,12 +1897,18 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         # append-delta/ prove nested negative_controls.py exist) used to be
         # silently bucketed into the top-level entry -- it must fail with
         # its full path instead, so it cannot hide behind its parent.
+        # fix-r8 (DS r7 sibling#3): the table keys on top-level
+        # directories, so a nested hit has NO registration it could
+        # satisfy; this failure is a stop-and-decide point, not a
+        # remediation hint -- whoever adds a nested refusal entry must
+        # first extend the key/exemption scheme for nested paths.
         nested = [str(path.relative_to(FIXTURES)) for path in matches
                   if len(path.relative_to(FIXTURES).parts) != 2]
         self.assertFalse(
             nested,
-            f'#2572 nested refusal fixtures must be registered by their '
-            f'full relative path, not their parent directory: {nested}')
+            f'#2572 nested refusal entries cannot be registered by the '
+            f'top-level-directory tables; extend the key/exemption scheme '
+            f'deliberately before adding one: {nested}')
         found = {str(path.relative_to(FIXTURES)).split('/')[0]
                  for path in matches}
         members = {row[0] for row in TRIPLE_ENTRIES}
