@@ -2508,6 +2508,75 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate._first_line_round("承接 fix-r3，本轮修 fix-r5：停泊补 waker") != 3:
             fails.append("fix-r17 分叉登记：rounds 半边取首个命中（fix-r4 宽松口径不变）")
 
+        # —— #3074 fix-r18（P0：r17 实测登记的 ECHO_HEAD 相邻星号回溯〔DS r16
+        # concurrency#1，r17 计时 _tmp/20261114-3074-fixr17/echo-head-timing.out〕，
+        # 协调者裁定 _tmp/20261114-3074-fixr18/p0-registration.md）——
+        # 修法＝正则改写 `\)\s*[:：]?\s*` → `\)\s*(?:[:：]\s*)?`（语言等价
+        # W* C? W* ≡ W* (C W*)?，冒号后空白只归一处；不用 possessive/原子组——
+        # 那要 python≥3.11，本修法全版本可用），失败路径每步回溯 O(1)＝线性。 ——
+        # 性能钉：r17 计时构造法（`fix(scripts)` + N 空格 + `fix-r5：x`，GitHub 正文
+        # 65536 字符上限内单行最大 N=65514）。修前实测（r17）：N=32768→7.854 s /
+        # N=65514→35.172 s（二次方）；修后实测（本机 darwin python3.14）~0.003 s
+        #（echo-head-timing-r18.out）。断言阈值 2.0 s＝预注册 10 s 的 5× 余量（防
+        # CI 机器慢假红），是修后实测的 ~600× 上方、修前值的 ~17× 下方——写回相邻
+        # 星号（二次方）形态必红。
+        _t0 = time.perf_counter()
+        _m18 = gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "fix-r5：x")
+        _dt18 = time.perf_counter() - _t0
+        if _m18 is not None:
+            fails.append("fix-r18 性能钉语义面：失败形（N 空格 + fix-r5：x）不得命中"
+                         "（正则改写不得引入新匹配面）")
+        if _dt18 >= 2.0:
+            fails.append(f"fix-r18 性能钉：N=65514 失败形 ECHO_HEAD.match {_dt18:.3f}s ≥ 2.0s"
+                         "（相邻星号回溯回归——r17 修前实测 35.172s，修后 ~0.002s；"
+                         "改动须过 P0 通道重新登记）")
+        _t0 = time.perf_counter()
+        if gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "#3056") is None:
+            fails.append("fix-r18 性能钉对照：成功形（N 空格 + #N）须照常命中（贪心首刀）")
+        # 冒号位形双向钉（等价面）：`\)` 后 W* C? W* 的位形族两版同判——命中族/
+        # 拒收族各钉；多冒号形两版都不命中＝单可选冒号语义不得放宽成 (?:\s|[:：])*。
+        for _line, _want in (
+                ("fix(scripts) #3056", True), ("fix(scripts):#3056", True),
+                ("fix(scripts) ： #12", True), ("fix(scripts) : PR #12", True),
+                ("fix(scripts) PR #12", True),
+                ("fix(scripts)  ：  PR  #12 fix-r3：x", True),
+                ("fix(scripts) #3056+#3057 fix-r3：x", True),
+                ("fix(" + "s" * 80 + ") #1", True),
+                ("fix(scripts) :: #3056", False), ("fix(scripts) ：: #3056", False),
+                ("fix(scripts) :#x", False), ("fix(scripts) x #3056", False),
+                ("chore(state) 01:45 #1305 fix-r3：x", False),
+                ("fix(" + "s" * 81 + ") #1", False)):
+            if bool(gate.ECHO_HEAD.match(_line)) is not _want:
+                fails.append(f"fix-r18 冒号位形钉：{_line[:60]!r} 须"
+                             f"{'命中' if _want else '不命中'}（改写不得动 W* C? W* 语言）")
+        # 等价差分钉（differential oracle）：与修前形态（r17 ref 30a98ebb1 的
+        # `\s*[:：]?\s*`，此处按原字面重建）在 `\)` 后字母表上确定性随机对拍——
+        # 两版 match（含 span）须零差异；任一侧形态改动（含写回相邻星号形）本钉必红。
+        import random as _rnd
+        import re as _re18
+        _old_echo = _re18.compile("^" + gate._TYPE_WORDS +
+                               r"\([^)\n]{1,80}\)\s*[:：]?\s*(?:PR\s+)?#\d+")
+        _rng = _rnd.Random(3074)
+        _alpha = " \t：: #5PRxf)（）"
+        _diffs = 0
+        for _ in range(4000):
+            _probe_line = "fix(scripts)" + "".join(
+                _rng.choice(_alpha) for _ in range(_rng.randrange(0, 18)))
+            _a, _b = _old_echo.match(_probe_line), gate.ECHO_HEAD.match(_probe_line)
+            if (_a is None) != (_b is None) or (_a and _a.span() != _b.span()):
+                _diffs += 1
+        if _diffs:
+            fails.append(f"fix-r18 等价差分钉：4000 随机位形 old-vs-new 差异 {_diffs} 条"
+                         "（正则改写必须语言严格等价——穷举证据见"
+                         " _tmp/20261114-3074-fixr18/echo-head-equiv.out）")
+        # 形态字面量钉：正则全文钉死（词表单源 _TYPE_WORDS 拼前缀）——写回相邻星号
+        # 形态 `\s*[:：]?\s*`（重开 O(N²) 面）或任何其他改写时本钉必红，改动须过
+        # p0-registration.md 的 P0 通道（与上方 _TYPE_WORDS 字面量钉同款防御）。
+        if gate.ECHO_HEAD.pattern != "^" + gate._TYPE_WORDS + \
+                r"\([^)\n]{1,80}\)\s*(?:[:：]\s*)?(?:PR\s+)?#\d+":
+            fails.append(f"fix-r18 形态钉：ECHO_HEAD 形态被改（现值 {gate.ECHO_HEAD.pattern!r}"
+                         "——写回相邻星号形态 `\\s*[:：]?\\s*` 重开 O(N²) 回溯面）")
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):

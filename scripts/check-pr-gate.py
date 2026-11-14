@@ -204,10 +204,22 @@
      例外补登记「无链×简写」格（㉓ 段，MM sibling#2）；两半边取号判据分叉（DS
      boundary#1）登记不修（rounds 兜底宽松取首个命中 vs foreign 声明形判形状，
      两半边 docstring 已各自声明）；ECHO_HEAD 相邻星号回溯形（DS concurrency#1）
-     实测计时登记不修（数值见本轮 RESULT）。形态窄窗（须人核）：本地形态「正文手工
+     实测计时登记不修（数值见本轮 RESULT；**fix-r18 已修，见 ㉞**）。形态窄窗（须人核）：本地形态「正文手工
      异单回显 + 提交标题干净」会本地红 CI 绿（r15 修的假 FAIL 面对 CI 形态 PR 在
      本地预演中复活）＝有意取舍（fail-closed 宁拒不漏；ECHO_HEAD 三重结构保证散文
      不进入），登记见 `_first_line_declares` docstring。
+     fix-r18（#3074，P0——r17 实测登记的 ECHO_HEAD 相邻星号回溯触发预注册阈值，
+     协调者裁定 _tmp/20261114-3074-fixr18/p0-registration.md，当轮修）：㉞
+     **ECHO_HEAD 失败路径消灾难性回溯（语义零变化）**——右括号后 `\\s*[:：]?\\s*` 是
+     「两段 \\s* 夹一个可选字面量」相邻星号形，冒号缺席且后随非 `#`/非空白（作者可控
+     正文 `fix(scripts)` + N 空格 + `fix-r5：x`）时全切分枚举＝O(N²)（r17 实测
+     N=65514→35.2 s 超预注册 10 s；本地 --body-file 无长度上限＝更长行分钟级＝准挂起）。
+     修法＝正则改写为语言等价的 `\\s*(?:[:：]\\s*)?`（W* C? W* ≡ W* (C W*)?：可选冒号
+     并入前导空白组、冒号后空白只归一处；不用 possessive/原子组——那要 python≥3.11，
+     本修法全版本可用），失败路径每步回溯 O(1)＝线性（实测 65514→0.003 s，~12000×）。
+     等价证据＝穷举枚举 244 万串零差异 + 语料行轴 old-vs-new 直比零差异 +
+     test-review-roles.py fix-r18 块（性能钉 N=65514 断言 <2 s〔预注册 10 s 的 5×
+     余量，修后实测 ~0.003 s〕、冒号位形双向钉、形态字面量钉）。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -406,8 +418,17 @@ _TYPE_WORDS = r"(?:fix|feat|docs|chore|test|style|refactor|perf|build|ci|revert)
 # 冒号（可无）+ #N（可选 PR 前缀）+ 就近 fix-r<M>。**必须带 scope 括号与 #N**：fix-r4 停点
 # 报告证明「类型词开头的散文」与真实标题在行内没有判别量（「test 覆盖了 fix-r5 的场景」
 # 也以类型词开头），靠 scope 括号 + #N 引用 + 配到本 PR 单号三重结构才与散文分开。
+# fix-r18（P0，DS r16 concurrency#1）：`\)` 后原来是 `\s*[:：]?\s*`＝「两段 \s* 夹一个可选
+# 字面量」的相邻星号反模式（与本文件 _GAP_EDGE 修法上方注释同款）——冒号缺席且后随非
+# `#`/非空白时 N 个空格的 (i,j) 全切分被逐枚举＝O(N²)（r17 实测 N=65514→35.2 s，本地
+# --body-file 无长度上限）。改写为**语言等价**的 `\s*(?:[:：]\s*)?`：W* C? W* ≡
+# W* (C W*)?（可选冒号并入前导空白组、冒号后空白只归一处），失败路径每步回溯 O(1)＝
+# 线性（实测 65514→0.003 s）。等价证据：`\)` 后字母表 {空格,:,：,#,5} 长度 0..9 全枚举
+# 244 万串（2,441,406）old-vs-new 零差异（match 及 span，echo-head-equiv.out）+ 语料行轴直比零差异
+# （wordlist-ab-r18.txt ⑥）+ test-review-roles.py fix-r18 块（性能钉 + 冒号位形等价钉 +
+# 形态字面量钉——防写回相邻星号形态）。
 ECHO_HEAD = re.compile(r"^" + _TYPE_WORDS +
-                       r"\([^)\n]{1,80}\)\s*[:：]?\s*(?:PR\s+)?#\d+")
+                       r"\([^)\n]{1,80}\)\s*(?:[:：]\s*)?(?:PR\s+)?#\d+")
 # #3056 fix-r5 修 1 换结构化信号源（state/decisions-20261113.md「#3056 fix-r4 修 1 停点裁定」）
 # → fix-r6 扩为集合（DS boundary#1 P0 + concurrency#1 P1 双撞同根因）：修复轮判定的**主信号 =
 # PR 范围提交标题集合**（pr_commit_titles + fix_round_from_titles，`git log --format=%s
