@@ -1245,8 +1245,14 @@ FIX_ROUND_OVER = _gate_module().FIXROUND_OVER
 class FixRoundOverflow(Exception):
     """路径段 fix-r 后 ≥19 位数字（位界 {1,18} 外）——fail-closed，报「读不了」而非
     静默判非修复轮（与 PR 侧 _overflow_err 同一 token 同一结论，MM r8 boundary P1）。"""
-# 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明
-FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*pdrs-fixtype:(.*?)-->[ \t]*$", re.M)
+# 标记须独占一行（行首允许缩进，`-->` 后不许再有正文）：正文行内引用的示例标记不算声明。
+# fix-r23（#3074 修 1，DS sibling#1 ≡ MM sibling#1 双撞）：pdrs-fixtype 关键字不再手抄——
+# 从 check-pr-gate.py 的单源词表 `_MARKER_KEYWORDS` 经 `_marker_kw()` 派生（同
+# FIXTYPE_VALUES/RESIDUAL_RE 的单源手法；两份字面拷贝会在改标记语法时一侧判「缺」
+# 另一侧认声明，仓内 marker 关键字全仓只此一份）。配对一致性钉在 test-review-roles.py
+# fix-r23 块（FIXTYPE_RE.pattern ＝ 派生式整条相等）。
+FIXTYPE_RE = re.compile(r"^[ \t]*<!--\s*" + _gate_module()._marker_kw("pdrs-fixtype:")
+                        + r"(.*?)-->[ \t]*$", re.M)
 # residual 标记正则不复制：PR 侧 check-pr-gate.py 的 RESIDUAL_MARKER 是源（#3056 fix-r2 修 7，
 # DS simplify#1 / MM2 sibling#5）——两份同字面拷贝会在改标记语法时一侧判「缺」另一侧认声明。
 # 配对测试断言两处 pattern 一致（同 FIXTYPE_VALUES 的单源做法）。

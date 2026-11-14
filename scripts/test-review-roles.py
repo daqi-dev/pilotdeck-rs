@@ -3198,10 +3198,168 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 双撞——手抄前缀漂移会让空白/借文判定面与豁免提取面分裂，r12 ISSUE_LINK/
         # ISSUE_NUM 同款反模式）；MM sibling#3（winvalid_multi）/MM sibling#2
         # （residual_lazy/fixtype_lazy）计时钉在 _probe 护栏（上方 fix-r22 计时循环）。
-        if not gate.WAIVER.pattern.startswith(gate._WAIVER_PREFIX.pattern):
-            fails.append("fix-r22 P2（DS boundary#3＋simplify#1）：_WAIVER_PREFIX 须与 WAIVER"
-                         " 前缀一致（WAIVER.pattern 以 _WAIVER_PREFIX.pattern 字面起）——"
-                         "手抄漂移＝判定面分裂")
+        # **fix-r23 修 2 升级**：`_WAIVER_PREFIX` 加尾界 `(?=\s|-->|\Z)` 后整条
+        # startswith 不再成立——不变量升级为「共用词形」：两条 pattern 都以
+        # `<!--\s*`＋单源词表的 `pr-gate:`＋`waiver` 字面起（fix-r23 块 (2) 复钉）。
+        _w22_word = r"<!--\s*" + gate._marker_kw("pr-gate:") + "waiver"
+        if not (gate.WAIVER.pattern.startswith(_w22_word)
+                and gate._WAIVER_PREFIX.pattern.startswith(_w22_word)):
+            fails.append("fix-r22 P2（DS boundary#3＋simplify#1）：WAIVER 与 _WAIVER_PREFIX"
+                         f" 须共用词形 {_w22_word!r}（单源派生；fix-r23 修 2 加尾界后"
+                         " startswith 整条相等不再成立，不变量随升级）——手抄漂移＝判定面分裂")
+
+        # —— #3074 fix-r23（DS/MM r22 双谱系评审 P0×1＋P1×1＋假红面 4 形，协调者实测
+        # 仲裁 _tmp/20261114-3074-fixr23/arbitration.md）——词表/边界族第 5 次复发
+        # 收口：修 1 marker 关键字单源派生（`_MARKER_KEYWORDS` 唯一词表，pdrs 三族
+        # 并入借文判定）；修 2 `_WAIVER_PREFIX` 尾界（waiverX 假红回正）；修 3 作废面/
+        # 引用形登记钉；修 4 复用与差分钉捆绑（`_valid_marker_search` 复用
+        # `_marker_match_at`、借文判定抽 `_has_borrowed_text` 共用件、NO_ISSUE 差分
+        # 钉打到生产入口）。
+        # (1) 修 1（P0，DS sibling#1 ≡ MM sibling#1/boundary#1 双撞）：pdrs 族借文两向
+        # 钉——r22 实测 `<!--no-issue   <!-- pdrs-residual: … -->` 借 pdrs 文本当理由
+        # ＝rc0 假通过（`_NESTED_MARKER_PREFIX` 手抄只认 pr-gate:/no-issue）。
+        _p0_noissue = gate.check(
+            "<!--pr-gate:waiver 纯文档变更，无需角色审计结果块 -->\n"
+            "<!--no-issue   <!-- pdrs-residual: 某段说明文字 -->", "", "", "", "")
+        if not any("缺 issue 关联" in e for e in _p0_noissue):
+            fails.append(f"fix-r23 修1（P0）：no-issue 借 pdrs-residual 文本当理由必须报"
+                         f"「缺 issue 关联」（r22 实测 rc0 假通过＝词表漏 pdrs 族）：{_p0_noissue}")
+        for _pf in ("pdrs-fixtype:", "pdrs-residual:", "pdrs-scope:"):
+            if not gate._invalid_waiver_marker(
+                    f"<!--pr-gate:waiver   <!-- {_pf} 结构性修法说明文字足够长 -->"):
+                fails.append(f"fix-r23 修1（P0）：空白 waiver 借 {_pf} 文本当豁免理由"
+                             f"不得豁免（借文分支须收 pdrs 族，两侧同词表）")
+        _p0_waiver = gate.check(
+            "<!--pr-gate:waiver   <!-- pdrs-fixtype: 结构性修法说明文字足够长 -->",
+            "", "", "", "")
+        if not any("豁免理由太短" in e for e in _p0_waiver):
+            fails.append(f"fix-r23 修1（P0）：waiver 借 pdrs-fixtype 文本当理由必须拒收"
+                         f"（r22 实测豁免理由＝借来的 pdrs 文本）：{_p0_waiver}")
+        # 修 1 单源派生钉：`_NESTED_MARKER_PREFIX` 整条由词表展开；五个扫描正则的
+        # 族前缀全部经 `_marker_kw` 从词表取；`_marker_kw` fail-loud；词表五族完整。
+        if gate._NESTED_MARKER_PREFIX.pattern != \
+                r"<!--\s*(?:" + "|".join(gate._MARKER_KEYWORDS) + ")":
+            fails.append("fix-r23 修1：_NESTED_MARKER_PREFIX 必须整条由 _MARKER_KEYWORDS"
+                         " 派生（交替分支＝单源词表展开，手抄漂移＝借文判定面与 marker"
+                         " 提取面分裂——r22 漏 pdrs 族正是手抄漂移）")
+        for _fam, _rx in (("pr-gate:", gate.MARKER), ("pr-gate:", gate.WAIVER),
+                          ("pr-gate:", gate._WAIVER_PREFIX), ("no-issue", gate.NO_ISSUE),
+                          ("pdrs-residual:", gate.RESIDUAL_MARKER)):
+            if _fam not in gate._MARKER_KEYWORDS or r"<!--\s*" + _fam not in _rx.pattern:
+                fails.append(f"fix-r23 修1：{_rx!r} 的族前缀 {_fam!r} 须来自单源词表"
+                             " _MARKER_KEYWORDS（`<!--\\s*`＋关键字 直拼，不在表里＝红）")
+        for _fam in ("pr-gate:", "no-issue", "pdrs-residual:", "pdrs-fixtype:", "pdrs-scope:"):
+            if _fam not in gate._MARKER_KEYWORDS:
+                fails.append(f"fix-r23 修1：单源词表漏 {_fam!r} 族（marker 关键字全仓"
+                             " 只此一份：新增只改 _MARKER_KEYWORDS，两侧借文判定自动同步）")
+            elif not gate._NESTED_MARKER_PREFIX.match("<!--  " + _fam + " 后文"):
+                fails.append(f"fix-r23 修1：{_fam!r} 须命中嵌套 marker 前缀判定"
+                             "（`<!--\\s*` 后随关键字即 markerish）")
+        try:
+            gate._marker_kw("pr-gate:waiver")
+        except ValueError:
+            pass
+        else:
+            fails.append("fix-r23 修1：_marker_kw 须对词表外的手抄复合字面量 fail-loud"
+                         "（raise——静默取件＝第二份词面）")
+        if gate._marker_kw("pdrs-fixtype:") != "pdrs-fixtype:":
+            fails.append("fix-r23 修1：_marker_kw 取件恒等返回（词表内成员原样取回）")
+        _tb23 = gate._load_taskbook()
+        if _tb23 is None or _tb23.FIXTYPE_RE.pattern != \
+                r"^[ \t]*<!--\s*" + gate._marker_kw("pdrs-fixtype:") + r"(.*?)-->[ \t]*$":
+            fails.append("fix-r23 修1 跨文件：check-taskbook-segments.FIXTYPE_RE 须从"
+                         " 单源词表派生（_gate_module()._marker_kw；两份手抄＝改标记语法"
+                         " 时任务书闸门与 PR 闸门分裂）")
+        # (2) 修 2（P1，DS boundary#3）：`_WAIVER_PREFIX` 尾界——`<!--pr-gate:waiverX`
+        # （非 marker）不得进未闭合/空白分支作废合法豁免（r22 规约与实现相反的假红）；
+        # 真 marker 的未闭合形仍拒收（fix-r22 修 4 面不回退）。
+        for _wb, _wl in (("<!--pr-gate:waiver 合法豁免理由足够长 -->\n<!--pr-gate:waiverX 说明文字 -->\nCloses #3056\n", "waiverX 闭合形"),
+                         ("<!--pr-gate:waiver 合法豁免理由足够长 -->\n<!--pr-gate:waiverX\nCloses #3056\n", "waiverX 未闭合形")):
+            _wb_errs = gate.check(_wb, "", "", "", "")
+            if _wb_errs:
+                fails.append(f"fix-r23 修2：{_wl} 不是 marker 候选，不得作废合法豁免"
+                             f"（r22 未闭合形实测作废＝假红回正）：{_wb_errs}")
+        _w2_true = gate.check("<!--pr-gate:waiver 合法豁免理由足够长 -->\n<!--pr-gate:waiver\nCloses #3056\n",
+                              "", "", "", "")
+        if not any("豁免理由太短" in e for e in _w2_true):
+            fails.append(f"fix-r23 修2：真 marker（waiver 后空白）的未闭合形仍须拒收"
+                         f"（fix-r22 修 4 面不回退）：{_w2_true}")
+        for _wp, _want in (("<!--pr-gate:waiver", True), ("<!-- pr-gate:waiver  ", True),
+                           ("<!--pr-gate:waiver-->", True), ("<!--pr-gate:waiver\n", True),
+                           ("<!--pr-gate:waiverX", False), ("<!--pr-gate:waiver:foo", False),
+                           ("<!--pr-gate:waiver-说明", False), ("<!--pr-gate:waiver：说明", False)):
+            if bool(gate._WAIVER_PREFIX.match(_wp)) is not _want:
+                fails.append(f"fix-r23 修2：{_wp!r} 的尾界判定须为 {_want}"
+                             "（waiver 后只认空白 / `-->` / 串尾）")
+        # (3) 修 3（假红面登记钉，行为保持——宁拒不漏的作废面不得悄悄漂移）：任一
+        # 无效 marker 候选（未闭合/借文/空白）作废**全部**豁免，三形钉住；理由引用
+        # 完整 marker 的 no-issue 借文跳过照报「缺 issue 关联」；普通注释镜像正控
+        # （修 1 收口 pdrs 族不得误伤普通注释）。
+        _m31 = gate.check("<!--pr-gate:waiver 合法豁免理由足够长 -->\n<!--pr-gate:waiver   -->\nCloses #3056\n",
+                          "", "", "", "")
+        if not any("豁免理由太短" in e for e in _m31):
+            fails.append(f"fix-r23 修3.1：合法豁免＋空白闭合 waiver 并存必报错"
+                         f"（MM boundary#2 作废面钉，r22 前零正向钉）：{_m31}")
+        _m32 = gate.check("<!--pr-gate:waiver 合法豁免理由足够长 -->\nCloses #3056\n<!--pr-gate:waiver\n",
+                          "", "", "", "")
+        if not any("豁免理由太短" in e for e in _m32):
+            fails.append(f"fix-r23 修3.2：合法豁免＋正文裸未闭合 marker 字面（引用形）"
+                         f"并存必报错（作废面宽度登记在 _invalid_waiver_marker docstring）：{_m32}")
+        _m33 = gate.check("<!--no-issue 说明文字引用 <!-- pr-gate:waiver 某条完整豁免说明 -->",
+                          "", "", "", "")
+        if not any("缺 issue 关联" in e for e in _m33):
+            fails.append(f"fix-r23 修3.3：理由引用完整 marker 的 no-issue 必报「缺 issue"
+                         f" 关联」（r22 起收紧族登记面，不得静默放行）：{_m33}")
+        if any("缺 issue 关联" in e for e in gate.check(
+                "<!--no-issue 说明 <!-- 普通注释 --> 继续 -->", "", "", "", "")):
+            fails.append("fix-r23 修3.4：理由含普通 <!-- 注释的 no-issue 须仍有效"
+                         "（MM sibling#4 镜像正控：普通注释不是 marker 前缀）")
+        # (4) 修 4 捆绑：借文判定共用件源级钉（不复制两份铁律——两个消费点都必须走
+        # `_has_borrowed_text`；`_valid_marker_search` 复用 `_marker_match_at` 消内联
+        # 复制，DS simplify#2 ≡ MM simplify#1 双撞）。
+        _gate_src23 = (ROOT / "scripts" / "check-pr-gate.py").read_text(encoding="utf-8")
+        for _fn23 in ("_valid_marker_search", "_invalid_waiver_marker"):
+            _seg23 = _gate_src23.split(f"def {_fn23}(")[1].split("\ndef ")[0]
+            if "_has_borrowed_text(" not in _seg23:
+                fails.append(f"fix-r23 修4：{_fn23} 的借文判定须走共用件 _has_borrowed_text"
+                            "（源级钉：手抄回潮＝两侧判定面分裂）")
+        if "_marker_match_at(" not in _gate_src23.split("def _valid_marker_search(")[1].split("\ndef ")[0]:
+            fails.append("fix-r23 修4：_valid_marker_search 须复用 _marker_match_at"
+                         "（消内联复制的判跳/匹配核心）")
+        # 修 4 差分钉打到生产入口（DS P3#3 ≡ MM sibling#3/boundary#3 三撞）：NO_ISSUE
+        # 生产路径自 r22 起走 `_valid_marker_search`，r21 差分只对拍 `_marker_search`＝
+        # 脱钩——差分补打：旧全文 search 语义 vs `_valid_marker_search`，差异只允许
+        # 两族＝簇③收紧形（旧 group 以 `-->` 字面起）或借文形（旧命中 span 内嵌
+        # markerish open，含 pdrs 族）；新命中须与旧语义在同一起点完全一致（不放宽）。
+        _rng23 = _rnd.Random(307423)
+        _pieces23 = ["<!--", "-->", "<!--pr-gate:waiver", "<!--no-issue", " ",
+                     "<!-- pdrs-residual: 残差判读文字 ", "<!-- pdrs-fixtype: 结构性论证文字 ",
+                     "<!-- pdrs-scope: files=2 ", "\n", "x", "理由", "说明",
+                     "<!-- pr-gate:v1 roles=x -->", "Closes #3056\n", "waiver ", "no-issue ",
+                     "<!--pr-gate:waiver  -->", "<!--no-issue  -->", ">-->", "普通 <!-- 注释 -->"]
+        _d23u = _d23t = _d23b = 0
+        for _ in range(4000):
+            _body = "".join(_rng23.choice(_pieces23) for _ in range(_rng23.randrange(0, 10)))
+            _o = gate.NO_ISSUE.search(_body)
+            _n = gate._valid_marker_search(gate.NO_ISSUE, _body)
+            if _n is not None:
+                _o_at = gate.NO_ISSUE.match(_body, _n.start())
+                if _o_at is None or _o_at.span() != _n.span() or _o_at.group(1) != _n.group(1):
+                    _d23u += 1  # 新命中与旧语义同起点不一致＝放宽/漂移
+            if _o is not None and (_n is None or _o.start() < _n.start()):
+                _mish = gate._markerish_opens(_body, gate._comment_opens_closes(_body)[0])
+                if _o.group(1).startswith("-->"):
+                    _d23t += 1  # 簇③有意收紧形（登记）
+                elif any(_o.start() + 4 <= _m < _o.end() for _m in _mish):
+                    _d23b += 1  # 借文形（r22/r23 有意跳过，登记）
+                else:
+                    _d23u += 1  # 旧命中被生产入口跳过的非收紧/借文形＝意外回归
+        if _d23u:
+            fails.append(f"fix-r23 修4：NO_ISSUE 生产入口差分 {_d23u} 条意外差异"
+                         "（只允许簇③收紧形/借文形被跳过，其余须与旧全文 search 同判）")
+        if not (_d23t or _d23b):
+            fails.append("fix-r23 修4 差分生成器失效：4000 随机位形未覆盖到收紧/借文跳过形"
+                         "（位形须补足再钉）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
