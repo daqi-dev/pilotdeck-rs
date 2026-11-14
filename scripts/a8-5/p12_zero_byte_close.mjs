@@ -15,20 +15,32 @@
  * EADDRINUSE 受控 FAIL 形态 + 进程级 uncaughtException/unhandledRejection
  * 兜底）。证据名带窗长+时间戳+pid（run 唯一，tmp 名随之唯一，不覆写既有
  * 证据）；结束时收尸（销毁 socket、若 close 已 settle 则等待完成）。
- * 判据登记（fix-r5 boundary#1，判废条件照 A8.3-CH-SMS-012-R1.md:121-134
- * 逐字段对齐）：产物首条 scenario 记录含 headersTimeout（server 对象实读
- * 的实测值，须 =60000；读不到记 null——判废面，不硬编）/requestTimeout/
- * connectionsCheckingInterval；observation 行时间字段——closeCalledMs/
- * elapsedMs 恒有限数值，closeResolvedMs/connectionEndedMs 事件发生才为
- * 有限数值（「窗内不 settle」正是观察对象，与 R1「必须有限」的差异点；
- * connectionEndedMs 终值在 cleanup 行恒有限）；有效性只看产物条件、不看退出码。
+ * 判据登记（fix-r5 boundary#1、fix-r6 结构性收口，判废条件照
+ * A8.3-CH-SMS-012-R1.md:121-134 逐字段对齐、判读以 exp016 readme
+ * p12-window-spec 节判废面矩阵 M1–M15 为正本）：产物首条 scenario 记录含
+ * headersTimeout/requestTimeout/connectionsCheckingInterval（三字段两层实读：
+ * server 对象直读、未命中再读 server.server 包装层——真实基线返回对象可能是
+ * 包装层而非原生 http.Server，close() 为 Promise 形态为证；serverShape 记录
+ * 命中层级 native/wrapped）；headersTimeout 须 =60000。两层均读不到 ⇒ 第四态
+ * probe-shape-mismatch：exit 4、不落观测产物、不进 K/I/S 三态也不判有效/判废
+ * ——先修探针再复跑（fix-r6 boundary#2：null 恒判废会把所有合规复跑判成
+ * 假 FAIL）。observation 行时间字段——closeCalledMs/elapsedMs 恒有限数值，
+ * closeResolvedMs/connectionEndedMs/closeWaitedMs（= closeResolvedMs −
+ * closeCalledMs，R1:127「提前 resolve ⇒ 走到的不是真实监听器」的 p12 对应面）
+ * 事件发生才为有限数值（「窗内不 settle」正是观察对象，与 R1「必须有限」的
+ * 差异点；connectionEndedMs 终值在 cleanup 行落定，200ms 内未达记 null）；
+ * 有效性只看产物条件、不看退出码（exit 4 例外：没有产物可判）。
  * note 结论谓词（fix-r5 boundary#2）：判「支持『close 清 checker ⇒ 永不
  * settle』」前须同 observation 行核「bytes=0 且窗内无 end/close/error 服务端
  * 事件（socketEventsFromServerSide 空）且 socketLocalStillOpen===true」；
  * 不满足时只报事实（bytes/firstByteMs/closeSettled + 服务端事件清单）、
- * 不作机制归因。
+ * 不作机制归因。settle 分支 note 携带 closeWaitedMs 与「是否 ≥60s 相位窗」
+ * （fix-r6 boundary#1），且早 settle 判废面（矩阵 M2：closeWaitedMs<1000
+ * 且无可归因证据——firstByteMs=null、无服务端事件、connectionEndedMs=null）
+ * 命中时 observation 行落 invalidationHit 标注。
  * 退出码：0 成功；1 运行失败（落失败记录）；2 非法参数/env（不落盘）；
- * 3 端口占用/bind 失败（不落观测记录）。
+ * 3 端口占用/bind 失败（不落观测记录）；4 probe-shape-mismatch——三超时
+ * 字段两层均读不到（不落观测产物，先修探针）。
  */
 import { writeSync } from "node:fs";
 import { connect } from "node:net";
@@ -128,20 +140,37 @@ async function main() {
     staticAssetsPath: makeStaticDir(RAW_DIR), pilotHome: makeHome(RAW_DIR, "p12"),
   });
 
-  // fix-r5 boundary#1：首条 scenario 记录（判据对齐 R1:121-134——「产物至少
-  // 一行 scenario」+「首行 headersTimeout 须 =60000」的 p12 对应面）。三个超时
-  // 字段从 startPilotDeckServer 返回的 server 对象实读（实测值，不硬编）；
-  // 读不到（非有限数值，如包装层未透出）记 null——判废面，复跑人可据此作废。
-  const finiteNumOrNull = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  // fix-r5 boundary#1 + fix-r6 boundary#2：首条 scenario 记录（判据对齐
+  // R1:121-134——「产物至少一行 scenario」+「首行 headersTimeout 须 =60000」的
+  // p12 对应面）。三个超时字段两层实读（server 直读 → server.server 包装层 →
+  // null；真实基线返回对象可能是包装层——close() Promise 形态为证，未实测前
+  // 不赌单层形状）；serverShape 记录 headersTimeout 实际命中的层级，两层均
+  // 读不到 ⇒ 第四态 probe-shape-mismatch：exit 4、不落观测产物（null 恒判废
+  // 会把所有合规复跑判成假 FAIL——fix-r6 修）。
+  const finiteNum = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const readSrvField = (key) => {
+    const native = finiteNum(server?.[key]);
+    if (native !== null) return { value: native, level: "native" };
+    const wrapped = finiteNum(server?.server?.[key]);
+    if (wrapped !== null) return { value: wrapped, level: "wrapped" };
+    return { value: null, level: "unreachable" };
+  };
+  const headersTimeoutRead = readSrvField("headersTimeout");
+  const serverShape = headersTimeoutRead.level; // 判据载重字段（R1:124）的命中层级
   log("scenario", {
     scenario: "p12-zero-byte-close",
     port,
     windowMs: WINDOW_MS,
     windowEnvRaw: rawWindowEnv ?? null,
-    headersTimeout: finiteNumOrNull(server?.headersTimeout),
-    requestTimeout: finiteNumOrNull(server?.requestTimeout),
-    connectionsCheckingInterval: finiteNumOrNull(server?.connectionsCheckingInterval),
+    serverShape,
+    headersTimeout: headersTimeoutRead.value,
+    requestTimeout: readSrvField("requestTimeout").value,
+    connectionsCheckingInterval: readSrvField("connectionsCheckingInterval").value,
   });
+  if (serverShape === "unreachable") {
+    writeSync(2, `P12 FAIL: probe-shape-mismatch——headersTimeout 两层（server 直读/包装层）均读不到（server=${typeof server}，已试 server.headersTimeout/server.server.headersTimeout）。该形状不判有效/判废、不落观测产物（exit 4）：先修探针对真实基线形状的读取再复跑（判据须 =60000 无从谈起，null 恒判废 = 假 FAIL）。\n`);
+    process.exit(4);
+  }
 
   // 零字节连接：建连成功后不发任何字节
   const connectedAt = Date.now();
@@ -190,6 +219,21 @@ async function main() {
   const supportsNeverSettle = bytes === 0
     && socketEvents.length === 0
     && !zeroByte.destroyed;
+  // fix-r6 boundary#1（矩阵 M2）：早 settle 判废面——close 落定不可归因于该连接的
+  // 任何可观测事件（无字节、无窗内服务端事件、连接未在窗内结束）且等待 <1s ⇒
+  // 连接未被计入（close 见 0 连接立即 resolve 的形状），非零字节观测、判废。
+  // 下界 1000ms：R1:127 对应面；408 驱动 settle ≥60s 相位窗，空闲清理/客户端 FIN
+  // 驱动 settle 均伴随可观测事件（error/end/close），不落本面。
+  const closeWaitedMs = closeResolvedAt !== null ? closeResolvedAt - t0 : null;
+  const EARLY_SETTLE_FLOOR_MS = 1_000;
+  const invalidationHit = closeSettled
+    && closeWaitedMs !== null
+    && closeWaitedMs < EARLY_SETTLE_FLOOR_MS
+    && firstByteMs === null
+    && socketEvents.length === 0
+    && socketCloseAt === null
+    ? "early-settle-conn-not-counted（矩阵 M2：closeWaitedMs<1000 且无字节、无服务端事件、连接未在窗内结束——close 落定不可归因于该连接，连接未被计入，非零字节观测，判废）"
+    : null;
   log("observation", {
     windowMs: WINDOW_MS,
     windowEnvRaw: rawWindowEnv ?? null, // 原始 env 字符串（复算用；null = 未设置）
@@ -197,6 +241,8 @@ async function main() {
     closeCalledMs,
     closeResolvedMs: closeResolvedAt !== null ? closeResolvedAt - runStartAt : null,
     connectionEndedMs: socketCloseAt !== null ? socketCloseAt - runStartAt : null,
+    closeWaitedMs,
+    invalidationHit,
     connectToCloseMs: t0 - connectedAt,
     elapsedMs: Date.now() - t0,
     closeSettled,
@@ -204,7 +250,7 @@ async function main() {
     bytes,
     hex,
     note: closeSettled
-      ? "close 在观测窗内 settle（时间见 elapsedMs/closeResolvedMs）"
+      ? `close 在观测窗内 settle（时间见 elapsedMs/closeResolvedMs；closeWaitedMs=${closeWaitedMs}ms，${closeWaitedMs >= 60_000 ? "≥60s 相位窗内（与 408 驱动面一致）" : "<60s 相位窗（非 408 驱动）"}${invalidationHit ? `；${invalidationHit}` : ""}）`
       : firstByteMs !== null
         ? `${WINDOW_S}s 窗内不 settle，但服务端字节已到达（firstByteMs/bytes/hex 见本行）——排除「close 清 checker ⇒ 408 不发」，settle 等待另有原因，见 #2259`
         : COVERS_WORST_PHASE && supportsNeverSettle
