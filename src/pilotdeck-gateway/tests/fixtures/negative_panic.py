@@ -213,14 +213,56 @@ def named_test_failed(raw, used_test):
     return False
 
 
-def named_test_killed(raw, used_test, marker, target=None):
+# libtest's own end-of-run summary line. The dot is part of the literal, so a
+# bare ``FAILED`` word elsewhere in the transcript never satisfies it.
+SUMMARY_FAILED = 'test result: FAILED.'
+
+
+def named_test_killed(raw, used_test, marker, target=None, *, require_summary=True):
     """Strict #813 criterion: a full test failed and marker is in its panic block.
 
     With an explicit list, the marker must belong to one of the listed tests
     that actually failed; a passing list member cannot lend its block.
     ``target`` pins the marker to the mutant's target assertion (#813 fix-r8);
     watchdog/timeout payloads are always rejected.
+
+    #1087 fix-r5 (simplify #2): ``require_summary`` (default on) additionally
+    requires libtest's own ``test result: FAILED.`` summary line. An aborted
+    run that already printed the named test's FAILED status and its own panic
+    payload (the ``--nocapture`` SIGKILL shape measured on a real libtest
+    process) never reaches that line, so it is not a kill. The one caller that
+    judges terminal non-libtest evidence — agent-event-projector's
+    stack-overflow disjunct, where the abort happens before libtest could print
+    anything — passes ``require_summary=False`` explicitly. This replaces the
+    fifteen per-table handwritten copies of the same guard (fix-r4 sibling #2)
+    with one spelling (always dotted).
     """
+    if require_summary and SUMMARY_FAILED not in raw:
+        return False
     names = _full_test_names(used_test)
     failed = [name for name in names if named_test_failed(raw, name)]
     return bool(failed) and marker_kills_named_test(raw, failed, marker, target)
+
+
+def classify_bound_run(returncode, log, test, marker, *,
+                       survived_reason="bound test stayed green",
+                       killed_reason="named assertion failed",
+                       unbound_reason="test failed outside the named assertion"):
+    """(status, reason) for one bound-test run.
+
+    #1087 fix-r5 (simplify #1): deduplicated from memory-gateway and
+    snapshot-projection, which carried two copies that differed only in the
+    default ``survived_reason`` wording; keep importing it — do not re-add a
+    local copy. #1087 fix-r4 (sibling #2): an aborted run is not a kill
+    decision — SIGINT/SIGKILL after the bound test's FAILED line leaves a
+    partial transcript without libtest's own summary (measured on a real
+    libtest process), so the FAILED summary line is a separate requirement
+    (now the shared ``named_test_killed`` default, simplify #2).
+    """
+    if returncode == 0:
+        return "SURVIVED", survived_reason
+    if SUMMARY_FAILED not in log:
+        return "INVALID", "no libtest FAILED summary line (aborted run or harness error)"
+    if named_test_killed(log, test, marker):
+        return "KILLED", killed_reason
+    return "INVALID", unbound_reason

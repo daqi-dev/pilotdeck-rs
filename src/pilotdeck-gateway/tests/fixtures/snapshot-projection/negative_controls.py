@@ -23,7 +23,11 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
+# #1087 fix-r5 (simplify #1): the bound-run classifier is the shared one —
+# keep importing it, do not re-add a local copy. The local wording
+# difference ("named test stayed green") survives as the explicit
+# survived_reason at the default call site below.
+from negative_panic import classify_bound_run, named_test_killed
 from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse_unusable_target, registered,
                                 verdict_exit)  # noqa: E402
@@ -425,12 +429,11 @@ def main():
                 result = run_test(target, test, env)
                 log = result.stdout + result.stderr
                 (out / f"{name}.log").write_text(log)
-                if result.returncode == 0:
-                    record(name, "SURVIVED", "named test stayed green")
-                elif named_test_killed(log, test, marker):
-                    record(name, "KILLED", "named assertion failed")
-                else:
-                    record(name, "INVALID", "test failed outside the named assertion")
+                record(name, *classify_bound_run(
+                    result.returncode, log, test, marker,
+                    # The shared default wording is memory-gateway's; this
+                    # table keeps its own (simplify #1 must not loosen it).
+                    survived_reason="named test stayed green"))
             except Exception as error:
                 # One mutant's bookkeeping/IO error must not hide every later
                 # row; restore still runs in `finally`. SystemExit from a
@@ -475,18 +478,12 @@ def main():
                 log = result.stdout + result.stderr
                 (out / f"{name}.log").write_text(log)
                 marker = "#322 workspace-snapshot corpus is pinned"
-                if result.returncode == 0:
-                    record(
-                        name,
-                        "SURVIVED",
-                        f"oracle shrank from {expected_scenarios} to 1",
-                    )
-                elif named_test_killed(
-                    log, "scenarios_match_ts_outcomes_and_trees", marker
-                ):
-                    record(name, "KILLED", "exact corpus pin failed")
-                else:
-                    record(name, "INVALID", "failed outside the corpus pin")
+                record(name, *classify_bound_run(
+                    result.returncode, log,
+                    "scenarios_match_ts_outcomes_and_trees", marker,
+                    survived_reason=f"oracle shrank from {expected_scenarios} to 1",
+                    killed_reason="exact corpus pin failed",
+                    unbound_reason="failed outside the corpus pin"))
             except Exception as error:
                 record(name, "INVALID", f"runner error: {type(error).__name__}: {error}")
             finally:

@@ -5,7 +5,17 @@ Four mutants each permit exactly one of read / write / delete / edit through a
 root-internal dangling link.  For every mutant the matching rejection test must
 fail while the other operation tests stay green; that proves no operation is
 only covered by an earlier panic in a shared loop.  Product source is restored
-in ``finally`` and the positive suite is rerun.
+by the guard and the positive suite is rerun.
+
+#1087 fix-r5 (sibling #3): the verdict rows stay in memory for the whole
+guarded window and one final ``summary.json`` is published by a single
+rename only after ``mutating_sources`` restored and byte-verified the
+guarded source (the same skeleton as the edgeclaw tables). An abort inside
+the window — a cancellation, a restore failure, the source guard — voids
+the recorded rows, publishes one INVALID summary and exits 3. A red
+positive baseline keeps exit 1 but still publishes its rows. The old
+``finally``-inside-the-window summary write left a partial all-killed
+summary behind when the run was cancelled mid-suite.
 """
 import hashlib
 import json
@@ -15,8 +25,11 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import SUMMARY_FAILED, named_test_killed
+from negative_process import (dead_stream_print, detach_dead_streams,
+                               mutating_sources, new_run_token, refuse_summary,
+                               run_owned, unique_summary_tmp,
+                               wait_for_slot, write_source_atomic)
 
 
 READ_BEFORE = '''            let Some(mut e) = self.entry(id)? else {
@@ -183,11 +196,21 @@ OPERATION_TESTS = [
 STATUS = re.compile(r'^test (\S+) \.\.\. (ok|FAILED|ignored)$', re.MULTILINE)
 TESTS = re.compile(r'^test result: (ok|FAILED)\.')
 
-
 def main():
     root = Path(__file__).resolve().parents[5]
     output = Path(sys.argv[1]).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # #1087 fix-r6 (P1a) / fix-r8 (S1-b): every evidence name carries the
+    # shared per-run token (pid.serial.time_ns) — the OUT_DIR above is a
+    # plain reused mkdir, so two overlapping runs of this table must not
+    # truncate each other's fixed-name artifacts, and the time_ns component
+    # survives pid recycling (a recycled pid must not replay another run's
+    # token).
+    run_token = new_run_token()
+    # #1087 fix-r8 (S2-a): the verdict summary is per-run, too — this run
+    # publishes its own file and never overwrites another run's green verdict
+    # recorded in the same reused OUT_DIR.
+    summary_name = f'summary.{run_token}.json'
     source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
     env = dict(os.environ)
     env['CARGO_TERM_COLOR'] = 'never'
@@ -195,42 +218,155 @@ def main():
                str(root / 'src/Cargo.toml'), '-p', 'pilotdeck-gateway',
                '--test', 'edgeclaw_dangling_links']
     results = []
-    failures = []
+    # The guard's snapshot bytes, kept for the final restored comparison
+    # after the window closes.
+    original = None
+
+    def write_summary():
+        """Publish the one final summary atomically (#1087 fix-r5, sibling #3).
+
+        Called exactly once per run, after ``mutating_sources`` restored and
+        byte-verified the guarded source — or from the abort handler, after
+        the same guard unwound. The old ``finally``-inside-the-window write
+        published a summary even when the run had been cancelled mid-suite,
+        leaving a partial all-killed file behind.
+        """
+        # The snapshot never happened (the guard refused a dirty baseline):
+        # report that instead of crashing the void path on `None.encode()`.
+        restored = None if original is None else source.read_text() == original
+        payload = dict(
+            results=results,
+            restored=restored,
+            beforeSha256=(None if original is None
+                          else hashlib.sha256(original.encode()).hexdigest()),
+            afterSha256=hashlib.sha256(source.read_bytes()).hexdigest())
+        # #1087 fix-r5 (concurrency #3): this runner's OUT_DIR is created with
+        # plain mkdir, not an exclusive claim, so two overlapping runs of the
+        # same table must not share one fixed staging name.
+        # #1087 fix-r8 (S2-a): the publish target is this run's per-run
+        # summary name and the payload names the run — the twin
+        # test_negative globs the per-run shape.
+        tmp = unique_summary_tmp(output, summary_name)
+        payload['runToken'] = run_token
+        tmp.write_text(json.dumps(payload, indent=2) + '\n')
+        tmp.replace(output / summary_name)
+
+    def _refuse_summary(reason):
+        """Publish this run's refusal in its own per-run file (#1087 fix-r6, P1c).
+
+        The evidence directory is created with ``mkdir(exist_ok=True)`` so a
+        host re-run can land in the same path; an exit-2 "never started"
+        refusal is recorded in this run's own ``summary.<token>.json`` —
+        one rename via the shared writer, carrying no verdict rows (the
+        same rule llm-envelope / llm-recall keep with their
+        ``_refuse_summary``). A previous run's verdict stays in its own
+        file, untouched: it is never this run's evidence. A fresh directory
+        simply receives its first file (fix-r9 per-run markers).
+        """
+        # #1087 fix-r6 (P1c) / fix-r8 (S1-c + S2-a): the refused marker is
+        # this run's own per-run summary file — one rename via the shared
+        # writer, never another run's verdict, and a failing write reports
+        # through the guarded print instead of a traceback.
+        refuse_summary(output, reason, run_token, summary_name=summary_name)
+
+    def _void_pending(error):
+        """Void the recorded rows and publish one INVALID summary (sibling #3).
+
+        A cancellation or crash inside the guarded window is not a verdict:
+        the rows recorded so far are voided, the remaining mutants are
+        recorded void, and the single summary is published after the guard
+        unwound. The process then exits 3 — deliberately different from 2
+        ("never started", the stale-anchor refusal below) so a reader can
+        tell a cancelled run from one that never ran.
+        """
+        reason = f'runner: {type(error).__name__}: {error}'
+        for row in results:
+            row['killed'] = False
+            row['voided'] = reason
+        for mutant in MUTANTS[len(results):]:
+            results.append(dict(name=mutant['name'], test=mutant['test'],
+                                scenario=mutant['scenario'], exit=None,
+                                target=None, others={}, suite=[],
+                                marker=f"{mutant['scenario']} must be rejected",
+                                killed=False, voided=reason))
+        write_summary()
+        # #1087 fix-r8 (S1-a): the shared guarded print — the summary is
+        # already published, "aborted = 3" is the only contract left
+        # to keep; a dead stderr must not replace the exit code.
+        dead_stream_print(f'voided {len(results)} row(s): {reason}', stream='stderr')
+        if isinstance(error, (OSError, ValueError)):
+            # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches
+            # the dead fds first, so the interpreter-shutdown flush cannot
+            # rewrite the exit code below to 120 ("Exception ignored in:").
+            detach_dead_streams()
+        if isinstance(error, SystemExit):
+            # Normalize: 128+signum and any other raw code must not decide
+            # how a coordinator reads this run.
+            raise SystemExit(3) from error
+        if not isinstance(error, Exception):
+            raise
+        raise SystemExit(3) from error
 
     # Hold the shared flock from the pristine read through the final restored
     # run; the other edgeclaw in-place runners use the same lock file.
-    with mutating_sources(root, [source]) as snapshots:
-        original = snapshots[source].decode()
-
-        def run(name, selected=None, gate=None):
-            with (output / f'{name}.log').open('w') as log:
-                gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
-                log.write(gate.stdout + gate.stderr)
-                log.flush()
-                args = command + (
-                    ['--', selected, '--test-threads', '2']
-                    if selected
-                    else ['--', '--test-threads', '2'])
-                result = run_owned(args, cwd=root, env=env, timeout=900)
-                log.write(result.stdout + result.stderr)
-                return result
-
-        positive = run('positive')
-        assert positive.returncode == 0, 'positive tests must pass before mutating'
-        try:
+    try:
+        with mutating_sources(root, [source]) as snapshots:
+            original = snapshots[source].decode()
+            # A stale anchor is a harness defect: refuse before any compile
+            # (exit 2, nothing measured, nothing published).
             for mutant in MUTANTS:
-                assert source.read_text() == original, 'another writer changed the product source'
+                for before, _after in mutant['replacements']:
+                    count = original.count(before)
+                    if count != 1:
+                        # #1087 fix-r8 (S1-a): the shared guarded print — a
+                        # dead stderr must not turn this exit-2 refusal into
+                        # an in-window abort (exit 3 with a voided INVALID
+                        # summary), an exec-time ``2>&-`` reroute, or a 120.
+                        dead_stream_print(f"STALE ANCHOR {mutant['name']}: {count} matches: {before!r}",
+                                          stream='stderr')
+                        raise SystemExit(2)
+
+            def run(name, selected=None, gate=None):
+                # #1087 fix-r6 (P1a): the log name carries the run token and
+                # the verdict below reads the transcript this run's own
+                # ``run_owned`` returned — a concurrent run on the same reused
+                # directory can no longer truncate this run's log into a false
+                # KILLED / SURVIVED.
+                with (output / f'{name}.{run_token}.log').open('w') as log:
+                    gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
+                    head = gate.stdout + gate.stderr
+                    log.write(head)
+                    log.flush()
+                    args = command + (
+                        ['--', selected, '--test-threads', '2']
+                        if selected
+                        else ['--', '--test-threads', '2'])
+                    result = run_owned(args, cwd=root, env=env, timeout=900)
+                    log.write(result.stdout + result.stderr)
+                    return result, head + result.stdout + result.stderr
+
+            positive, _positive_log = run('positive')
+            if positive.returncode != 0:
+                # The positive baseline is red: nothing below is a verdict.
+                # The guard unwinds and verifies while this exception
+                # travels to the handler, which still publishes.
+                print('positive tests did not pass before mutating', flush=True)
+                raise SystemExit(1)
+
+            for mutant in MUTANTS:
                 mutated = original
                 for before, after in mutant['replacements']:
-                    assert mutated.count(before) == 1, \
-                        f"{mutant['name']}: mutation anchor must be unique: {before!r}"
                     mutated = mutated.replace(before, after, 1)
                 # Reserve the Cargo slot before exposing the mutation.
                 gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
-                source.write_text(mutated)
+                # #1087 fix-r5 (sibling #3): one rename, never a truncating
+                # in-place write; the shared publish helper (#1903) keeps a
+                # SIGKILL mid-write from leaving a source the next preflight
+                # would refuse as "differs from HEAD". No `mode=`: the
+                # helper's own fallback stat covers the shape (boundary #5).
+                write_source_atomic(root, source, mutated.encode())
                 try:
-                    negative = run(mutant['name'], 'dangling_link_', gate)
-                    raw = (output / f"{mutant['name']}.log").read_text()
+                    negative, raw = run(mutant['name'], 'dangling_link_', gate)
                     statuses = dict(STATUS.findall(raw))
                     suite = [line for line in raw.splitlines() if TESTS.match(line)]
                     target = mutant['test']
@@ -240,37 +376,56 @@ def main():
                     compiled = 'error: could not compile' not in raw
                     killed = (negative.returncode == 101
                               and compiled
-                              and 'test result: FAILED' in raw
+                              # #1087 fix-r5 (simplify #2): the shared
+                              # dotted spelling — stricter than the bare
+                              # word, same aborted-run guard.
+                              and SUMMARY_FAILED in raw
                               and statuses.get(target) == 'FAILED'
                               and all(value == 'ok' for value in others.values())
                               and named_test_killed(raw, target, marker))
-                    record = dict(name=mutant['name'], test=target,
-                                  scenario=mutant['scenario'], exit=negative.returncode,
-                                  target=statuses.get(target), others=others,
-                                  suite=suite, marker=marker, killed=killed)
-                    results.append(record)
+                    results.append(dict(name=mutant['name'], test=target,
+                                        scenario=mutant['scenario'], exit=negative.returncode,
+                                        target=statuses.get(target), others=others,
+                                        suite=suite, marker=marker, killed=killed))
                     print(f"{mutant['name']}: killed={killed}, "
                           f"target={statuses.get(target)}, others={others}",
                           flush=True)
-                    if not killed:
-                        failures.append(mutant['name'])
                 finally:
-                    assert source.read_text() == mutated, 'another writer changed the mutant'
-                    source.write_text(original)
-        finally:
-            restored = source.read_text() == original
-            (output / 'summary.json').write_text(json.dumps(dict(
-                results=results, restored=restored,
-                beforeSha256=hashlib.sha256(original.encode()).hexdigest(),
-                afterSha256=hashlib.sha256(source.read_bytes()).hexdigest()), indent=2) + '\n')
-            assert restored
-        restored_run = run('restored')
-        assert restored_run.returncode == 0, 'restored product must pass'
-    print(f'summary: KILLED={sum(r["killed"] for r in results)} INVALID={len(failures)}',
-          flush=True)
+                    # Same #1087 fix-r5 window: the in-loop restore is also
+                    # one rename; the guard's own exit verification covers
+                    # the bytes.
+                    write_source_atomic(root, source, original.encode())
+            restored, _restored_log = run('restored')
+            if restored.returncode != 0:
+                raise RuntimeError('restored product did not pass its tests')
+    except SystemExit as error:
+        if error.code == 1:
+            # The deliberate positive-baseline failure: the guard already
+            # restored and byte-verified the tree while unwinding the
+            # with-block; publish the (empty) rows and keep the exit code.
+            write_summary()
+            raise
+        if error.code == 2:
+            # The deliberate stale-anchor refusal: nothing was measured, so
+            # nothing is published — and a reused directory's previous green
+            # summary is invalidated before the refusal propagates, so it
+            # cannot stay readable as this run's evidence (#1087 fix-r6, P1c).
+            _refuse_summary('stale anchors: negative.py is out of sync with its sources')
+            raise
+        _void_pending(error)
+    except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+        _void_pending(error)
+    # Reaching here means mutating_sources restored the guarded file and
+    # verified it against the baseline bytes. Only now may a summary exist.
+    write_summary()
+
+    failures = [row['name'] for row in results if not row['killed']]
+    print(f"summary: KILLED={sum(r['killed'] for r in results)} "
+          f"INVALID={len(failures)}", flush=True)
     if failures:
         print(f'not killed: {", ".join(failures)}', file=sys.stderr)
         sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == '__main__':

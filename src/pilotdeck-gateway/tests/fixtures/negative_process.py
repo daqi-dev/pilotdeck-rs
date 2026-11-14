@@ -7,10 +7,11 @@ escapes the process group and can keep the inherited pipes open, which is why
 a plain ``with Popen(...)`` plus ``communicate()`` can block forever even after
 the leader is dead (#528).
 """
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, suppress
 import builtins
 import fcntl
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -18,6 +19,7 @@ from pathlib import Path
 import re
 import signal
 import shutil
+import select
 import stat
 import subprocess
 import sys
@@ -638,7 +640,11 @@ def _publish_build_owner(root, env):
             stream.write(payload)
         pending.replace(marker)
     finally:
-        pending.unlink(missing_ok=True)
+        # fix-r9 (review DS sibling #1): same shape as refuse_summary's
+        # cleanup — an unwritable directory would turn this unlink into a
+        # traceback from inside the failure path, masking the publish error.
+        with suppress(OSError):
+            pending.unlink(missing_ok=True)
     return marker, payload
 
 
@@ -879,6 +885,42 @@ PUBLISH_DIR = '.negctl-publish'
 
 DEFAULT_SOURCE_MODE = 0o644
 
+# Per-process serial for unique staging names below.
+_PUBLISH_SERIAL = itertools.count(1)
+
+
+def unique_summary_tmp(directory, name='summary.json'):
+    """Staging name for a one-rename summary publish (#1087 fix-r5, concurrency #3).
+
+    The evidence directories of the dir-reusing runners are shared across host
+    re-runs, so a fixed ``summary.json.tmp`` is a shared mutable resource: two
+    concurrent runs on the same directory can truncate each other's staging
+    file, and one run's rename can then publish the other's half-written
+    bytes — or crash on a temp that the other already renamed away. The name
+    carries the pid and a per-process serial, so concurrent stagings never
+    collide. It stays non-hidden on purpose: the existing leak checks
+    (``glob('*.tmp')``) must still see a residue.
+    """
+    return Path(directory) / f'{name}.{os.getpid()}.{next(_PUBLISH_SERIAL)}.tmp'
+
+
+def new_run_token():
+    """Per-run identity for every evidence name this run publishes.
+
+    #1087 fix-r8 (S1-b, concurrency #6 / boundary #6): the fix-r6 token was
+    ``pid.serial`` — unique only between *live* processes. A recycled pid
+    (macOS wraps at 99998) re-runs the same table into the same reused
+    OUT_DIR with an identical token and its ``open('w')`` truncates the
+    earlier run's logs — the exact defect the token was meant to close. The
+    ``time_ns`` component makes the token unique across pid recycling, and
+    the shared serial keeps two tokens from one process distinct. The rule
+    lives here once instead of in eleven hand-copied ``_RUN_SERIAL`` blocks
+    (#1087 fix-r8, simplify #2); the serial is shared with
+    :func:`unique_summary_tmp` on purpose — one counter, two name spaces
+    that never collide.
+    """
+    return f'{os.getpid()}.{next(_PUBLISH_SERIAL)}.{time.time_ns()}'
+
 
 def write_source_atomic(root, path, data, *, mode=None):
     """Publish source bytes in one rename, never a truncating in-place write.
@@ -898,8 +940,12 @@ def write_source_atomic(root, path, data, *, mode=None):
     refuse the whole tree; the mode is taken from the source and applied to
     the temp before the rename.
 
-    Fail-closed: any failing step raises. Nothing here swallows an error,
-    because a silent skip is exactly the defect class this closes.
+    Fail-closed on the publish itself: any failing step raises. The only
+    swallowed error is the cleanup ``unlink`` in the ``finally`` below —
+    it suppresses its own ``OSError`` so a failing cleanup can never mask
+    the original publish error (fix-r9, review DS sibling #1; the
+    ``negative_suite.py`` "Never mask the publish error with a cleanup
+    error" rule). Everything else raises.
     """
     path = Path(path)
     publish = Path(root) / PUBLISH_DIR
@@ -925,7 +971,178 @@ def write_source_atomic(root, path, data, *, mode=None):
         os.chmod(temporary, mode)
         os.replace(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        # fix-r9 (review DS sibling #1): the restore hot path of every
+        # source-mutating runner — the cleanup unlink must not mask the
+        # original error with its own (negative_suite.py: "Never mask the
+        # publish error with a cleanup error").
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+
+
+def _fd_is_dead(fd):
+    """True when the fd is closed (EBADF) or its peer is gone (POLLERR|POLLHUP).
+
+    A broken pipe's write end reports POLLERR from poll(2) on Linux, but
+    macOS only reports POLLHUP for it, so both bits are checked. A healthy
+    stream must never be reported dead: in-process callers (the twin tests)
+    share the interpreter's real fds, and detaching a live one would eat
+    their output for the rest of the process.
+
+    Known limitation: an fd closed after interpreter start may be recycled;
+    detach targets fds as sampled, not a stable identity.
+    """
+    try:
+        os.fstat(fd)
+    except OSError:
+        return True
+    poller = select.poll()
+    poller.register(fd, select.POLLOUT)
+    try:
+        for _fd, events in poller.poll(0):
+            # macOS poll reports POLLHUP (16) — not POLLERR (8) — for a
+            # pipe whose read end is closed; Linux reports POLLERR. Without
+            # the POLLHUP bit here, detach_dead_streams is a no-op for a
+            # broken pipe on macOS and the interpreter-shutdown flush still
+            # rewrites the exit code (#1087).
+            if events & (select.POLLERR | select.POLLHUP):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def detach_dead_streams():
+    """Point dead stdout/stderr fds at /dev/null (#1087 fix-r5, concurrency #2).
+
+    A cancelled run whose stdout is a broken pipe publishes its summary and
+    then raises SystemExit — but CPython's interpreter-shutdown flush of the
+    dead stream rewrites that exit code to 120 ("Exception ignored in:
+    <_io.TextIOWrapper ...>"). Redirecting the dead fds to /dev/null before
+    the exit keeps the intended code. Only genuinely dead fds (closed or
+    POLLERR|POLLHUP — Linux reports POLLERR, macOS reports only POLLHUP
+    for a broken pipe, see ``_fd_is_dead``) are detached; streams without
+    a usable fileno (in-process test doubles) are skipped, and the helper
+    never raises.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            fd = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            continue
+        if not _fd_is_dead(fd):
+            continue
+        try:
+            null_fd = os.open(os.devnull, os.O_WRONLY)
+        except OSError:
+            return
+        # #1087 fix-r8 (S1-d, concurrency #5): a *closed* fd (EBADF shape,
+        # e.g. ``os.close(1)`` after interpreter start) is the smallest free
+        # number, so ``os.open`` returns that very fd — ``dup2(old == new)``
+        # is a POSIX no-op and the ``close`` below would detach the very
+        # /dev/null that was just attached. The fd already IS /dev/null:
+        # skip the pair and keep it.
+        if null_fd == fd:
+            continue
+        try:
+            os.dup2(null_fd, fd)
+        except OSError:
+            pass
+        finally:
+            os.close(null_fd)
+
+
+def dead_stream_print(*args, stream='stdout', sep=' ', end='\n'):
+    """Print on a possibly-dead stream; the exit code is the contract.
+
+    #1087 fix-r8 (S1-a, boundary #1/#2, concurrency #1/#2, sibling #4,
+    simplify #3): the guarded refusal / stale-anchor / green-preflight
+    prints used to be hand-copied per table in two drifted shapes —
+    ``except: pass`` without ``flush=True`` (the guard never fires on a real
+    dead fd; the interpreter-shutdown flush then rewrites the exit code to
+    120) and ``flush=True`` + ``detach_dead_streams`` (the fix-r7 shape).
+    One shared helper, one rule:
+
+    * ``flush=True`` makes a really dead fd raise *inside* the guard;
+    * the tuple matches ``negative_selection.refuse``: ``AttributeError``
+      (exec-time ``1>&-`` / ``2>&-`` makes CPython set the stream to
+      ``None``), ``ValueError`` (a closed stream object), ``OSError`` (a
+      dead fd);
+    * the target is resolved *by name* (``stream='stdout'|'stderr'``) and
+      a ``None`` resolution is a skip, never a silent re-route:
+      ``print(file=None)`` would fall back to the *other* stream (a
+      refusal reason leaving via stdout while the host watches stderr),
+      and a caller's ``file=sys.stderr`` that already evaluated to ``None``
+      is indistinguishable from the default — by-name resolution is the
+      only shape that cannot re-route;
+    * a caught failure detaches the dead fds so the shutdown flush cannot
+      rewrite the caller's exit code to 120.
+    """
+    if stream not in ('stdout', 'stderr'):
+        raise ValueError(f'unknown stream: {stream!r}')
+    target = getattr(sys, stream)
+    if target is None:
+        detach_dead_streams()
+        return
+    try:
+        print(*args, file=target, sep=sep, end=end, flush=True)
+    except (AttributeError, OSError, ValueError):
+        detach_dead_streams()
+
+
+def refuse_summary(directory, reason, token=None, *, summary_name):
+    """Void this run's summary with one refused-marker rename.
+
+    #1087 fix-r8 (S1-c, concurrency #4 / #8, simplify #1): the nine
+    hand-copied ``_refuse_summary`` blocks were unconditional — a refusal
+    from run B destroyed run A's green verdict recorded in the same reused
+    directory. With the per-run summary names (``summary.<token>.json``,
+    fix-r8 S2-a) the marker is *this run's own* file: pass the run's
+    ``summary_name`` and the other runs' verdicts are never touched.
+
+    #1087 fix-r9 (P1, review concurrency #1): the fix-r8 claim that the
+    remaining fixed-``summary.json`` callers own exclusive directories was
+    wrong for the reused-``mkdir(exist_ok=True)`` tables, so every runner
+    of that shape now passes a per-run name too. ``summary_name`` is
+    mandatory: there is no safe default left, because a fixed fallback
+    name is exactly the last-writer-wins footgun this helper exists to
+    close — a new caller must name the summary it wants refused.
+
+    A failing marker write must not turn the refusal into a traceback
+    (rc=1, "ran and was red"); the staging temp is unlinked so no ``*.tmp``
+    residue is left behind to pose as evidence (concurrency #8). A directory
+    that does not exist yet (a first run refused before its ``mkdir``) is
+    created: the refusal always lands in this run's own marker — a silent
+    skip would break the "every refusal leaves exactly one own marker"
+    contract and let an adapter claim a marker that was never written
+    (fix-r11, review MM r10 boundary #1/#2 + DS sibling #5, two lineages;
+    the fix-r9 guard returned quietly for that shape). Returns ``None`` on
+    success, the failure text otherwise.
+    """
+    payload = {'refused': reason}
+    if token is not None:
+        payload['runToken'] = token
+    directory = Path(directory)
+    target = directory / summary_name
+    tmp = unique_summary_tmp(directory, summary_name)
+    try:
+        # fix-r11 (review MM r10 boundary #1/#2 + DS sibling #5, two
+        # lineages): create the directory instead of skipping — a refusal
+        # that leaves nothing on disk makes the "every refusal leaves
+        # exactly one own marker" contract fail on exactly this shape.
+        directory.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(payload, indent=2) + '\n')
+        tmp.replace(target)
+    except OSError as error:
+        # fix-r9 (review concurrency #3): the cleanup unlink can itself
+        # raise (an unwritable directory), which would escape this handler
+        # as a traceback and turn the refusal into rc=1 — suppress so the
+        # caller still gets the failure text below.
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        dead_stream_print(f'could not invalidate the reused summary: {error}',
+                          stream='stderr')
+        return f'could not invalidate the reused summary: {error}'
+    return None
 
 
 @contextmanager

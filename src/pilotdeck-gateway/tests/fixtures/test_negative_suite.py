@@ -54,11 +54,16 @@ class SuiteTests(unittest.TestCase):
                                 name, TEST, ANCHOR) for name in ('first', 'second')]
             calls = []
             write_bytes = Path.write_bytes
+            publish_source = suite.write_source_atomic
 
-            def restore(path, data):
+            def publish(root, path, data, *, mode=None):
+                # #1087 fix-r2: run_cases publishes every guarded-source write
+                # through write_source_atomic (one rename, #1903), so the
+                # fault injection wraps that entry point — the byte level under
+                # it never runs a truncating write anymore.
                 if restore_failure and path == source and path.read_text() == 'first':
                     raise OSError('injected restoration failure')
-                return write_bytes(path, data)
+                return publish_source(root, path, data, mode=mode)
 
             def leave_guard(*args):
                 write_bytes(source, b'original')
@@ -91,7 +96,7 @@ class SuiteTests(unittest.TestCase):
             with patch.object(suite, 'mutating_sources') as sources, \
                     patch.object(suite, 'wait_for_slot', return_value=output('pass')), \
                     patch.object(suite, 'run_owned', side_effect=run), \
-                    patch.object(Path, 'write_bytes', new=restore), \
+                    patch.object(suite, 'write_source_atomic', new=publish), \
                     contextlib.redirect_stdout(io.StringIO()) as stdout:
                 sources.return_value.__enter__.return_value = {source: b'original'}
                 sources.return_value.__enter__.side_effect = guard
@@ -519,6 +524,69 @@ class CancellationTests(unittest.TestCase):
                       '#1076 the SystemExit invalidation reason must be recorded')
         self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
                          '#1076 the published counts must be INVALID after SystemExit')
+
+    def test_closed_stdout_voids_rows_publishes_and_returns_2(self):
+        """#1087 fix-r5 (sibling #1): the abort path must survive a dead stdout.
+
+        A consumer that closed the pipe turns record()'s announce print into
+        a BrokenPipeError. The old handler filled the remaining rows through
+        the same announcing record(), so a dead stdout skipped the publish and
+        left no verdict file at all. Now the fill is silent, the publish is
+        mandatory, and a stream-failure cancellation returns 2 like every
+        other cancellation (#1076 exit contract: unverified/voided = 2).
+        """
+
+        class ClosedStdout:
+            def write(self, data):
+                raise BrokenPipeError('consumer closed the pipe')
+
+            def flush(self):
+                pass
+
+        with tempfile.TemporaryDirectory(prefix='pdrs-1087-suite-closed-') as directory:
+            root = Path(directory)
+            source = root / 'fixture.txt'
+            source.write_bytes(b'original')
+            out = root / 'logs'
+            out.mkdir()
+            case = suite.Case('one', source, 'original', 'mutant', TEST, ANCHOR)
+
+            @contextlib.contextmanager
+            def guard(_root, _paths, **_kwargs):
+                yield {source: b'original'}
+
+            def run(command, **_kwargs):
+                if source.read_text() == 'mutant':
+                    return output('kill')
+                return output('pass')
+
+            def mutate(text, _scope, replacements):
+                old, new = replacements[0]
+                return text.replace(old, new, 1)
+
+            previous = sys.stdout
+            sys.stdout = ClosedStdout()
+            try:
+                with patch.object(suite, 'mutating_sources', new=guard), \
+                        patch.object(suite, 'wait_for_slot',
+                                     return_value=output('pass')), \
+                        patch.object(suite, 'run_owned', side_effect=run):
+                    code = suite.run_cases(
+                        root, [case], out,
+                        {'CARGO_TARGET_DIR': str(root / 'target')}, mutate)
+            finally:
+                sys.stdout = previous
+            message = '#1087 the abort path must publish under a closed stdout'
+            self.assertTrue(code == 2,
+                            message + f' (a stream-failure cancellation must '
+                            f'return 2, got {code!r})')
+            path = out / 'summary.json'
+            summary = json.loads(path.read_text()) if path.is_file() else None
+            self.assertIsNotNone(summary, message + ' (no summary was published)')
+            self.assertEqual([row['status'] for row in summary['controls']],
+                             ['INVALID'], message + ' (the rows were not voided)')
+            self.assertIn('BrokenPipeError', summary['controls'][0]['reason'],
+                          message + ' (the abort reason must be recorded)')
 
     def test_publish_summary_publishes_atomically(self):
         with tempfile.TemporaryDirectory(prefix='pdrs-1076-suite-atomic-') as directory:
@@ -1174,12 +1242,15 @@ class MatrixRunnerTests(unittest.TestCase):
             original = b'original'
             guards = []
             restores = []
-            write_bytes = Path.write_bytes
-            def restore(path, data):
+            publish_source = suite.write_source_atomic
+            def publish(root, path, data, *, mode=None):
+                # Same #1087 fix-r2 re-anchoring as SuiteTests: matrix_main
+                # publishes through write_source_atomic, so the injected
+                # restore failure must come from that entry point.
                 if fault == 'restore' and path == source and path.read_text() == 'first' and not restores:
                     restores.append(True)
                     raise OSError('injected matrix restore failure')
-                return write_bytes(path, data)
+                return publish_source(root, path, data, mode=mode)
             @contextlib.contextmanager
             def guard(*args, **kwargs):
                 self.assertNotIn('baseline', kwargs, 'must use HEAD')
@@ -1210,7 +1281,7 @@ class MatrixRunnerTests(unittest.TestCase):
                 return subprocess.CompletedProcess([], 101, 'test prefix::bound ... FAILED\n', '')
             with patch.object(suite, 'mutating_sources', side_effect=guard), \
                     patch.object(suite, 'run_owned', side_effect=run), \
-                    patch.object(Path, 'write_bytes', new=restore), \
+                    patch.object(suite, 'write_source_atomic', new=publish), \
                     patch.object(suite, 'wait_for_slot', return_value=output('pass')), \
                     patch.dict('os.environ', {'CARGO_TARGET_DIR': str(root / 'target')}), \
                     contextlib.redirect_stdout(io.StringIO()):

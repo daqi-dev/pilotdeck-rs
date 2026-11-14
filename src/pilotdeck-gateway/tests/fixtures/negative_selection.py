@@ -167,9 +167,19 @@ def refuse(message):
 
     A ``SystemExit`` carrying a *string* exits 1, so the message is written
     first and the code is passed explicitly as an int.
+
+    #1087 fix-r5 (boundary #2 / sibling #2): a caller whose stderr is already
+    dead must still exit 2 — an unguarded write would crash with rc=1 and read
+    as "ran and was red". ``2>&-`` at exec time makes CPython set
+    ``sys.stderr = None`` (AttributeError on write), a really closed stream
+    object raises ValueError, and a dead fd raises OSError. The message is
+    best-effort; the code is the contract.
     """
-    sys.stderr.write(f'INVALID: {message}\n')
-    sys.stderr.flush()
+    try:
+        sys.stderr.write(f'INVALID: {message}\n')
+        sys.stderr.flush()
+    except (AttributeError, OSError, ValueError):
+        pass
     raise SystemExit(2)
 
 

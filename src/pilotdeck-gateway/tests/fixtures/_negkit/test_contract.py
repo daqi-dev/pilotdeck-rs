@@ -188,6 +188,38 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((self.output / 'summary.json').read_text(), 'foreign evidence',
                          '#1107 publication rollback only removes its own inode')
 
+    def test_revoke_cleanup_cannot_mask_the_publish_error(self):
+        """#1087 fix-r11 (review MM sibling #3 / DS concurrency #2, two
+        lineages): the revoke's own failure is reported, never raised.
+
+        The publication fails and the directory goes unwritable in between:
+        ``_revoke``'s cleanup ``PermissionError`` must not replace the
+        original publish error (the fix-r9 widen), and ``run()`` must
+        append the rollback note to the failure text (the fix-r11 restore)
+        so a leftover summary on disk is never a silent "looks like
+        success" read.
+        """
+        output = self.root / 'revoke-cleanup'
+
+        def unwritable_dump(stream, document, *args, **kwargs):
+            output.chmod(0o555)  # the directory loses write mid-publication.
+            raise Stop('publication')
+
+        try:
+            with patch.object(C.json, 'dump', unwritable_dump):
+                result = self.run_contract(output=output)
+        finally:
+            # The directory must be writable again before the context
+            # manager tries to remove it.
+            output.chmod(0o755)
+        self.assertEqual(result.code, 2, '#1087 publication failure exits two')
+        self.assertIn('Stop: publication', result.error,
+                      '#1087 the original publish error survives the failed revoke')
+        self.assertIn('publication rollback', result.error,
+                      '#1087 the failed revoke is reported in the failure text')
+        self.assertTrue(all(row['status'] == 'INVALID' for row in result.document['controls']),
+                        '#1087 publication failure revokes completed verdicts')
+
     def test_empty_cases_refused(self):
         with self.assertRaisesRegex(ValueError, 'empty case table', msg='#1107 empty case table has its own admission guard'):
             C.select_cases([], None, [1])

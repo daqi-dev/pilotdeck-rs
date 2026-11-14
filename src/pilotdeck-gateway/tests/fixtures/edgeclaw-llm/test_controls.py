@@ -13,11 +13,16 @@ from unittest.mock import patch
 here = Path(__file__).resolve().parent
 source = here.parents[2] / 'src/runtime/memory/edgeclaw/llm/transport.rs'
 reader = here.parents[2] / 'src/fetch_redirect.rs'
+sys.path.insert(0, str(here.parents[0]))
+from negative_process import dead_stream_print  # noqa: E402 - the extracted anchors() calls it
 module = ast.parse((here / 'negative.py').read_text())
 parts = [node for node in module.body if
          isinstance(node, ast.FunctionDef) and node.name in {'anchors', 'run', 'classify'} or
          isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {'cases', 'messages'} for t in node.targets)]
-namespace = {'source': source, 'reader': reader, 'sys': sys, 'os': __import__('os'), 're': __import__('re')}
+# #1087 fix-r8 (S1-a): the guarded refusal prints now go through the shared
+# dead_stream_print instead of a hand-copied try/except around print.
+namespace = {'source': source, 'reader': reader, 'sys': sys, 'os': __import__('os'), 're': __import__('re'),
+             'dead_stream_print': dead_stream_print}
 exec(compile(ast.Module(body=parts, type_ignores=[]), str(here / 'negative.py'), 'exec'), namespace)
 
 
@@ -63,6 +68,30 @@ class Controls(unittest.TestCase):
                 namespace['run_owned'] = lambda *_, status=status, log=log, **__: SimpleNamespace(returncode=status, stdout=log, stderr='')
                 with self.subTest(index=index):
                     self.assertEqual(namespace['run'](str(index), 'wire_matrix', 'expected marker'), expected)
+
+    def test_stale_anchor_refusal_survives_a_dead_stderr(self):
+        """#1087 fix-r7 batch 1 (P1b): a dead stderr keeps the refusal at exit 2.
+
+        ``2>&-`` or a closed stream makes the STALE ANCHOR print raise; the
+        old unguarded print turned the never-started exit-2 refusal into an
+        unhandled OSError crash (rc=1, "ran and was red").
+        """
+        class ClosedStderr:
+            def write(self, data):
+                raise OSError('stderr is closed')
+
+            def flush(self):
+                pass
+
+        stale = {path: 'twin unrelated source' for path in (source, reader)}
+        with patch.object(Path, 'read_text', autospec=True,
+                          side_effect=stale.__getitem__), \
+             patch.object(sys, 'stderr', ClosedStderr()):
+            with self.assertRaises(SystemExit) as error:
+                namespace['anchors'](stale[source])
+        message = '#1087 a dead stderr must keep the stale-anchor refusal at exit 2'
+        self.assertEqual(error.exception.code, 2,
+                         message + ' (the refusal must stay exit 2, not crash rc=1)')
 
 
 if __name__ == '__main__':

@@ -1827,5 +1827,531 @@ class TerminateHandlerRegistration(unittest.TestCase):
         self.assertEqual(cp.returncode, -signal.SIGQUIT)
 
 
+class DeadStreamDetach(unittest.TestCase):
+    """#1087 fix-r5 (concurrency #2): keep the abort exit code under dead fds.
+
+    A cancelled run whose stdout is a broken pipe publishes its summary and
+    raises SystemExit — but CPython's interpreter-shutdown flush rewrites
+    the exit code to 120 ("Exception ignored in: ..."). Measured on this
+    host. ``detach_dead_streams`` redirects only genuinely dead fds to
+    /dev/null, so the code survives; a healthy fd must never be detached.
+    """
+
+    def test_fd_is_dead_for_closed_and_broken_fds_only(self):
+        read_end, write_end = os.pipe()
+        self.assertFalse(negative_process._fd_is_dead(write_end),
+                         '#1087 a pipe with a live reader is not dead')
+        os.close(read_end)
+        self.assertTrue(negative_process._fd_is_dead(write_end),
+                        '#1087 a broken pipe (reader gone) must read dead')
+        os.close(write_end)
+        with tempfile.TemporaryFile() as healthy:
+            self.assertFalse(negative_process._fd_is_dead(healthy.fileno()),
+                             '#1087 a regular file fd is not dead')
+
+    def test_detach_keeps_a_broken_pipe_writable_and_leaves_healthy_fds(self):
+        read_end, write_end = os.pipe()
+        healthy_read, healthy_write = os.pipe()
+        try:
+            os.close(read_end)
+            # The streams carry private dups, so the interpreter's own fds
+            # are never touched by the detach below.
+            with patch.object(sys, 'stdout',
+                              os.fdopen(os.dup(write_end), 'w')), \
+                    patch.object(sys, 'stderr',
+                                 os.fdopen(os.dup(healthy_write), 'w')):
+                negative_process.detach_dead_streams()
+                # The broken stdout fd is now /dev/null: writing neither
+                # raises nor blocks.
+                sys.stdout.write('after detach\n')
+                sys.stdout.flush()
+                # The healthy stderr fd keeps its reader connected.
+                sys.stderr.write('still alive\n')
+                sys.stderr.flush()
+            self.assertEqual(os.read(healthy_read, 16), b'still alive\n',
+                             '#1087 a healthy fd must not be detached')
+        finally:
+            os.close(write_end)
+            os.close(healthy_write)
+            os.close(healthy_read)
+        # A stream without fileno (in-process test double) is skipped, never
+        # an error.
+        class FakeStream:
+            def fileno(self):
+                raise ValueError('fileno unsupported')
+
+        with patch.object(sys, 'stdout', FakeStream()), \
+                patch.object(sys, 'stderr', FakeStream()):
+            negative_process.detach_dead_streams()
+
+    def test_detach_keeps_the_exit_code_over_a_real_broken_pipe(self):
+        """The composed contract, measured end to end in a child process."""
+        fixtures = str(Path(__file__).resolve().parent)
+        child = (
+            'import sys, time\n'
+            f'sys.path.insert(0, {fixtures!r})\n'
+            'from negative_process import detach_dead_streams\n'
+            'time.sleep(0.3)\n'
+            'try:\n'
+            "    print('first line', flush=True)\n"
+            'except BrokenPipeError:\n'
+            '    pass\n'
+            'detach_dead_streams()\n'
+            'raise SystemExit(3)\n'
+        )
+        with tempfile.TemporaryDirectory(prefix='pdrs-detach-pipe-') as temp:
+            script = Path(temp) / 'child.py'
+            script.write_text(child)
+            process = subprocess.Popen(
+                [sys.executable, '-I', str(script)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process.stdout.close()  # the read end is gone before the second print
+            _stdout, stderr = process.communicate(timeout=60)
+        self.assertEqual(process.returncode, 3,
+                         '#1087 the exit code must stay 3, not the 120 the '
+                         f'shutdown flush rewrites it to (stderr={stderr!r})')
+        self.assertNotIn(b'Exception ignored', stderr,
+                         '#1087 the shutdown flush must not see the dead stream')
+
+    def test_unique_summary_tmp_differs_per_call_and_stays_visible(self):
+        first = negative_process.unique_summary_tmp('/tmp/out')
+        second = negative_process.unique_summary_tmp('/tmp/out')
+        self.assertNotEqual(first.name, second.name,
+                            '#1087 two stagings must never share one temp file')
+        for path in (first, second):
+            self.assertTrue(path.name.startswith('summary.json.'),
+                            '#1087 the staging name keeps its identity')
+            self.assertTrue(path.name.endswith('.tmp'),
+                            '#1087 the staging name must stay non-hidden so '
+                            'the glob leak checks still see a residue')
+
+    def test_detach_reattaches_an_fd_closed_after_interpreter_start(self):
+        """#1087 fix-r8 (S1-d, concurrency #5): the EBADF shape was a no-op.
+
+        ``os.close(1)`` frees the smallest number, so the devnull
+        ``os.open`` inside ``detach_dead_streams`` returned fd 1 itself;
+        ``dup2(1, 1)`` is a POSIX no-op and the ``finally: close`` then
+        removed the /dev/null that had just been attached — the fd stayed
+        closed and the interpreter-shutdown flush still rewrote the exit
+        code to 120. After the fix the same-number pair is skipped and
+        fd 1 stays writable /dev/null.
+        """
+        fixtures = str(Path(__file__).resolve().parent)
+        child = (
+            'import os, sys\n'
+            f'sys.path.insert(0, {fixtures!r})\n'
+            'from negative_process import detach_dead_streams\n'
+            'os.close(1)\n'
+            'detach_dead_streams()\n'
+            'os.write(1, b"after detach\\n")\n'
+            'raise SystemExit(0)\n'
+        )
+        with tempfile.TemporaryDirectory(prefix='pdrs-detach-ebadf-') as temp:
+            script = Path(temp) / 'child.py'
+            script.write_text(child)
+            result = subprocess.run(
+                [sys.executable, '-I', str(script)],
+                capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0,
+                         '#1087 fd 1 must be a writable /dev/null after the '
+                         f'detach (got rc={result.returncode}, '
+                         f'stderr={result.stderr!r})')
+        self.assertNotIn(b'Exception ignored', result.stderr,
+                         '#1087 the shutdown flush must not see the closed fd')
+
+
+class DeadStreamPrint(unittest.TestCase):
+    """#1087 fix-r8 (S1-a): one shared guarded print; the code is the contract.
+
+    The per-table guards drifted into two shapes (``except: pass`` without
+    ``flush`` — never fires on a real dead fd; ``flush`` + detach — the
+    fix-r7 shape). Both are gone: every refusal / stale-anchor /
+    green-preflight print in the family goes through this helper.
+    """
+
+    def test_a_none_target_is_skipped_without_rerouting(self):
+        """``1>&-`` / ``2>&-`` at exec time make the stream ``None``.
+
+        ``print(file=None)`` would silently fall back to the OTHER stream —
+        a refusal reason leaving via stdout while the host watches stderr —
+        and a caller's ``file=sys.stderr`` that already evaluated to None
+        is indistinguishable from the default, which is why the helper
+        resolves the target by *name* (#1087 fix-r8, boundary #1).
+        """
+        captured = io.StringIO()
+        stdout, stderr = sys.stdout, sys.stderr
+        sys.stdout = None
+        sys.stderr = captured
+        try:
+            negative_process.dead_stream_print('refusal reason')
+        finally:
+            sys.stdout = stdout
+            sys.stderr = stderr
+        message = '#1087 a None stdout must be skipped, never rerouted'
+        self.assertEqual(captured.getvalue(), '', message)
+        with patch.object(sys, 'stdout', captured), \
+                patch.object(sys, 'stderr', None):
+            negative_process.dead_stream_print('stderr reason',
+                                               stream='stderr')
+        self.assertEqual(captured.getvalue(), '',
+                         message + ' (a None stderr must not reroute either)')
+
+    def test_a_healthy_stream_is_flushed_with_sep_and_end(self):
+        class Memory:
+            def __init__(self):
+                self.data = ''
+                self.flushes = 0
+
+            def write(self, data):
+                self.data += data
+                return len(data)
+
+            def flush(self):
+                self.flushes += 1
+
+        stream = Memory()
+        with patch.object(sys, 'stdout', stream):
+            negative_process.dead_stream_print('a', 'b', sep='|', end='!')
+        self.assertEqual(stream.data, 'a|b!',
+                        '#1087 sep/end must reach the underlying print')
+        self.assertEqual(stream.flushes, 1,
+                         '#1087 the print must flush so a real dead fd '
+                         'raises inside the guard')
+
+    def test_an_unknown_stream_name_is_rejected(self):
+        with self.assertRaises(ValueError,
+                               msg='#1087 an unknown stream name is a caller '
+                                   'bug, not a silent stdout'):
+            negative_process.dead_stream_print('reason', stream='stdlog')
+
+    def test_a_dead_stream_failure_detaches_and_never_raises(self):
+        calls = []
+
+        class ClosedStdout:
+            def write(self, data):
+                raise OSError('stdout is dead')
+
+            def flush(self):
+                pass
+
+        with patch.object(negative_process, 'detach_dead_streams',
+                          lambda: calls.append(1)), \
+                patch.object(sys, 'stdout', ClosedStdout()):
+            negative_process.dead_stream_print('refusal reason', end='')
+        self.assertEqual(calls, [1],
+                         '#1087 a caught dead-stream write must detach so '
+                         'the shutdown flush cannot rewrite the exit code')
+
+    def test_delivered_preflight_and_refusal_survive_dead_streams(self):
+        """#1087 fix-r8 (S1-e, boundary #4 / concurrency #7): one real twin.
+
+        A real delivered script in a real subprocess: the green
+        ``--check-anchors`` preflight of ``edgeclaw-llm`` with stdout
+        closed at exec time (``1>&-`` makes CPython set ``sys.stdout =
+        None``; the old print crashed with an uncaught AttributeError,
+        rc=1), and the no-arguments refusal of ``edgeclaw-llm-telemetry``
+        under ``2>&-`` — the reason must not be silently re-routed to
+        stdout while the host watches stderr, and both must keep their
+        contract code with no interpreter "Exception ignored" noise.
+        """
+        fixtures = Path(__file__).resolve().parent
+        green = fixtures / 'edgeclaw-llm/negative.py'
+        refusal = fixtures / 'edgeclaw-llm-telemetry/negative.py'
+        # The refusal twin must reach the CARGO_TARGET_DIR guard, not a
+        # half-imported module; the green preflight is read-only either way.
+        env = {name: value for name, value in os.environ.items()
+               if name != 'CARGO_TARGET_DIR'}
+        with tempfile.TemporaryDirectory(prefix='pdrs-dsp-twin-') as temp:
+            green_run = subprocess.run(
+                ['/bin/sh', '-c',
+                 f'exec {sys.executable} -I {green} --check-anchors 1>&-'],
+                capture_output=True, timeout=300, env=env, cwd=temp)
+            refusal_run = subprocess.run(
+                ['/bin/sh', '-c',
+                 f'exec {sys.executable} -I {refusal} 2>&-'],
+                capture_output=True, timeout=300, env=env, cwd=temp)
+        self.assertEqual(
+            green_run.returncode, 0,
+            '#1087 the green --check-anchors preflight must keep exit 0 '
+            f'under 1>&- (got rc={green_run.returncode}, '
+            f'stderr={green_run.stderr!r})')
+        self.assertNotIn(b'Exception ignored', green_run.stderr,
+                         '#1087 the shutdown flush must not see the dead stdout')
+        self.assertEqual(
+            refusal_run.returncode, 2,
+            '#1087 the never-started refusal must keep exit 2 under 2>&- '
+            f'(got rc={refusal_run.returncode}, '
+            f'stderr={refusal_run.stderr!r})')
+        self.assertEqual(
+            refusal_run.stdout, b'',
+            '#1087 a dead stderr must not silently reroute the refusal '
+            'reason to stdout')
+        self.assertNotIn(b'Exception ignored', refusal_run.stderr,
+                         '#1087 the shutdown flush must not see the dead stderr')
+
+
+class RunTokenAndRefuseSummary(unittest.TestCase):
+    """#1087 fix-r8 (S1-b / S1-c): per-run identity and the refused marker."""
+
+    def test_tokens_differ_and_carry_a_time_component(self):
+        first = negative_process.new_run_token()
+        second = negative_process.new_run_token()
+        self.assertNotEqual(first, second,
+                            '#1087 two runs must never share a token')
+        for token in (first, second):
+            parts = token.split('.')
+            self.assertTrue(
+                len(parts) == 3 and all(part.isdigit() for part in parts),
+                f'#1087 the token stays pid.serial.time_ns (got {token!r})')
+            # A recycled pid re-running the same table used to recreate the
+            # old pid.serial token exactly; the time_ns component is what
+            # makes that impossible (#1087 fix-r8, concurrency #6).
+            self.assertTrue(
+                int(parts[2]) > 1_600_000_000_000_000_000,
+                '#1087 the time component must be time_ns scale, not the '
+                'recycling-prone pid.serial pair alone')
+
+    def test_the_marker_voids_only_this_runs_summary(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-summary-') as temp:
+            out = Path(temp)
+            # Another run's already-published green verdict.
+            (out / 'summary.999.1.123.json').write_text('{"results": []}\n')
+            failure = negative_process.refuse_summary(
+                out, 'stale anchors', '42.1.777',
+                summary_name='summary.42.1.777.json')
+            self.assertIsNone(failure,
+                              '#1087 the refused marker must publish cleanly')
+            other = json.loads((out / 'summary.999.1.123.json').read_text())
+            self.assertTrue(other == {'results': []},
+                            '#1087 another run\'s green verdict must stay '
+                            'intact (fix-r8 S1-c, concurrency #4)')
+            marker = json.loads((out / 'summary.42.1.777.json').read_text())
+            self.assertTrue(marker.get('refused') == 'stale anchors'
+                            and marker.get('runToken') == '42.1.777',
+                            f'#1087 the marker must record this run\'s '
+                            f'refusal (got {marker!r})')
+            self.assertEqual(sorted(path.name for path in out.glob('*.tmp')),
+                             [], '#1087 no staging temp may be left behind')
+
+    def test_a_failing_marker_write_leaves_no_temp(self):
+        # fix-r9 (review MM #3 + DS #3): the old twin forced the write to
+        # fail by pointing at a directory that did not exist; the guard
+        # below now returns quietly for that shape, so the failing write is
+        # forced on an existing directory instead. fix-r11 (review MM
+        # concurrency #3 + DS concurrency #3): land the real bytes first —
+        # an exception raised before any byte hits the disk leaves nothing
+        # for the cleanup unlink to remove, and the residue assertion below
+        # would pass vacuously.
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-fail-') as temp:
+            out = Path(temp)
+            real_write_text = Path.write_text
+
+            def failing_write(self, data, *args, **kwargs):
+                real_write_text(self, data)
+                raise OSError('twin: the staging write fails mid-file')
+
+            with patch.object(Path, 'write_text', failing_write):
+                failure = negative_process.refuse_summary(
+                    out, 'reason', '1.1.1', summary_name='summary.1.1.1.json')
+            self.assertTrue(failure is not None,
+                            '#1087 a failing marker write must report itself')
+            self.assertEqual(sorted(path.name for path in out.glob('*.tmp')),
+                             [],
+                             '#1087 a failing marker write must unlink its '
+                             'staging temp (fix-r8 S1-c, concurrency #8)')
+
+    def test_a_missing_directory_still_receives_its_marker(self):
+        """#1087 fix-r11 (review MM r10 boundary #1/#2 + DS, two lineages):
+        a refusal before the runner's ``mkdir`` still leaves its marker.
+
+        Several runners check argv and anchors before their ``mkdir``, so a
+        first-run refusal can point at an OUT_DIR that does not exist yet.
+        The fix-r9 guard skipped silently — no marker, no directory — while
+        adapters claimed "marker published" and the "every refusal leaves
+        exactly one own marker" contract failed on exactly this shape. The
+        refusal now creates the directory and publishes its own marker.
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-missing-') as temp:
+            missing = Path(temp) / 'never-created'
+            result = negative_process.refuse_summary(
+                missing, 'stale anchors', '1.1.1',
+                summary_name='summary.1.1.1.json')
+            self.assertIsNone(result,
+                              '#1087 publishing the refusal marker into a '
+                              'missing directory is a success, not a failure')
+            marker = json.loads((missing / 'summary.1.1.1.json').read_text())
+            self.assertTrue(marker.get('refused') == 'stale anchors'
+                            and marker.get('runToken') == '1.1.1',
+                            f'#1087 the marker must record this run\'s '
+                            f'refusal (got {marker!r})')
+
+    def test_an_uncreatable_directory_reports_instead_of_raising(self):
+        """#1087 fix-r11 (review MM r10 boundary #1): a refusal stays a
+        refusal.
+
+        The ``mkdir`` the refusal now performs can itself fail — a parent
+        that is a regular file raises ``NotADirectoryError``. That must
+        come back as failure text (reported, exit 2 preserved by the
+        caller), never as a traceback that turns the refusal into rc=1
+        ("ran and was red").
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-uncreatable-') as temp:
+            blocker = Path(temp) / 'blocker.txt'
+            blocker.write_text('a regular file, not a directory')
+            below = blocker / 'nested' / 'out'
+            try:
+                failure = negative_process.refuse_summary(
+                    below, 'stale anchors', '1.1.1',
+                    summary_name='summary.1.1.1.json')
+            except OSError as error:
+                self.fail('#1087 an uncreatable directory must not raise '
+                          f'past refuse_summary (got {error!r})')
+        self.assertTrue(failure is not None,
+                        '#1087 the uncreatable-directory marker publish '
+                        'must report itself as failure text')
+
+    def test_an_unwritable_directory_reports_instead_of_raising(self):
+        """#1087 fix-r9 (review concurrency #3): the refusal stays a refusal.
+
+        The failure path's cleanup ``unlink`` runs inside an ``except OSError``
+        that a read-only evidence directory can turn into another OSError —
+        without the suppress a marker write on such a directory would escape
+        the handler as a traceback and turn the exit-2 refusal into rc=1
+        ("ran and was red"). The caller must get the failure text instead.
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-readonly-') as temp:
+            out = Path(temp)
+            out.chmod(0o555)
+            try:
+                try:
+                    failure = negative_process.refuse_summary(
+                        out, 'stale anchors', '42.1.777',
+                        summary_name='summary.42.1.777.json')
+                except OSError as error:
+                    self.fail('#1087 an unwritable directory must not raise past '
+                              f'refuse_summary (got {error!r})')
+            finally:
+                # The directory must be writable again before the context
+                # manager tries to remove it.
+                out.chmod(0o755)
+        self.assertTrue(failure is not None,
+                        '#1087 the unwritable-directory marker write must '
+                        'report itself as failure text')
+
+    def test_failure_path_cleanup_cannot_escalate_past_the_handler(self):
+        """#1087 fix-r9 (review concurrency #3): the cleanup unlink is guarded.
+
+        The staging write succeeded, the rename failed, and the directory
+        went unwritable in between — the exact shape of a host pulling
+        permissions while a run is mid-publish. The handler's cleanup
+        ``unlink`` then meets an existing temp in a read-only directory and
+        raises ``PermissionError``; without the ``suppress`` that error
+        escapes the ``except OSError`` clause and turns the exit-2 refusal
+        into a traceback (rc=1, "ran and was red").
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-cleanup-') as temp:
+            out = Path(temp)
+
+            def unwritable_rename(self, destination, *args, **kwargs):
+                out.chmod(0o555)  # the directory loses write between the
+                # staging write and the rename.
+                raise OSError('twin: rename refused')
+
+            try:
+                with patch.object(Path, 'replace', unwritable_rename):
+                    try:
+                        failure = negative_process.refuse_summary(
+                            out, 'stale anchors', '42.1.777',
+                            summary_name='summary.42.1.777.json')
+                    except OSError as error:
+                        self.fail('#1087 the cleanup unlink must not escalate '
+                                  f'past the failure handler (got {error!r})')
+            finally:
+                out.chmod(0o755)
+        self.assertTrue(failure is not None,
+                        '#1087 a failing rename must report itself as '
+                        'failure text, not raise')
+
+    def test_build_owner_cleanup_cannot_mask_the_publish_error(self):
+        """#1087 fix-r11 (review MM sibling #2 / DS sibling #5, two
+        lineages): the build-owner publish's cleanup unlink is guarded.
+
+        The publish fails and the cleanup ``unlink`` meets its own
+        ``OSError`` — without the ``suppress`` that cleanup error replaces
+        the original publish error, and the caller never learns why the
+        publish actually failed.
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-owner-cleanup-') as temp:
+            # Any git worktree root works for the HEAD lookup; the marker
+            # itself lands in the temp target directory.
+            root = Path(negative_process.__file__).resolve().parents[4]
+            target = Path(temp) / 'target'
+            env = {'CARGO_TARGET_DIR': str(target)}
+
+            def unwritable_rename(self, destination, *args, **kwargs):
+                raise OSError('twin: rename refused')
+
+            def failing_unlink(self, *args, **kwargs):
+                raise OSError('twin: the cleanup unlink fails')
+
+            with patch.object(Path, 'replace', unwritable_rename), \
+                    patch.object(Path, 'unlink', failing_unlink):
+                try:
+                    negative_process._publish_build_owner(root, env)
+                except OSError as error:
+                    self.assertTrue('rename refused' in str(error)
+                                    and 'cleanup unlink fails' not in str(error),
+                                    f'#1087 the cleanup error must not mask '
+                                    f'the publish error (got {error!r})')
+                else:
+                    self.fail('#1087 the publish must fail as asked')
+            self.assertFalse((target / '.negative-build-owner.json').exists(),
+                             '#1087 the failed publish must leave no owner '
+                             'marker')
+
+    def test_write_source_atomic_cleanup_cannot_mask_the_publish_error(self):
+        """#1087 fix-r11 (review MM sibling #2 / DS sibling #5, two
+        lineages): the source publish's cleanup unlink is guarded.
+
+        Same shape as the build-owner twin above, on the restore hot path
+        of every source-mutating runner: the staging write fails and the
+        cleanup ``unlink`` meets its own ``OSError`` — the publish error,
+        not the cleanup error, is what the caller must see.
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-atomic-cleanup-') as temp:
+            root = Path(temp)
+            source = root / 'src.txt'
+            source.write_text('original')
+            publish = root / '.negctl-publish'
+            publish.mkdir()
+            publish.chmod(0o555)  # the staging write fails on its own here.
+
+            def failing_unlink(self, *args, **kwargs):
+                raise OSError('twin: the cleanup unlink fails')
+
+            try:
+                with patch.object(Path, 'unlink', failing_unlink):
+                    try:
+                        negative_process.write_source_atomic(root, source,
+                                                             b'replacement')
+                    except OSError as error:
+                        self.assertTrue('cleanup unlink fails' not in str(error),
+                                        f'#1087 the cleanup error must not '
+                                        f'mask the publish error (got '
+                                        f'{error!r})')
+                        self.assertTrue('Permission denied' in str(error),
+                                        f'#1087 the original publish error '
+                                        f'must be the read-only staging '
+                                        f'directory (got {error!r})')
+                    else:
+                        self.fail('#1087 the publish must fail on the '
+                                  'read-only staging directory')
+            finally:
+                publish.chmod(0o755)
+            self.assertEqual(source.read_text(), 'original',
+                             '#1087 the failed publish must not touch the '
+                             'source bytes')
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

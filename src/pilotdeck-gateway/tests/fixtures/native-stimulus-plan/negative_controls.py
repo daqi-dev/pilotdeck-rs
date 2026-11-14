@@ -9,6 +9,7 @@ import argparse
 import importlib.machinery
 import importlib.util
 import os
+from contextlib import suppress
 from pathlib import Path
 import re
 import unittest
@@ -61,7 +62,11 @@ def write_atomic(path, data):
         os.chmod(tmp, mode)
         os.replace(tmp, path)
     finally:
-        tmp.unlink(missing_ok=True)
+        # fix-r12 (review DS r11 sibling #1, same family as write_source_atomic):
+        # the cleanup unlink is the only swallowed error, so a failed publish
+        # always surfaces its own error instead of a PermissionError here.
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
 
 
 cases = [

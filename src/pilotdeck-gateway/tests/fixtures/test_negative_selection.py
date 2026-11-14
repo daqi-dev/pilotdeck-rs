@@ -11,6 +11,7 @@ baseline.
 """
 import io
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -165,6 +166,57 @@ class Refuse(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertEqual(stderr.getvalue(),
                          'INVALID: unknown mutation name: typo\n')
+
+    def test_refuse_exits_two_when_stderr_is_closed_in_process(self):
+        """#1087 fix-r5 (boundary #2 / sibling #2): an in-process closed stream.
+
+        ``sys.stderr.close()`` makes later writes raise ValueError; the old
+        unguarded write crashed with rc=1 ("ran and was red") instead of the
+        "never started" refusal code.
+        """
+
+        class ClosedStderr:
+            def write(self, data):
+                raise ValueError('I/O operation on closed file')
+
+            def flush(self):
+                pass
+
+        stderr = sys.stderr
+        sys.stderr = ClosedStderr()
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                refuse('unknown mutation name: typo')
+        finally:
+            sys.stderr = stderr
+        self.assertTrue(raised.exception.code == 2,
+                        '#1087 refuse() must keep exit 2 under a closed stderr')
+
+    def test_refuse_exits_two_with_a_real_closed_fd(self):
+        """#1087 fix-r5 (boundary #2 / sibling #2): the real ``2>&-`` shape.
+
+        A caller that had fd 2 closed at exec time makes the write raise
+        OSError(EBADF); measured on this host the old unguarded refuse()
+        exited 1 there. The child is launched through ``sh`` because the
+        ``2>&-`` redirection is what actually closes the descriptor.
+        """
+        fixtures = Path(__file__).resolve().parent
+        child = (f'import sys\n'
+                 f'sys.path.insert(0, {str(fixtures)!r})\n'
+                 f'from negative_selection import refuse\n'
+                 f"refuse('closed stderr twin')\n"
+                 f"raise SystemExit('refuse returned without exiting')\n")
+        with tempfile.TemporaryDirectory(prefix='pdrs-refuse-2fd-') as base:
+            script = Path(base) / 'child.py'
+            script.write_text(child)
+            result = subprocess.run(
+                ['/bin/sh', '-c', f'exec {sys.executable} -I {script} 2>&-'],
+                capture_output=True, timeout=60)
+        self.assertTrue(result.returncode == 2,
+                        f'#1087 refuse() must exit 2 under 2>&- '
+                        f'(got {result.returncode}, stderr={result.stderr!r})')
+        self.assertTrue(result.stdout == b'',
+                        '#1087 refuse() must not write the reason to stdout')
 
 
 if __name__ == '__main__':

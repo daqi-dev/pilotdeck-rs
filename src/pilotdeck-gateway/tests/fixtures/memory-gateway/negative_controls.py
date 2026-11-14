@@ -27,7 +27,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_panic import named_test_killed
+# #1087 fix-r5 (simplify #1): the bound-run classifier is the shared one —
+# keep importing it, do not re-add a local copy.
+from negative_panic import classify_bound_run, named_test_killed
 from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse_unusable_target, registered)
 from negative_process import (mutating_sources, run_owned, wait_for_slot)  # noqa: E402
@@ -399,12 +401,7 @@ def main():
                 result = run_bound_test(test)
                 log = result.stdout + result.stderr
                 (out / f"{name}.log").write_text(log)
-                if result.returncode == 0:
-                    record(name, "SURVIVED", "bound test stayed green")
-                elif named_test_killed(log, test, marker):
-                    record(name, "KILLED", "named assertion failed")
-                else:
-                    record(name, "INVALID", "test failed outside the named assertion")
+                record(name, *classify_bound_run(result.returncode, log, test, marker))
             except Exception as error:
                 record(
                     name,
@@ -446,16 +443,11 @@ def main():
                     log = result.stdout + result.stderr
                     (out / f"{name}.log").write_text(log)
                     marker = "#1214 the committed gateway case corpus is pinned"
-                    if result.returncode == 0:
-                        record(
-                            name,
-                            "SURVIVED",
-                            f"oracle shrank from {expected_cases} to 1",
-                        )
-                    elif named_test_killed(log, TEST, marker):
-                        record(name, "KILLED", "exact corpus pin failed")
-                    else:
-                        record(name, "INVALID", "failed outside the corpus pin")
+                    record(name, *classify_bound_run(
+                        result.returncode, log, TEST, marker,
+                        survived_reason=f"oracle shrank from {expected_cases} to 1",
+                        killed_reason="exact corpus pin failed",
+                        unbound_reason="failed outside the corpus pin"))
                 except Exception as error:
                     record(
                         name,

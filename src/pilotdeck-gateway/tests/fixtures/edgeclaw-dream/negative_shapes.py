@@ -20,9 +20,15 @@ and count every anchor instead of reading ``before`` as a filename.
 Case binding: ``oracle.json`` cases have no id field, so the replay names each
 one ``<fn>#<index within that fn>`` in every failure message. The harness below
 locates each mutant's target in ``oracle.json`` from its recorded signature and
-accepts a kill only when the log contains ``test <test> ... FAILED`` and that
-exact ``case=<id>``. A mutant tripped by an earlier sibling case (the P1 from
-review-r1), an unrelated panic, or a build failure is not a kill.
+accepts a kill only when the named test's own ``FAILED`` status line is present
+and that exact ``case=<id>`` sits inside that test's own panic payload (#1087
+shared criterion; a marker in a sibling test's panic, captured stdout, or build
+output is not evidence). For a throw case the expected error kind
+(``expected TypeError`` / ``expected RangeError``) must sit in the same
+payload — the row's recorded ``_throws`` column, back in force since the fix-r3
+review (boundary #4): a panic carrying only ``case=<id>`` is a wrong-kind
+failure. A mutant tripped by an earlier sibling case (the P1 from review-r1),
+an unrelated panic, or a build failure is not a kill.
 
 Signatures are matched after decoding the fixture's JS-value sentinels:
 ``{"$undefined": true}`` is a *value*, not an object with no keys. Matching raw
@@ -51,17 +57,14 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed, panic_evidence
+from negative_process import (mutating_sources, new_run_token, run_owned,
+                              wait_for_slot, dead_stream_print,
+                              write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
 helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/helpers.rs'
-out = Path(sys.argv[1]).resolve()
-target = os.environ.get('CARGO_TARGET_DIR')
-if not target:
-    sys.exit('negative_shapes.py requires CARGO_TARGET_DIR from the caller')
-baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
-out.mkdir(parents=True, exist_ok=True)
 
 oracle = json.loads((fixtures / 'oracle.json').read_text())
 
@@ -368,131 +371,189 @@ cases = [
                 }''',
      'clusters_match_ts', 'validateExclusiveClusters', deep_reason, 'RangeError'),
 ]
-env = dict(os.environ)
-env['CARGO_TARGET_DIR'] = target
-only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
-unknown = only - {case[0] for case in cases}
-assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
-
-# Resolve each mutant's case id from its recorded signature before touching the
-# source. A moved fixture is a stale control, not a surviving mutant.
-stale_targets = []
-case_ids = {}
-for name, _path, _before, _after, _test, fn, signature, throws_name in cases:
-    seq = [case for case in oracle['cases'] if case['fn'] == fn]
-    found = None
-    for index, case in enumerate(seq):
-        if not matches(signature, case['args'][0]):
-            continue
-        if throws_name is None:
-            if 'throws' in case:
-                continue
-        elif case.get('throws', {}).get('name') != throws_name:
-            continue
-        found = f'{fn}#{index}'
-        break
-    if found is None:
-        stale_targets.append((name, fn, getattr(signature, '__name__', 'signature')))
-    else:
-        case_ids[name] = found
-if stale_targets:
-    report = '\n'.join(f'STALE TARGET {name}: no {fn} case matches {kind}'
-                       for name, fn, kind in stale_targets) + '\n'
-    (out / 'stale-targets.log').write_text(report)
-    print(report, end='', flush=True)
-    print('STALE TARGETS: negative_shapes.py does not match oracle.json; refusing to run',
-          flush=True)
-    sys.exit(2)
-
-# Authoring-tree check that does not mutate anything (the committed run still
-# goes through `mutating_sources` below).
-if os.environ.get('NEGATIVE_CHECK_ANCHORS'):
-    source = helpers.read_text()
-    stale = [(name, source.count(before)) for name, _path, before, *_rest in cases
-             if source.count(before) != 1]
-    for name, count in stale:
-        print(f'STALE ANCHOR {name}: {count} matches')
-    print(f'anchors: {len(cases) - len(stale)}/{len(cases)} current')
-    sys.exit(2 if stale else 0)
-
-
-def assertion_failure(log, test, case_id):
+def assertion_failure(log, test, case_id, throws_name):
+    # #1087: only the named test's own FAILED status line plus the bound
+    # case id inside that test's own panic payload kills (negative_panic
+    # judges both). The old whole-log `case=...` substring also matched a
+    # sibling test's panic, captured stdout and build output — the
+    # false-kill shapes the twin controls in test_negative.py pin.
+    # #1087 fix-r3 (boundary #4): a throw case must also die the way the
+    # oracle says — the replay's own panic text names the expected error
+    # kind (`expected TypeError` / `expected RangeError`, helpers.rs
+    # replay), so the kind is bound to the same payload as the case id.
+    # A panic that carries only `case=<id>` is a wrong-kind failure, not
+    # the kill the mutant is booked to prove.
+    # #1087 fix-r4 (sibling #1): an aborted run is not a kill decision —
+    # SIGINT/SIGKILL after the bound test's FAILED line leaves a partial
+    # transcript without libtest's own summary (measured on a real libtest
+    # process), so the FAILED summary line is a separate requirement, the
+    # same guard as `negative.py` and `_shared/negative_control.py`.
     if 'could not compile' in log:
         return False
-    if f'test {test} ... FAILED' not in log:
+    # #1087 fix-r5 (simplify #2): the FAILED summary requirement moved into
+    # the shared named_test_killed default (require_summary=True).
+    if not named_test_killed(log, test, f'case={case_id}'):
         return False
-    if f'case={case_id}' not in log:
-        return False
-    return ('assertion `left == right` failed' in log
-            or 'expected TypeError' in log
-            or 'expected RangeError' in log)
+    if throws_name is None:
+        return True
+    return f'expected {throws_name}' in panic_evidence(log, test)
 
 
-def run_suite(label):
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-           '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers']
-    run = run_owned(cmd, cwd=root, env=env, timeout=600)
-    (out / f'{label}.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
-    return run.returncode
+def main(argv=None):
+    argv = list(sys.argv if argv is None else argv)
+    out = Path(argv[1]).resolve()
+    target = os.environ.get('CARGO_TARGET_DIR')
+    if not target:
+        sys.exit('negative_shapes.py requires CARGO_TARGET_DIR from the caller')
+    baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
+    out.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env['CARGO_TARGET_DIR'] = target
+    only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
+    unknown = only - {case[0] for case in cases}
+    assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
+    # #1087 fix-r8 (S1-b/S2-c): the per-run token keeps the evidence log
+    # names of two overlapping runs on this reused directory from truncating
+    # each other, and survives pid recycling (time_ns component).
+    run_token = new_run_token()
 
-
-killed, survived = [], []
-with mutating_sources(root, [helpers], baseline=baseline) as originals:
-    stale = []
-    for name, _path, before, _after, _test, _fn, _signature, _throws in cases:
-        count = originals[helpers].decode().count(before)
-        if count != 1:
-            stale.append((name, helpers.relative_to(root).as_posix(), count))
-    if stale:
-        report = '\n'.join(
-            f'STALE ANCHOR {name}: {count} matches in {relative}'
-            for name, relative, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='', flush=True)
-        print('STALE ANCHORS: negative_shapes.py is out of sync with helpers.rs; refusing to run',
-              flush=True)
+    # Resolve each mutant's case id from its recorded signature before touching
+    # the source. A moved fixture is a stale control, not a surviving mutant.
+    stale_targets = []
+    case_ids = {}
+    for name, _path, _before, _after, _test, fn, signature, throws_name in cases:
+        seq = [case for case in oracle['cases'] if case['fn'] == fn]
+        found = None
+        for index, case in enumerate(seq):
+            if not matches(signature, case['args'][0]):
+                continue
+            if throws_name is None:
+                if 'throws' in case:
+                    continue
+            elif case.get('throws', {}).get('name') != throws_name:
+                continue
+            found = f'{fn}#{index}'
+            break
+        if found is None:
+            stale_targets.append((name, fn, getattr(signature, '__name__', 'signature')))
+        else:
+            case_ids[name] = found
+    if stale_targets:
+        report = '\n'.join(f'STALE TARGET {name}: no {fn} case matches {kind}'
+                           for name, fn, kind in stale_targets) + '\n'
+        (out / f'stale-targets.{run_token}.log').write_text(report)
+        # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout must
+        # not turn this exit-2 refusal into a crash (rc=1, "ran and was red"),
+        # an exec-time ``1>&-`` reroute, or a 120; the report is already on
+        # disk in the stale-targets log, the code is the contract.
+        dead_stream_print(report, end='')
+        dead_stream_print('STALE TARGETS: negative_shapes.py does not match oracle.json; refusing to run')
         sys.exit(2)
-    if run_suite('baseline') != 0:
-        print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
+
+    # Authoring-tree check that does not mutate anything (the committed run
+    # still goes through `mutating_sources` below).
+    if os.environ.get('NEGATIVE_CHECK_ANCHORS'):
+        source = helpers.read_text()
+        stale = [(name, source.count(before)) for name, _path, before, *_rest in cases
+                 if source.count(before) != 1]
+        # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout must
+        # not turn the read-only precheck into a crash (rc=1) or a shutdown
+        # flush 120; 2 for stale, 0 for current is the contract.
+        for name, count in stale:
+            dead_stream_print(f'STALE ANCHOR {name}: {count} matches')
+        dead_stream_print(f'anchors: {len(cases) - len(stale)}/{len(cases)} current')
+        sys.exit(2 if stale else 0)
+
+    def run_suite(label):
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+        cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+               '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers']
+        run = run_owned(cmd, cwd=root, env=env, timeout=600)
+        # #1087 fix-r8 (S2-c): the tokenized log name keeps two overlapping
+        # runs on this reused directory from truncating each other's evidence.
+        (out / f'{label}.{run_token}.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
+        return run.returncode
+
+    killed, survived = [], []
+    with mutating_sources(root, [helpers], baseline=baseline) as originals:
+        stale = []
+        for name, _path, before, _after, _test, _fn, _signature, _throws in cases:
+            count = originals[helpers].decode().count(before)
+            if count != 1:
+                stale.append((name, helpers.relative_to(root).as_posix(), count))
+        if stale:
+            report = '\n'.join(
+                f'STALE ANCHOR {name}: {count} matches in {relative}'
+                for name, relative, count in stale) + '\n'
+            (out / f'stale-anchors.{run_token}.log').write_text(report)
+            # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout must
+            # not turn this exit-2 refusal into a crash (rc=1, "ran and was
+            # red"), an exec-time ``1>&-`` reroute, or a 120; the report is
+            # already on disk in the stale-anchors log, the code is the
+            # contract.
+            dead_stream_print(report, end='')
+            dead_stream_print('STALE ANCHORS: negative_shapes.py is out of sync with helpers.rs; refusing to run')
+            sys.exit(2)
+        if run_suite('baseline') != 0:
+            print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
+            sys.exit(1)
+
+        for name, _path, before, after, test, _fn, _signature, throws_name in cases:
+            if only and name not in only:
+                continue
+            reason = None
+            try:
+                source = originals[helpers].decode()
+                slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                # #1087 fix-r2: every guarded-source write in the window is
+                # one atomic rename (#1903 rule, shared with
+                # ``mutating_sources``) — a truncating ``write_text`` killed
+                # mid-write leaves an empty or half-written product source.
+                write_source_atomic(root, helpers,
+                                     source.replace(before, after).encode(),
+                                     mode=helpers.stat().st_mode & 0o7777)
+                try:
+                    cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+                           '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers',
+                           test, '--', '--exact']
+                    run = run_owned(cmd, cwd=root, env=env, timeout=300)
+                    log = run.stdout + run.stderr
+                    (out / f'{name}.{run_token}.log').write_text(slots.stdout + slots.stderr + log)
+                    if not (run.returncode != 0
+                            and assertion_failure(log, test, case_ids[name],
+                                                  throws_name)):
+                        expected = (f' (expected {throws_name})'
+                                    if throws_name else '')
+                        reason = (f'did not fail case={case_ids[name]}'
+                                  f'{expected} in {test}')
+                finally:
+                    # Same #1087 fix-r2 window: the in-loop restore is also one
+                    # rename, never a truncating write_bytes.
+                    write_source_atomic(root, helpers, originals[helpers],
+                                        mode=helpers.stat().st_mode & 0o7777)
+            except Exception as error:
+                reason = f'{type(error).__name__}: {error}'
+            if reason is None:
+                killed.append(name)
+                print(f'KILLED   {name}: {test} case={case_ids[name]}', flush=True)
+            else:
+                survived.append((name, reason))
+                print(f'SURVIVED {name}: {reason}', flush=True)
+        # Same #1087 fix-r2 window: the final restore is also one rename,
+        # never a truncating write_bytes.
+        write_source_atomic(root, helpers, originals[helpers],
+                            mode=helpers.stat().st_mode & 0o7777)
+        assert helpers.read_bytes() == originals[helpers], 'restoration failed'
+    print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
+    print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
+    # The restore path must pass too: a mutant that cannot be returned to the
+    # committed bytes would poison the next run.
+    if run_suite('restored') != 0:
+        print('RESTORED FAILED: source did not return to a passing baseline', flush=True)
+        sys.exit(1)
+    if survived:
         sys.exit(1)
 
-    for name, _path, before, after, test, _fn, _signature, _throws in cases:
-        if only and name not in only:
-            continue
-        reason = None
-        try:
-            source = originals[helpers].decode()
-            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            helpers.write_text(source.replace(before, after))
-            try:
-                cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-                       '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers',
-                       test, '--', '--exact']
-                run = run_owned(cmd, cwd=root, env=env, timeout=300)
-                log = run.stdout + run.stderr
-                (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-                if not (run.returncode != 0
-                        and assertion_failure(log, test, case_ids[name])):
-                    reason = f'did not fail case={case_ids[name]} in {test}'
-            finally:
-                helpers.write_bytes(originals[helpers])
-        except Exception as error:
-            reason = f'{type(error).__name__}: {error}'
-        if reason is None:
-            killed.append(name)
-            print(f'KILLED   {name}: {test} case={case_ids[name]}', flush=True)
-        else:
-            survived.append((name, reason))
-            print(f'SURVIVED {name}: {reason}', flush=True)
-    helpers.write_bytes(originals[helpers])
-    assert helpers.read_bytes() == originals[helpers], 'restoration failed'
-print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
-print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-# The restore path must pass too: a mutant that cannot be returned to the
-# committed bytes would poison the next run.
-if run_suite('restored') != 0:
-    print('RESTORED FAILED: source did not return to a passing baseline', flush=True)
-    sys.exit(1)
-if survived:
-    sys.exit(1)
+
+if __name__ == '__main__':
+    main()

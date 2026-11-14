@@ -9,7 +9,23 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
+
+
+def classify(returncode, log, test, assertion):
+    """The shared strict #813 verdict for one mutant row (#1087 fix-r3).
+
+    The named test's own ``FAILED`` status line plus the bound assertion's
+    message inside that test's own panic payload (``named_test_killed`` judges
+    both). The old whole-log substring check (``f'test {test} ... FAILED' in
+    log`` plus ``assertion in log``) also matched a sibling test's panic,
+    captured stdout and build output. A compile failure stays excluded
+    explicitly: it is never evidence of a kill.
+    """
+    return (returncode == 101 and 'could not compile' not in log
+            and named_test_killed(log, test, assertion))
 
 
 def main():
@@ -122,12 +138,18 @@ def main():
             changed = content.replace(old, new, 1)
             save(f'{name}.patch', ''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True), fromfile=str(source), tofile=str(source))))
-            source.write_text(changed)
+            # #1087 fix-r4 (sibling #5): one rename, never a truncating
+            # in-place write; a SIGKILL mid-write-back would leave a half-
+            # written source the next preflight refuses as "differs from
+            # HEAD". The shared publish helper (#1903) keeps the mode too.
+            write_source_atomic(root, source, changed.encode())
             result, log = run(f'{name}-negative', test)
-            killed = (result.returncode == 101 and f'test {test} ... FAILED' in log
-                      and assertion in log and 'could not compile' not in log)
-        # Restoration and SHA validation belong to mutating_sources, including on failure.
-        assert source.read_bytes() == original, 'source not restored'
+            killed = classify(result.returncode, log, test, assertion)
+        # Restoration, byte comparison and SHA validation belong to
+        # mutating_sources, including on failure: the guard's own exit
+        # verification re-reads the file and compares against the snapshot
+        # (and `git show <baseline>`), so a local re-assert here would only
+        # duplicate that check (#1087 fix-r4, sibling #5).
         # Keep the clean rerun under the same tree guard used by every runner.
         with mutating_sources(root, [source]):
             result, restored = run(f'{name}-restored', test)
