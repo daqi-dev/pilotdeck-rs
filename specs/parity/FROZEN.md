@@ -20,7 +20,7 @@
 | `multimodal.md` | `e8a7b4c4025a2a3cccbabc34b3f2b3c8542f58268ccf327f5e4937e19e890742` | 2026-10-14 #35 新增（**AI 代批，待人复核**） | 原版多态场景登记（cancel_during_tool：TS 20 遍 17/3 两类）与每日重采流程 |
 | `normalization.md` | `5a0c10b70a89a42aa7808f2a0520116e557a4614545f3662fc19dccff1568450` | 2026-10-14（**AI 代批，待人复核**） | 两侧同路径硬前提、路径对齐、ID / 时间、seq、请求体 |
 | `scripts/parity/bind.mjs` | `1b4a38037cf526c6225e69bb4faeb24835d9390f37bed3becb0f8b0f8fd6bfd3` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/check_frozen.py` | `e86bcaf816bf01da18846b035b19a29e6745f0d08c811e6cba6e7fa0d4309a9f` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/check_frozen.py` | `88d74af4f1d7898d94085c83e0ff8b34a5feacf658c9c5956194365b5a6b41f3` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/check_ruler.py` | `781b0e6d78ca11801e50954059bc6038cf75ea0e66229622eccd6bcabfe500a4` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/README.md` | `670697ffe0e1a3811561cd2ae4c7d572dd5e6b64ccea5e0fdbf68e98dfe6b9a3` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/host_env_isolation.py` | `25852e14c9d03b1d9e1437adef0e2b21dccfe4affcedca1593ffb8054ef4f5c7` | 2026-11-11 #2513 重登记（**AI 代批，待人复核**） | 宿主环境隔离控制（#2513 fix-r1 新增）：清理元组补 PILOTDECK_GATEWAY_MODE，隔离族一致性正例 / 负例绑定 `src/pilotdeck-gateway/tests/fixtures/parity-env-isolation/negative_controls.py` |

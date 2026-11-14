@@ -180,7 +180,7 @@ c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84  ../../scripts/
 b7373b5838370c43f5b35217f95ce688a0183b5494eb276a25d868a0c18517dd  ../../scripts/a5-19/six_cells.mts
 3a1bb6fedf04ff01273528c250d46765d98ef63cf1f569fba940de2acdf2f2e5  ../../scripts/gateway-parity/_guard.py
 9c0760f76aaa287f18e2fefa795230e920820b9a8ed7f98af4f71504a1a4319c  ../../scripts/gateway-parity/build_proxy.py
-a03990dfd85b87ea5b7be33a943c483091cee7049a96758d2e49d644d95d0177  ../../scripts/gateway-parity/check_frozen.py
+d07aa98b7e9d51ede2fc565353ff44d066559c87f1ac2c0c2c620e3eae81c649  ../../scripts/gateway-parity/check_frozen.py
 f398e0ba7e30d83faa9fd3ac8f3a32bf757224b153768d628d8fba010cb19538  ../../scripts/gateway-parity/check_ruler.py
 4032505067d4ecf77e875b2511354ad1144bba02ddabf88c616143f266be1c17  ../../scripts/gateway-parity/common.py
 5aa2f14fb2890f795f7638b6ccb4005f64cadc21d3ce3cff38797982b51e7e12  ../../scripts/gateway-parity/compare.py
