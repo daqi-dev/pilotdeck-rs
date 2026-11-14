@@ -1,9 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-14 20:15（19:00 段后滚动；**3042 终轮闭环（DS 终轮 P1 仲裁既有不挡 + body 手术 + pr-gate 绿，入队等待器跑 negative-controls 完即自动入队）**、**3074 r24 已收货提交 f0a08ca91 双谱系增量评审在跑**、**#3152 批次 17 条已派 macmini-01**、**#2558 已重开（#3131/#3146 前置未清）**、队列 3158/3163 + 2944/3170/3171 MERGED 已收账）：**主线 = 3042 入队 → MERGED 后串行链（2959→3088→2856）+ 3074 r24 评审收口 + #3152 批次收货（前置于 #1357 A 阶段收口）**
+updated: 2026-11-14 20:42（20:15 段后滚动；**3042 已入队（bs8avewp5 GraphQL 紧凑形报错改手动入队，队位 3）**、**3074 fix-r25 双谱系 P0/P1 全清 + body 手术（r8–r25 块、旧块存档形）→ 第二次 pr-gate 在跑**、**#3152 批次 17 条派 macmini-01 在跑**、**#2558 保持 OPEN（#3131/#3146 前置未清）**、队列 3158/3163/3042）：**主线 = 3074 pr-gate 绿入队 → #3056 收口 + 3042 MERGED 后串行链（2959→3088→2856）+ #3152 批次收货（前置于 #1357 A 阶段收口）**
 
-- #3074 | impl | doing | 3056 收口 PR：**fix-r24 已收货**（DONE 三件 sha256 验过 + 工作区 diff 与 final.patch 逐字节一致 + py_compile 四文件 OK → 提交 **f0a08ca91**（`fix(scripts) #3074 fix-r24：scope 容错拼写族入单源词表（P0 双撞）+ no-issue 尾界（no-issueX 假红）+ 产出侧字面量派生与镜像钉收尾`，+GLM trailer 按署名规则）gitleaks 干净已推送 → RESULT `_tmp/20261114-3074-fixr24/r1/`（六形探针+tb-equiv 全等+cases=366 绿+四方向差分意外 0））→ **双谱系增量评审在跑（DS bjt6zrryx / MM bqvj49jmm，base 2a790e06b）** → 仲裁/处置 → body 手术（r20–r24 块）→ gate → 入队 → #3056 收口 + #3154 销账
+- #3074 | impl | doing | 3056 收口 PR：**fix-r25 已实施并双谱系全清**（r24 评审 DS P1×2 实测仲裁：sibling#1 waiver 续字符形两正则分裂假红坐实当轮修；boundary#1 en dash 缺类无分裂降级登记边界 → 协调者本机亲改 fc49db0c5：子形/尾界四常量单源 + 表键 fail-loud + `_gate_module()` 双 memo + 真值表钉；自证 `_tmp/20261114-3074-fixr25/selfcheck/unit-tests.txt` 两套件 rc=0）→ **r25 双谱系增量评审（DS `_tmp/20261114-3074-fixr25-review-ds/` P2=5 / MM `-mm/` P2=13）P0=0 P1=0**，P2 去重五簇按修复轮上限 3 + 协作工具口径全部判定不修（触发条件与簇清单 `_tmp/20261114-3074-fixr25/arbitration.md`）→ **body 手术完成**（r8–r25 历史块补齐 39 存档形 + r25 双谱系活块盖 fc49db0c5 + 终轮处置节；首版历史块未标存档致 pr-gate 红 43595780531，存档形重手术后本地预检 PASS）→ **第二次 pr-gate 在跑，绿即入队** → #3056 收口 + #3154 销账
 - #3042 | impl | doing | 1087 收口 PR：**终轮闭环**——DS 终轮覆盖评审（--base 18d349140 全量 31,639 行，head 044ce4b6f）四角色 PASS P0=0 P1=1 P2=4；**P1（damaged owner.json 不 fast-fail 不接管）仲裁既有 main 侧不挡**（`common.py` 在 044ce4b6f 与 d8b5fa89b 逐字节一致、main :373 已 63900 同量级、DS 对照基准 18d349140 的 timeout=60 已被重锚淘汰）→ #3172 条目 4 登记（issuecomment-6876728550）；P2 处置：sibling#1→#3152 条 7、concurrency#1+boundary#2（guard/TreeLock 预算+ABBA）→#3172 条目 5（6876742491）、simplify#1→#3166 → **PR body 手术**（旧 live 块标存档 + DS 终轮活块 + 终轮条目处置节）→ pr-gate run 43591378721 **绿** → **入队等待器 bs8avewp5**（negative-controls 完成即自动 GraphQL enqueue）→ MERGED → #3001 条1/#3100 条2/3 + 1087-p2-batch 开单 + 2959 合并轮即派 + 2800 重锚再入队
 - #2959 | impl | blocked | 2499 收口 PR CONFLICTING——与 #3042 共享冲突文件，**串行排 3042 MERGED 后**即派合并轮（任务书已备 _tmp/20261114-2959-merge/，树 wt-2499）
 - #3088 | impl | doing | 1723 收口 PR：pr-gate 红 = 旧 payload → 04:27 追加重钉注释触发新 run（bw6fu77gb）；合并侧 CONFLICTING 同族 → 入串行链尾 3042→2959→3088 → MERGED 后 #1723 收尾自查关单
@@ -19,6 +19,16 @@ updated: 2026-11-14 20:15（19:00 段后滚动；**3042 终轮闭环（DS 终轮
 - 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序；前置 = #3042 合入（同域串行）
 - legacy-batches | coord | blocked | 红灯 3 六十四张老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
+
+### 交接段（20:15–20:42，coord2/e7，轮中段）
+
+**做了什么**：
+1. **3074 r24 评审收齐 → fix-r25 亲改收口**：DS（P1×2）/MM（P2×10）双谱系增量评审判读 → sibling#1（waiver 续字符形 `_WAIVER_PREFIX` vs `_NESTED_MARKER_PREFIX` 分裂假红）探针实测坐实；boundary#1（en dash 缺类）探针证实两侧同源同判 None、非本 PR 引入，降级登记边界 → 本机亲改 **fc49db0c5**（词表/边界族第 7 次复发按 memory「lexical-verdict-fix-nonconvergence」升级结构性单源：`_V1_WORD/_V1_TAIL/_WAIVER_WORD/_WAIVER_TAIL` 四常量全链派生 + `_MARKER_KW_RE` 表键 fail-loud + tb/rrr `_gate_module()` 进程内 memo + 两正则同判真值表钉）→ 双谱系增量评审（base f0a08ca91）**P0=0 P1=0**（DS P2=5 / MM P2=13）→ P2 去重五簇全部判定不修（修复轮上限 3 已满 + 协作工具不开跟进单；复查触发条件＝影响产品单闸门判定时按簇最小修复，清单 `_tmp/20261114-3074-fixr25/arbitration.md`）。
+2. **3074 body 手术**：r8–r24 历史块由子代理组装（16 节 36 谱系块逐字节校验，r17 评审并入 r18 轮已注）+ r25 双谱系活块 + 终轮处置节 → 首版历史块未标存档，pr-gate 红（run 43595780531：39 块被当活块查 head/指纹/角色态）→ **旧块全部改存档形**（`<!-- 存档（head 已过）pr-gate:v1 …`，破坏 MARKER 匹配，r17 存档先例）后本地预检 `check-pr-gate.py --body-file` PASS → 重手术，第二次 pr-gate 在跑（等待器全绿即入队）。
+3. **3042 入队**：checks 全绿但 bs8avewp5 等待器 GraphQL mutation 紧凑形（`){` 缺空格）5 次 retry 全败 → 手动带空格形入队成功（**队位 3**；当前队列 3158(1)/3163(2)/3042(3)）。
+4. **3173 零 run 排查**：PR #3173（state PR，head 6b750d3c7）push/opened/二次 close+reopen 均零 workflow run（同分支 3171 昨轮正常，仓库级 Actions 正常）→ 本轮以 board 轮中段提交推送触发 synchronize（即本提交）。
+
+**下一步**：①3074 第二次 pr-gate 绿即入队 → MERGED → 核邮箱 → #3056 收口 + #3154 销账；②3173 synchronize run 出来 → checks 绿入队（快路径）；③3158/3163/3042 队列收账；④#3152 收货（bf8vn0tyk）；⑤3042 MERGED 后串行链启动（2959 即派）。
 
 ### 交接段（19:00–20:15，coord2/e7，两小时轮；巡场卡 patrol-2000.md）
 
