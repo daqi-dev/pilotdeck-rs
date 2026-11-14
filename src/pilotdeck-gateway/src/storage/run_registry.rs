@@ -759,10 +759,19 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
     // mutation rewrites the file without the skipped records, so an operator
     // sees the drop coming on every read, not after the bytes are gone.
     if snapshot.unrekeyable > 0 {
-        eprintln!(
-            "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
-            path.display(),
-            snapshot.unrekeyable
+        // #2692 fix-merge (DS sibling#1, P1): the merge brought #2558's
+        // production `eprintln!` scan and this is a production path —
+        // `eprintln!` panics when the write fails (std behavior), so the
+        // skip signal itself could kill the read. Same non-panicking
+        // writer the other library call sites share
+        // (`production_tree_stays_eprintln_free` pins it).
+        crate::native_process::channels::console_log_line(
+            &mut std::io::stderr(),
+            &format!(
+                "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
+                path.display(),
+                snapshot.unrekeyable
+            ),
         );
     }
     // Object.entries(snapshot.events). Load order is irrelevant to the bytes:
