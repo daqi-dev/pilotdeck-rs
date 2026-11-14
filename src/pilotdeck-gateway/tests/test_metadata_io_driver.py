@@ -1668,9 +1668,22 @@ class EnvironmentControls(unittest.TestCase):
             ('settings-gateway/test_negative_controls.py', 13),
             ('test_negative_run_guards', 8),
             ('network-timing/test_negative_controls.py', 10),
-            ('test_negative_roster_guards', 20),
+            # #3043 fix-r6 同口径：本文件（test_negative_roster_guards）新增
+            # SharedRunnerRosterGuard 四向名册守卫，20→24。
+            # #3043 fix-r11（P2，DS sibling#2）：run_copy 的 repo 锁 busy 分支
+            # 配对负控（持锁方写 roster → 具名诊断 + 预算内拒 + 正控），
+            # 同口径 24→25。
+            ('test_negative_roster_guards', 25),
             ('issue-2495/test_negative_controls.py', 30),
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 20),
+            # #3043 fix-r5 给该夹具补了 StaticRosterTests 四向名册守卫
+            # （rename / reorder / 双删 / 纯净宽度），口径=当前 test_ 方法数：
+            # 20→24，不抬则删掉那四条 CI 仍绿（下限漂移洞）。
+            # #3043 fix-r10（P1 + P2#2）：GuardedSourceWindowTests 两用例
+            # （祖先持锁窗口内 bound 读取仍绿 = P1 回归钉；repo 锁 busy 分支
+            # 具名诊断 + 预算内拒 + 正控），同口径 24→26。
+            # #3043 fix-r11（P2，DS sibling#5）：旁路第三条腿（值≠本 root
+            # 不得旁路：异根值 + 真持锁 → 仍具名诊断拒 + 正控），26→27。
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 27),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -3125,6 +3138,25 @@ class EnvironmentControls(unittest.TestCase):
         ('native-config/negative_controls.py', 'write_atomic'),
         ('model-complete/negative-controls.py', 'atomic_write'),
         ('native-stimulus-plan/negative_controls.py', 'write_atomic'),
+        # #3043 fix-r6（DS r5 sibling P2a-2）：shared-runner-failclosed 的发布/
+        # 还原在 fix-r5 已走共享 negative_process.write_source_atomic（那条形态
+        # 由 publish_guards 对 negative_process.py 单独钉），但本夹具没进任何
+        # §9 名单，把它改回 `path.write_text(...)` 三家钉子全绿。登记进来只为铺
+        # sibling_write_guards 的「被变异源零原地截断写」AST 判据（下面
+        # SIBLING_WRITE_MUTANTS 两条变异必须杀）；夹具自身没有本地 atomic
+        # 函数与模块级 PUBLISH_DIR，所以 function 记 None —— sibling_atomic_
+        # guards 形态半边对它跳过，写守卫半边全量跑。
+        ('shared-runner-failclosed/negative_controls.py', None),
+        # #3043 fix-r8（MM sibling#1）：sdk-signals-close-order-pin 的发布/还原
+        # 搬上共享 negative_process.write_source_atomic（fix-r5 的 shared-runner
+        # 同款修法，mid-restore 挂钩随迁），同样记 None 进「被变异源零原地截断
+        # 写」的 AST 判据 —— 不登记则把它改回 `path.write_text(...)` 三家钉子
+        # 依旧全绿，恰是 fix-r6 为 shared-runner 补登记时的同一条理由。
+        ('sdk-signals-close-order-pin/negative_controls.py', None),
+        # #3043 fix-r9（DS sibling，同族 P1）：sdk-signals 本体是被 pin 夹具当
+        # catalog 反复变异的真源，其逐项发布/还原在 fix-r9 同样搬上共享
+        # write_source_atomic；与上两条同理由记 None 进写守卫半边。
+        ('sdk-signals/negative_controls.py', None),
     )
     # r14（zai 6 P1 + deepseek 2 P1）：r13 按「模块级 + 属性名 ∈ 保留名单」枚举，
     # 于是 setattr 调用 / Subscript 目标 / 函数体 / 接收者反向 / 写方法调用 / 别名导入
@@ -3492,6 +3524,120 @@ class EnvironmentControls(unittest.TestCase):
              'path.write_bytes(changed.encode())'),
             ('truncating-restore-write', 'write_atomic(path, originals[path])',
              'path.write_bytes(originals[path])'),
+        ),
+        # #3043 fix-r6：两个发布点换成原地截断写必须红——fix-r5 把它们搬上
+        # write_source_atomic 之前这里是裸 write，恰是 #1903 半文件形态。
+        'shared-runner-failclosed/negative_controls.py': (
+            ('truncating-mutant-write',
+             "write_source_atomic(\n"
+             "                            ROOT, path,\n"
+             "                            texts[path].replace(before, after, 1).encode('utf-8'))",
+             "path.write_text(texts[path].replace(before, after, 1))"),
+            ('truncating-restore-write',
+             'write_source_atomic(ROOT, path, originals[path])',
+             'path.write_bytes(originals[path])'),
+            # fix-r11（绑定枚举含形参后的值流洞）：``publish(output, results)``
+            # 的 ``output`` 是形参——r10 手写子集不枚举形参，调用点改传被
+            # 变异源 ``path`` 后写接收者的名字链原样照旧、仍全绿；值流判据
+            # （每个调用点传给该形参的实参必须是输出目录）必须杀。
+            ('rebound-output-parameter-receives-the-mutated-source',
+             '\n        publish(output, results)',
+             '\n        publish(path, results)'),
+        ),
+        # #3043 fix-r8：同上两个发布点（发布 + 还原）换成原地截断写必须红。
+        'sdk-signals-close-order-pin/negative_controls.py': (
+            ('truncating-mutant-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'path.write_text(changed, encoding="utf-8")'),
+            ('truncating-restore-write',
+             'write_source_atomic(root, path, snapshots[path])',
+             'path.write_bytes(snapshots[path])'),
+            # fix-r9（DS boundary#1，b-档）：伪装接收者。旧的文本前缀判据
+            # （``receiver.lstrip('( ').startswith('out')``）对 ``out_*`` 名字
+            # 假放行——把它改回截断写仍全绿；结构判据（名字必须是 out/output
+            # 本身或以它为左端的 ``/`` 链）必须杀。
+            ('disguised-out-receiver-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'out_catalog = path\n'
+             '                        out_catalog.write_text(changed, '
+             'encoding="utf-8")'),
+            # fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：结构判据只看
+            # 名字形状，名字正好取成 ``out`` 即放行——``out = path`` 之后
+            # ``out.write_text(...)`` 在 r9 判据下存活。绑定来源判（名字只能
+            # 由调用赋值）必须杀：该伪装自己引入了 ``out = path`` 绑定。
+            ('rebound-out-receiver-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'out = path\n'
+             '                        out.write_text(changed, '
+             'encoding="utf-8")'),
+            # fix-r11（DS boundary#2 ≡ MM simplify#2 ≡ sibling#4，三撞）：
+            # Call 白名单收紧的配对存活变异——r10 判据只看「右值是
+            # Call」，``out = Path(path)`` 一词即存活（本文件的 pin 条目
+            # 是判别性的一条：out 在该夹具只有 new_output_directory 一处
+            # 绑定，旧判据下本行存活、白名单下必杀）。同族三个 r10 手写
+            # 枚举漏掉的绑定形态各配一条：海象 / With 元组目标 / List
+            # 目标——binding_sites 单一枚举口径下它们都是「无白名单
+            # 右值的绑定」。
+            ('rebound-out-receiver-write-constructor',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'out = Path(path)\n'
+             '                        out.write_text(changed, '
+             'encoding="utf-8")'),
+            ('rebound-out-receiver-walrus',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'if (out := path):\n'
+             '                            out.write_text(changed, '
+             'encoding="utf-8")'),
+            ('rebound-out-receiver-with-tuple',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'with path as (out,):\n'
+             '                            out.write_text(changed, '
+             'encoding="utf-8")'),
+            ('rebound-out-receiver-list-target',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             '[out] = [path]\n'
+             '                        out.write_text(changed, '
+             'encoding="utf-8")'),
+        ),
+        # #3043 fix-r9（DS sibling，同族 P1）：sdk-signals 本体的两个发布点。
+        'sdk-signals/negative_controls.py': (
+            ('truncating-mutant-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'path.write_text(changed, encoding="utf-8")'),
+            ('truncating-restore-write',
+             'write_source_atomic(root, path, originals[path])',
+             'path.write_bytes(originals[path])'),
+            # fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：sdk-signals
+            # 模块级 ``output = root / "src/.../output.rs"`` 本是被变异的
+            # 产物源（变异行目标），名字形状判据放行任何 ``output`` 接收者。
+            # 绑定来源判按文件收窄后此处 ``output`` 判红——该伪装在 r9
+            # 判据下存活（现状即证明洞存在）。
+            ('rebound-output-receiver-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'output = path\n'
+             '                        output.write_text(changed, '
+             'encoding="utf-8")'),
+            # fix-r11（同三撞）：``output = Path(path)`` 一词存活方向在
+            # sdk-signals 的配对钉——注意该文件的 ``output`` 另有模块级
+            # 产物源绑定（``root / "..."``，r10 已判红），本行在两代判据下
+            # 都被那条绑定杀死；判别性的存活→必杀证据在 pin 条目的
+            # ``out`` 变体（见上），此处按 boundary#2 原始场景登记
+            # ``output`` 名字上的同形态。
+            ('rebound-output-receiver-write-constructor',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'output = Path(path)\n'
+             '                        output.write_text(changed, '
+             'encoding="utf-8")'),
         ),
     }
 
@@ -4205,8 +4351,162 @@ class EnvironmentControls(unittest.TestCase):
                          '#1692 §9 r2 a failed publish leaves no temp behind')
         return body
 
+    @classmethod
+    def output_name_has_only_call_bindings(cls, tree, name, _resolving=frozenset()):
+        """fix-r10（DS boundary#1 ≡ MM concurrency#3）→ fix-r11（三撞）：名字只认
+        **绑定来源**，且来源必须是输出目录构造器白名单。
+
+        名字形状（r9）之后还差绑定形状：把伪装变量正好命名为 ``out``
+        （``out = path`` 之后 ``out.write_text(...)``）或 ``output`` 即可放行，
+        而 ``sdk-signals`` 模块级 ``output = root / "src/.../output.rs"``
+        本就是被变异的产物源，放行任何 ``output`` 接收者都是 #1903 半文件
+        形态的假 PASS。fix-r11 把两处收紧钉死：
+
+        - **形态枚举只此一份**：改用 ``binding_sites``（``bound_names`` 的
+          底层完整枚举，含 NamedExpr / match 捕获 / With 元组 / List 目标 /
+          形参 / import / 解包递归）——r10 手写的那份子集漏了海象与
+          With 元组等形态（``if (out := path):`` 的 AST 里没有 Assign，
+          判据恒真放行）。任何没有白名单右值的绑定形态一律拒绝。
+        - **Call 侧白名单**：右值必须是我们六夹具实有的输出目录构造器
+          形态（``new_output_directory(...)`` / ``claim_dir(...)`` /
+          ``….resolve()``）。r10 只判「右值是 Call」，``out = Path(path)``
+          一词即存活（boundary#2 实锤的洞）。
+
+        健康面（实测核对）：五个有 ``out``/``output`` 写接收者的夹具——
+        native-config ``out = Path(args[0]).resolve()``、native-stimulus-plan
+        ``out = args.output.resolve()``、shared-runner:668 / pin:419 /
+        sdk-signals:616 的 ``new_output_directory``——右值全在白名单；
+        model-complete 的 ``output`` 只作子进程文本、无该类写点，判据对
+        它从不触发。据此 ``out`` 在现存夹具全放行，``output`` 只在
+        sdk-signals 判红（其模块级绑定正是产物源路径链）。
+
+        形参绑定（fix-r11 健康面实测补）：``publish(output, results)`` 的
+        ``output`` 右值不在绑定点、在**调用点**——按
+        ``parameter_arguments_are_output_directories`` 判该形参在本文件的
+        每一个调用点被传入的实参，实参本身必须是输出目录（白名单构造器，
+        或挂在只由构造器绑定、/ 链外侧的名字上，递归同口径）。r10 那份
+        手写子集不含形参所以对它假绿；直接按「右值非白名单」一刀切则把
+        shared-runner:668 的健康调用链误伤（``output = new_output_directory``
+        模块级绑定 → ``publish(output, results)``）。
+        """
+        for bound, _how, value, owner in cls.binding_sites(tree):
+            if bound != name:
+                continue
+            if owner is None:
+                if not cls.is_output_directory_constructor(value):
+                    return False
+            elif (owner, bound) not in _resolving:
+                if not cls.parameter_arguments_are_output_directories(
+                        tree, owner, bound, _resolving | {(owner, bound)}):
+                    return False
+        return True
+
+    @classmethod
+    def parameter_arguments_are_output_directories(cls, tree, function_name,
+                                                   parameter_name, _resolving):
+        """形参绑定的值流判（fix-r11）。
+
+        该形参在本文件的每一个调用点被传入的实参必须本身就是输出目录
+        （``argument_is_output_directory`` 同口径）。函数没有任何调用点时
+        形参无从获得值、其函数体不会执行，判安全；调用点用 ``*`` / ``**``
+        展开或省略该实参走默认值时，值不可静态判，保守判不安全。
+        """
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and ((isinstance(node.func, ast.Name) and node.func.id == function_name)
+                      or (isinstance(node.func, ast.Attribute)
+                          and node.func.attr == function_name))]
+        if not calls:
+            return True
+        position = None
+        for node in ast.walk(tree):
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == function_name):
+                ordered = [argument.arg for argument in
+                           node.args.posonlyargs + node.args.args + node.args.kwonlyargs]
+                if parameter_name in ordered:
+                    position = ordered.index(parameter_name)
+                    break
+        if position is None:
+            return False
+        for call in calls:
+            if any(isinstance(argument, ast.Starred) for argument in call.args):
+                return False
+            argument = None
+            for keyword in call.keywords:
+                if keyword.arg is None:  # **展开，实参不可静态定位
+                    return False
+                if keyword.arg == parameter_name:
+                    argument = keyword.value
+            if argument is None and position < len(call.args):
+                argument = call.args[position]
+            if argument is None or not cls.argument_is_output_directory(
+                    argument, tree, _resolving):
+                return False
+        return True
+
+    @classmethod
+    def argument_is_output_directory(cls, argument, tree, _resolving):
+        """调用点实参是不是输出目录：白名单构造器，或挂在安全名字上的 / 链。
+
+        名字侧复用 ``output_name_has_only_call_bindings``（同一份绑定枚举
+        递归），``_resolving`` 记录正在解析的 (函数, 形参)——实参名字指回
+        自己的形参时是值流环边，不引入新绑定来源，按已覆盖跳过；其余
+        绑定照判。
+        """
+        while isinstance(argument, ast.BinOp) and isinstance(argument.op, ast.Div):
+            argument = argument.left
+        if isinstance(argument, ast.Call):
+            return cls.is_output_directory_constructor(argument)
+        if isinstance(argument, ast.Name):
+            return cls.output_name_has_only_call_bindings(
+                tree, argument.id, _resolving)
+        return False
+
+    @staticmethod
+    def is_output_directory_constructor(value):
+        """`value` 是不是六夹具实有的输出目录构造器调用形态。
+
+        白名单（按实有登记，不逐词补）：``new_output_directory(...)`` 与
+        ``claim_dir(...)``（negative_selection 的两个目录构造器）及
+        ``….resolve()``（native-config 的 ``Path(args[0]).resolve()``、
+        native-stimulus-plan 的 ``args.output.resolve()``）。裸
+        ``Path(path)`` 不在名单——它只是调用形状，不证明该名字是输出
+        目录（boundary#2 的存活变异正是它）。
+        """
+        if not isinstance(value, ast.Call):
+            return False
+        func = value.func
+        if isinstance(func, ast.Name):
+            return func.id in ('new_output_directory', 'claim_dir')
+        return isinstance(func, ast.Attribute) and func.attr == 'resolve'
+
+    @staticmethod
+    def receiver_is_output_directory(func, tree):
+        """fix-r9（DS boundary#1，b-档）：接收者按 AST 结构判，不按源码文本前缀。
+
+        放行的只有两种形态：接收者名字本身是 ``out`` / ``output``，或以它们为
+        最左端的 ``/`` 链（``out / "summary.json.tmp"``、``output / a / b``）。
+        裸标识符一律判红——包括 ``out_path`` / ``outbox`` 这类**前缀伪装**：
+        旧判据 ``receiver.lstrip('( ').startswith('out')`` 读的是
+        ``get_source_segment`` 的源码文本，对它们假放行，把截断写藏进一个
+        ``out`` 开头的变量名就能过（正是逐词补词表必出新洞的形态）。链条的
+        最左端必须是那两个名字本身，中间一环换名（``a / out``）同样判红。
+        fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：结构之上再补**绑定**
+        判（见 ``output_name_has_only_call_bindings``，按整棵树收窄）——名字
+        在本文件里还只能由调用赋值，``out = path`` / ``output = <产物源路径>``
+        这类绑定让名字不再是可放行的输出目录。
+        """
+        value = func.value
+        while isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+            value = value.left
+        if not (isinstance(value, ast.Name) and value.id in ('out', 'output')):
+            return False
+        return EnvironmentControls.output_name_has_only_call_bindings(
+            tree, value.id)
+
     def sibling_write_guards(self, source, relative):
-        """#1692 §9 r2/r4：被变异源一处原地截断写都不许有，全走原子发布。
+        """#1692 §9 r2/r4/r9：被变异源一处原地截断写都不许有，全走原子发布。
 
         r4（MiniMax sibling P1 / DeepSeek boundary P2 同源）：r3 的版本按**接收者变量名**
         枚举（`path` / `case.path` / `_active["path"]`），而 `model-complete` 的第三个发布点
@@ -4215,16 +4515,29 @@ class EnvironmentControls(unittest.TestCase):
         三条断言全绿，§9 的「一处原地截断写都不许有」对该点假 PASS。
         改成 AST 判「谁在被写」：接收者必须是输出目录（`out` 派生的证据/日志）之外的一律判红，
         接收者叫什么名字都不影响覆盖类。
+        fix-r9（DS boundary#1）：r4 说的「AST 判」在白名单半边其实还是源码文本
+        前缀（`startswith('out')`）——`out_path.write_bytes(…)` 这种伪装接收者
+        照样放行。白名单收成结构判定（见 `receiver_is_output_directory`），
+        并配 `disguised-out-receiver-write` 存活变异钉住，不再往词表里逐词补。
+        fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：结构判定对「名字正好
+        取成 out/output」的伪装仍放行（`out = path` 之后 `out.write_text(…)`），
+        补绑定来源判（`output_name_has_only_call_bindings`）并配
+        `rebound-out-receiver-write` / `rebound-output-receiver-write` 两条
+        存活变异钉住。
         """
         offenders = []
-        for node in ast.walk(ast.parse(source)):
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
             if node.func.attr not in ('write_text', 'write_bytes'):
                 continue
             receiver = (ast.get_source_segment(source, node.func.value) or '').strip()
-            # 证据目录（`out / …`）是唯一允许的原地写目标；被变异源一律走原子发布。
-            if receiver.lstrip('( ').startswith('out'):
+            # 证据目录是唯一允许的原地写目标：接收者必须是 `out` / `output`
+            # 名字本身或以它为最左端的 `/` 链（AST 结构判，fix-r9），且该
+            # 名字在本文件里只由调用赋值（绑定判，fix-r10）。被变异源
+            # 一律走原子发布。
+            if self.receiver_is_output_directory(node.func, tree):
                 continue
             offenders.append(f'line {node.lineno}: {receiver}.{node.func.attr}(…)')
         self.assertEqual(offenders, [],
@@ -4374,9 +4687,29 @@ class EnvironmentControls(unittest.TestCase):
         root = Path(__file__).resolve().parent / 'fixtures'
         for relative, function in self.SIBLING_ATOMIC_WRITES:
             source = (root / relative).read_text()
-            self.sibling_atomic_guards(source, function)
+            if function is not None:
+                self.sibling_atomic_guards(source, function)
             # 每个变异写入点都要走它：形式各异，所以钉「原地截断写零命中」。
+            # #3043 fix-r6：这一半对 function=None 的条目（共享 write_source_
+            # atomic 的夹具）照跑 —— 注册它的目的就是这条 AST 判据。
             self.sibling_write_guards(source, relative)
+            for label, old, new in self.SIBLING_WRITE_MUTANTS[relative]:
+                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
+                    self.sibling_write_guards(source.replace(old, new, 1), relative)
+                print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
+                      flush=True)
+            # #3043 fix-r6：共享发布形态的条目没有本地 atomic 函数，形态半边跳过。
+            if function is None:
+                # DS fix-r6 simplify P2：None 的理由须可证伪——该夹具确无本地
+                # atomic 写函数；哪天它长出了 write_atomic/atomic_write，这里
+                # 变红提醒改登记函数名，不能照抄 None 让形态半边静默缺席。
+                self.assertNotIn('def write_atomic', source,
+                                 f'#3043 {relative} 记 None 却定义了 write_atomic')
+                self.assertNotIn('def atomic_write', source,
+                                 f'#3043 {relative} 记 None 却定义了 atomic_write')
+                continue
             scratch = re.search(r"PUBLISH_DIR = (?:ROOT|root) / (['\"])\.negctl-publish\1",
                                 source)
             self.assertIsNotNone(scratch, f'#1692 §9 r2 {relative} scratch constant')
@@ -4433,13 +4766,6 @@ class EnvironmentControls(unittest.TestCase):
                     self.sibling_atomic_guards(mutated, function)
                 print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
                       flush=True)
-            for label, old, new in self.SIBLING_WRITE_MUTANTS[relative]:
-                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
-                with self.assertRaises(AssertionError,
-                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
-                    self.sibling_write_guards(source.replace(old, new, 1), relative)
-                print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
-                      flush=True)
         # r15（两家 10 条 P1）：静态判据对「换一种拼写改道」永远差一步 —— 改判行为。
         # 三处夹具各在 `python3 -I` 子进程里真跑一次发布，观测 `os.replace` 的**源**
         # 是不是仓根暂存目录、目标是不是就是那个临时文件（同一 inode）。
@@ -4448,6 +4774,9 @@ class EnvironmentControls(unittest.TestCase):
         repository_root = Path(__file__).resolve().parents[3]
         scratch = repository_root / '.negctl-publish'
         for relative, function in self.SIBLING_ATOMIC_WRITES:
+            # #3043 fix-r6：共享发布形态（function=None）没有本地发布函数可观测。
+            if function is None:
+                continue
             probe_root = Path(tempfile.mkdtemp(prefix='.negctl-probe-',
                                                dir=repository_root))
             try:
@@ -4954,7 +5283,89 @@ self_check_controls_run | return | return problems
         self.fail('#1692 §9 the module must define write_source_atomic()')
 
     @staticmethod
-    def bound_names(source):
+    def binding_sites(tree):
+        """`tree` 里所有把名字绑进本模块命名空间的语法点 → `[(名字, 形态, 右值, 形参所属函数)]`。
+
+        `bound_names` 的底层枚举（#1903 r2/r3 建立的完整口径）。fix-r11
+        （DS simplify#2 ≡ MM boundary#2 ≡ sibling#4，三撞）：绑定形态枚举
+        全仓只此一份——``output_name_has_only_call_bindings`` 复用同一枚举
+        判「名字是否只由白名单构造器赋值」，不再手写子集副本（r10 那份子集
+        漏了 NamedExpr / match 捕获 / With 元组 / List 目标 / 形参 / import，
+        形态漏一个，两处一起漏）。右值是该绑定点的赋值表达式节点
+        （Assign/AnnAssign/AugAssign/NamedExpr 的 ``value``、with 的上下文
+        表达式）；解包目标共享同一个右值节点。其余形态（import/def/参数/
+        for/except/match）没有「赋了什么值」可言，右值为 None。
+        第四个元素只有形参绑定非 None：该形参所属函数的名字（lambda 记
+        ``<lambda>``）——形参的「右值」在调用点而非绑定点，
+        ``output_name_has_only_call_bindings`` 拿它去解析调用点实参；其余
+        绑定形态一律 None。``bound_names`` 只取前两列，旧契约不变。
+        """
+        found = []
+
+        def bind_target(node, how, value):
+            if isinstance(node, ast.Name):
+                found.append((node.id, f'{how} {node.id}', value, None))
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for element in node.elts:
+                    bind_target(element, how, value)
+            elif isinstance(node, ast.Starred):
+                bind_target(node.value, how, value)
+
+        def collect_parameters(arguments, owner):
+            parameters = arguments.posonlyargs + arguments.args + arguments.kwonlyargs
+            parameters += [argument for argument in (arguments.vararg, arguments.kwarg)
+                           if argument is not None]
+            for argument in parameters:
+                found.append((argument.arg, f'parameter {argument.arg}', None, owner))
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == '*':
+                        found.append(('*', f'from {node.module} import *', None, None))
+                    elif alias.asname:
+                        found.append((alias.asname,
+                                      f'from {node.module} import {alias.name} as {alias.asname}',
+                                      None, None))
+                    else:
+                        found.append((alias.name, f'from {node.module} import {alias.name}',
+                                      None, None))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    bound = alias.asname or alias.name.split('.')[0]
+                    spelled = f'import {alias.name}' + (f' as {bound}' if alias.asname else '')
+                    found.append((bound, spelled, None, None))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found.append((node.name, f'def {node.name}', None, None))
+                collect_parameters(node.args, node.name)
+            elif isinstance(node, ast.ClassDef):
+                found.append((node.name, f'def {node.name}', None, None))
+            elif isinstance(node, ast.Lambda):
+                collect_parameters(node.args, '<lambda>')
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    bind_target(target, 'assign', node.value)
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                bind_target(node.target, 'assign', node.value)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                bind_target(node.target, 'loop', None)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        bind_target(item.optional_vars, 'with-as', item.context_expr)
+            elif isinstance(node, ast.ExceptHandler):
+                if node.name:
+                    found.append((node.name, f'except as {node.name}', None, None))
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+                if node.name:
+                    found.append((node.name, f'match as {node.name}', None, None))
+            elif isinstance(node, ast.MatchMapping):
+                if node.rest:
+                    found.append((node.rest, f'match **{node.rest}', None, None))
+        return found
+
+    @classmethod
+    def bound_names(cls, source):
         """`source` 里所有把名字绑进**本模块命名空间**的语法点 → `[(名字, 形态)]`。
 
         #1903 r2/r3（DeepSeek boundary P2 + zai boundary P1）：第一版只枚举
@@ -4964,62 +5375,11 @@ self_check_controls_run | return | return problems
         于是「夹具只从 negative_process 导入」这条钉子对它们假 PASS。
         这里把 AST 里**每一个**产生名字绑定的节点都摊平（含解包递归），
         调用方按名字过滤即可 —— 判据是「恰好一条共享导入」，形态漏一个就不成立。
+        fix-r11：枚举本体移进 ``binding_sites``（带右值节点），本方法保持
+        旧契约 `[(名字, 形态)]` 不变，两个判据共用同一份形态枚举。
         """
-        found = []
-
-        def bind_target(node, how):
-            if isinstance(node, ast.Name):
-                found.append((node.id, f'{how} {node.id}'))
-            elif isinstance(node, (ast.Tuple, ast.List)):
-                for element in node.elts:
-                    bind_target(element, how)
-            elif isinstance(node, ast.Starred):
-                bind_target(node.value, how)
-
-        for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    if alias.name == '*':
-                        found.append(('*', f'from {node.module} import *'))
-                    elif alias.asname:
-                        found.append((alias.asname,
-                                      f'from {node.module} import {alias.name} as {alias.asname}'))
-                    else:
-                        found.append((alias.name, f'from {node.module} import {alias.name}'))
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    bound = alias.asname or alias.name.split('.')[0]
-                    spelled = f'import {alias.name}' + (f' as {bound}' if alias.asname else '')
-                    found.append((bound, spelled))
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                found.append((node.name, f'def {node.name}'))
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    bind_target(target, 'assign')
-            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
-                bind_target(node.target, 'assign')
-            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
-                bind_target(node.target, 'loop')
-            elif isinstance(node, (ast.With, ast.AsyncWith)):
-                for item in node.items:
-                    if item.optional_vars is not None:
-                        bind_target(item.optional_vars, 'with-as')
-            elif isinstance(node, ast.ExceptHandler):
-                if node.name:
-                    found.append((node.name, f'except as {node.name}'))
-            elif isinstance(node, ast.arguments):
-                parameters = node.posonlyargs + node.args + node.kwonlyargs
-                parameters += [argument for argument in (node.vararg, node.kwarg)
-                               if argument is not None]
-                for argument in parameters:
-                    found.append((argument.arg, f'parameter {argument.arg}'))
-            elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
-                if node.name:
-                    found.append((node.name, f'match as {node.name}'))
-            elif isinstance(node, ast.MatchMapping):
-                if node.rest:
-                    found.append((node.rest, f'match **{node.rest}'))
-        return found
+        return [(name, how) for name, how, _value, _owner
+                in cls.binding_sites(ast.parse(source))]
 
     def body_binding_count(self, source, name):
         """`source` 里 `name` 的绑定次数，口径与 `bound_names` 完全一致（AST，非文本正则）。

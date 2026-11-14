@@ -194,6 +194,19 @@ def apply_mutation(name, original, before, after):
 
 
 def run_bound(env):
+    # fix-r10 (P1, four-way review: DS sibling#1/concurrency#1, MM
+    # sibling#1/boundary#1): this round holds <root>/.negative-source.lock
+    # for its whole case list (the mutating_sources window in main), and
+    # the bound test's guarded source reads would wait 2 s on their own
+    # ancestor -- no amount of waiting resolves (the Rust read-lease
+    # precedent, tests/common/read_lease.rs:61-96). Export the held root
+    # exactly like sdk-signals does for its cargo children (:650): this
+    # process is the byte writer for the very sources the child reads --
+    # the mutation leg must read the parent-published mutant, the
+    # pristine/restored legs the restored pristine -- so reading straight
+    # through is the correct bytes on all three legs.
+    env = dict(env)
+    env['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = str(ROOT)
     return run_owned(
         [sys.executable, '-I', '-B', str(TEST), BOUND, '-v'],
         cwd=ROOT, env=env, timeout=180)

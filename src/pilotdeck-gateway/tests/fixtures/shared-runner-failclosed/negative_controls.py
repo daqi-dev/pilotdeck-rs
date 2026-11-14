@@ -22,6 +22,25 @@ The rows below pin the exception-identity check, the ``not
 isinstance(error, Exception)`` cancellation branch, both phase transitions and
 both halves of the ``('restore', 'exit')`` tuple for each executor.
 
+#3043 fix-r5 swaps the local loose judges for the family's canonical
+four-condition set (``gateway-entry-guard/negative_controls.py``, #991/#1060;
+the same swap fix-r4 made for close-order-reader-failclosed) and moves the
+publish/restore writes onto ``write_source_atomic``.  A skip-shaped green log
+is not a pass, and the marker echoed anywhere but the bound test's own
+AssertionError block is not a kill; the bound test now runs as the script it
+lives in so the canonical ``__main__`` description layouts match.
+
+#3043 fix-r6 (#3134 P1) adds the static name roster the sdk-signals sibling
+got in the same r5 diff: ``MUTANT_ROWS`` is compared against the frozen
+``EXPECTED_NAMES`` tuple by ``negative_selection.registered()`` at module
+load, so a renamed, reordered, duplicated or single-deleted row refuses
+before any control runs (the rc-1 startup refusal below -- a run that
+never started must not be readable as a green ``--check`` or a smaller
+all-KILLED summary). The pair is two-sided with the test-side denominator
+literal (``SHARED_RUNNER_ROSTER`` in ``test_negative_roster_guards.py``):
+deleting a row together with its roster entry shrinks both sides of the
+registered() mirror, and only that outside literal refuses it.
+
 Each mutant is syntax-compiled before its positive control runs.  A stale
 anchor aborts the whole selected run as INVALID (never SURVIVED).  All selected
 rows finish before the summary is published; any non-KILLED row is a nonzero
@@ -35,10 +54,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (mutating_sources, new_output_directory,
+                              run_owned, write_source_atomic)
+from negative_selection import registered
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
@@ -446,6 +468,67 @@ MUTANT_ROWS = [
     ),
 ]
 
+# #3043 fix-r6 (#3134 P1, mirroring the sdk-signals-close-order-pin r5 fix
+# at its negative_controls.py EXPECTED_NAMES block): without a static
+# denominator, a single edit deleting any MUTANT_ROWS row left --check
+# printing "{len(selected)} anchors: ok" at rc 0 and a full run publishing
+# an (N-1)/(N-1) all-KILLED exit 0 (the DS r6 sibling P1, verified on a
+# mutated tmp copy pre-fix). The frozen ordered roster below closes every
+# name-level drift -- rename, reorder, duplicate, single delete -- per
+# specs/negative-controls/README.md invariant 1 ("the denominator is a
+# static literal, not the runtime table length"). The refusal keeps this
+# runner's startup contract shape (a module-level sys.exit with the drift
+# diagnostic, rc 1, before argparse or any anchor is touched); the
+# double-delete escape (row plus its roster entry removed together) is
+# what the outside literal SHARED_RUNNER_ROSTER in
+# test_negative_roster_guards.py refuses.
+EXPECTED_NAMES = (
+    'runner-baseexception-narrowed',
+    'runner-publish-before-verify',
+    'runner-nonatomic-publish',
+    'sqlite-baseexception-narrowed',
+    'sqlite-publish-in-loop',
+    'sqlite-nonatomic-publish',
+    'runner-refusal-exit-two',
+    'sqlite-refusal-exit-two',
+    'runner-body-refusal-exit-two',
+    'sqlite-body-refusal-exit-two',
+    'runner-body-error-overwritten-exit-one',
+    'sqlite-body-error-overwritten-exit-one',
+    'runner-body-cancellation-exit-one',
+    'sqlite-body-cancellation-exit-one',
+    'runner-restore-phase-body',
+    'sqlite-restore-phase-body',
+    'runner-exit-branch-one',
+    'sqlite-exit-branch-one',
+    'runner-restore-branch-one',
+    'sqlite-restore-branch-one',
+    'audit-binding-empty-short-allowed',
+    'audit-binding-extra-level-allowed',
+    'audit-binding-unlisted-module-allowed',
+    'audit-binding-missing-declaration-allowed',
+    'audit-binding-suffix-name-allowed',
+    'audit-binding-embedded-fn-allowed',
+    'audit-binding-longer-macro-allowed',
+    'audit-binding-declares-empty-short-allowed',
+    'audit-binding-qualifiers-dropped',
+    'audit-binding-qualifier-suffix-allowed',
+    'audit-binding-line-comment-kept',
+    'audit-binding-block-comment-kept',
+    'audit-binding-string-literal-kept',
+    'audit-binding-char-literal-kept',
+    'audit-binding-unterminated-string-accepted',
+    'audit-binding-c-string-prefix-allowed',
+    'audit-binding-char-escape-allowed',
+    'audit-binding-c-string-hash-prefix-accepted',
+    'audit-binding-c-string-gate-allowed',
+)
+
+try:
+    registered(MUTANT_ROWS, EXPECTED_NAMES)
+except ValueError as error:
+    sys.exit(f'#1076 mutation roster drifted from the static inventory: {error}')
+
 
 def apply_mutation(name, original, before, after):
     """Return the mutant bytes, or fail closed on a stale/no-op anchor."""
@@ -459,34 +542,99 @@ def apply_mutation(name, original, before, after):
     return mutant
 
 
+def bound_test(test):
+    # #3043 fix-r5: the canonical judges' ``descriptions()`` accepts only the
+    # script-run id shape ('Class.method'); the rows keep the historical
+    # fully-qualified form for the summary, so the module prefix is stripped
+    # exactly here -- and a row that escapes the suite script is refused
+    # instead of silently producing a judge layout nothing matches.
+    prefix = 'test_negative_suite.'
+    if not test.startswith(prefix):
+        raise ValueError(f'#1076 bound test outside the suite script: {test}')
+    return test[len(prefix):]
+
+
 def run_test(test, env):
-    return run_owned([sys.executable, '-m', 'unittest', '-v', test],
+    # #3043 fix-r5: the bound test runs as the script it lives in
+    # (``python -B test_negative_suite.py Class.method -v``) instead of
+    # ``-m unittest test_negative_suite.Class.method``, so the canonical
+    # ``__main__`` description layout below is the one produced. cwd stays on
+    # FIXTURES so the script-dir import of ``negative_suite`` keeps resolving
+    # to the (possibly mutated) module. No ``-I``: isolated mode drops the
+    # script directory from ``sys.path`` and would break that import.
+    return run_owned([sys.executable, '-B',
+                      str(FIXTURES / 'test_negative_suite.py'),
+                      bound_test(test), '-v'],
                      cwd=FIXTURES, env=env, timeout=180)
 
 
-def passed(result):
+# #3043 fix-r5: the judge set below is copied verbatim from the family's
+# canonical entry ``gateway-entry-guard/negative_controls.py`` (#991/#1060),
+# the same swap fix-r4 (a4) made for close-order-reader-failclosed. The local
+# drift it replaces accepted any rc-0 log containing "Ran 1 test" and "\nOK"
+# -- a skip-shaped green log passes it -- and called any log with the marker,
+# "FAIL:" and "AssertionError" a KILL, so the marker echoed in stdout over an
+# unrelated failure block was judged KILLED. Only the bound test's own
+# AssertionError may report a kill, in either unittest layout.
+def single_test(log):
+    return len(re.findall(r'^Ran 1 test in [0-9.]+s$', log, re.MULTILINE)) == 1
+
+
+def descriptions(test):
+    owner, method = test.rsplit('.', 1)
+    # Accept both observed unittest layouts, retaining the exact module,
+    # class and method identity in either layout (#1060).
+    return (f'{method} (__main__.{test})', f'{method} (__main__.{owner})')
+
+
+def passed(result, test):
     log = result.stdout + result.stderr
-    return result.returncode == 0 and 'Ran 1 test' in log and '\nOK' in log
+    return (result.returncode == 0
+            and any(description + ' ... ok' in log.splitlines()
+                    for description in descriptions(test))
+            and single_test(log) and log.rstrip().endswith('\nOK')
+            and 'skipped' not in log)
 
 
 def classify(result, test, message):
     log = result.stdout + result.stderr
-    short = test.rsplit('.', 1)[-1]
-    if result.returncode == 0:
+    if passed(result, test):
         return 'SURVIVED', 'bound test passed the mutant'
-    if f'FAIL: {short}' in log and message in log and 'AssertionError' in log:
-        return 'KILLED', message
-    return 'INVALID', f'failed outside the bound assertion: {message}'
+    if (result.returncode != 1 or not single_test(log)
+            or not re.search(r'^FAILED \(failures=[1-9][0-9]*\)\s*\Z', log, re.MULTILINE)
+            or 'ERROR:' in log):
+        return 'INVALID', 'missing normal single-test assertion failure'
+    # subTest descriptions follow either layout. Only this test's own
+    # AssertionError may supply the marker.
+    names = '|'.join(re.escape(name) for name in descriptions(test))
+    header = re.compile(
+        rf'FAIL: (?:{names})(?: \(.*\))?')
+    separator = '\n' + '-' * 70 + '\n'
+    for block in log.split('\n' + '=' * 70 + '\n')[1:]:
+        title, found, body = block.partition(separator)
+        if not found or not header.fullmatch(title):
+            continue
+        body = body.split(separator, 1)[0]
+        assertion = re.search(r'^AssertionError: (.*)', body, re.MULTILINE | re.DOTALL)
+        if assertion and message in assertion.group(1):
+            return 'KILLED', message
+    return 'INVALID', 'missing bound assertion (anchor, compile or wrong failure)'
 
 
 def publish(output, results):
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    target = output / 'summary.json'
-    temporary = target.with_name(target.name + '.tmp')
-    temporary.write_text(json.dumps({'controls': results, 'counts': counts},
-                                    indent=2) + '\n')
-    temporary.replace(target)
+    # #3043 fix-r6: the summary temp keeps the family's inline evidence-write
+    # receiver shape (`(out / ...).write_text(...)`, native-config:1732-1734,
+    # native-stimulus-plan:244-266) now that this fixture is registered on the
+    # #1692 §9 write-guard side: sibling_write_guards allows an in-place
+    # write_text only on a receiver derived from the output directory, and a
+    # bare local name reads there as a truncating write of a guarded source.
+    # Same bytes, same one-rename publish; only the receiver is spelled
+    # inline off `output`.
+    (output / 'summary.json.tmp').write_text(
+        json.dumps({'controls': results, 'counts': counts}, indent=2) + '\n')
+    (output / 'summary.json.tmp').replace(output / 'summary.json')
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()),
           flush=True)
 
@@ -530,21 +678,29 @@ def main():
             for name, path, before, after, _test, _message in selected:
                 apply_mutation(name, texts[path], before, after)
             for name, path, before, after, test, message in selected:
+                bound = bound_test(test)
                 status, reason = 'INVALID', 'not executed'
                 try:
-                    if not passed(run_test(test, env)):
+                    if not passed(run_test(test, env), bound):
                         reason = 'positive control did not pass'
                     else:
-                        path.write_text(texts[path].replace(before, after, 1))
-                        status, reason = classify(run_test(test, env), test, message)
+                        # fix-r5 (a5-shaped): publish goes through
+                        # write_source_atomic (temp file + one rename),
+                        # never a truncating in-place write -- a SIGKILL
+                        # mid-write leaves the old or the new bytes, not half
+                        # a file (#1903; the #3088 fix-r6 same-family shape).
+                        write_source_atomic(
+                            ROOT, path,
+                            texts[path].replace(before, after, 1).encode('utf-8'))
+                        status, reason = classify(run_test(test, env), bound, message)
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path])
                     if path.read_bytes() != originals[path]:
                         raise RuntimeError(f'#1076 byte restoration failed: {path}')
                 try:
-                    if not passed(run_test(test, env)):
+                    if not passed(run_test(test, env), bound):
                         status, reason = 'INVALID', reason + '; restored bound test did not pass'
                 except Exception as error:
                     status, reason = (

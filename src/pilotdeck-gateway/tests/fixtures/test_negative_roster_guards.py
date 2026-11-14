@@ -103,12 +103,32 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 import pending_reanchor as pending
+from negative_process import tree_lock
 
 FIXTURES = Path(__file__).resolve().parent
+# The tree the guarded drivers lock: the same ``<root>/.negative-source.lock``
+# their own ``mutating_sources`` flocks (a driver's ROOT is parents[5] from
+# its deeper fixture nesting; from this file it is parents[4]).
+REPO_ROOT = Path(__file__).resolve().parents[4]
+# fix-r11 (P2, DS sibling#1 ≡ MM sibling#1, the pin fixture's twin): the
+# depth constant must be self-proved -- the pin fixture got its proof in
+# fix-r10 but this twin (one level shallower, ``parents[4]``) stayed
+# bare. Same external anchor, same explicit raise (not an assert --
+# ``python -O`` strips asserts), not a second hand-rolled scheme: without
+# it a relocated or flattened fixture tree would derive some other
+# *existing* directory and ``tree_lock`` (``os.open(..., O_CREAT)``)
+# would silently create a stranger's lock file -- run_copy's and
+# _drive_2495's windows would stay green while locking nothing at all.
+if not (REPO_ROOT / 'src/Cargo.toml').is_file():
+    raise RuntimeError(
+        '#3043 REPO_ROOT must be the repository root (the directory '
+        f'holding src/Cargo.toml), got {REPO_ROOT}: a relocated or '
+        'flattened fixture tree would silently lock a stranger\'s tree')
 FULL_ROSTER = 36
 # mode-routing's EXPECTED_NAMES literal (that fixture's negative_controls
 # :164-175): the roster count pinned independently of module.EXPECTED_NAMES,
@@ -123,6 +143,16 @@ MODE_ROSTER = 10
 # and the run still publishes a (N-1)/(N-1) all-KILLED exit 0. Only this
 # literal, which the table under test cannot influence, refuses it.
 CLOSE_ORDER_READER_ROSTER = 6
+# The shared-runner table's EXPECTED_NAMES length (#3043 fix-r6, DS r5
+# sibling P1 #3134 -- the same #1666-family second denominator the sdk
+# -signals StaticRosterTests got in fix-r5): the shared-runner fixture
+# registered its MUTANT_ROWS with ``negative_selection.registered()`` but
+# had no second denominator and no test case for the refusal, so a rename,
+# a reorder, or a row deleted together with its EXPECTED_NAMES entry kept
+# every check green (measured pre-fix: a single-deleted row still printed
+# ``38 anchors: ok``). Only this literal, which the table under test
+# cannot influence, refuses the double-delete direction.
+SHARED_RUNNER_ROSTER = 39
 TERMINATE_SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGQUIT')
 MANAGER_SCRIPT = 'manager-gateway/negative_controls.py'
 ENTRY = FIXTURES / MANAGER_SCRIPT
@@ -1678,6 +1708,331 @@ class CloseOrderReaderRosterGuard(unittest.TestCase):
                         f'#3043 the marker inside the bound test\'s own '
                         f'AssertionError block must stay a kill, got '
                         f'{status}')
+
+
+# The shared-runner four-way copy tests (fix-r6) run staged copies of the
+# real driver through a boot script that pre-inserts the real fixtures
+# directory on sys.path, so ``negative_process`` / ``negative_selection``
+# still resolve while every byte of the driver under test comes from the
+# staged copy. Same shape as the sdk-signals fix-r5 ROSTER_BOOT_SOURCE.
+SHARED_RUNNER_BOOT_SOURCE = """\
+import sys
+copy = sys.argv[1]
+sys.argv = ['negative_controls.py', *sys.argv[2:]]
+sys.path.insert(0, __REAL_FIXTURES__)
+import runpy
+runpy.run_path(copy, run_name='__main__')
+"""
+# String anchors into the shared-runner source: the first table row's name
+# (8-space indent inside its tuple), the second row's name, and the same
+# name as it appears in EXPECTED_NAMES (4-space indent). One occurrence
+# each, so a replace is surgical and a drift in the fixture turns these
+# count assertions red instead of mutating the wrong line.
+_SHARED_RUNNER_TABLE_ROW = "\n        'runner-baseexception-narrowed',\n"
+_SHARED_RUNNER_TABLE_ROW_MOVED = "\n        'runner-publish-before-verify',\n"
+# The row that must survive a first-row deletion: here the second row
+# doubles as the reorder partner and the surviving-next witness.
+_SHARED_RUNNER_TABLE_ROW_NEXT = _SHARED_RUNNER_TABLE_ROW_MOVED
+_SHARED_RUNNER_ROSTER_ENTRY = "\n    'runner-baseexception-narrowed',\n"
+
+# fix-r11 (P2, DS sibling#2): the pin fixture's LOCK_HOLDER_SOURCE shape
+# (sdk-signals-close-order-pin/test_negative_controls.py) -- a real
+# subprocess holding the repo lock through the real ``tree_lock``,
+# publishing its ready file atomically, then sleeping. Replicated here (not
+# imported) per the family's cross-file shape convention: importing one
+# discovery-visible test module from another would couple their startup.
+_REPO_LOCK_HOLDER_SOURCE = (
+    'import sys, time\n'
+    'from pathlib import Path\n'
+    'sys.path.insert(0, sys.argv[1])\n'
+    'from negative_process import tree_lock\n'
+    'with tree_lock(sys.argv[2], timeout=10):\n'
+    '    Path(sys.argv[3] + ".tmp").write_text("held")\n'
+    '    Path(sys.argv[3] + ".tmp").replace(sys.argv[3])\n'
+    '    time.sleep(30)\n'
+)
+
+
+def _kill_repo_lock_holder(holder):
+    # Group kill, not a bare kill(): the holder runs in its own session
+    # (the issue-2495 cleanup shape). A vanished group is not an error.
+    if holder.poll() is None:
+        try:
+            os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    holder.wait(timeout=30)
+    # The holder's stdout/stderr pipes (captured for death diagnosis, the
+    # pin's fix-r11 concurrency#3 shape) are never read in the normal path.
+    for stream in (holder.stdout, holder.stderr):
+        if stream is not None:
+            stream.close()
+
+
+def _spawn_repo_lock_holder(testcase):
+    """A sibling subprocess holding REPO_ROOT/.negative-source.lock (fix-r11).
+
+    Returns the holder once its ready file proves the lock is held. A
+    holder that dies before publishing is a premise fact, not a setup bug
+    (the pin's fix-r11 concurrency#3 shape): contended lock -> named skip,
+    any other death -> fail closed with the holder's stderr.
+    """
+    base = Path(tempfile.mkdtemp(prefix='pdrs-3043-roster-repolock-'))
+    testcase.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    ready = base / 'held'
+    holder = subprocess.Popen(
+        [sys.executable, '-I', '-c', _REPO_LOCK_HOLDER_SOURCE,
+         str(FIXTURES), str(REPO_ROOT), str(ready)],
+        start_new_session=True, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+    testcase.addCleanup(_kill_repo_lock_holder, holder)
+    deadline = time.monotonic() + 30
+    while not ready.exists():
+        if holder.poll() is not None:
+            _out, holder_error = holder.communicate(timeout=30)
+            if 'TimeoutError' in holder_error:
+                testcase.skipTest(
+                    '#3043 the repo lock is already held by a sibling '
+                    'negative-control round; this test\'s own holder '
+                    'cannot establish its premise -- rerun when idle '
+                    f'(holder stderr: {holder_error!r})')
+            testcase.fail('#3043 the repo lock holder died before '
+                          f'acquiring the repo lock: {holder_error!r}')
+        testcase.assertLess(time.monotonic(), deadline,
+                            'the repo lock holder never published its '
+                            'ready file')
+        time.sleep(0.05)
+    return holder
+
+
+class SharedRunnerRosterGuard(unittest.TestCase):
+    """#3043 fix-r6: the shared-runner table's static roster refuses (rc 1).
+
+    The sdk-signals fix-r5 mirror (``StaticRosterTests``): fix-r5 gave
+    sdk-signals-close-order-pin ``EXPECTED_NAMES`` + ``registered()`` and the
+    four-way copy tests in the same change, while the shared-runner table --
+    grown to 39 rows in the same fix-r5 -- kept a bare ``MUTANT_ROWS``
+    (DS r5 sibling P1, #3134). Measured pre-fix: a single-deleted row
+    still printed ``38 anchors: ok``; a rename or a reorder kept every
+    check green too, because nothing outside the table pinned the names.
+    These tests drive subprocess copies of the real driver so the refusal
+    fires through the module's own startup code path, never an import.
+
+    This fixture is deliberately NOT registered in ``ROSTER_GUARDED``: that
+    register is the *publish-time* roster-mismatch.json re-check (the scan
+    test requires the ``roster-mismatch.json`` literal in the source, and a
+    register row must carry the mismatch-publish kill set); shared-runner
+    has the *startup* ``registered()`` refusal instead, the same family
+    shape as ``CloseOrderReaderRosterGuard`` above -- a standalone class
+    with its own outside-literal denominator, not a register row.
+    """
+
+    def run_copy(self, source, argv=(), with_output=False):
+        """Run a staged copy of the driver in a temp tree; return (result, out).
+
+        ``argv`` lands after the script name, so the copy's own ``main()``
+        parses it exactly like a real invocation. The guarded sources the
+        ``--check`` walk reads are staged next to the copy so the pristine
+        direction exercises the real 39-anchor walk end to end.
+        ``with_output=True`` appends ``--output <out>`` so the refusal cases
+        below stay falsifiable: if a pre-run refusal ever stopped firing,
+        the run would proceed past argparse and create ``out`` (DS fix-r6
+        boundary P2 -- the bare ``assertFalse(out.exists())`` used to hold
+        vacuously because no path ever created ``out``).
+        """
+        base = Path(tempfile.mkdtemp(prefix='pdrs-3043-shared-runner-roster-'))
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        fixtures = base / ('src/pilotdeck-gateway/tests/fixtures')
+        tree = fixtures / 'shared-runner-failclosed'
+        tree.mkdir(parents=True)
+        copy = tree / 'negative_controls.py'
+        copy.write_text(source, encoding='utf-8')
+        # The driver resolves SUITE/SQLITE from its own __file__ (parents[5]
+        # + the fixtures suffix): stage the real guarded bytes so --check
+        # walks the true 39 anchors in the temp tree. fix-r8
+        # (concurrency#1): those two files are exactly the shared-runner
+        # control's SUITE/SQLITE, and it keeps a mutant on disk for the
+        # whole bound-test window under the tree lock -- copying without
+        # the lock can land on mutant bytes and red the anchor walk below
+        # (TreeLock: whoever owns the lock reads the pristine bytes
+        # *after* acquisition). The lock is held only across the copy
+        # window; the subprocess below runs staged bytes, unlocked.
+        # fix-r9 (MM concurrency#1 ≡ DS concurrency#1, the fast_tree_lock
+        # precedent at :628): the wait budget is explicit and short, not
+        # TreeLock's silent 900 s default -- a sibling round holding
+        # ROOT/.negative-source.lock fails this copy closed in seconds
+        # with a holder-naming diagnostic instead of outlasting the CI
+        # step's own timeout.
+        try:
+            with tree_lock(REPO_ROOT, timeout=2):
+                shutil.copy2(FIXTURES / 'negative_suite.py',
+                             fixtures / 'negative_suite.py')
+                shared = fixtures / '_shared'
+                shared.mkdir()
+                shutil.copy2(FIXTURES / '_shared/negative_sqlite_header.py',
+                             shared / 'negative_sqlite_header.py')
+        except TimeoutError as error:
+            self.fail('#3043 the guarded shared sources were busy for over '
+                      '2 s: a sibling negative-control round holds '
+                      f'{REPO_ROOT}/.negative-source.lock and mutant bytes '
+                      f'would be staged as pristine; refusing: {error}')
+        boot = base / 'boot.py'
+        boot.write_text(
+            SHARED_RUNNER_BOOT_SOURCE.replace('__REAL_FIXTURES__',
+                                              repr(str(FIXTURES))),
+            encoding='utf-8')
+        out = base / 'out'
+        if with_output:
+            argv = (*argv, '--output', str(out))
+        result = subprocess.run(
+            [sys.executable, '-B', str(boot), str(copy), *argv],
+            capture_output=True, text=True, timeout=60,
+            env={key: value for key, value in os.environ.items()
+                 if key != 'CARGO_TARGET_DIR'})
+        return result, out
+
+    def test_a_busy_repo_lock_fails_closed_within_the_budget(self):
+        # fix-r11 (P2, DS sibling#2): the copy window's busy branch had no
+        # paired control in this file -- the pin fixture's
+        # guarded_source_window got one in fix-r10 P2#2, but run_copy's own
+        # ``tree_lock(REPO_ROOT, timeout=2)`` (the same family) stayed
+        # uncovered: reverting the timeout to TreeLock's 900 s default or
+        # dropping the fail branch entirely keeps every test here green. A
+        # sibling process holds the real repo lock, the very window must
+        # refuse with the named diagnostic inside its 2 s budget, and the
+        # same guarded read acquires cleanly once the holder is gone.
+        source = (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
+                  ).read_text(encoding='utf-8')
+        holder = _spawn_repo_lock_holder(self)
+        try:
+            started = time.monotonic()
+            with self.assertRaises(AssertionError) as raised:
+                self.run_copy(source)
+            elapsed = time.monotonic() - started
+        finally:
+            _kill_repo_lock_holder(holder)
+        message = str(raised.exception)
+        self.assertIn('#3043 the guarded shared sources were busy', message)
+        self.assertIn('.negative-source.lock', message)
+        self.assertGreaterEqual(
+            elapsed, 1.0,
+            'the copy window must really wait its 2 s budget out before '
+            'refusing, not fail on some earlier error')
+        self.assertLessEqual(
+            elapsed, 5.0,
+            'the refusal must land at the 2 s budget (the window must '
+            'never silently outlast it toward the holder\'s sleep horizon)')
+        # Positive control: once the holder is gone the very same lock
+        # window acquires and the guarded bytes read cleanly.
+        with tree_lock(REPO_ROOT, timeout=2):
+            self.assertTrue(
+                (FIXTURES / 'negative_suite.py').read_bytes()
+                and (FIXTURES / '_shared/negative_sqlite_header.py'
+                     ).read_bytes(),
+                'the copy window must read the guarded shared sources '
+                'once the holder is gone')
+
+    def test_a_renamed_row_is_refused_without_evidence(self):
+        source = (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
+                  ).read_text(encoding='utf-8')
+        self.assertEqual(source.count(_SHARED_RUNNER_TABLE_ROW), 1)
+        result, out = self.run_copy(
+            source.replace(_SHARED_RUNNER_TABLE_ROW,
+                           _SHARED_RUNNER_TABLE_ROW.replace('narrowed',
+                                                            'narrowed-x')),
+            with_output=True)
+        self.assertEqual(result.returncode, 1,
+                         f'#3043 a renamed row is a pre-run refusal (rc 1): '
+                         f'{result.stderr!r}')
+        self.assertIn('#1076 mutation roster drifted from the static inventory',
+                      result.stderr)
+        self.assertIn('runner-baseexception-narrowed', result.stderr)
+        self.assertIn('runner-baseexception-narrowed-x', result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_reordered_row_is_refused_without_evidence(self):
+        source = (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
+                  ).read_text(encoding='utf-8')
+        self.assertEqual(source.count(_SHARED_RUNNER_TABLE_ROW), 1)
+        self.assertEqual(source.count(_SHARED_RUNNER_TABLE_ROW_MOVED), 1)
+        swapped = (source
+                   .replace(_SHARED_RUNNER_TABLE_ROW, '\n        "__swap__",\n')
+                   .replace(_SHARED_RUNNER_TABLE_ROW_MOVED,
+                            _SHARED_RUNNER_TABLE_ROW)
+                   .replace('\n        "__swap__",\n',
+                            _SHARED_RUNNER_TABLE_ROW_MOVED))
+        result, out = self.run_copy(swapped, with_output=True)
+        self.assertEqual(result.returncode, 1,
+                         f'#3043 a reordered row is a pre-run refusal (rc 1): '
+                         f'{result.stderr!r}')
+        self.assertIn('#1076 mutation roster drifted from the static inventory',
+                      result.stderr)
+        self.assertFalse(out.exists())
+
+    def test_a_row_deleted_with_its_roster_entry_escapes_registered(self):
+        # The double edit registered() alone cannot see (both sides shrink
+        # to 38 together) is exactly why the SHARED_RUNNER_ROSTER literal
+        # stays: the pair is two-sided, and the pin below refuses this
+        # direction when it reaches the source. The escape itself must stay
+        # demonstrable: the shrunk copy clears the roster and dies at
+        # main()'s own usage refusal instead.
+        source = (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
+                  ).read_text(encoding='utf-8')
+        self.assertEqual(source.count(_SHARED_RUNNER_TABLE_ROW), 1)
+        self.assertEqual(source.count(_SHARED_RUNNER_ROSTER_ENTRY), 1)
+        index = source.index(_SHARED_RUNNER_TABLE_ROW)
+        # The anchor's leading newline is also the tuple-opening line's
+        # terminator, so the row's own ``    (\n`` spans [index-5, index+1)
+        # and the search end must be index + 1 to include it (the sdk
+        # -signals geometry deletes one row too many and lets its
+        # EXPECTED_TOTAL count check absorb that; shared-runner has only
+        # registered(), so this deletion must be surgical: exactly one
+        # row and its roster entry, both sides shrinking 39 -> 38).
+        start = source.rfind('    (\n', 0, index + 1)
+        end = source.index('    (\n', index + 1)
+        without_row = source[:start] + source[end:]
+        self.assertNotIn(_SHARED_RUNNER_TABLE_ROW, without_row)
+        self.assertEqual(without_row.count(_SHARED_RUNNER_TABLE_ROW_NEXT), 1)
+        result, out = self.run_copy(without_row.replace(
+            _SHARED_RUNNER_ROSTER_ENTRY, ''))
+        self.assertEqual(result.returncode, 2,
+                         f'#3043 the same-delete escape must clear the roster '
+                         f'and reach main() own refusal (rc 2): '
+                         f'{result.stderr!r}')
+        self.assertIn('--output is required unless --check is used',
+                      result.stderr)
+        # Shape guard only (DS fix-r6 boundary P2): this case deliberately
+        # does NOT pass --output -- the pinned refusal is exactly the
+        # missing-output usage error, so no path here creates ``out``.
+        self.assertFalse(out.exists())
+        # The outside literal: the real module must still carry the whole
+        # 39-name pair, so the shrunk source fails this pin exactly when
+        # the escape reaches it.
+        module = load_entry('shared-runner-failclosed/negative_controls.py')
+        self.assertEqual(len(module.MUTANT_ROWS), SHARED_RUNNER_ROSTER,
+                         f'#3043 the shared-runner table must carry its '
+                         f'literal {SHARED_RUNNER_ROSTER} rows, got '
+                         f'{len(module.MUTANT_ROWS)}')
+        self.assertEqual([row[0] for row in module.MUTANT_ROWS],
+                         list(module.EXPECTED_NAMES),
+                         '#3043 the real table must stay registered against '
+                         'its full static roster')
+
+    def test_a_pristine_copy_walks_the_whole_table(self):
+        # The pristine width direction: the refusals above must come from
+        # the roster, not the bootstrap, and the healthy copy must still
+        # walk the real anchor table end to end through --check.
+        result, out = self.run_copy(
+            (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
+             ).read_text(encoding='utf-8'),
+            argv=('--check',), with_output=True)
+        self.assertEqual(result.returncode, 0,
+                         f'#3043 the pristine copy must walk all '
+                         f'{SHARED_RUNNER_ROSTER} anchors and exit 0: '
+                         f'{result.stdout!r} {result.stderr!r}')
+        self.assertIn(f'{SHARED_RUNNER_ROSTER} anchors: ok',
+                      result.stdout)
+        self.assertFalse(out.exists())
 
 
 if __name__ == '__main__':
