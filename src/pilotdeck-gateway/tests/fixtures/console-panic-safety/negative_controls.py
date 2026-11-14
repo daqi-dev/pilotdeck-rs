@@ -5,7 +5,10 @@ Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes are verified by ``mutating_sources``
 (HEAD baseline — this file must be committed before it can run). Each mutant
 is recorded as KILLED / SURVIVED / INVALID and the script exits non-zero
-unless every selected mutant is KILLED.
+unless every selected mutant is KILLED. A failed shared-lexer repair is
+recorded as its own INVALID row in ``summary.json`` and fails the run through
+the same verdict (fix-r1, review boundary#1: a branded tree must not limp
+on as a pass).
 
 Bound guards (all in ``src/pilotdeck-gateway/tests/console_panic_safety.rs``):
 
@@ -798,6 +801,22 @@ with mutating_sources(
                 (out / f'{name}.repair.log').write_text(repair.stdout + repair.stderr)
                 if repair.returncode != 0:
                     failures.append(f'{name}-repair')
+                    # fix-r1 (review boundary#1, P1): the verdict below
+                    # judges ``summary`` rows only, so a repair failure that
+                    # stayed out of it let an all-KILLED run exit 0 with a
+                    # branded tree — the false pass the comment above
+                    # already promised could not happen. The failure rides
+                    # in as its own non-KILLED row using the same field
+                    # vocabulary the exception path already writes, so
+                    # ``verdict_exit`` fails the run and the evidence lands
+                    # in ``summary.json``; the stderr line stays.
+                    summary.append(dict(
+                        name=f'{name}-repair', test=test, status='INVALID',
+                        returncode=repair.returncode,
+                        reason='repair build FAILED; the shared-lexer '
+                                'examples were not rebuilt from the '
+                                'restored bytes',
+                        sourceSha256=before))
                     print(f'{name}: repair build FAILED rc={repair.returncode}',
                           flush=True)
                 else:
