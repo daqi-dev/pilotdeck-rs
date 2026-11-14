@@ -58,6 +58,15 @@ fn negative_fixture_anchors_and_checker_controls() {
             &["--negative-controls"][..],
         ),
         ("pending-reanchor/test_controls.py", &[][..]),
+        // #1695 fix-r1（评审 sibling#2 / simplify#9）：#1713 判决链自测 +
+        // #1695 handoff / #1705 kill-tree 行为自测此前不在任何闸门里
+        // （评审原话：不列进来等于这些测试在 CI 里从没跑过）；正跑走 12 个
+        // 用例，--negative 走 21 个内存变异体（negative-restore 的两档先例）。
+        ("user-dialog-http-store-1555/test_controls.py", &[][..]),
+        (
+            "user-dialog-http-store-1555/test_controls.py",
+            &["--negative"][..],
+        ),
         // CI prepares the TS baseline after cargo test. This explicit mode still
         // lists missing launcher prerequisites; local invocation is strict.
         ("anchor_selfcheck.py", &["--anchors-only"][..]),
