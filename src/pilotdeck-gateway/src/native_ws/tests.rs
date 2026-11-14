@@ -1626,6 +1626,23 @@ fn default_mode_unchanged() {
         1,
         "#1354 exact argv plumbing helper"
     );
+    // #2558 fix-r1 re-pin: the r0 commit's revision of main.rs's three error
+    // lines to the re-exported `console_log_line` moved bytes outside the
+    // routing region and the argv plumbing helper, and the re-pin hunk the
+    // r0 delivery carried for its own patch revision did not make it into
+    // f5683b011 — the committed tree hashes to 9f02b978… against this pin's
+    // pre-r0 value, so the golden was red at HEAD before fix-r1 touched
+    // anything (fix-r1 itself leaves main.rs alone). The residual hash moves
+    // with the legitimate entry diff (the #1131/#1354 re-pin precedent).
+    // #2558 fix-r6 re-pin: fix-r4 rewrote main.rs's two stdout banner lines
+    // (server listening / WebSocket) to `console_log_line`, which also sit
+    // outside the stripped routing region and argv plumbing helper, so the
+    // residual hash moved again while the pin stayed at the fix-r1 value.
+    // Regate reviewers MM sibling#1 and DS sibling#1 independently flagged
+    // the resulting false FAIL at HEAD; recomputed from the real bytes
+    // (`cargo test default_mode_unchanged` on 525b1abaa printed left
+    // 6320a76a…, right 9f02b978…), the pin follows the same #1131/#1354
+    // legitimate-diff precedent.
     negative_assert_eq!(
         format!(
             "{:x}",
@@ -1635,7 +1652,7 @@ fn default_mode_unchanged() {
                     .replacen(ARGV_PLUMBING, "", 1)
             )
         ),
-        "02613cf4a756f4e9cfdb59c5356961798244feb209bf53a5485491c8b7dd4622",
+        "6320a76aacd7a805b2546e4d3efa69a86dff6a551303dcf055d1bdbafd980ba6",
         "#749 A4 executable remains unchanged"
     );
 }

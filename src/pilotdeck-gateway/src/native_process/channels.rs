@@ -96,7 +96,11 @@ pub(crate) fn write_console_line(
 /// fails (std behavior) — a closed stdout would abort an adapter's task after
 /// it saved its listener state, stranding the listener (#2301 fix-r1 review
 /// P0). The write error is dropped instead, like TS's best-effort console.
-pub(crate) fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
+/// #2558: `pub` and re-exported one hop up (`native_process::console_log_line`)
+/// so the A4 binary entry (`main.rs`) shares the same non-panicking writer as
+/// the library call sites (`http_proxy`, `upstream`, `native_ws`, the memory
+/// maintenance diagnostic) instead of keeping its own `eprintln!` copies.
+pub fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
     let _ = writeln!(sink, "{message}");
 }
 

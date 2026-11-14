@@ -29,13 +29,13 @@ mod native_ws_sample;
 use native_ws_sample::RFC6455_SAMPLE_NONCE;
 
 // The machine's halt-line prefix has exactly one home (#2511 item 1): the
-// `eprintln!` in `src/native_process.rs` prints it, and the
+// non-panicking console line in `src/native_process.rs` prints it, and the
 // completed-switch verdicts below read it back from the child's tail.
 use pilotdeck_gateway::native_process::NATIVE_SWITCH_HALTED;
 
 /// The child's own advertisement line once it is serving, exactly as the
-/// product writes it (`eprintln!("native listening {address}")` in
-/// `src/native_process.rs`).
+/// product writes it (`console_log_line` on stderr in `src/native_process.rs`;
+/// the #2558 fix changed only the panic behavior of the write, not the bytes).
 pub const NATIVE_LISTENING: &str = "native listening";
 /// A slow host still reaches the advertisement eventually; silence past this
 /// bound is a launch failure, never a pass.
@@ -53,7 +53,7 @@ pub const SWITCH_DEADLINE: Duration = Duration::from_secs(60);
 /// retention — a stopped read there would block a chatty child on a full
 /// pipe.
 pub const STDERR_LIMIT: u64 = 64 * 1024;
-/// The machine's S2 opening line (`eprintln!("native stopping")` in
+/// The machine's S2 opening line (`console_log_line` on stderr in
 /// `src/native_process.rs`): the positive evidence that the SIGTERM really
 /// entered the switch machine — exit 0 alone would also pass for a child
 /// that self-exited after its advertisement.

@@ -704,6 +704,9 @@ fn is_doc_attribute(tokens: &[SourceToken]) -> bool {
 // or scan a file that was never collected as a candidate. The third `visit`
 // argument is the `file_attribute` level, so a caller can tell which position
 // a key was found in (#1249) without a second walker drifting from this one.
+// fix-r12 (DS simplify#1, #2969): `attribute_path_keys_in` is also the
+// anchor scanner's nested-key walk (console_panic_safety.rs) — three
+// consumers, one walker.
 fn attribute_path_keys<'a>(
     tokens: &'a [SourceToken],
     visit: &mut impl FnMut(&'a [SourceToken], usize, bool),
@@ -711,7 +714,7 @@ fn attribute_path_keys<'a>(
     attribute_path_keys_in(tokens, true, visit);
 }
 
-fn attribute_path_keys_in<'a>(
+pub(crate) fn attribute_path_keys_in<'a>(
     tokens: &'a [SourceToken],
     file_attribute: bool,
     visit: &mut impl FnMut(&'a [SourceToken], usize, bool),

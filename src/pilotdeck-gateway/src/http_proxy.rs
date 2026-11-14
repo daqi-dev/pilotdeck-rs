@@ -72,7 +72,15 @@ impl Proxy {
             return Ok(match self.websocket::<S>(&mut request, lease).await {
                 Ok(response) => response,
                 Err(error) => {
-                    eprintln!("WS pairing: {error}");
+                    // #2558: a best-effort console line, like TS's
+                    // `console.error` — an `eprintln!` here panics when the
+                    // write fails (std behavior); the panic would unwind this
+                    // connection's service future, so the 502 below would
+                    // never reach the client either.
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!("WS pairing: {error}"),
+                    );
                     plain(StatusCode::BAD_GATEWAY, "upstream websocket unavailable")
                 }
             });
@@ -108,7 +116,13 @@ impl Proxy {
                 })
             }
             Err(error) => {
-                eprintln!("HTTP upstream: {error}");
+                // #2558: same non-panicking shape as the pairing line above —
+                // a failed stderr write must not take down the service future
+                // that still owes the client its 502.
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &format!("HTTP upstream: {error}"),
+                );
                 plain(StatusCode::BAD_GATEWAY, "upstream HTTP unavailable")
             }
         }
@@ -144,10 +158,27 @@ impl Proxy {
                     if let Err(error) =
                         pair_upgraded::<S, _>(downstream, TokioIo::new(upstream)).await
                     {
-                        eprintln!("WS pairing: {error}");
+                        // #2558: a best-effort console line, like TS's
+                        // `console.error` — an `eprintln!` here panics when the
+                        // write fails (std behavior); tokio would contain the
+                        // panic, but it would still kill this pairing task
+                        // (both upgraded sockets drop, the connection dies)
+                        // while TS's `console.error` loses neither the
+                        // connection nor the diagnostic line.
+                        crate::native_process::channels::console_log_line(
+                            &mut std::io::stderr(),
+                            &format!("WS pairing: {error}"),
+                        );
                     }
                 }
-                Err(error) => eprintln!("downstream upgrade: {error}"),
+                Err(error) => {
+                    // #2558: same best-effort shape as the pairing line above
+                    // — a failed stderr write must not kill the upgrade task.
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!("downstream upgrade: {error}"),
+                    );
+                }
             }
         });
         Ok(acceptor::websocket_response(upstream_headers, &accept))
@@ -1680,6 +1711,438 @@ mod tests {
         assert!(!headers.contains_key("x-private-hop"));
         assert_eq!(headers[header::AUTHORIZATION], "Bearer isolated");
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
+    }
+
+    // --------------------------------------------------------------- #2558
+    // stderr
+
+    /// The re-exec probe's env: `run:<token>`; the child also requires the
+    /// token as an argv positional, so a stray env value alone can never
+    /// branch a normal test run into the child path (the #2301 probe-token
+    /// shape, like the #2434 ws probe).
+    const STDERR_PROBE_ENV: &str = "PDRS_2558_PROXY_STDERR_PROBE";
+    const STDERR_MARKER_ENV: &str = "PDRS_2558_PROXY_STDERR_MARKER";
+
+    /// The accept `RFC6455_SAMPLE_NONCE` derives — the pinned key/accept
+    /// pair the acceptor unit test above asserts, reused by the probe's fake
+    /// TS so its 101 passes the upstream handshake check.
+    const PROBE_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+
+    fn stderr_probe_token() -> Option<String> {
+        let value = std::env::var_os(STDERR_PROBE_ENV)?.to_str()?.to_owned();
+        let (_, token) = value.split_once(':')?;
+        if token.is_empty() {
+            return None;
+        }
+        std::env::args()
+            .any(|argument| argument == token)
+            .then(|| token.to_owned())
+    }
+
+    /// #2558: this module's four error lines (`WS pairing` on the
+    /// upstream-connect failure and inside the spawned pairing task,
+    /// `HTTP upstream` in the plain proxy path, `downstream upgrade` on the
+    /// upgrade error) were `eprintln!`, which panics when the stderr write
+    /// fails (std behavior). For the awaited serve paths the panic unwinds
+    /// the connection's service future, so the 502 the line precedes would
+    /// never reach the client; for the spawned pairing task tokio would
+    /// contain the panic but still kill the connection (both upgraded
+    /// sockets drop), while TS's `console.error` never loses either. The
+    /// fix is the shared `console_log_line`, which drops the write error.
+    /// This control drives all four sites in a re-exec'd child whose stderr
+    /// is a pipe with the read end already dropped (every write fails with
+    /// EPIPE); the child installs a panic hook first, so a panicking
+    /// `eprintln!` leaves a marker file and exits 33 instead of passing. A
+    /// read-only fd is not a failing sink for this purpose: `std::io::Stderr`
+    /// redirects EBADF to a fresh `/dev/null` and reports success, so only
+    /// EPIPE reaches the `eprintln!` panic.
+    #[tokio::test]
+    async fn error_console_lines_survive_a_failed_stderr_write() {
+        if let Some(token) = stderr_probe_token() {
+            stderr_probe_child(&token).await;
+            return;
+        }
+        let token = format!("pdrs-2558-{}", uuid::Uuid::new_v4().simple());
+        let marker = std::env::temp_dir().join(format!("{token}.marker"));
+        let mut child = tokio::process::Command::new(
+            std::env::current_exe().expect("#2558 the probe binary path"),
+        )
+        .args([
+            "--exact",
+            "http_proxy::tests::error_console_lines_survive_a_failed_stderr_write",
+            "--nocapture",
+            "--test-threads=1",
+            &token,
+        ])
+        .env(STDERR_PROBE_ENV, format!("run:{token}"))
+        .env(STDERR_MARKER_ENV, &marker)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("#2558 the failed-stderr probe child spawns");
+        // The failing sink: a pipe whose read end is dropped before the child
+        // writes, so every stderr write fails with EPIPE.
+        drop(child.stderr.take());
+        // The stdout pipe is drained concurrently with the wait, never after
+        // it (the #2301 probe's drain-before-wait shape): a full pipe — a
+        // failing child prints a whole backtrace — would block the child
+        // before it could exit.
+        let stdout = child.stdout.take();
+        let console_task = tokio::spawn(async move {
+            let mut out = Vec::new();
+            if let Some(mut pipe) = stdout {
+                let _ = pipe.read_to_end(&mut out).await;
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        });
+        // Every wait states its termination condition: 30 seconds on the
+        // child, then kill + reap before the named failure.
+        let status = match timeout(Duration::from_secs(30), child.wait()).await {
+            Ok(status) => status.expect("#2558 the failed-stderr probe child is waitable"),
+            Err(_) => {
+                child
+                    .kill()
+                    .await
+                    .expect("#2558 the timed-out probe child is killed");
+                let _ = child.wait().await;
+                crate::negative_assert!(
+                    false,
+                    "#2558 the failed-stderr probe child did not finish within 30s"
+                );
+                unreachable!("negative_assert! panics");
+            }
+        };
+        let console = console_task
+            .await
+            .expect("#2558 the probe's stdout drain finishes");
+        crate::negative_assert!(
+            status.success(),
+            "#2558 the error lines survive a failed stderr write (exit {status})\n{console}"
+        );
+        // Positive receipt — success alone is not evidence the probe case
+        // ran: a renamed test makes the `--exact` filter match nothing and
+        // libtest still exits 0 (the #273 / fix-r1 lesson).
+        crate::negative_assert!(
+            crate::test_exact_receipt::single_pass(
+                &status,
+                "http_proxy::tests::error_console_lines_survive_a_failed_stderr_write",
+                &console,
+            ),
+            "#2558 the child's libtest receipt proves the probe case ran\n{console}"
+        );
+        // The child leaves one reached marker per scenario, each written only
+        // after that error line's code path has provably run.
+        for scenario in ["a", "b", "c", "d"] {
+            let reached = std::env::temp_dir().join(format!("{token}.reached.{scenario}"));
+            crate::negative_assert!(
+                reached.exists(),
+                "#2558 the child never reached error-line scenario {scenario}"
+            );
+            let _ = std::fs::remove_file(&reached);
+        }
+        crate::negative_assert!(
+            !marker.exists(),
+            "#2558 no panic marker after the error lines ({}): {:?}",
+            marker.display(),
+            std::fs::read_to_string(&marker).unwrap_or_default()
+        );
+    }
+
+    /// The child half of [`error_console_lines_survive_a_failed_stderr_write`]:
+    /// panic hook first (marker + exit 33), then the four error-line
+    /// scenarios in sequence. Nothing here prints to stdout: the
+    /// single-threaded receipt needs the whole test line intact.
+    async fn stderr_probe_child(token: &str) {
+        let marker = std::env::var(STDERR_MARKER_ENV)
+            .unwrap_or_else(|_| panic!("#2558 {token} is missing the marker env"));
+        std::panic::set_hook(Box::new(move |info| {
+            // The default hook would print to the failed stderr; the marker is
+            // the parent's evidence instead.
+            let _ = std::fs::write(&marker, format!("{info}"));
+            std::process::exit(33);
+        }));
+        let reached =
+            |scenario: char| std::env::temp_dir().join(format!("{token}.reached.{scenario}"));
+
+        // Scenario A — `HTTP upstream`: a plain request whose upstream
+        // connect fails. The line runs inside the awaited serve future
+        // before the 502 is built, so the response below is the proof the
+        // write already happened.
+        {
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let proxy = Arc::new(Proxy {
+                upstream: "http://127.0.0.1:1".into(),
+                client: Client::builder(TokioExecutor::new()).build_http(),
+            });
+            let server = tokio::spawn(async move { proxy.serve_connection(server_io).await });
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(client_io))
+                    .await
+                    .expect("#2558 scenario A handshake");
+            let connection = tokio::spawn(connection);
+            let request = Request::builder()
+                .uri("/")
+                .header(header::HOST, "localhost")
+                .body(Full::new(Bytes::new()))
+                .expect("#2558 scenario A request");
+            let response = timeout(Duration::from_secs(10), sender.send_request(request))
+                .await
+                .expect("#2558 scenario A is answered in time")
+                .expect("#2558 scenario A sends its request");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_GATEWAY,
+                "#2558 scenario A: the 502 the error line still owes the client"
+            );
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                "upstream HTTP unavailable",
+                "#2558 scenario A: the 502 body the error line still owes the client"
+            );
+            drop(sender);
+            let _ = timeout(Duration::from_secs(3), connection)
+                .await
+                .expect("#2558 scenario A connection ends");
+            let _ = timeout(Duration::from_secs(3), server)
+                .await
+                .expect("#2558 scenario A serve future ends");
+            let _ = std::fs::write(reached('a'), b"reached");
+        }
+
+        // Scenario B — `WS pairing` on the upstream-connect failure: the
+        // same 502 family through the websocket arm (an unparseable
+        // upstream origin fails before any socket is opened).
+        {
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let proxy = Arc::new(Proxy {
+                upstream: "invalid upstream".into(),
+                client: Client::builder(TokioExecutor::new()).build_http(),
+            });
+            let server = tokio::spawn(async move { proxy.serve_connection(server_io).await });
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(client_io))
+                    .await
+                    .expect("#2558 scenario B handshake");
+            let connection = tokio::spawn(connection);
+            let upgrade = Request::builder()
+                .uri("/ws")
+                .header(header::HOST, "localhost")
+                .header(header::CONNECTION, "Upgrade")
+                .header(header::UPGRADE, "websocket")
+                .header(header::SEC_WEBSOCKET_KEY, "key")
+                .body(Full::new(Bytes::new()))
+                .expect("#2558 scenario B request");
+            let response = timeout(Duration::from_secs(10), sender.send_request(upgrade))
+                .await
+                .expect("#2558 scenario B is answered in time")
+                .expect("#2558 scenario B sends its upgrade");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_GATEWAY,
+                "#2558 scenario B: the 502 the pairing line still owes the client"
+            );
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                "upstream websocket unavailable",
+                "#2558 scenario B: the 502 body the pairing line still owes the client"
+            );
+            drop(sender);
+            let _ = timeout(Duration::from_secs(3), connection)
+                .await
+                .expect("#2558 scenario B connection ends");
+            let _ = timeout(Duration::from_secs(3), server)
+                .await
+                .expect("#2558 scenario B serve future ends");
+            let _ = std::fs::write(reached('b'), b"reached");
+        }
+
+        // Scenario C — the pairing task's `WS pairing` line. A real fake TS
+        // accepts the upstream upgrade; the client parks the send pump with
+        // a close frame (a close never completes `send`; receive owns final
+        // teardown) and then dies, and the next server frame makes
+        // receive's downstream write fail — the pairing task's error line.
+        // The fake TS's EOF is the receipt that the task (and its line)
+        // finished; a bare downstream death would instead let `send` return
+        // on its EOF and complete the pair cleanly, so the close frame is
+        // what keeps the error path deterministic.
+        {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("#2558 scenario C binds the fake TS");
+            let upstream_origin = format!(
+                "http://{}",
+                listener
+                    .local_addr()
+                    .expect("#2558 scenario C bound address")
+            );
+            let (go_tx, go_rx) = tokio::sync::oneshot::channel::<()>();
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+            let fake = tokio::spawn(async move {
+                let (mut socket, _) = listener
+                    .accept()
+                    .await
+                    .expect("#2558 scenario C accepts the proxy");
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0u8; 1];
+                    socket
+                        .read_exact(&mut byte)
+                        .await
+                        .expect("#2558 scenario C reads the proxied head");
+                    head.extend_from_slice(&byte);
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+                             Connection: Upgrade\r\nSec-WebSocket-Accept: {PROBE_ACCEPT}\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("#2558 scenario C answers the upgrade");
+                go_rx
+                    .await
+                    .expect("#2558 scenario C waits for the downstream death");
+                socket
+                    .write_all(&crate::frame::server_frame(1, b"#2558 late frame"))
+                    .await
+                    .expect("#2558 scenario C sends the late frame");
+                let mut tail = Vec::new();
+                socket
+                    .read_to_end(&mut tail)
+                    .await
+                    .expect("#2558 scenario C reads the pairing task's EOF");
+                let _ = done_tx.send(());
+            });
+            let (server_io, mut client_io) = tokio::io::duplex(4096);
+            let proxy = Arc::new(Proxy {
+                upstream: upstream_origin,
+                client: Client::builder(TokioExecutor::new()).build_http(),
+            });
+            let server = tokio::spawn(async move { proxy.serve_connection(server_io).await });
+            client_io
+                .write_all(
+                    format!(
+                        "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\n\
+                         Upgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .expect("#2558 scenario C sends the upgrade");
+            let mut response = Vec::new();
+            while !response.ends_with(b"\r\n\r\n") {
+                let mut byte = [0u8; 1];
+                client_io
+                    .read_exact(&mut byte)
+                    .await
+                    .expect("#2558 scenario C reads the 101 head");
+                response.extend_from_slice(&byte);
+            }
+            assert!(
+                response.starts_with(b"HTTP/1.1 101"),
+                "#2558 scenario C: the upgrade completed"
+            );
+            // Park the send pump with a close frame, then kill the
+            // downstream; the buffered head still parses after the drop.
+            client_io
+                .write_all(&crate::frame::client_frame(0x88, 0, b""))
+                .await
+                .expect("#2558 scenario C sends the close frame");
+            drop(client_io);
+            let _ = go_tx.send(());
+            timeout(Duration::from_secs(10), done_rx)
+                .await
+                .expect("#2558 scenario C pairing task ends")
+                .expect("#2558 scenario C done receipt survives");
+            let _ = timeout(Duration::from_secs(3), server)
+                .await
+                .expect("#2558 scenario C serve future ends");
+            let _ = timeout(Duration::from_secs(3), fake)
+                .await
+                .expect("#2558 scenario C fake TS ends");
+            let _ = std::fs::write(reached('c'), b"reached");
+        }
+
+        // Scenario D — `downstream upgrade`: the client dies before the
+        // upgrade is handed over, so the spawned task's upgrade future
+        // resolves with the connection error instead. The request bytes
+        // are buffered before the drop, so the proxy still parses the whole
+        // head and reaches the response write that fails on the dead
+        // downstream.
+        {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("#2558 scenario D binds the fake TS");
+            let upstream_origin = format!(
+                "http://{}",
+                listener
+                    .local_addr()
+                    .expect("#2558 scenario D bound address")
+            );
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+            let fake = tokio::spawn(async move {
+                let (mut socket, _) = listener
+                    .accept()
+                    .await
+                    .expect("#2558 scenario D accepts the proxy");
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0u8; 1];
+                    socket
+                        .read_exact(&mut byte)
+                        .await
+                        .expect("#2558 scenario D reads the proxied head");
+                    head.extend_from_slice(&byte);
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+                             Connection: Upgrade\r\nSec-WebSocket-Accept: {PROBE_ACCEPT}\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("#2558 scenario D answers the upgrade");
+                let mut tail = Vec::new();
+                socket
+                    .read_to_end(&mut tail)
+                    .await
+                    .expect("#2558 scenario D reads the upgrade task's EOF");
+                let _ = done_tx.send(());
+            });
+            let (server_io, mut client_io) = tokio::io::duplex(4096);
+            let proxy = Arc::new(Proxy {
+                upstream: upstream_origin,
+                client: Client::builder(TokioExecutor::new()).build_http(),
+            });
+            let server = tokio::spawn(async move { proxy.serve_connection(server_io).await });
+            client_io
+                .write_all(
+                    format!(
+                        "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\n\
+                         Upgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .expect("#2558 scenario D sends the upgrade");
+            drop(client_io);
+            timeout(Duration::from_secs(10), done_rx)
+                .await
+                .expect("#2558 scenario D upgrade task ends")
+                .expect("#2558 scenario D done receipt survives");
+            let _ = timeout(Duration::from_secs(3), server)
+                .await
+                .expect("#2558 scenario D serve future ends");
+            let _ = timeout(Duration::from_secs(3), fake)
+                .await
+                .expect("#2558 scenario D fake TS ends");
+            let _ = std::fs::write(reached('d'), b"reached");
+        }
     }
 }
 
