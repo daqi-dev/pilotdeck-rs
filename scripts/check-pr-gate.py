@@ -72,7 +72,8 @@
      fix-r3（MM concurrency#1 P0 + MM/DS boundary#1 双撞 P1 + MM sibling#1 P1 + DS boundary#2
      P2a）：① 标题侧兼容 `#N r<M>` 简写形（与 fix-r<M> 同一套配对判定；收集面＝**题头区内
      全部**——前方无 #N 的简写自 fix-r13 起不丢弃、自 fix-r14 起不 SELF，交后向臂要求后方
-     真实链且与 token 同侧于题头区界，无链/链异侧不计（窄窗登记见 _scan_pairs docstring）；
+     真实链且与 token 同侧于题头区界，无链/链异侧且与 issues 不相交不计（fix-r15 起异侧
+     相交照计入，窄窗登记见 _scan_pairs docstring）；
      归属＝与前方 #N 链**紧邻**——间隔恰为链尾裸号成员时视同紧邻（`_bare_member_connected`
      单源，fix-r10 起精确判定无距离上界）；题头区外的 rN 是评审轮引用，`fix-r3：r2 评审`
      不计，语料 423 条无一例外，
@@ -150,6 +151,18 @@
      ——交后向臂评价并补「token 与后方链同侧于题头区界」守卫（r13 曾把题头区无链
      前导简写一律 SELF 计入＝board/评审散文 rN 被当修复轮的假 FAIL 面；无链/链异侧
      回到不计＝r12 判，board 尾形不引入新拒收；无链简拼真修复轮回到不计＝窄窗登记）。
+     fix-r15（#3074，DS r14 增量评审 P1 + P2×3，P1 协调者实测仲裁
+     _tmp/20261114-3074-fixr15/p1-probe.txt，当轮修）：㉖ **正文回显 foreign 拒收
+     受首行早退限制**——check() 对 ECHO_HEAD 行的 foreign 扫描与 fix_round_from_body
+     的 echo_scan 同条件（首行命中即整体跳过，_first_line_round 单源；修前无条件跑＝
+     首行判 5 一边硬拒收「异单旁路」的假 FAIL）；㉗ **同侧守卫只压 foreign 半边**——
+     链异侧且与 issues 不相交才不计不拒，异侧相交（SELF 同形真修复轮）照后向配对
+     计入（旧假 PASS 面；board 尾链恰为本单也计入＝登记残余代价）；㉘ **全拼 SELF
+     假 FAIL 拼写分裂登记**（注释订正 + A/B 证伪收口回退）——board 散文全拼
+     「token 区内、链区外不相交」形 SELF 照计＝假 FAIL 窄窗，语料 0 条落窗；曾按
+     ㉗ 同判据收口，真实语料复算静默 44 条真修复轮（closure-reject-proof.txt）
+     违反「静默回归 0」验收，已回退为登记；㉙ 窄窗登记文字订正为实际判据（题头区内
+     无前链简写 + 同侧后方链不相交 → 拒收，与类型词/裸号无关，四条形列全）。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -216,8 +229,8 @@ FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d{1,18})b?(?![A-Za-z0-9_-])"
 # fix-r3 P0①（MM concurrency#1）：仓内真实简写惯例 `fix(scripts) #3056 r14：…` /
 # `chore(gateway) #1579 r3: …`——标题里写 r<N> 而不是 fix-r<N>。RSHORT 只提供词形；
 # 收集面＝题头区内全部（fix-r13 起前方无 #N 的简写不再丢弃；fix-r14 起不 SELF、交
-# 后向臂要求后方真实链且与 token 同侧于题头区界，无链/链异侧不计，见 _scan_pairs
-# 收集臂注释）；归属与计入由 _scan_pairs 的结构判据决定：与前方 #N 链
+# 后向臂要求后方真实链且与 token 同侧于题头区界，无链/链异侧且与 issues 不相交不计
+# ——fix-r15 起异侧相交照计入，见 _scan_pairs 收集臂注释）；归属与计入由 _scan_pairs 的结构判据决定：与前方 #N 链
 # **紧邻**（gap 全为链
 # 字符（_is_issue_gap_char 单源），或间隔恰为链尾裸号成员（`_bare_member_connected`
 # 单源：区间恰一个纯数字 run，fix-r10 起精确判定无距离上界；RSHORT 的 lookbehind 排
@@ -702,7 +715,11 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
         （见 `_enum_title` docstring），无全角冒号标题的尾部 #N 注记不再关掉 foreign 封堵）；
       - 前方无 #N 且在题头区 → 计入（SELF：`fix(scope) 名 fix-rN：…（#refs 在后）` 的
         实修形态，refs 在题头之后的括注里；fix-r3 P1-1 面 B 引入、fix-r4 P0-A 收窄口径的
-        裸号守卫同样拒收；**fix-r14 起全拼专属**——无前链简写不 SELF，落进下一支后向臂）；
+        裸号守卫同样拒收；**fix-r14 起全拼专属**——无前链简写不 SELF，落进下一支后向臂。
+        fix-r15 P2#2 登记：board 散文全拼「token 区内、链区外」形（`chore(state)
+        board 12:01 fix-r2：coord…——#2040`）SELF 照计＝与简写同侧守卫同款拼写分裂的
+        假 FAIL 窄窗，**登记不收口**——A/B 证伪收口会静默 44 条真修复轮（见该臂内联
+        注释），且语料 0 条落该窗）；
       - 前方无 #N 且在题头区外 → **向后看**最近的 #N 链（fix-r2，DS boundary#5 P2：
         `fix(gateway)：fix-r5 修 #3074` 形态的 token 与 #N 都在「：」后，旧判据判不出
         → fix_round=None → 同一假 PASS 面），链 ∩ issues ≠ ∅ 才计入（归属到本单才
@@ -722,7 +739,11 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     假 FAIL 面，origin/main 3000 条标题 29 条翻转、多 N≥4）；现交后向臂评价并补
     「token 与后方链同侧于题头区界」守卫（无守卫则 board 尾形 `chore(state) board
     12:01 r2：…——#2040 …` 的链配对＝假归属 → foreign 拒收＝新假 FAIL 面）；
-    无链 / 链异侧 → 不计（r12 判）。**窄窗登记（fix-r14）**：无链简拼真修复轮
+    无链 / 链异侧 → 不计（r12 判）；**fix-r15 P2#1（DS r14 增量评审）：守卫只压
+    foreign 半边**——链异侧且与 issues 不相交才不计不拒，异侧相交（SELF 同形真修复轮
+    `fix(scripts) 修闸门 r5：#3056`、#3056∈issues）照后向配对计入（旧整条 continue＝
+    rounds=[]∧foreign=[] 的假 PASS；board 尾链恰为本单也计入＝已登记残余代价）。
+    **窄窗登记（fix-r14）**：无链简拼真修复轮
     （`chore(gateway) upload 清理 r6`）回到不计、与全拼 `fix-r6` 计入的拼写分裂
     复开——「无链前导简写不计」的必然取舍，修法是补全拼或补 #N 链，不是收窄守卫），
     归属与计入由结构判据决定：与前方
@@ -983,6 +1004,18 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
                 foreign.append((int(num), chain_sets[heads[i]]))
         # fix-r14 P1：SELF（题头区内、前方无 #N 全计入）自本修起**全拼专属**——无前链
         # 简写（rshort_nolink）落到后向臂评价，要求后方真实链且与 token 同侧于题头区界
+        # fix-r15 P2#2（DS r14 增量评审）：订正 r14 注释「全拼 token 不经本守卫…两半边
+        # 都在区外，自然同侧」的不成立断言——board 散文全拼 `chore(state) board 12:01
+        # fix-r2：coord …——#2040` 是「token 在区内、链在区外」，SELF 照计＝假 FAIL 面
+        # （与简写同侧守卫同款**拼写分裂**，r14 注释只举了 `fix(gateway)：fix-r5 修
+        # #3074` 两半边都在区外的形）。**该分裂登记不收口**：本修曾按「后方链在
+        # 题头区界外且与 issues 不相交 → 不计」收口，真实语料 A/B 复算
+        # （closure-reject-proof.txt）证伪——异侧不相交全拼的计入面静默 44 条里
+        # 括注内 32 条是规范 SELF 形 `fix(scope) 名 fix-rN：…（#refs 在后）`、括号外
+        # 12 条是散文里引关联单的真修复轮标题（`docs(gateway) fix-r8：把「#1739
+        # 前能检出」…`），board 散文假 FAIL 形在语料 0 条落窗——收口违反「标题静默
+        # 回归 0」验收，已回退。board 散文全拼形照计＝登记窄窗（假 FAIL 向，
+        # 量化：语料 0 条；闭窗须词法可分板尾叙事与括注引用，待有真实回归再议）。
         elif allow_unpaired and start < zone_end and start not in rshort_nolink \
                 and not _bare_num_before(text, start):
             rounds.append(int(num))  # SELF
@@ -992,10 +1025,22 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             # 的后向配对要求**后方链与 token 同侧于题头区界**——token 在题头区内、链在
             # 全角「：」之后的 board 尾形（`chore(state) board 12:01 r2：coord …——#2040
             # 合入计 9 笔`）其链是各归各单的板尾引用，配对＝假归属 → 不计不拒（r12 同判；
-            # 无守卫则 foreign 拒收＝比 r12/r13 都严的新假 FAIL 面）。全拼 token 不经本守卫
-            # （`fix(gateway)：fix-r5 修 #3074` 两半边都在区外，自然同侧）。
+            # 无守卫则 foreign 拒收＝比 r12/r13 都严的新假 FAIL 面）。
+            # fix-r15 P2#1（DS r14 增量评审，协调者实测 probe-before.out）：守卫只压
+            # **foreign 半边**——链异侧且与 issues 不相交才整条不计不拒（board 尾各归
+            # 各单，r14 语义保留）；链异侧但 ∩ issues ≠ ∅（SELF 同形真修复轮
+            # `fix(scripts) 修闸门 r5：#3056`，#3056∈issues——token 在区内、链在「：」后）
+            # 不再 continue，落到下方后向配对按既有判据计入——旧口径该形 rounds=[]∧
+            # foreign=[] → fix_round=None → fixtype/residual/多块一致整段跳过＝假 PASS。
+            # 已知残余代价（A/B 复算量化，wordlist-ab-r15.txt）：board 尾链恰为本单
+            # （`… r2：coord…——#3056`、#3056∈issues）也计入——「异侧相交计入」半边的
+            # 必然取舍（全拼 SELF 不收窄同侧判据——fix-r15 P2#2 登记，A/B 证伪，
+            # 见该臂内联注释，故无对称面）。
             if start in rshort_nolink and (j >= len(hashes) or starts[j] >= zone_end):
-                continue
+                if j >= len(hashes) or chain_sets[heads[j]].isdisjoint(issues):
+                    continue
+                # 落进后向配对：相交半边按既有判据（裸号守卫 + enum 门）评价——裸号
+                # 引用断归属的形照走 foreign 拒收（归属存疑，三臂口径不变）。
             # fix-r4 P1-D（DS sibling#2）：后向配对分支补裸号守卫——board 尾引用形
             # `… + 2932 fix-r2 交付 + #2957 P1×3`（probe-corpus.txt board 13:42）在 #2957∈issues
             # 时旧照计 2 ＝假 FAIL；裸号口径与另外两个免配对分支单源（_bare_num_before）。
@@ -1038,10 +1083,18 @@ def foreign_fixround_pairs(titles: list[str], issues: frozenset[str]) -> list[tu
     抑制自 fix-r4 P1-C 起只看题头区内的链（尾部 #N 注记不构成枚举，见 _enum_title）；
     fix-r13 起抑制收窄到**不相交半边**（链 ∩ issues = ∅），相交半边照列 foreign
     （enum 门半边化，三臂同口径，见 _enum_title docstring）。**已知窄窗（fix-r14 登记，
-    DS r13 补跑 boundary#3）**：非 TITLE_HEAD 散文标题（`交接段、123 r5 交付 + #2957
-    P1×3`）带「枚举分隔裸号 + 无链简写 + 后方 #N 链」时进 foreign 拒收而该标题并非
-    修复轮标题（r12 基线该 token 丢弃、无输出）——fail-closed 有意行为（多拒不漏，
-    修法是把引用移出题头区），A/B 语料 0 实例，钉见 test-review-roles.py fix-r14 块。"""
+    DS r13 补跑 boundary#3；fix-r15 P2#3 订正登记文字——旧文字「非 TITLE_HEAD…枚举
+    分隔裸号 + 无链简写 + 后方 #N 链」与实际判据不符：四条钉形里两条 TITLE_HEAD、
+    三条无枚举裸号，判据与类型词/裸号无关）**：题头区内、前方无 #N 的简写 token +
+    **同侧**后方 #N 链（链 ∩ issues = ∅）→ 进 foreign 拒收而该标题并非修复轮标题
+    （r12 基线该 token 丢弃、无输出）——fail-closed 有意行为（多拒不漏，修法是把
+    引用移出题头区），全四条形：①`交接段、123 r5 交付 + #2957 P1×3`（非
+    TITLE_HEAD + 枚举裸号）；②`r0 #2562 submit 路径 …（附 #2564 …）`；③`chore(board):
+    12:15 /loop——pr9 r9 三家同撞 P1 已修…、#386 停在选型转人批（决策卡）`；
+    ④`chore(board): 15:48——pr10b r10 / gate9；#407 修复轮 1 提交`（②③④无枚举裸号、
+    ③④TITLE_HEAD；语料实测 3 条（10448 标题，wordlist-ab-r15.txt 同源）＋①形为
+    测试钉构造形；近 30 真实 MERGED PR 0 触发），钉见
+    test-review-roles.py fix-r14 块。"""
     out: list[tuple[str, int, frozenset[str]]] = []
     for t in titles:
         # fix-r3 P0②：门从「TITLE_HEAD 命中」放宽为「TITLE_HEAD 命中 或 行内带修复轮 token
@@ -1173,6 +1226,22 @@ def fix_round_from_titles(titles: list[str], issues: frozenset[str] = frozenset(
     return max(rounds) if rounds else None
 
 
+def _first_line_round(body: str) -> int | None:
+    """fix_round_from_body 的首行宽松判定（fix-r15 抽出单源）：正文第一个非空行含
+    fix-r<N> 即取该轮号，无则 None。check() 对正文回显行的 foreign 拒收扫描与本函数
+    共用同一判定（首行命中＝主信号，正文回显本就不是信号，扫描整体跳过——与
+    echo_scan 同条件同口径；修前 check() 无条件跑该扫描，与 fix_round_from_body 的
+    首行早退相反，协调者实测 _tmp/20261114-3074-fixr15/p1-probe.txt），两处不得
+    再各写一份循环（一处收紧另一处漏改＝口径分裂，ISSUE_NUM/ECHO_HEAD 同款反模式）。"""
+    for line in body.split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        m = FIXROUND_RE.search(s)
+        return int(m.group(1)) if m else None
+    return None
+
+
 def fix_round_from_body(body: str, echo_scan: bool = True, issues: frozenset[str] = frozenset()):
     """**兜底**（主信号是提交标题集合）：正文第一个非空行含 fix-r<N> 即判修复轮（宽松口径，
     fix-r1 P0 的 CJK 连写首行「修复fix-r5：」靠它；已知窄代价：类型词开头的散文行恰在首行
@@ -1193,15 +1262,12 @@ def fix_round_from_body(body: str, echo_scan: bool = True, issues: frozenset[str
     的回显扫描只出 **rounds 半边**（_paired_rounds）——foreign 半边（enum 相交半边散文
     间隔简写 token 既不计入也不拒收＝假 PASS 回归）由 check() 对 ECHO_HEAD 行同跑
     foreign_fixround_pairs 承担（同一兜底口径，见 check() fix-r14 段）；本函数对触发形
-    返回 None、由拒收兜住即验收通过（「非 None 或被拒」二选一）。"""
-    first = None
-    for line in body.split("\n"):
-        s = line.strip()
-        if not s:
-            continue
-        m = FIXROUND_RE.search(s)
-        first = int(m.group(1)) if m else None
-        break
+    返回 None、由拒收兜住即验收通过（「非 None 或被拒」二选一）。
+    fix-r15 P1（DS r14 增量评审，协调者实测仲裁 p1-probe.txt）：首行判定抽
+    `_first_line_round` 单源——check() 的正文回显 foreign 拒收与 echo_scan 早退共用
+    同一判定（首行命中时 check() 不再对回显行跑 foreign，见 check() fix-r15 段），
+    两处口径不得再分裂。"""
+    first = _first_line_round(body)
     if first is not None or not echo_scan:
         return first
     rounds = [r for ln in body.split("\n") if ECHO_HEAD.match(ln.strip())
@@ -1546,11 +1612,21 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
         # 无处拒收＝fixtype / N≥4 residual / 多块一致整段跳过的假 PASS 回归。修法（仲裁
         # 建议①）：ECHO_HEAD 行与提交标题同跑 foreign_fixround_pairs，拒收与标题路径同构
         # （_foreign_reject_errs 共用件）。同跑范围＝echo_scan 的同一兜底口径——主信号
-        # 命中时正文回显本就不是信号，不放大拒收面。
-        _echo_lines = [s for s in (ln.strip() for ln in masked.split("\n"))
-                       if ECHO_HEAD.match(s)]
-        errs.extend(_foreign_reject_errs(
-            foreign_fixround_pairs(_echo_lines, issues), issues, "正文回显行"))
+        # 命中时正文回显本就不是信号，不放大拒收面。**fix-r15 P1（DS r14 增量评审，
+        # 协调者实测仲裁 _tmp/20261114-3074-fixr15/p1-probe.txt）**：该口径自本修起真正
+        # 兑现——正文首行非空行命中 fix-rN 时 fix_round_from_body 早退（`first is not
+        # None … return first`），而上方扫描无条件跑＝同一体（首行 `修复fix-r5：停泊
+        # 补 waker` + 后段回显行引异单）一边判 5、一边硬拒收「异单旁路」，与本注释
+        # 「主信号命中时正文回显本就不是信号」自相矛盾。修法（评审建议①）：先算首行
+        # 命中（_first_line_round 单源，与 fix_round_from_body 同一判定），命中即整体
+        # 跳过正文回显 foreign 扫描——与 echo_scan 同条件同口径；check() 级负控钉见
+        # test-review-roles.py fix-r15 块（首行命中的修复轮义务照走：fixtype/residual
+        # 仍由下方 fix_round=5 触发）。
+        if _first_line_round(masked) is None:
+            _echo_lines = [s for s in (ln.strip() for ln in masked.split("\n"))
+                           if ECHO_HEAD.match(s)]
+            errs.extend(_foreign_reject_errs(
+                foreign_fixround_pairs(_echo_lines, issues), issues, "正文回显行"))
         fix_round = fix_round_from_body(masked, echo_scan=True, issues=issues)
     w = WAIVER.search(masked)
     if blocks:
