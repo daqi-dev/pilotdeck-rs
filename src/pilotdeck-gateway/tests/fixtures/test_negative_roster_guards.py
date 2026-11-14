@@ -1693,6 +1693,21 @@ TRIPLE_ENTRIES = (
     ('issue-1437-methods', '#1437', 21),
     ('native-loop-stimulus', '#1371', 12),
 )
+# #2856 fix-r5 (DS sibling#2): entries carrying the same-form `--check`
+# misuse refusal that TRIPLE's shape cannot pin get a REGISTERED exemption
+# with a reason, not silence -- an exemption whose fixture dropped the
+# refusal is stale and must be removed from here.
+CHECK_MISUSE_EXEMPTIONS = {
+    # #1642 lane: Case-shaped mutation rows (a tuple table patch breaks
+    # Case.__init__), the CARGO_TARGET_DIR refusal precedes the name
+    # checks, and a drifted EXPECTED_NAMES does not refuse on the --check
+    # path -- the TRIPLE startup-refusal pins do not apply. Its own pin
+    # lives in the #2572 follow-up, not here.
+    'native-management': '#1642 fixture family, different startup shape',
+}
+# #2856 fix-r5: the sibling-form refusal text the reverse scan keys on --
+# #1437 phrases it without "positional", both spellings count.
+CHECK_MISUSE_REFUSAL = re.compile(r'--check takes no (?:positional )?arguments')
 
 
 def load_named_entry(directory):
@@ -1809,6 +1824,60 @@ class TripleFixtureRosterGuard(unittest.TestCase):
                 self.assertTrue(code == 0,
                                 f'{tag} --check must pass on a clean tree; '
                                 f'stderr={stderr!r}')
+
+    def test_every_check_refusal_fixture_is_in_the_table(self):
+        # #2856 fix-r5 (DS boundary#2): the table pinned the denominator from
+        # the fixture side only -- deleting a row (rollback, a merge conflict
+        # dropping a line) left every guard green and re-opened the very
+        # escape the fourth row had closed. Scan the tree the other way: any
+        # negative_controls.py carrying the sibling-form `--check` misuse
+        # refusal must be a table member or carry a REGISTERED exemption
+        # with a reason. ROSTER_GUARDED has the same two-way shape in
+        # test_every_roster_guard_entry_is_registered.
+        found = {str(path.relative_to(FIXTURES)).split('/')[0]
+                 for path in FIXTURES.rglob('negative_controls.py')
+                 if CHECK_MISUSE_REFUSAL.search(path.read_text(encoding='utf-8'))}
+        members = {row[0] for row in TRIPLE_ENTRIES}
+        self.assertTrue(
+            found == members | set(CHECK_MISUSE_EXEMPTIONS),
+            f'#2572 every fixture with the `--check takes no arguments` '
+            f'refusal must be pinned through TRIPLE_ENTRIES or carry a '
+            f'registered exemption '
+            f'(unregistered={sorted(found - members - set(CHECK_MISUSE_EXEMPTIONS))} '
+            f'stale={sorted((members | set(CHECK_MISUSE_EXEMPTIONS)) - found)})')
+        for exempt, reason in CHECK_MISUSE_EXEMPTIONS.items():
+            with self.subTest(exempt=exempt):
+                self.assertTrue(bool(reason.strip()),
+                                f'{exempt}: an exemption needs its reason')
+
+    def test_the_misuse_refusal_fires_before_the_stale_scan(self):
+        # #2856 fix-r5 (DS boundary#1): the misuse refusal was only pinned on
+        # a clean tree, where the stale list is empty -- moving it after the
+        # stale scan kept every guard green. The name refusals have this
+        # ordering pin; the misuse refusal must report itself (exit 2) even
+        # when stale anchors exist, not surface a stale rc 1 that reads as
+        # "it ran and was not green".
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                # A full table with exactly one anchor that no longer matches:
+                # the roster check passes, the stale list is non-empty, and
+                # the misuse refusal must still fire first.
+                stale_table = [
+                    (row[0], row[1],
+                     '#2572 sentinel anchor that matches nothing on purpose'
+                     if i == 0 else row[2], *row[3:])
+                    for i, row in enumerate(module.mutations)]
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, ['--check', str(out)], table=stale_table)
+                self.assertTrue(code == 2,
+                                f'{tag} --check with extra arguments must '
+                                f'refuse before the stale scan (2), got '
+                                f'{code}; stderr={stderr!r}')
+                self.assertTrue('--check' in stderr and 'stale' not in stderr,
+                                f'{tag} the refusal must name the misuse, not '
+                                f'the stale anchors: {stderr!r}')
 
     def test_a_drifted_roster_never_starts(self):
         for directory, tag, _total in TRIPLE_ENTRIES:
