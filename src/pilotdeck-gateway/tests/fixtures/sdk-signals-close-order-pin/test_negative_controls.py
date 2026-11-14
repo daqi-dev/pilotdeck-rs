@@ -157,12 +157,22 @@ from negative_process import tree_lock
 # (the roster_guards twin, one level shallower at ``fixtures/`` itself, uses
 # ``parents[4]`` for the same root).
 REPO_ROOT = Path(__file__).resolve().parents[5]
-# fix-r10 (P2#4, DS simplify#1 ≡ MM simplify#1): the depth constant is
-# self-proved against FIXTURES. A relocated or flattened fixture tree would
+# fix-r11 (P2, simplify#1 covering sibling#1's main site): the depth
+# constant is proved against an *external anchor*. fix-r10's
+# ``REPO_ROOT/'…/fixtures' == FIXTURES`` assert was a path-algebra identity
+# -- both sides derive from the same resolved ``__file__`` -- so it could
+# never fail and proved nothing about relocation (and ``assert`` strips
+# under ``python -O``). A relocated or flattened fixture tree would
 # otherwise derive some other *existing* directory, and ``tree_lock``
 # (``os.open(..., O_CREAT)``) would silently create a stranger's lock file
-# there -- the window would stay green while locking nothing at all.
-assert (REPO_ROOT / 'src/pilotdeck-gateway/tests/fixtures').resolve() == FIXTURES
+# there -- the window would stay green while locking nothing at all. The
+# anchor is a file only the repository root holds; the roster_guards twin
+# (``parents[4]``) carries the same anchor -- one idiom, both depths.
+if not (REPO_ROOT / 'src/Cargo.toml').is_file():
+    raise RuntimeError(
+        '#3043 REPO_ROOT must be the repository root (the directory '
+        f'holding src/Cargo.toml), got {REPO_ROOT}: a relocated or '
+        'flattened fixture tree would silently lock a stranger\'s tree')
 
 
 @contextlib.contextmanager
@@ -300,6 +310,26 @@ if flow == 'cancel' and reader == 'head' and len(names) < 2:
 
 sys.path.insert(0, str(real_fixtures))
 import negative_process
+
+# fix-r11 (P1, DS boundary#1 ≡ MM concurrency#1, 双撞): import
+# self-verification -- the staged copies must be the modules actually
+# imported, not merely files that exist somewhere in the temp tree (the
+# fix-r10 sys.path assertion only proved presence). The runner's own
+# ``sys.path.insert(parents[1])`` resolves to this same staged root;
+# pre-importing here both proves the level (a one-level drift reds the
+# assert below) and makes the runner's from-imports hit ``sys.modules`` --
+# the staged bytes -- never the real fixtures. ``negative_process`` is
+# deliberately excluded: the harness imports the real module first to
+# patch its guard boundaries.
+staged_fixtures = tree / 'src/pilotdeck-gateway/tests/fixtures'
+sys.path.insert(0, str(staged_fixtures))
+for _module_name in ('negative_selection', 'negative_suite',
+                     'pending_reanchor', 'negative_panic', 'negative_scope'):
+    _module = __import__(_module_name)
+    assert Path(_module.__file__).resolve().is_relative_to(staged_fixtures), (
+        '#3043 [staged-import] %s was imported from %s -- the staged copy '
+        'at %s is not on the import path, so the import-channel TOCTOU is '
+        'open again' % (_module_name, _module.__file__, staged_fixtures))
 
 runner_path = tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals-close-order-pin/negative_controls.py'
 # fix-r9 (MM sibling P1): pin_path is a *staged* copy the parent read inside
@@ -560,14 +590,23 @@ class _PinDriver:
             staged_pin.write_bytes(PIN_SCRIPT.read_bytes())
             catalog.write_bytes(CATALOG_SCRIPT.read_bytes())
             # fix-r10 (P2#1, DS sibling#2 ≡ MM concurrency#2): stage the
-            # runner's fixture import closure next to the staged catalog, so
-            # the staged runner's own ``sys.path.insert(parents[1])`` (the
-            # temp tree) resolves every shared module first. Before this the
-            # temp tree resolved none of them and the imports fell back to
-            # the real fixtures directory, where a sibling round can hold a
-            # mutant on disk -- the same TOCTOU the staging exists for,
-            # leaking through the import channel.
-            stage_shared_sources(catalog.parent, PIN_RUNNER_SHARED_SOURCES)
+            # runner's fixture import closure inside the temp tree, so the
+            # staged runner's own ``sys.path.insert(parents[1])`` (the temp
+            # tree's fixtures *root*) resolves every shared module first --
+            # before, the temp tree resolved none of them and the imports
+            # fell back to the real fixtures directory, where a sibling
+            # round can hold a mutant on disk -- the same TOCTOU the
+            # staging exists for, leaking through the import channel.
+            # fix-r11 (P1, DS boundary#1 ≡ MM concurrency#1, 双撞): r10
+            # staged one level too deep -- ``catalog.parent`` is the
+            # sdk-signals subdirectory while the runner's ``parents[1]``
+            # is the fixtures root, so the staged copies were never on the
+            # import path and all five modules still imported from the
+            # real fixtures unlocked (measured on 722d8a761:
+            # _tmp/20261114-3058-fixr11/before-import-probe/). Stage at the
+            # exact directory the runner derives.
+            stage_shared_sources(catalog.parent.parent,
+                                 PIN_RUNNER_SHARED_SOURCES)
         for ledger in ('D1-SDK-WS-CLOSE-ORDER-001.md',
                        'D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md'):
             path = tree / 'specs/gateway-parity/diffs' / ledger
@@ -606,6 +645,13 @@ class _PinDriver:
             except ProcessLookupError:
                 pass
         holder.wait(timeout=30)
+        # fix-r11: the holder's stdout/stderr pipes (captured so a
+        # death-before-ready can be diagnosed, DS concurrency#3) are never
+        # read in the normal path -- close them here or every kill leaks a
+        # ResourceWarning into the suite log.
+        for stream in (holder.stdout, holder.stderr):
+            if stream is not None:
+                stream.close()
 
 
 class AbortAccountingTests(_PinDriver, unittest.TestCase):
@@ -1505,13 +1551,31 @@ class GuardedSourceWindowTests(_PinDriver, unittest.TestCase):
         holder = subprocess.Popen(
             [sys.executable, '-I', '-c', LOCK_HOLDER_SOURCE,
              str(FIXTURES), str(REPO_ROOT), str(ready)],
-            start_new_session=True)
+            start_new_session=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
         self.addCleanup(self._kill_holder, holder)
         deadline = time.monotonic() + 30
         while not ready.exists():
-            self.assertIsNone(
-                holder.poll(),
-                'the repo lock holder died before holding the tree lock')
+            if holder.poll() is not None:
+                # fix-r11 (P2, DS concurrency#3): a holder that dies before
+                # publishing its ready file is a *premise* fact, not a
+                # generic setup bug. The one honest death is its own
+                # ``tree_lock`` timing out because a real sibling round
+                # already holds the repo lock -- exactly the contention
+                # these tests stage -- and that interleaving is not this
+                # test's failure: skip with the named reason instead of
+                # reding on a misleading "died before holding" diagnosis.
+                # Any other death still fails closed, naming the holder's
+                # own stderr.
+                _out, holder_error = holder.communicate(timeout=30)
+                if 'TimeoutError' in holder_error:
+                    self.skipTest(
+                        '#3043 the repo lock is already held by a sibling '
+                        'negative-control round; this test\'s own holder '
+                        'cannot establish its premise -- rerun when idle '
+                        f'(holder stderr: {holder_error!r})')
+                self.fail('#3043 the repo lock holder died before '
+                          f'acquiring the repo lock: {holder_error!r}')
             self.assertLess(time.monotonic(), deadline,
                             'the repo lock holder never published its '
                             'ready file')
@@ -1523,7 +1587,7 @@ class GuardedSourceWindowTests(_PinDriver, unittest.TestCase):
         # waited 2 s on its own ancestor and failed closed (the round's
         # whole table INVALID). With it, the staged read runs to its green
         # verdict while the ancestor still holds the lock.
-        self._hold_repo_lock()
+        holder = self._hold_repo_lock()
         saved = os.environ.get('PDRS_NEGATIVE_LEASE_HELD_ROOT')
         os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = str(REPO_ROOT)
         try:
@@ -1537,6 +1601,16 @@ class GuardedSourceWindowTests(_PinDriver, unittest.TestCase):
                          '#3043 a bound read inside the ancestor lock window '
                          f'must stay green: {process.stderr!r}'
                          f'{process.stdout!r}')
+        # fix-r11 (P2, DS concurrency#2): the ancestor must still be holding
+        # the repo lock *through* the bound read -- the holder sleeps 30 s
+        # and run_pin's own subprocess timeout is 120 s, so a loaded CI host
+        # could outlive the holder and turn this P1 regression pin vacuous
+        # (a dead holder means the bypass was never exercised against a
+        # genuinely held lock, and a broken bypass would stay green).
+        self.assertIsNone(
+            holder.poll(),
+            'the ancestor holder must still hold the repo lock after the '
+            'bound read completes')
         self.assertEqual([row['status'] for row in summary['results']],
                          ['KILLED'] * len(SELECTION))
         self.assertEqual(summary['counts'],
@@ -1578,6 +1652,56 @@ class GuardedSourceWindowTests(_PinDriver, unittest.TestCase):
             'outlast it toward the holder\'s sleep horizon')
         # Positive control: once the holder is gone the very same window
         # acquires and reads the guarded bytes cleanly.
+        self._kill_holder(holder)
+        with guarded_source_window():
+            self.assertTrue(PIN_SCRIPT.read_bytes(),
+                            'the window must read the guarded source once '
+                            'the holder is gone')
+
+    def test_a_foreign_root_value_never_bypasses_the_window(self):
+        # fix-r11 (P2, DS sibling#5): the two r10 legs only pinned
+        # "matching value -> bypass" and "unset -> refuse"; a value naming
+        # some *other* existing tree root while the repo lock is genuinely
+        # held must still refuse with the named busy diagnostic -- the Rust
+        # read_lease precedent (tests/common/read_lease.rs:92-95: "an
+        # unrelated tree's value never matches and never bypasses").
+        # Anything looser (a truthiness check on the env var) would let a
+        # wrong-root value read mutant bytes with no lock at all -- the
+        # most dangerous misuse direction of the bypass.
+        holder = self._hold_repo_lock()
+        other_root = Path(tempfile.mkdtemp(prefix='pdrs-3043-foreign-root-'))
+        _BASES.append(other_root)
+        saved = os.environ.get('PDRS_NEGATIVE_LEASE_HELD_ROOT')
+        os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = str(other_root)
+        try:
+            started = time.monotonic()
+            with self.assertRaises(AssertionError) as raised:
+                with guarded_source_window():
+                    PIN_SCRIPT.read_bytes()
+            elapsed = time.monotonic() - started
+        finally:
+            if saved is None:
+                del os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT']
+            else:
+                os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = saved
+        message = str(raised.exception)
+        self.assertIn('#3043 the guarded source was busy', message)
+        self.assertIn('.negative-source.lock', message)
+        self.assertGreaterEqual(
+            elapsed, 1.0,
+            'the window must really wait its 2 s budget out before '
+            'refusing, not fail on some earlier error')
+        self.assertLessEqual(
+            elapsed, 5.0,
+            'the refusal must land at the 2 s budget (50 ms poll), never '
+            'outlast it toward the holder\'s sleep horizon')
+        # The holder was alive through the refusal (the bypass was really
+        # exercised against a held lock, never a vacuous refusal) and the
+        # same window acquires cleanly once it is gone.
+        self.assertIsNone(
+            holder.poll(),
+            'the holder must still hold the repo lock through the '
+            'refused window')
         self._kill_holder(holder)
         with guarded_source_window():
             self.assertTrue(PIN_SCRIPT.read_bytes(),

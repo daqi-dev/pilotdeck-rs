@@ -98,6 +98,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -109,6 +110,20 @@ FIXTURES = Path(__file__).resolve().parent
 # their own ``mutating_sources`` flocks (a driver's ROOT is parents[5] from
 # its deeper fixture nesting; from this file it is parents[4]).
 REPO_ROOT = Path(__file__).resolve().parents[4]
+# fix-r11 (P2, DS sibling#1 ≡ MM sibling#1, the pin fixture's twin): the
+# depth constant must be self-proved -- the pin fixture got its proof in
+# fix-r10 but this twin (one level shallower, ``parents[4]``) stayed
+# bare. Same external anchor, same explicit raise (not an assert --
+# ``python -O`` strips asserts), not a second hand-rolled scheme: without
+# it a relocated or flattened fixture tree would derive some other
+# *existing* directory and ``tree_lock`` (``os.open(..., O_CREAT)``)
+# would silently create a stranger's lock file -- run_copy's and
+# _drive_2495's windows would stay green while locking nothing at all.
+if not (REPO_ROOT / 'src/Cargo.toml').is_file():
+    raise RuntimeError(
+        '#3043 REPO_ROOT must be the repository root (the directory '
+        f'holding src/Cargo.toml), got {REPO_ROOT}: a relocated or '
+        'flattened fixture tree would silently lock a stranger\'s tree')
 FULL_ROSTER = 36
 # mode-routing's EXPECTED_NAMES literal (that fixture's negative_controls
 # :164-175): the roster count pinned independently of module.EXPECTED_NAMES,
@@ -1682,6 +1697,75 @@ _SHARED_RUNNER_TABLE_ROW_MOVED = "\n        'runner-publish-before-verify',\n"
 _SHARED_RUNNER_TABLE_ROW_NEXT = _SHARED_RUNNER_TABLE_ROW_MOVED
 _SHARED_RUNNER_ROSTER_ENTRY = "\n    'runner-baseexception-narrowed',\n"
 
+# fix-r11 (P2, DS sibling#2): the pin fixture's LOCK_HOLDER_SOURCE shape
+# (sdk-signals-close-order-pin/test_negative_controls.py) -- a real
+# subprocess holding the repo lock through the real ``tree_lock``,
+# publishing its ready file atomically, then sleeping. Replicated here (not
+# imported) per the family's cross-file shape convention: importing one
+# discovery-visible test module from another would couple their startup.
+_REPO_LOCK_HOLDER_SOURCE = (
+    'import sys, time\n'
+    'from pathlib import Path\n'
+    'sys.path.insert(0, sys.argv[1])\n'
+    'from negative_process import tree_lock\n'
+    'with tree_lock(sys.argv[2], timeout=10):\n'
+    '    Path(sys.argv[3] + ".tmp").write_text("held")\n'
+    '    Path(sys.argv[3] + ".tmp").replace(sys.argv[3])\n'
+    '    time.sleep(30)\n'
+)
+
+
+def _kill_repo_lock_holder(holder):
+    # Group kill, not a bare kill(): the holder runs in its own session
+    # (the issue-2495 cleanup shape). A vanished group is not an error.
+    if holder.poll() is None:
+        try:
+            os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    holder.wait(timeout=30)
+    # The holder's stdout/stderr pipes (captured for death diagnosis, the
+    # pin's fix-r11 concurrency#3 shape) are never read in the normal path.
+    for stream in (holder.stdout, holder.stderr):
+        if stream is not None:
+            stream.close()
+
+
+def _spawn_repo_lock_holder(testcase):
+    """A sibling subprocess holding REPO_ROOT/.negative-source.lock (fix-r11).
+
+    Returns the holder once its ready file proves the lock is held. A
+    holder that dies before publishing is a premise fact, not a setup bug
+    (the pin's fix-r11 concurrency#3 shape): contended lock -> named skip,
+    any other death -> fail closed with the holder's stderr.
+    """
+    base = Path(tempfile.mkdtemp(prefix='pdrs-3043-roster-repolock-'))
+    testcase.addCleanup(shutil.rmtree, base, ignore_errors=True)
+    ready = base / 'held'
+    holder = subprocess.Popen(
+        [sys.executable, '-I', '-c', _REPO_LOCK_HOLDER_SOURCE,
+         str(FIXTURES), str(REPO_ROOT), str(ready)],
+        start_new_session=True, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+    testcase.addCleanup(_kill_repo_lock_holder, holder)
+    deadline = time.monotonic() + 30
+    while not ready.exists():
+        if holder.poll() is not None:
+            _out, holder_error = holder.communicate(timeout=30)
+            if 'TimeoutError' in holder_error:
+                testcase.skipTest(
+                    '#3043 the repo lock is already held by a sibling '
+                    'negative-control round; this test\'s own holder '
+                    'cannot establish its premise -- rerun when idle '
+                    f'(holder stderr: {holder_error!r})')
+            testcase.fail('#3043 the repo lock holder died before '
+                          f'acquiring the repo lock: {holder_error!r}')
+        testcase.assertLess(time.monotonic(), deadline,
+                            'the repo lock holder never published its '
+                            'ready file')
+        time.sleep(0.05)
+    return holder
+
 
 class SharedRunnerRosterGuard(unittest.TestCase):
     """#3043 fix-r6: the shared-runner table's static roster refuses (rc 1).
@@ -1768,6 +1852,47 @@ class SharedRunnerRosterGuard(unittest.TestCase):
             env={key: value for key, value in os.environ.items()
                  if key != 'CARGO_TARGET_DIR'})
         return result, out
+
+    def test_a_busy_repo_lock_fails_closed_within_the_budget(self):
+        # fix-r11 (P2, DS sibling#2): the copy window's busy branch had no
+        # paired control in this file -- the pin fixture's
+        # guarded_source_window got one in fix-r10 P2#2, but run_copy's own
+        # ``tree_lock(REPO_ROOT, timeout=2)`` (the same family) stayed
+        # uncovered: reverting the timeout to TreeLock's 900 s default or
+        # dropping the fail branch entirely keeps every test here green. A
+        # sibling process holds the real repo lock, the very window must
+        # refuse with the named diagnostic inside its 2 s budget, and the
+        # same guarded read acquires cleanly once the holder is gone.
+        source = (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
+                  ).read_text(encoding='utf-8')
+        holder = _spawn_repo_lock_holder(self)
+        try:
+            started = time.monotonic()
+            with self.assertRaises(AssertionError) as raised:
+                self.run_copy(source)
+            elapsed = time.monotonic() - started
+        finally:
+            _kill_repo_lock_holder(holder)
+        message = str(raised.exception)
+        self.assertIn('#3043 the guarded shared sources were busy', message)
+        self.assertIn('.negative-source.lock', message)
+        self.assertGreaterEqual(
+            elapsed, 1.0,
+            'the copy window must really wait its 2 s budget out before '
+            'refusing, not fail on some earlier error')
+        self.assertLessEqual(
+            elapsed, 5.0,
+            'the refusal must land at the 2 s budget (the window must '
+            'never silently outlast it toward the holder\'s sleep horizon)')
+        # Positive control: once the holder is gone the very same lock
+        # window acquires and the guarded bytes read cleanly.
+        with tree_lock(REPO_ROOT, timeout=2):
+            self.assertTrue(
+                (FIXTURES / 'negative_suite.py').read_bytes()
+                and (FIXTURES / '_shared/negative_sqlite_header.py'
+                     ).read_bytes(),
+                'the copy window must read the guarded shared sources '
+                'once the holder is gone')
 
     def test_a_renamed_row_is_refused_without_evidence(self):
         source = (FIXTURES / 'shared-runner-failclosed/negative_controls.py'
