@@ -79,6 +79,23 @@ messages = {
 }
 
 
+# #2929 fix-r2: the parity-lease acquire budget for the one mutating_sources
+# window this runner holds: FAMILY_MAX -- the family roster's largest
+# whole-round hold bound (gateway-batch; the live value is the roster's FAMILY_MAX) -- plus this runner's own
+# restore tail and one stage of handoff margin, rounded up to the 900 s
+# family unit.  One derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.  A live holder always carries
+# cleanupPending and no taker takes such an owner over, so the budget
+# deliberately exceeds common.MAX_AGE -- MAX_AGE only ages out
+# never-published stale locks; a published owner, dead pid included, keeps
+# the cleanupPending protection and is never taken over automatically
+# (fix-r3: such a residual now fails the acquire fast with a diagnostic
+# instead of waiting the budget out) -- and just has to cover the family's
+# largest live hold (#1528/#1529).
+LEASE_ACQUIRE_BUDGET_SECONDS = 63900
+
+
 def validate_case_count():
     # fix-r2 (#1528 review): the count alone cannot catch an equal-length
     # swap -- drop one row and paste another over it and len(cases) still
@@ -235,7 +252,8 @@ def main():
                 for row in selected:
                     one(row)
         else:
-            with mutating_sources(root, guarded_sources):
+            with mutating_sources(root, guarded_sources,
+                                 lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS):
                 for row in selected:
                     one(row, True)
     except BaseException as error:

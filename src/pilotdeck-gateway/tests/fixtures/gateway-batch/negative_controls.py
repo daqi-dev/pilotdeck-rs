@@ -565,6 +565,23 @@ CHECKS = {
 }
 
 
+# #2929 fix-r2: the parity-lease acquire budget for the one mutating_sources
+# window this runner holds: FAMILY_MAX -- this runner's own whole-round hold
+# bound IS the family maximum -- plus its own restore tail and one
+# stage of handoff margin, rounded up to the 900 s family unit.  One
+# derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.  A live holder always carries
+# cleanupPending and no taker takes such an owner over, so the budget
+# deliberately exceeds common.MAX_AGE -- MAX_AGE only ages out
+# never-published stale locks; a published owner, dead pid included, keeps
+# the cleanupPending protection and is never taken over automatically
+# (fix-r3: such a residual now fails the acquire fast with a diagnostic
+# instead of waiting the budget out) -- and just has to cover the family's
+# largest live hold (#1528/#1529).
+LEASE_ACQUIRE_BUDGET_SECONDS = 64800
+
+
 def run(out, label, test):
     script = (DRIVER_TEST if test.startswith('AggregationAudit.') else
               PROCESS_TEST if test.startswith('ParityMutationLock.') else SAFETY)
@@ -610,7 +627,8 @@ def main():
     results = []
 
     try:
-        with mutating_sources(ROOT, list(dict.fromkeys([COMMON, *(row[1] for row in selected)]))) as originals:
+        with mutating_sources(ROOT, list(dict.fromkeys([COMMON, *(row[1] for row in selected)])),
+                              lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
             MUTATION_STATUS = common.MUTATION_STATUS

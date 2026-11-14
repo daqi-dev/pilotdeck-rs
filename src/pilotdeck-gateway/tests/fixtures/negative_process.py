@@ -947,9 +947,12 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     acquire the shared parity lease before yielding, then retain it through
     restoration and byte verification. Lease polling and each guard flock
     acquisition share the caller's lock_timeout budget (#1528: the old 60s
-    cap starved runners queuing behind another tree's case window -- the
-    hold bound is the same order, so the acquire budget must be too); a
-    busy lock still fails before source writes.
+    cap starved runners queuing behind another tree's case window; the
+    budget is now the parity family's largest live hold, not merely this
+    caller's own window, so a queued runner survives it); a busy lock
+    still fails before source writes, and a residual lease (published
+    owner dead while cleanupPending is set) fails fast with a
+    diagnostic instead of waiting the budget out (#2929 fix-r3).
     """
     root = Path(root).resolve()
     normalized = []

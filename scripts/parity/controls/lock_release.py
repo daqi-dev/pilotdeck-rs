@@ -121,8 +121,14 @@ class LockReleaseControls(unittest.TestCase):
         retained = R.read_owner(self.lock)
         self.assertEqual(retained.get('cleanupPending'), [424242],
                          '#209 retained groups must be explicit in owner.json')
-        with patch.object(R, 'pid_alive', return_value=False), \
-                patch.object(R.time, 'sleep', side_effect=RuntimeError('waited')):
+        # #2929 fix-r4: the retained owner is this live process, so the wait
+        # below reaches no takeover decision at all -- the refusal is the
+        # never-acquired wait, broken by the sleep sentinel.  A dead
+        # cleanupPending owner now fails fast instead of waiting (#2929
+        # fix-r3, probed by test_residual_lease_fast_fail.py); patching
+        # pid_alive False here used to route that fast refusal into this
+        # assertRaises(RuntimeError) probe and misclassify it as an ERROR.
+        with patch.object(R.time, 'sleep', side_effect=RuntimeError('waited')):
             # The refusal itself is the bound assertion: a mutant that takes
             # the retained lease over makes assertRaises fail with this message.
             with self.assertRaises(RuntimeError,
@@ -267,12 +273,18 @@ class LockReleaseControls(unittest.TestCase):
                          '#209 probe OSError must publish cleanupPending')
 
     def test_cleanup_pending_cannot_be_stolen(self):
+        # #2929 fix-r4: the owner must be a LIVE pid on an over-age lease, so
+        # the takeover decision is the only thing standing between this lease
+        # and a steal -- exactly the branch the cleanupPending guard protects.
+        # A dead owner now fails fast before any takeover (#2929 fix-r3,
+        # probed by test_residual_lease_fast_fail.py); the old
+        # pid_alive-False probe let the bound mutant hide behind that fast
+        # refusal (the negative-control row stopped being KILLED).
         self.lock.mkdir()
-        original = {'pid': os.getpid(), 'timestamp': time.time(),
+        original = {'pid': os.getpid(), 'timestamp': 0,
                     'token': 'retained-owner', 'cleanupPending': [424242]}
         (self.lock / 'owner.json').write_text(json.dumps(original) + '\n')
-        with patch.object(R, 'pid_alive', return_value=False), \
-                patch.object(R.time, 'sleep', side_effect=RuntimeError('waited')):
+        with patch.object(R.time, 'sleep', side_effect=RuntimeError('waited')):
             # The refusal itself is the bound assertion: a mutant that steals
             # this lease makes assertRaises fail with this exact message.
             with self.assertRaises(RuntimeError,

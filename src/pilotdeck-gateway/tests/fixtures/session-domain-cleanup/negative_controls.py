@@ -7583,6 +7583,20 @@ KILL_GRACE_SECONDS = KILL_TIMEOUT
 # restore/digest of the sources is charged once more on top (MiniMax concurrency
 # r10 P2-2 / r11 P2-4).
 TAIL_OVERHEAD_SECONDS = 20
+# #2929 fix-r2: the acquire side is a different quantity from the hold
+# budget above -- LEASE_BUDGET_SECONDS stays the fail-closed hold cap the
+# mutation loop enforces (with its below-MAX_AGE startup gate below, a
+# hold-side self-check), while the acquire wait for the one
+# mutating_sources window is FAMILY_MAX -- the family roster's largest
+# whole-round hold bound (gateway-batch; the live value is the roster's FAMILY_MAX) -- plus this runner's
+# own restore tail and one stage of handoff margin, rounded up to the
+# 900 s family unit.  One derivation for the whole family, recomputed live
+# in test_lease_acquire_budgets.py; its closed roster keeps a new
+# global-lease runner from silently missing a budget.  A live holder
+# always carries cleanupPending and no taker takes such an owner over, so
+# the acquire budget deliberately exceeds common.MAX_AGE and just has to
+# cover the family's largest live hold (#1528/#1529, sibling#6).
+LEASE_ACQUIRE_BUDGET_SECONDS = 63900
 
 
 def lease_budget_left(started, now):
@@ -7728,10 +7742,12 @@ def main():
     sources = sorted({COMMON_SOURCE, *(Path(row[1]) for row in MUTATIONS)}, key=str)
     try:
         with mutating_sources(ROOT, sources, baseline=args.baseline,
-                              lock_timeout=LEASE_BUDGET_SECONDS) as originals:
+                              lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
-            # The budget has to stay below the age at which a *different*
+            # The *hold* budget (LEASE_BUDGET_SECONDS above -- a different
+            # quantity from the acquire budget the with-statement just used)
+            # has to stay below the age at which a *different*
             # apparatus gives up on this lease, so a drift in either constant
             # would silently break the promise; the two are checked against each
             # other here.  An explicit raise, not an ``assert``: ``python -O``

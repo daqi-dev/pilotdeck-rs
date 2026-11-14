@@ -78,11 +78,26 @@ class ReviewControls(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def test_dead_pid_lock_takeover(self):
-        child = subprocess.Popen([sys.executable, '-c', 'pass'])
-        child.wait(timeout=10)
+        # #2929 fix-r5 (DS sibling#2): a reaped child's pid sits in the
+        # host's reuse window -- once reused, pid_alive() is true again, the
+        # dead_pid branch of round.py is unreachable and this control waits
+        # the whole unbounded budget out (a hang, never a takeover).  A pid
+        # above every host's allocation range (macOS pid_max 99999, Linux
+        # pid_max at most 4194304) is never handed out, so it stays dead;
+        # the precondition is asserted anyway so a host that does allocate
+        # it fails the control loudly instead of hanging on a wait (same
+        # sentinel shape as test_residual_lease_fast_fail.dead_pid).
+        dead = 2 ** 31 - 1
+        try:
+            os.kill(dead, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError(
+                f'pid {dead} is unexpectedly signalable; pick another dead pid')
         lock = self.root / 'parity.lock'
         lock.mkdir()
-        (lock / 'owner.json').write_text(json.dumps({'pid': child.pid, 'timestamp': time.time()}))
+        (lock / 'owner.json').write_text(json.dumps({'pid': dead, 'timestamp': time.time()}))
         events, stderr = [], io.StringIO()
         with redirect_stderr(stderr), R.parity_lock(lock, events):
             owner = json.loads((lock / 'owner.json').read_text())

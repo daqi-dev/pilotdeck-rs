@@ -147,10 +147,20 @@ class Safety(unittest.TestCase):
         self.assertTrue(self.lock.exists(), '#209 unverified cleanup must retain lock')
         retained = owner(self.lock)
         self.assertEqual(retained.get('cleanupPending'), [424242], '#209 retained groups are explicit')
-        with patch.object(common, 'alive', return_value=False):
-            with self.assertRaises(TimeoutError, msg='#209 retained lock cannot be stolen as dead owner'):
-                with parity_lock(.01, lock=self.lock):
-                    self.fail('#209 cleanup-pending owner was stolen')
+        # #2929 fix-r5 (DS sibling#1): the owner must be a LIVE pid on an
+        # over-age lease, so the takeover decision is the only thing standing
+        # between this lease and a steal -- exactly the branch the
+        # cleanupPending guard protects.  The old alive-False patch routed
+        # the refusal into the residual fast-fail (#2929 fix-r3) before any
+        # takeover decision, so the bound pending-lock-stolen mutant hid
+        # behind that fast refusal (the negative-control row stopped being
+        # KILLED); the dead-pid residual itself is probed by
+        # test_residual_lease_fast_fail.py.
+        retained = dict(retained, timestamp=0)
+        save(self.lock / 'owner.json', retained)
+        with self.assertRaises(TimeoutError, msg='#209 retained lock cannot be stolen as over-age owner'):
+            with parity_lock(.01, lock=self.lock):
+                self.fail('#209 cleanup-pending owner was stolen')
         self.assertEqual(owner(self.lock), retained, '#209 failed takeover preserves owner')
 
     def test_acquisition_interrupt_releases_empty_owned_lock(self):
@@ -185,10 +195,14 @@ class Safety(unittest.TestCase):
                     pass
         self.assertEqual(owner(self.lock).get('cleanupPending'), [424242],
                          '#209 release entry interrupt must publish pending groups')
-        with patch.object(common, 'alive', return_value=False):
-            with self.assertRaises(TimeoutError, msg='#209 cancelled release retains lock'):
-                with parity_lock(.01, lock=self.lock):
-                    self.fail('#209 cancelled release lock was stolen')
+        # #2929 fix-r5 (DS sibling#1): same live-owner over-age shape as
+        # test_cleanup_pending_retains_lock_and_cannot_be_taken_over -- the
+        # residual fast-fail must not stand in front of the takeover refusal
+        # this tail asserts (the owner pid is this live process).
+        save(self.lock / 'owner.json', dict(owner(self.lock), timestamp=0))
+        with self.assertRaises(TimeoutError, msg='#209 cancelled release retains lock'):
+            with parity_lock(.01, lock=self.lock):
+                self.fail('#209 cancelled release lock was stolen')
 
     def test_cleanup_record_write_failure_keeps_preexisting_marker(self):
         real_save = common.save
@@ -206,10 +220,13 @@ class Safety(unittest.TestCase):
         self.assertIs(acquisition_marker, True, '#209 lock must be marked before spawning')
         self.assertIs(owner(self.lock).get('cleanupPending'), True,
                       '#209 failed cleanup write must preserve acquisition marker')
-        with patch.object(common, 'alive', return_value=False):
-            with self.assertRaises(TimeoutError, msg='#209 failed write retains dead-owner lock'):
-                with parity_lock(.01, lock=self.lock):
-                    self.fail('#209 failed-write lock was stolen')
+        # #2929 fix-r5 (DS sibling#1): same live-owner over-age shape -- the
+        # acquisition-marker owner keeps its cleanupPending, so the refusal
+        # below is the takeover guard, not the residual fast-fail.
+        save(self.lock / 'owner.json', dict(owner(self.lock), timestamp=0))
+        with self.assertRaises(TimeoutError, msg='#209 failed write retains live-owner lock'):
+            with parity_lock(.01, lock=self.lock):
+                self.fail('#209 failed-write lock was stolen')
 
     def test_damaged_published_owner_is_not_stale_unpublished_lock(self):
         self.lock.mkdir()
@@ -406,10 +423,23 @@ class Safety(unittest.TestCase):
         self.assertEqual(owner(self.lock), previous)
 
     def test_dead_pid_takeover_and_release(self):
-        child = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
-        child.wait(timeout=3)
+        # #2929 fix-r5 (DS sibling#3): a reaped child's pid sits in the
+        # host's reuse window -- once reused, alive() is true again, the
+        # dead_pid branch is unreachable and this probe waits the whole
+        # 600 s default budget out (an apparatus false red, never a kill).
+        # A pid above every host's allocation range (macOS pid_max 99999,
+        # Linux pid_max at most 4194304) is never handed out, so it stays
+        # dead; the precondition is asserted anyway so a host that does
+        # allocate it fails the probe loudly instead of hanging on a wait.
+        dead = 2 ** 31 - 1
+        try:
+            os.kill(dead, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            self.fail(f'pid {dead} is unexpectedly signalable; pick another dead pid')
         self.lock.mkdir()
-        save(self.lock / 'owner.json', {'pid': child.pid, 'timestamp': time.time(), 'token': 'dead'})
+        save(self.lock / 'owner.json', {'pid': dead, 'timestamp': time.time(), 'token': 'dead'})
         takeovers = []
         with parity_lock(takeovers=takeovers, lock=self.lock):
             self.assertEqual(owner(self.lock)['pid'], os.getpid())
@@ -4169,9 +4199,22 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(verdict['rule'], 'NETWORK_FALLBACK')
 
     def test_lsof_failure_is_not_an_empty_connection_set(self):
-        dead = subprocess.Popen(['true'])
-        dead.wait()
-        connections = self.session._retirement_connections(dead.pid)
+        # #2929 fix-r6 (DS sibling#1): a reaped child's pid sits in the
+        # host's reuse window -- once the host hands it to a process that
+        # holds TCP connections, `lsof -p <pid> -iTCP` exits 0 and the
+        # sample parses as ok, so the 'failed' assertion below would be an
+        # apparatus false red.  A pid above every host's allocation range
+        # (macOS pid_max 99999, Linux pid_max at most 4194304) is never
+        # handed out, so it stays dead; the precondition is asserted anyway
+        # so a host that does allocate it fails the probe loudly.
+        dead = 2 ** 31 - 1
+        try:
+            os.kill(dead, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            self.fail(f'pid {dead} is unexpectedly signalable; pick another dead pid')
+        connections = self.session._retirement_connections(dead)
         self.assertEqual(connections['commandStatus'], 'failed')
         self.assertNotEqual(self.session._retirement_network_verdict(connections)['status'], 'PASS')
 

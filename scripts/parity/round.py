@@ -207,6 +207,16 @@ def lock_guard(lock):
             fcntl.flock(guard, fcntl.LOCK_UN)
 
 
+class ResidualLeaseError(TimeoutError):
+    """已发布 owner 死亡且带 cleanupPending 的残留租约。
+
+    只能按 `scripts/cli-parity/README.md`「锁被保留时怎么解」人工回收：
+    既不会被 LOCK_MAX_AGE 老化，也永远不会被接管，等下去保证零进展
+    （#2929 fix-r3）。继承 TimeoutError，让现有捕获方按取锁超时归类，
+    而不是当成未知崩溃。
+    """
+
+
 @contextmanager
 def parity_lock(lock=LOCK, takeovers=None):
     # 获取时先发布 cleanupPending：SIGKILL/OOM 或后续残留记录写入失败都不会留下
@@ -214,18 +224,37 @@ def parity_lock(lock=LOCK, takeovers=None):
     owner = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex,
              'cleanupPending': True}
     announced = False
+    started = time.monotonic()
+    noted = started
+    holder = None
     try:
         while True:
             acquired = False
             with deferred_signals(), lock_guard(lock):
+                holder = None
                 if lock.exists():
                     previous = read_owner(lock)
+                    # 已发布 owner 即便 pid 已死也带 cleanupPending 保护、永不自动接管；
+                    # 该残留只能人工回收，等穿任意时长都是零进展（#2929 fix-r3），
+                    # 故立即失败并带足人工处置需要的诊断信息。
+                    if (previous and previous.get('cleanupPending')
+                            and not pid_alive(previous['pid'])):
+                        raise ResidualLeaseError(
+                            f'{lock}: residual lease from a dead owner '
+                            f"(pid={previous['pid']}, "
+                            f"age={time.time() - previous['timestamp']:.0f}s, "
+                            f"cleanupPending={previous.get('cleanupPending')!r}) "
+                            'can never be acquired automatically; recover it by '
+                            'hand following the 「锁被保留时怎么解」 section of '
+                            'scripts/cli-parity/README.md')
                     timestamp = previous['timestamp'] if previous else lock.stat().st_mtime
                     reason = ('dead_pid' if previous and not pid_alive(previous['pid']) else
                               'expired' if time.time() - timestamp > LOCK_MAX_AGE else None)
                     # 损坏的已发布 owner 可能是中断的 cleanupPending 写入；只有从未发布
                     # 的陈旧锁可按 mtime 回收，已发布的损坏 owner 必须人工核实。
                     damaged = previous is None and (lock / 'owner.json').exists()
+                    holder = (previous if previous is not None
+                              else 'unreadable' if damaged else None)
                     # 带 cleanupPending 的锁表示上一次运行可能还有存活进程组，任何装置
                     # 都不得自动接管；核实原 owner 与残留组后再人工回收。
                     if reason and not damaged and not (previous and previous.get('cleanupPending')):
@@ -246,9 +275,24 @@ def parity_lock(lock=LOCK, takeovers=None):
                     acquired = True
             if acquired:
                 break
+            now = time.monotonic()
             if not announced:
                 print(f'waiting for {lock}', file=sys.stderr, flush=True)
                 announced = True
+                noted = now
+            elif now - noted >= 60:
+                # 进展心跳：排在活同伴后面等是预期行为，别误当死锁去手工删锁。
+                # 本装置无取锁预算上限，只报已等秒数。
+                if isinstance(holder, dict):
+                    state = (f"owner pid={holder['pid']} alive={pid_alive(holder['pid'])}, "
+                             f"age={time.time() - holder['timestamp']:.0f}s")
+                elif holder == 'unreadable':
+                    state = 'owner.json present but unreadable'
+                else:
+                    state = 'no published owner (never-published stale lock)'
+                print(f'still waiting for {lock}: {state}, waited={now - started:.0f}s',
+                      file=sys.stderr, flush=True)
+                noted = now
             time.sleep(2)
         yield
     finally:

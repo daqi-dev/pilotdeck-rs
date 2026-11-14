@@ -570,6 +570,17 @@ def cargo_config_problems(root=None, environ=None):
 
 
 
+class ResidualLeaseError(TimeoutError):
+    """A lease whose published owner is dead with cleanupPending still set.
+
+    Such a residual lease can only be recovered by hand (the 「锁被保留时怎么解」
+    section of scripts/cli-parity/README.md): a published owner is never aged
+    out by MAX_AGE and never taken over, so waiting for one is guaranteed
+    zero progress.  It subclasses TimeoutError so existing catchers classify
+    it like a lock wait that gave up, instead of an unknown crash.
+    """
+
+
 def owner(lock):
     try:
         data = json.loads((lock / 'owner.json').read_text())
@@ -605,7 +616,12 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
     """Same owner/guard/stale takeover contract as scripts/parity/round.py.
 
     Entire k-round calibration holds the lock, including rename/snapshot.
-    A run is bounded to 900s, comfortably below the 2400s stale lease.
+    The timeout is the caller's acquire budget (#2929 fix-r2: fixtures
+    runners pass the family-max hold bound, which deliberately exceeds the
+    2400s MAX_AGE because MAX_AGE only ages never-published stale locks;
+    a published owner, dead pid included, is never taken over -- and such
+    a residual lease now fails fast here instead of waiting the budget
+    out, #2929 fix-r3).  Waiting prints a heartbeat to stderr every 60s.
     """
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('lock timeout must be positive and finite')
@@ -615,12 +631,31 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
     mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex,
             'cleanupPending': True}
     deadline = time.monotonic() + timeout
+    started = time.monotonic()
     announced = False
+    noted = started
+    holder = None
     try:
         while True:
             with guard(lock), deferred_signals():
+                holder = None
                 if lock.exists():
                     previous = owner(lock)
+                    # A published owner carries cleanupPending and is never
+                    # taken over, even when its pid is dead: that residual is
+                    # only recoverable by hand, so waiting out the budget is
+                    # guaranteed zero progress (#2929 fix-r3).  Fail fast with
+                    # the diagnostics the manual recovery needs.
+                    if (previous and previous.get('cleanupPending')
+                            and not alive(previous['pid'])):
+                        raise ResidualLeaseError(
+                            f'{lock}: residual lease from a dead owner '
+                            f"(pid={previous['pid']}, "
+                            f"age={time.time() - previous['timestamp']:.0f}s, "
+                            f"cleanupPending={previous.get('cleanupPending')!r}) "
+                            'can never be acquired automatically; recover it by '
+                            'hand following the 「锁被保留时怎么解」 section of '
+                            'scripts/cli-parity/README.md')
                     stamp = previous['timestamp'] if previous else lock.stat().st_mtime
                     reason = ('dead_pid' if previous and not alive(previous['pid']) else
                               'expired' if time.time() - stamp > MAX_AGE else None)
@@ -628,6 +663,8 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
                     # cleanupPending write. Only a never-published stale lock
                     # may use mtime recovery; a damaged owner needs inspection.
                     damaged = previous is None and (lock / 'owner.json').exists()
+                    holder = (previous if previous is not None
+                              else 'unreadable' if damaged else None)
                     if reason and not damaged and not (previous and previous.get('cleanupPending')):
                         event = {'reason': reason, 'previous_owner': previous, 'timestamp': time.time()}
                         shutil.rmtree(lock)
@@ -643,11 +680,28 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
                         shutil.rmtree(lock)
                         raise
                     break
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 raise TimeoutError(f'parity lock wait exceeded {timeout}s')
             if not announced:
                 print(f'waiting for {lock}', file=sys.stderr, flush=True)
                 announced = True
+                noted = now
+            elif now - noted >= 60:
+                # Progress heartbeat: a long wait behind a live peer is
+                # expected, and must not look like a deadlock worth deleting
+                # the lease for by hand.
+                if isinstance(holder, dict):
+                    state = (f"owner pid={holder['pid']} alive={alive(holder['pid'])}, "
+                             f"age={time.time() - holder['timestamp']:.0f}s")
+                elif holder == 'unreadable':
+                    state = 'owner.json present but unreadable'
+                else:
+                    state = 'no published owner (never-published stale lock)'
+                print(f'still waiting for {lock}: {state}, '
+                      f'waited={now - started:.0f}s, budget left={deadline - now:.0f}s',
+                      file=sys.stderr, flush=True)
+                noted = now
             # Other suites may release and immediately launch their next round.
             # Keep the polling window shorter than that gap to avoid starvation;
             # ownership, lease and guard rules remain identical to the C lock.
