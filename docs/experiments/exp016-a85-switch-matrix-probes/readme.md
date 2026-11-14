@@ -48,24 +48,26 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   正是观察对象，与 R1「必须有限」的差异点如实登记；`connectionEndedMs` 终值在 cleanup 行落定，
   200 ms 内未达记 null、此时该字段只用于 observation 行结论）；note 谓词（fix-r5）：判「支持『close 清
   checker ⇒ 永不 settle』」须同 observation 行核「bytes=0 且窗内无 end/close/error 服务端事件
-  且 socket 本地仍开」，不满足只报事实不作机制归因；settle 分支 note 携带 `closeWaitedMs` 与
+  且 socket 本地仍开」，不满足只报事实不作机制归因；fix-r7 boundary#1（M11 自守）：「支持②」
+  另须 scenario 行 `headersTimeout=60000`——读到但 ≠60000 时该产物按矩阵 M11 判废，探针
+  不输出支持性结论、只报事实；settle 分支 note 携带 `closeWaitedMs` 与
   「是否 ≥60 s 相位窗」（fix-r6），且命中早 settle 判废面时产物带 `invalidationHit` 标注。
   **判废面矩阵（fix-r6 结构性正本——形状 × 判定全覆盖，判官按本表判读；r3→r5 逐轮补词
   不收敛后改为枚举形状）**：
 
 | # | 形状（observation/scenario 字段组合） | 判定 | 探针侧行为 | 对应实测形状 |
 |---|---|---|---|---|
-| M1 | ≥95 s 窗不 settle、bytes=0、无窗内服务端事件、socketLocalStillOpen=true | 有效（支持②判别面） | note 支持②分支 | stub hang-96（close 延后 300 ms 保证连接计入） |
+| M1 | ≥95 s 窗不 settle、bytes=0、无窗内服务端事件、socketLocalStillOpen=true | 有效（支持②判别面） | note 支持②分支 | fixr6 m3-delay0（plain/60000/96 s 不 settle、bytes=0——`STUB_CLOSE_DELAY_MS=0` 竞态计入侧；fix-r7 改引：原引 hang-96 的 headersTimeout=3600000，按 M11 即判废产物）；fixr7 m1-plain60000 同形复核（close 延后 300 ms 保证计入，新自守谓词下支持②分支照常命中） |
 | M2 | settle 且 closeWaitedMs<1000 且 firstByteMs=null 且窗内无事件且 connectionEndedMs=null | **判废**（早 settle/连接未被计入——close 落定不可归因于该连接的任何可观测事件，非零字节观测；R1:127 对应面） | `invalidationHit` 标注 + note 判废句 | stub close 落到不含本连接的 server（STUB_CLOSE_TARGET=other） |
 | M3 | settle 且 closeWaitedMs<1000 且窗内有 error/close 事件（connectionEndedMs≈closeResolvedMs） | 有效（settle·机制=close 清/断该连接（未被计入时 RST、计入则空闲清理），非 408 驱动） | note settle 分支 + closeWaitedMs<60 s 相位窗 | 实测 STUB_CLOSE_SYNC=1（fixr6 race-close-sync：settle、closeWaitedMs=0、事件=[error,close]）；STUB_CLOSE_DELAY_MS=0 同轮落竞态另一侧（连接计入→不 settle，同 M1 形状）——两态均为 close 时序竞态的真实结果，fixr5 目录旧 delay0 run 出过本行形状 |
 | M4 | settle 且 closeWaitedMs≥60000（408 相位窗内，firstByteMs 通常非 null） | 有效（settle·408 驱动面） | note settle 分支 + ≥60 s 相位窗 | stub late408（61 s 写 408 字节后销毁连接） |
-| M5 | 不 settle 且 firstByteMs≠null | 有效（排除「close 清 checker ⇒ 408 不发」） | note 排除分支 | stub bytes |
-| M6 | 不 settle、bytes=0、窗内有 end/close/error 事件或 socket 本地已关 | 有效（只报事实，不作机制归因） | note 事实分支 | stub finnever |
+| M5 | 不 settle 且 firstByteMs≠null | 有效（排除「close 清 checker ⇒ 408 不发」） | note 排除分支 | fixr7 m5-bytes（stub bytes 在 headersTimeout=60000 下重跑换引；fixr6 旧 run 抬到 3600000，按 M11 即判废产物） |
+| M6 | 不 settle、bytes=0、窗内有 end/close/error 事件或 socket 本地已关 | 有效（只报事实，不作机制归因） | note 事实分支 | fixr7 m6-finnever（stub finnever 在 headersTimeout=60000 下重跑换引；fixr6 旧 run 抬到 3600000，按 M11 即判废产物） |
 | M7 | 不 settle 且窗 <95 s | 有效·右删失下界（不得作对拍判 PASS 依据） | note 右删失分支 | 1 s 窗冒烟 |
 | M8 | 1 s 冒烟窗（装置自检） | 有效·装置自检（同 M7 形状） | 同上 | 同上 |
 | M9 | 三超时字段两层（server/server.server）均读不到 | **第四态 probe-shape-mismatch**：exit 4、无产物、先修探针再复跑（不进 K/I/S、不判有效/判废） | exit 4 + stderr 诊断 | stub STUB_SHAPE=unreachable |
 | M10 | `serverShape=wrapped`（命中包装层） | 有效（读取层级记录在案） | scenario 带 serverShape | stub STUB_SHAPE=wrapped |
-| M11 | headersTimeout 读到但 ≠60000 | 判废（R1:124） | — | stub hang 模式（抬到 3600000，作判废演示） |
+| M11 | headersTimeout 读到但 ≠60000 | 判废（R1:124） | note 判废事实分支（支持②自守谓词 `HEADERS_TIMEOUT_NOMINAL` 拦下——fix-r7，反证不该出现时不输出「支持」） | stub hang 模式（抬到 3600000，作判废演示；fixr7 重跑核：note 只报事实并写明 M11 判废） |
 | M12 | 无 scenario/observation 行或必需字段缺失 | 判废（R1:121-124） | — | 受控探针构不出：健康探针必落两行；该条防的是进程被杀/产物截断/主控写坏 |
 | M13 | connectionEndedMs（非 null 时）< closeCalledMs | 判废（连接在 close() 前已没了） | — | 受控构不出（fixr6 实测 earlyrst 最近似形状 connectionEndedMs=26 > closeCalledMs=25——探针 connect→close 为同一同步块，连接结束事件只能在下一 tick 派发、恒晚于 close 调用；该条防探针结构变更/写坏产物） |
 | M14 | closeSettled=false 且 elapsedMs<windowMs | 判废（早退/被截断） | — | 受控探针构不出：观测循环只在 settle 或窗满退出，两者都使条件不成立；防进程被杀/截断产物 |
