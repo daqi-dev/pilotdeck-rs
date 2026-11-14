@@ -13,6 +13,12 @@ Scope note: the two capability-advertisement rows this issue added
 `../native-management/negative_controls.py` with the rest of the
 capability-name rows, bound to `production_host_management_and_restart`;
 running this fixture alone does not cover them (#1616 r3).
+
+The execution table is verified against the static EXPECTED_NAMES roster with
+the shared `negative_selection.registered` in every mode (--check, the default
+full run, and an explicit subset) before anything runs, so a row dropped from
+`mutations` cannot silently shrink the denominator, and a drift is a
+never-started refusal (exit 2), not a shorter run that still reads green.
 """
 import os
 import sys
@@ -20,6 +26,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_selection import refuse, registered
 from negative_suite import Case, run_cases
 
 USER_DIALOG = root / 'src/pilotdeck-gateway/src/native_process/methods/user_dialog.rs'
@@ -239,6 +246,49 @@ mutations = [
       '#1437 grant whitespace sessionKey must not alias the sessionless bucket']),
 ]
 
+# #2572: `mutations` is both the registry and the execution table, so a row
+# dropped from the table silently shrank the denominator — `--check` printed a
+# smaller count and still said OK, and the run handed `run_cases` only the
+# survivors. The denominator is this static roster instead, checked with the
+# shared `negative_selection.registered` before anything runs: a dropped,
+# renamed, duplicated or reordered row is a never-started refusal (exit 2),
+# never a shorter green run (#1666 family, same fix shape as issue-2495).
+EXPECTED_TOTAL = 21
+EXPECTED_NAMES = (
+    'list-domain-message',
+    'list-projection-empty',
+    'ttl-lower-bound',
+    'ttl-upper-bound',
+    'ttl-fraction-allowed',
+    'ttl-non-number-message',
+    'claim-domain-code',
+    'release-domain-code',
+    'respond-domain-code',
+    'release-lease-message',
+    'user-dialog-blank-trim',
+    'claim-blank-lease-allowed',
+    'respond-missing-result-message',
+    'behavior-dispatch',
+    'behavior-unknown-cancels',
+    'behavior-cancelled-skipped',
+    'lease-required-code',
+    'notpending-delivered-true',
+    'local-dispatch-leak',
+    'permission-list-domain-code',
+    'grant-whitespace-bucket',
+)
+
+
+def check_roster():
+    """Every mode enters here first: roster drift is a refusal, never a run."""
+    try:
+        names = registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
+    if len(names) != EXPECTED_TOTAL:
+        refuse(f'#1437 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
+               f'found {len(names)}')
+
 
 def mutate(content, scope, replacements):
     for old, new in replacements:
@@ -249,13 +299,46 @@ def mutate(content, scope, replacements):
 
 
 def main():
+    # #2572: every mode verifies the table against the static roster first, so
+    # a dropped row refuses to start instead of shrinking the run.
+    check_roster()
     if sys.argv[1:] == ['--check']:
         for name, path, old, new, _test, _assertion in mutations:
             mutate(path.read_text(), None, [(old, new)])
-        print(f'#1437 {len(mutations)} mutation anchors OK')
+        print(f'#1437 {EXPECTED_TOTAL} registered mutation anchors OK '
+              f'(EXPECTED_NAMES roster matched)')
         return 0
+    # #2572 fix-r2 (both review families): the exact-match above let
+    # `--check NAME` fall through to the run path and create a directory
+    # named `--check`; any other placement of --check is a never-started
+    # refusal. The name refusals also move ahead of the target check so
+    # every entry of this batch reports a typo as "never started" (exit 2)
+    # — the two argparse siblings check names before their stale and target
+    # guards for the same reason.
+    if '--check' in sys.argv[1:]:
+        refuse('#1437 --check takes no arguments')
+    # #2572 fix-r3 (DS r3 boundary P2): the argv parsing is hand-rolled, so
+    # a mistyped first token that merely starts with a dash (`--chec`,
+    # `--check=1`) must refuse as an unrecognized flag instead of becoming
+    # the OUT directory of a full run. (The argparse siblings abbreviate
+    # `--chec` to `--check` by prefix, which is a legitimate `--check`.)
+    if sys.argv[1:] and sys.argv[1].startswith('-'):
+        refuse('#1437 unrecognized flag: ' + sys.argv[1])
     if len(sys.argv) < 2:
         raise SystemExit('usage: negative_controls.py --check | OUT [mutation ...]')
+    selected_names = sys.argv[2:]
+    # #2572: a repeated name is a caller-side typo (`a a` for `a b`), not a
+    # subset; folding it through the membership test would run the row once
+    # and report a green over the smaller scope, the same false green as an
+    # unknown name (#1734; native-management r6 fixed the same hole in the
+    # same diff as its roster). Both are never-started refusals (exit 2).
+    repeated = sorted({name for name in selected_names
+                       if selected_names.count(name) > 1})
+    if repeated:
+        refuse('#1437 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(selected_names) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1437 unknown mutation name: ' + ', '.join(unknown))
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -267,9 +350,6 @@ def main():
     for key in ('PDRS_MUTANT', 'PDRS_NEGATIVE_RECEIPTS',
                 'PDRS_NEGATIVE_PARENT_TEST', 'CARGO_TERM_QUIET'):
         env.pop(key, None)
-    selected_names = sys.argv[2:]
-    if set(selected_names) - {row[0] for row in mutations}:
-        raise SystemExit('unknown mutation name')
     selected = [Case(*row) for row in mutations
                 if not selected_names or row[0] in selected_names]
     out = Path(sys.argv[1]).resolve()
