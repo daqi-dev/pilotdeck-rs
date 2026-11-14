@@ -126,6 +126,19 @@
      fail-closed（多拒不漏）——修法是把引用移出题头区，不是补全拼（全拼 fix-rN
      对本族＝假声明修复轮 N，N≥4 触发 residual 连锁假 FAIL）；check() 相交半边
      文案同步去「全拼 fix-rN」建议（改为「移出题头区或与链写紧邻」）。
+     fix-r13（#3074，MM+DS r12 复审 P1×2 双谱系双撞同根，enum 门半边化 + 收集臂
+     第二条静默丢弃路径，协调者四孪生实测 _tmp/20261114-3074-fixr13/）：
+     ㉒ enum 的 foreign 抑制由「not enum_title 整题关」收成**半边**——只压链 ∩
+     issues = ∅ 的不相交半边（board 并记各归各单，登记抑制保留）；相交半边下
+     归属存疑 token（裸号引用/含数字散文/评审署名族字母 run）照 fix-r11 非枚举
+     口径进 foreign 拒收、不再计入 rounds（收集/前向/后向三臂同口径）——「加
+     一条无关链即绕过拒收」的静默放行与署名族 enum 计入（假声明轮号，N≥4 触发
+     residual 假 FAIL 向）同轮封堵；⑳ 的「rounds 路径照走」与 fix-r12 登记窄窗②
+     （相交半边＝登记抑制）自本修收窄/废止，硬不变式② 收窄到不相交半边；
+     ㉓ 题头区内、前方无 #N 的简写 token（协调者追加 MM sibling#2）不再整条
+     丢弃——与全拼同走 SELF/后向臂（`修 + 2932 r2 交付 + #2957` 旧 ([],[]) →
+     foreign 拒收＝简拼/全拼拼写分裂封堵），硬不变式「任何格子不得 rounds=[] ∧
+     foreign=[]」在简写后向臂格补齐。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -191,11 +204,15 @@ RESIDUAL_MIN_ROUND = 4
 FIXROUND_RE = re.compile(r"(?<![A-Za-z0-9_-])fix-r(\d{1,18})b?(?![A-Za-z0-9_-])")
 # fix-r3 P0①（MM concurrency#1）：仓内真实简写惯例 `fix(scripts) #3056 r14：…` /
 # `chore(gateway) #1579 r3: …`——标题里写 r<N> 而不是 fix-r<N>。RSHORT 只提供词形；
-# 是否计入由 _scan_pairs 的结构判据决定：**题头区内 + 与前方 #N 链紧邻**（gap 全为链
+# 收集面＝题头区内全部（fix-r13 起前方无 #N 的简写不再丢弃，与全拼同走 SELF/后向臂，
+# 见 _scan_pairs 收集臂注释）；归属与计入由 _scan_pairs 的结构判据决定：与前方 #N 链
+# **紧邻**（gap 全为链
 # 字符（_is_issue_gap_char 单源），或间隔恰为链尾裸号成员（`_bare_member_connected`
 # 单源：区间恰一个纯数字 run，fix-r10 起精确判定无距离上界；RSHORT 的 lookbehind 排
 # 数字 → 空 gap（`#3056r14`）实际不可达）；散文间隔的简写形自 fix-r11 起不整条丢弃、
-# 照前向臂口径进 foreign 拒收——本注释为判据陈述点⑧）——题头区外的
+# 照前向臂口径进 foreign 拒收——enum 相交半边自 fix-r13 起同判 foreign 拒收、不相交
+# 半边照走 rounds 路径（enum 门半边化，见 _enum_title docstring）——本注释为判据
+# 陈述点⑧）——题头区外的
 # rN 是评审轮引用（`fix-r3：r2 评审`，语料 423 条）与决策卡注记，不计
 # （_tmp/20261114-3074-fixr3/probe-corpus.txt §1/§1b）。位界同 P2a；fix-r4（boundary#7）
 # `b?` 与 FIXROUND_RE 单源同步——「简写 + 接续轮」组合形 `#3056 r14b` 不再一侧认一侧不认。
@@ -487,9 +504,11 @@ def _bare_member_before_token(text: str, start: int, chain_end: int | None,
     与事实相反已更正——负例登记：谁再引入「间隔非成员 → 整条丢弃」即红，见
     test-review-roles.py fix-r11 矩阵 gap 内容轴）。已知窄窗（登记）：全拼形
     （前向臂 BARE_NUM_BEFORE 无命中 → 不拦 → 计入）与简写形（收集臂 foreign
-    拒收）行为仍分——计入 vs 拒收都是非空出口，双空不变式不破；该分裂自 fix-r12
-    起仅存在于**非枚举型标题**（枚举型标题下简写照走 rounds 路径、与全拼同判——
-    enum 只压 foreign 半边，见 _enum_title docstring）。"""
+    拒收）行为仍分——计入 vs 拒收都是非空出口，双空不变式不破；该分裂自 fix-r13
+    （enum 门半边化）起在枚举与非枚举标题下**同判**（enum 相交半边简写照拒收、
+    不相交半边 rounds=[] 登记抑制；fix-r12 曾令 enum 相交半边简写照走 rounds
+    路径与全拼同判，本修按 P1 收口——enum/非 enum 两半边行为一致），见
+    _enum_title docstring）。"""
     return _bare_member_connected(text, start, chain_end, gap_clear, last_nongap)
 
 
@@ -599,13 +618,21 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
     简写 token 不再整条丢弃，照走 rounds 路径（计入判据＝前向臂配对：`#3056+3074 补
     r5 … #2957 P1×3` + {3056} 计 5；修前整条丢弃＝fixtype/residual/多块一致义务整段
     跳过的假 PASS，协调者实测 _tmp/20261114-3074-fixr12/probe-p1-before.out）。
-    **登记窄窗（enum 抑制是全维度的）**：enum 下 foreign 半边整题关闭——①不相交半边
-    （board 并记各归各单，fix-r3 P1-1 面 A 的保护本体）；②裸号引用/含数字散文
-    （`P1×3 + 2932`）断归属的**相交半边**——enum 下 rounds=[]∧foreign=[]，与 ① 同为
-    登记在案的有意抑制（board 并记形态保护，非静默丢弃；非枚举对照自 fix-r11 起进
-    foreign 拒收）。修法＝把轮号/评审轮引用移出题头区（首个全角「：」之后）或与链
-    写紧邻；硬不变式「链∩issues≠∅ 不得 rounds=[]」只在归属完好（gap 无裸号引用）时
-    成立。pinning 见 test-review-roles.py fix-r12 块（enum 矩阵 + 抑制直钉）。"""
+    fix-r13（#3074，MM boundary#1 + DS sibling#1≡boundary#2 双谱系双撞，enum 门
+    半边化）：foreign 抑制由「not enum_title 整题关」收成**半边**——只压「该链 ∩
+    issues = ∅」的**不相交半边**（board 并记各归各单，fix-r3 P1-1 面 A 的保护本体，
+    登记抑制保留）；**相交半边**（链 ∩ issues ≠ ∅）下归属存疑 token（裸号引用/含
+    数字散文断归属/评审署名族字母 run 间隔）照 fix-r11 P1-1 非枚举口径进 foreign
+    拒收（归属存疑文案）、不再计入 rounds——「加一条无关链即绕过拒收」（`#3056
+    P1×3 fix-r2 交付；#9991 复盘` 旧 ([],[])＝静默放行）与署名族 enum 计入（`#3056
+    MM r16 …；#9991` 旧 [16]＝假声明轮号，N≥4 触发 residual 假 FAIL）同轮封堵
+    （协调者四孪生实测 _tmp/20261114-3074-fixr13/）。fix-r12 登记窄窗②（裸号
+    引用断归属的相交半边＝登记抑制）自本修废止、改判 foreign 拒收（与非枚举同判）。
+    修法＝把轮号/评审轮引用移出题头区（首个全角「：」之后）或与链写紧邻；硬不
+    变式「链∩issues≠∅ 不得 rounds=[]」只在**归属完好**（简写需与链紧邻——纯 gap/
+    链尾裸号成员；全拼需 gap 无裸号引用）时成立；硬不变式②（enum 下 foreign=[]
+    是登记抑制而非静默丢弃）自本修收窄到不相交半边。pinning 见 test-review-roles.py
+    fix-r13 块（四孪生 + enum 半边矩阵更新）。"""
     uniq = set(chains)
     if len(uniq) < 2 or len(uniq) > _ENUM_CHAIN_CAP:
         return False
@@ -627,7 +654,8 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     foreign)：
     rounds = 计入的轮号；foreign = 题头区内「#N 配对链非空且（与 issues 全不相交，
     或轮号 token 被裸号引用/散文间隔断开归属）」的 (轮号, 链)（fix-r2 P0 旁路封堵的
-    依据；fix-r11 起三臂口径对称，见 foreign_fixround_pairs）。每个 token：
+    依据；fix-r11 起三臂口径对称，见 foreign_fixround_pairs；枚举型标题自 fix-r13
+    起只压不相交半边——相交半边照列，见 `_enum_title` docstring）。每个 token：
       - 整条无任何 #N → 计入（宁高勿低，fail-closed：漏计轮号会跳过 N≥4 的 residual 必填；
         fix-r3 P1-1 面 B 引入裸号守卫、fix-r4 P0-A 收窄口径：token 前紧邻裸数字串（数字前
         跳过空白后最近的非空白字符是**枚举分隔**——非词标点/全角符号，排除 ASCII `:`/`#`，
@@ -643,13 +671,16 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
         题头区外的不进：board 尾引用别的单是合法形态，fix-r5 修 2 的配对语义保持不变；
         fix-r3 P1-1 面 A：**枚举型标题**（题头区内 ≥2 条互不相交 #N 链——board/交接段的
         并记形态，协调者仲裁实测 case1 `chore(state) 01:45 #1305 fix-r3 …；#1318 缺第二家
-        标缺口` 被 foreign 假 FAIL）整条不作 foreign 判定，计入分支不受影响；fix-r4 P1-C：
+        标缺口` 被 foreign 假 FAIL）不作 foreign 判定（fix-r13 起收窄：enum 只压不相交
+        半边——链 ∩ issues ≠ ∅ 的相交半边照进 foreign，见 `_enum_title` docstring），
+        计入分支不受影响；fix-r4 P1-C：
         枚举只看**题头区内**的链——题头区外的尾部 #N 注记（`（复用 #1321 机制）`）不构成
         枚举，异单失配照进 foreign，no-issue/异单旁路（fix-r2 P0）不复开；fix-r5 P1
         （DS r4 sibling#1）：该前向配对臂补裸号守卫——token 前紧邻裸号（裸号不是前方链
         自身成员，由 `_bare_num_before` 的 chain_end 豁免判据保证，fix-r6 sibling#1 单源化；
         链成员豁免 fix-r10 起经 `_bare_member_connected` 精确判定无距离上界）时**不计入**
-        （假 FAIL 防护），但 fix-r10 P0 起不再整 token 丢弃——题头区内且非枚举时照进
+        （假 FAIL 防护），但 fix-r10 P0 起不再整 token 丢弃——题头区内且（非枚举或链 ∩
+        issues ≠ ∅，fix-r13 enum 门半边化）时照进
         foreign 拒收（fix-r11 P1-1 起两半边对称：链 ∩ issues = ∅（异单）或链 ∩ issues ≠ ∅
         但裸号非链成员（含散文间隔，归属存疑＝异单混写）都拒收；旧「不计不拒」＝义务
         整段跳过的假 PASS，见前向臂内联注释），与另三个免配对/后向分支单源
@@ -667,19 +698,26 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
         补同一裸号守卫——board 尾 `… 2932 fix-r2 交付 + #2957 P1×3` 在 #2957∈issues 时
         旧照计 2 ＝假 FAIL，现在裸号 2932 紧邻 token 同样不计；fix-r11 P1-3：该分支
         补 foreign 半边（镜像前向臂，相交（裸号非链成员）/不相交两半边；题头区内且
-        非枚举才进——board 尾（题头区外）照旧合法不计不拒）。
+        非枚举或链 ∩ issues ≠ ∅ 才进（fix-r13 enum 门半边化）——board 尾（题头区外）
+        照旧合法不计不拒）。
     题头区外的无配对 token（板尾裸号）不计。issues 为空集时配对 token 全不计——该违规
     （正文没写关联 / no-issue）由规则 2 与 fix-r2 的 foreign 拒收兜住，配对判据不放大。
-    fix-r3 P0①：r<N> 简写 token 只在「题头区内 + 与前方 #N 链紧邻（gap 全为
+    fix-r3 P0①：r<N> 简写 token 收集面＝**题头区内全部**（fix-r13 协调者追加 MM
+    sibling#2：前方无 #N 的简写不再整条丢弃——`修 + 2932 r2 交付 + #2957` 与全拼
+    同走 SELF/后向臂，简拼/全拼拼写分裂封堵），归属与计入由结构判据决定：与前方
+    #N 链**紧邻**（gap 全为
     _is_issue_gap_char；间隔恰为链尾裸号成员时视同紧邻——`_bare_member_connected`
     单源，fix-r10 起精确判定无距离上界、与链构建臂同判据，区间恰一个纯数字 run 即
-    成员（空格前置的裸号 `#3056 3074 r5` 照算）」时收集——`fix(scripts) #3056 r14：`
+    成员（空格前置的裸号 `#3056 3074 r5` 照算）」时保归属——`fix(scripts) #3056 r14：`
     计入、`fix-r3：r2 评审` 与决策卡注记（题头区外/不紧邻）不计；散文间隔（gap 含
     非 PAIR_SEP 字符）的简写形自 fix-r11 P1-2 起不整条丢弃——照前向臂口径进 foreign
-    拒收（非枚举标题；`#3056+3074 补 r5` 与全拼 `补 fix-r5` 计 5 的拼写分裂封堵）；
-    枚举型标题下自 fix-r12 P1-1 起 rounds 路径照走（不再整条丢弃，仍 tokens.append，
-    由前向臂配对判据决定计入——`#3056+3074 补 r5 … #2957 P1×3` 计 5，与全拼同判；
-    foreign 照旧被 enum 整题抑制，登记窄窗见 `_enum_title` docstring）。
+    拒收（`#3056+3074 补 r5` 拒收 vs 全拼 `补 fix-r5` 计 5 的「计入 vs 拒收」分裂，
+    自 fix-r13 enum 门半边化起在枚举/非枚举标题下同判，登记窄窗见
+    `_bare_member_before_token` docstring）；
+    枚举型标题下自 fix-r13 起 enum 门半边化——不相交半边照走 rounds 路径（计入
+    判据＝前向臂配对，不相交不计＝登记抑制）；相交半边照进 foreign 拒收、不再计入
+    （`#3056+3074 补 r5 … #2957 P1×3` + {3056} 修前 [5]（fix-r12）→ 拒收；全拼
+    对照计 5 不变——enum 从不压全拼 rounds），见 `_enum_title` docstring。
     fix-r3 P0②：allow_unpaired=False 时免配对兜底（无 #N 全计入 / SELF）
     关闭——非 TITLE_HEAD 标题（`#3056 fix-r3：…`）只走配对分支，散文 `temp: fix-r2`
     不因去类型词化被计入。"""
@@ -793,9 +831,14 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     for m in RSHORT.finditer(text):
         if m.start() >= zone_end:
             continue
+        # fix-r13 协调者追加（#3074 MM sibling#2，静默放行双空族）：前方无 #N 链的
+        # 题头区内简写 token 不再 `continue` 整条丢弃——旧口径 rounds=[]∧foreign=[]
+        # ＝修复轮义务整段跳过的假 PASS，而全拼同形走后向臂拒收（`修 + 2932 r2
+        # 交付 + #2957` 旧 ([],[]) vs `fix-r2` foreign=(2,{2957})＝简拼/全拼拼写
+        # 分裂）；现以 ri=-1 进 entries（与全拼 token 同通道），由 SELF/后向臂按
+        # 同口径评价（有后方链则计入/拒收），协调者实测
+        # _tmp/20261114-3074-fixr13/probe-mm-sibling2.py。
         i = bisect_right(ends, m.start()) - 1
-        if i < 0:
-            continue
         entries.append((m.start(), m.group(1), i))
     entries.sort()
     rounds: list[int] = []
@@ -832,7 +875,8 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             # 字符，`#3056+3074 补 r5：修闸门` 的「补」）的简写 token 不再整条丢弃
             # ——照前向臂口径进 foreign 拒收（fail-closed 多拒不漏：该轮号与链的
             # 归属被散文打断＝归属存疑，与全拼 `补 fix-r5` 计 5 的拼写分裂封堵）；
-            # 枚举型标题照旧抑制 foreign（fix-r3 P1-1 面 A 的 board 并记形态不误伤）。
+            # 枚举型标题下不相交半边照旧抑制 foreign（fix-r3 P1-1 面 A 的 board 并记
+            # 形态不误伤；相交半边自 fix-r13 起照进 foreign——enum 门半边化，见下）。
             # token 在题头区内是收集臂的前置条件（zone 过滤在上文），无再判 zone。
             # fix-r12 P1-2（sibling#1，协调者裁定 b 案：确属有意 fail-closed 拒收）
             # 窄窗登记（落收集臂注释，任务书指定）：评审者署名 + 简写轮号族（`MM r16`/
@@ -852,7 +896,17 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             # foreign 照旧被 enum 抑制——board 并记形态各归各单的保护不变；
             # `_enum_title` docstring「只压 foreign 半边（计入分支照旧）」自本修起
             # 对简写收集臂同样兑现）。
-            if not enum_title:
+            # fix-r13（#3074，MM boundary#1 + DS sibling#1≡boundary#2 双谱系双撞）：
+            # **enum 门半边化**——enum 只压「该链 ∩ issues = ∅」的不相交半边
+            # （fix-r12 修法的「rounds 路径照走」由此收窄到不相交半边）；相交半边
+            # （链 ∩ issues ≠ ∅）下归属存疑 token（散文间隔/裸号引用断归属/评审
+            # 署名族字母 run）照 fix-r11 P1-1 非枚举口径进 foreign 拒收、**不再
+            # tokens.append**——「加一条无关链即绕过拒收」（`#3056 P1×3 fix-r2
+            # 交付；#9991 复盘` 旧 ([],[])＝静默放行）与署名族 enum 计入（`#3056
+            # MM r16 …；#9991` 旧 [16]＝假声明轮号，N≥4 触发 residual 假 FAIL）
+            # 同轮封堵；合法计入形（紧邻/链尾裸号成员/全拼）不经本分支，计入不
+            # 回退。协调者四孪生实测 _tmp/20261114-3074-fixr13/probe-mm-p1.py。
+            if not enum_title or not chain_sets[heads[ri]].isdisjoint(issues):
                 foreign.append((int(num), chain_sets[heads[ri]]))
                 continue
         tokens.append((start, num, last_nongap))
@@ -886,7 +940,10 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             if not _bare_num_before(text, start, ends[i], gpair.clear, lng) \
                     and not chain_sets[heads[i]].isdisjoint(issues):
                 rounds.append(int(num))
-            elif start < zone_end and not enum_title:
+            # fix-r13 P1-1（enum 门半边化，收集臂同款）：前向臂 foreign 出口在 enum 下
+            # 只压不相交半边——相交半边（裸号/散文断归属）照进 foreign 拒收，三臂同口径。
+            elif start < zone_end and (not enum_title
+                                       or not chain_sets[heads[i]].isdisjoint(issues)):
                 foreign.append((int(num), chain_sets[heads[i]]))
         elif allow_unpaired and start < zone_end and not _bare_num_before(text, start):
             rounds.append(int(num))  # SELF
@@ -899,11 +956,14 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             # foreign 半边，相交（裸号非链成员 → 归属存疑拒收，镜像前向臂 fix-r11
             # P1-1）/不相交（异单拒收，既有语义）两半边都覆盖；题头区外（board 尾）
             # 照旧不计不拒——`start < zone_end` 守住 fix-r5 修 2 的合法形态
-            # （board 尾引用别的单各归各单），枚举型标题照旧抑制。
+            # （board 尾引用别的单各归各单）。fix-r13 P1-1（enum 门半边化，收集/
+            # 前向臂同款）：后向臂 foreign 出口在 enum 下只压不相交半边——相交
+            # 半边照进 foreign 拒收，三臂同口径。
             if j < len(hashes) and not chain_sets[heads[j]].isdisjoint(issues) \
                     and not _bare_num_before(text, start):
                 rounds.append(int(num))
-            elif j < len(hashes) and start < zone_end and not enum_title:
+            elif j < len(hashes) and start < zone_end \
+                    and (not enum_title or not chain_sets[heads[j]].isdisjoint(issues)):
                 foreign.append((int(num), chain_sets[heads[j]]))
     return rounds, foreign
 
@@ -925,7 +985,9 @@ def foreign_fixround_pairs(titles: list[str], issues: frozenset[str]) -> list[tu
     旁路，fix-r2 P0 既有口径；相交但轮号 token 被裸号引用/散文间隔断开归属＝归属存疑，
     三臂见 _scan_pairs）；check() 对非空清单 fail-closed 拒收。题头区外的引用
     （board 尾）不算——那是 fix-r5 修 2 保留的合法形态（引用轮各归各单）。枚举型标题的
-    抑制自 fix-r4 P1-C 起只看题头区内的链（尾部 #N 注记不构成枚举，见 _enum_title）。"""
+    抑制自 fix-r4 P1-C 起只看题头区内的链（尾部 #N 注记不构成枚举，见 _enum_title）；
+    fix-r13 起抑制收窄到**不相交半边**（链 ∩ issues = ∅），相交半边照列 foreign
+    （enum 门半边化，三臂同口径，见 _enum_title docstring）。"""
     out: list[tuple[str, int, frozenset[str]]] = []
     for t in titles:
         # fix-r3 P0②：门从「TITLE_HEAD 命中」放宽为「TITLE_HEAD 命中 或 行内带修复轮 token
@@ -961,10 +1023,12 @@ def fix_round_from_title(title: str, issues: frozenset[str] = frozenset()):
     或范围只有 board 尾）取到引用轮 2、residual 因 fix_round<4 直接跳过＝假 PASS——配对
     判定双向都修。
     fix-r3 P0①+②（MM concurrency#1，修复轮识别盲＝尺子假通过）：① 行内 token 扩到
-    `r<N>` 简写形（`fix(scripts) #3056 r14：…`，题头区内+紧邻 #N 链——紧邻＝纯 gap 或
-    链尾裸号成员，判据单源 `_bare_member_connected`，散文间隔简写形走 foreign 拒收
-    （见 _scan_pairs，判据陈述点⑨）；枚举型标题下自 fix-r12 起照走 rounds 路径
-    （enum 只压 foreign 半边，计入与全拼同判，见 `_enum_title` docstring））；
+    `r<N>` 简写形（`fix(scripts) #3056 r14：…`，题头区内收集——fix-r13 起含前方
+    无 #N 的简写（与全拼同走 SELF/后向臂，MM sibling#2）；归属存疑（散文间隔/裸号
+    引用断归属）走 foreign 拒收，判据单源 `_bare_member_connected`（判据陈述点
+    ⑧⑨见 _scan_pairs）；枚举型标题下自 fix-r13 起 enum 门半边化——不相交半边照走
+    rounds 路径（计入由配对判据决定）、相交半边归属存疑走 foreign 拒收（见
+    `_enum_title` docstring））；
     ② 不再强制类型词开头——非 TITLE_HEAD 但行内带 fix-r<N> 的标题（`#3056 fix-r3：…`）
     走**配对分支**（allow_unpaired=False：无 #N 全计入与 SELF 兜底关闭），散文 `temp: fix-r2`
     无 #N 配对即不入——去类型词化只放开「带本单 #N 配对的实修标题」，不放开散文。"""

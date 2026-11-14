@@ -1998,9 +1998,11 @@ def _run(gate, rrr, out_base: Path) -> int:
                         f"「全拼 fix-rN」（假指引）：{_errs11[:3]}")
         # 全矩阵扩展（任务书硬判据，同处第四轮补轴）：fix-r10 矩阵（拼写×链形×gap
         # 长度×issues）之上加 **gap 内容轴**（纯 PAIR_SEP 间隙 / 散文间隔）与 **臂轴**
-        # （前向 / 收集 / 后向各形）——不变式「任何格子不得 rounds=[] ∧ foreign=[]」
-        # 全格成立；散文间隔格一律 foreign 拒收（归属存疑＝fail-closed）；纯间隙格照
-        # fix-r10 口径（计入族 ∩≠∅ 计入 / foreign 族 ∩=∅ 拒收）。
+        # （前向 / 收集 / 后向 / 后向简写各形）——不变式「任何格子不得 rounds=[] ∧
+        # foreign=[]」全格成立；**非枚举型标题下**散文间隔格一律 foreign 拒收（归属
+        # 存疑＝fail-closed；enum 相交半边自 fix-r13 起同判拒收——见 fix-r13 块，
+        # 本矩阵形均为单链）；纯间隙格照 fix-r10 口径（计入族 ∩≠∅ 计入 / foreign 族
+        # ∩=∅ 拒收）。
         _m11_bad: list[str] = []
         _m11_rows = 0
         _arm_forms = (
@@ -2010,13 +2012,18 @@ def _run(gate, rrr, out_base: Path) -> int:
              frozenset({"3056"}), 5),
             ("后向", lambda gc: f"fix(scripts) 修{gc}2932 fix-r2 交付 + #2957 P1×3",
              frozenset({"2957"}), 2),
+            # fix-r13 协调者追加（MM sibling#2）：简写后向臂——RSHORT token 前方无 #N
+            # 链时旧版 i<0 整条丢弃（rounds=[]∧foreign=[] 双空＝拼写分裂：全拼同形走
+            # 后向臂拒收）；修后以 ri=-1 进 entries 流经后向臂同口径评价（与全拼臂同判）
+            ("后向简写", lambda gc: f"fix(scripts) 修{gc}2932 r2 交付 + #2957 P1×3",
+             frozenset({"2957"}), 2),
         )
         for _arm, _mk, _chain, _num in _arm_forms:
             for _gname, _gc in (("纯间隙", " + "), ("散文间隔", " P1×3 + ")):
                 _title = _mk(_gc)
                 # 后向臂形自带裸号引用（guard 必响：后向守卫无 chain_end 豁免），
                 # 纯间隙格也走 foreign；前向/收集的纯间隙格裸号是链尾成员（计入族）
-                _expect_fo = (_arm == "后向") or (_gname == "散文间隔")
+                _expect_fo = (_arm in ("后向", "后向简写")) or (_gname == "散文间隔")
                 for _iss in (_chain, frozenset({"9999"})):
                     _rs, _fo = gate._scan_pairs(_title, _iss)
                     _m11_rows += 1
@@ -2055,35 +2062,49 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 相交 #N 链）对散文间隔简写 token 整条 continue 丢弃 → ([], []) → fix_round=None
         # → fixtype/N≥4 residual/多块一致三段义务整段跳过＝假 PASS；同结构全拼对照计 5
         # （before 实测 _tmp/20261114-3074-fixr12/probe-p1-before.out）
+        # 【fix-r13 反转登记】enum 相交半边简写 token 自 fix-r13 起**有意改判 foreign
+        # 拒收**（enum 门半边化，MM boundary#1 + DS sibling#1 双谱系双撞）——下两条钉随
+        # 行为翻转更新，历史判据（计 5 / 登记抑制）见 git log 本块 fix-r12 版；不相交
+        # 半边登记抑制（第三条）与硬不变式②不变。
         if gate._scan_pairs("fix(scripts) #3056+3074 补 r5 #2957 P1×3",
-                            frozenset({"3056"})) != ([5], []):
-            fails.append("fix-r12 P1-1：枚举型标题下散文间隔简写 token 照走 rounds 路径"
-                        "（enum 只压 foreign 半边）——链∩issues≠∅ 计 5（修前 ([], [])＝假 PASS）")
+                            frozenset({"3056"})) != ([], [(5, frozenset({"3056"}))]):
+            fails.append("fix-r13 P1-1（原 fix-r12 P1-1 触发形）：enum 相交半边散文间隔"
+                        "简写照进 foreign 拒收、不再计入（fix-r12 曾计 5＝本修有意反转；"
+                        "同结构全拼对照仍计 5——计入半边不回退见 ⑳ 钉）")
         if gate.fix_round_from_title("fix(scripts) #3056+3074 补 r5 #2957 P1×3",
-                                     frozenset({"3056"})) != 5:
-            fails.append("fix-r12 P1-1 e2e：触发形标题应判修复轮 5（修前 None＝义务整段跳过）")
+                                     frozenset({"3056"})) is not None:
+            fails.append("fix-r13 P1-1 e2e：enum 相交半边简写不再判修复轮（义务由 foreign "
+                        "拒收承担；fix-r12 曾判 5＝本修有意反转）")
         # 不相交半边：enum 下 foreign=[] 是登记在案的抑制（硬不变式②，board 并记形态
         # 各归各单的保护；与全拼形同判——`_enum_title` docstring 窄窗表）
         if gate._scan_pairs("fix(scripts) #3056+3074 补 r5 #2957 P1×3",
                             frozenset({"9999"})) != ([], []):
             fails.append("fix-r12 P1-1：不相交半边 enum 下 foreign=[] 是登记在案的抑制"
                         "（非静默丢弃，board 形态保护不变——全拼对照同判）")
-        # 裸号引用（含数字散文 `P1×3 + 2932`）断归属的相交半边 + enum：登记抑制直钉
-        # （_enum_title docstring 窄窗表；非枚举对照＝fix-r11 P1-1 钉）——防「登记了
-        # 但行为静默漂移」；修法=移出题头区或与链写紧邻
+        # 裸号引用（含数字散文 `P1×3 + 2932`）断归属的相交半边 + enum：fix-r13 起照
+        # 非枚举口径进 foreign 拒收（fix-r12 登记窄窗②废止——enum 门半边化；
+        # 非枚举对照＝fix-r11 P1-1 钉）——防「登记了但行为静默漂移」；修法=移出
+        # 题头区或与链写紧邻
         if gate._scan_pairs("fix(scripts) #3056 P1×3 + 2932 fix-r2 交付；#9991 P1×2",
-                            frozenset({"3056"})) != ([], []):
-            fails.append("fix-r12 P1-1：裸号引用断归属的相交半边在 enum 下 rounds=[]∧"
-                        "foreign=[]＝登记抑制（非枚举对照照进 foreign，见 fix-r11 P1-1 钉）")
-        # P1-1 矩阵补 enum 轴（任务书硬判据）：3 臂 × 2 gap 内容 × 2 issues 相交性 ×
-        # 2 enum（单链/枚举）＝ 24 格——非枚举半边＝上方 fix-r11 矩阵 12 格（裸号引用
+                            frozenset({"3056"})) != ([], [(2, frozenset({"3056"}))]):
+            fails.append("fix-r13 P1-1：裸号引用断归属的相交半边在 enum 下照进 foreign "
+                        "拒收（fix-r12 登记窄窗②废止，与非枚举同判——见 fix-r11 P1-1 钉）")
+        # P1-1 矩阵补 enum 轴（任务书硬判据）：4 臂 × 2 gap 内容 × 2 issues 相交性 ×
+        # 2 enum（单链/枚举）＝ 32 格——非枚举半边＝上方 fix-r11 矩阵 16 格（裸号引用
         # 形态族），枚举半边在此（enum 判定用题头区 ≥2 互不相交链的真实形，如
         # `#3056+3074 … #2957 P1×3`；gap＝纯 PAIR_SEP/散文间隔两档，散文档不含裸号
         # 引用——裸号引用维度由 r11 矩阵 + 上方直钉 + _enum_title 登记窄窗覆盖）。
-        # 硬不变式：① 归属完好（gap 无裸号引用）且 链∩issues≠∅ → rounds≠[]；② 不相交
-        # 半边 enum 下 foreign=[] 是登记在案的抑制（非静默丢弃）。全矩阵直调
-        # allow_unpaired=False＝生产非 TITLE_HEAD 口径（后向臂需它走后向分支而非 SELF
-        # 兜底；前向/收集臂不经 allow_unpaired 敏感分支，两侧同判）
+        # 硬不变式：① 归属完好（gap 无裸号引用）且 链∩issues≠∅ → rounds≠[]（**全拼
+        # 臂**；简写收集臂散文间隔格自 fix-r13 起照非枚举口径 foreign 拒收——enum 门
+        # 半边化）；② 不相交半边 enum 下 foreign=[] 是登记在案的抑制（非静默丢弃）。
+        # 全矩阵直调 allow_unpaired=False＝生产非 TITLE_HEAD 口径（后向臂需它走后向
+        # 分支而非 SELF 兜底；前向/收集臂不经 allow_unpaired 敏感分支，两侧同判）。
+        # 后向简写臂（fix-r13 协调者追加 MM sibling#2）：`修补{gc}2932 r2 交付 +
+        # #2957 P1×3；#9991`——r2 前方无 #N 链；旧版 i<0 整条丢弃（双空），修后以
+        # ri=-1 进 entries 流经后向臂同口径评价。**gap 内容轴在此臂改变归属判定**
+        # （BARE_NUM_BEFORE 只认枚举分隔前邻，fix-r4 P0-A 口径）：gc=纯间隙（`+ ` 前邻
+        # 2932）→ 裸号引用断归属 → 相交 foreign 拒收；gc=散文（`补` 词符前邻）→ 非
+        # 裸号引用 → 归属完好计入（与 sibling#2 正控·enum 钉成对）。
         _m12_bad: list[str] = []
         _m12_rows = 0
         _e12_forms = (
@@ -2093,6 +2114,8 @@ def _run(gate, rrr, out_base: Path) -> int:
              frozenset({"3056"}), 5),
             ("后向", lambda gc: f"修补{gc}fix-r2 交付 + #2957 P1×3；#9991 P1×2",
              frozenset({"2957"}), 2),
+            ("后向简写", lambda gc: f"修补{gc}2932 r2 交付 + #2957 P1×3；#9991 P1×2",
+             frozenset({"2957"}), 2),
         )
         for _arm, _mk, _chain, _num in _e12_forms:
             for _gname, _gc in (("纯间隙", " + "), ("散文间隔", " 补 ")):
@@ -2101,27 +2124,102 @@ def _run(gate, rrr, out_base: Path) -> int:
                     _rs, _fo = gate._scan_pairs(_title, _iss, allow_unpaired=False)
                     _m12_rows += 1
                     if not _chain.isdisjoint(_iss):
-                        # ① 归属完好 + 相交 → 计入（enum 只压 foreign 半边）
-                        if _rs != [_num] or _fo:
-                            _m12_bad.append(f"计入格（enum）：{_arm}/{_gname}：{_title!r} "
-                                            f"issues={sorted(_iss)} → {_rs}/{_fo}")
+                        # fix-r13 相交半边二分：收集臂散文间隔（简写归属存疑）与后向
+                        # 简写纯间隙（枚举分隔前邻裸号 → 断归属）→ foreign 拒收——
+                        # 归属存疑不因 enum 而静默放行/计入（P1 半边化本体）；其余
+                        # （全拼三臂 + 后向简写散文 `补` 词符前邻＝归属完好）→ 计入
+                        _e13_reject = (
+                            (_arm == "收集" and _gname == "散文间隔")
+                            or (_arm == "后向简写" and _gname == "纯间隙"))
+                        if _e13_reject:
+                            # ①' enum 相交半边 + 归属存疑简写 → foreign 拒收
+                            if _rs or _fo != [(_num, _chain)]:
+                                _m12_bad.append(f"拒收格（enum 交）：{_arm}/{_gname}：{_title!r} "
+                                                f"issues={sorted(_iss)} → {_rs}/{_fo}")
+                        else:
+                            # ① 归属完好 + 相交 → 计入（enum 只压 foreign 半边）
+                            if _rs != [_num] or _fo:
+                                _m12_bad.append(f"计入格（enum）：{_arm}/{_gname}：{_title!r} "
+                                                f"issues={sorted(_iss)} → {_rs}/{_fo}")
                     else:
                         # ② 不相交半边 enum 下 ([], [])＝登记抑制（非静默丢弃）
                         if _rs or _fo:
                             _m12_bad.append(f"抑制格（enum）：{_arm}/{_gname}：{_title!r} "
                                             f"issues={sorted(_iss)} → {_rs}/{_fo}")
         if _m12_bad:
-            fails.append(f"fix-r12 矩阵（enum 轴）：{_m12_rows} 格中 {len(_m12_bad)} 失败"
-                         f"（前 6）：{_m12_bad[:6]}")
-        # P2-1（boundary#1）：矩阵分母下界断言——期望格数按轴单源算（len(forms)×gap
-        # 内容×issues 相交性），不写死字面量（enum 轴并入后格数变过，单源算防再次
-        # 漂移）；防「删空元组 → 0 格 0 失败假绿」（矩阵静默失效）
-        if _m11_rows != len(_arm_forms) * 2 * 2:
-            fails.append(f"fix-r12 P2-1：fix-r11 矩阵格数 {_m11_rows} ≠ 期望 "
-                        f"{len(_arm_forms) * 2 * 2}（轴单源算）——矩阵可能被删空")
-        if _m12_rows != len(_e12_forms) * 2 * 2:
-            fails.append(f"fix-r12 P2-1：fix-r12 enum 矩阵格数 {_m12_rows} ≠ 期望 "
-                        f"{len(_e12_forms) * 2 * 2}（轴单源算）——矩阵可能被删空")
+            fails.append(f"fix-r12 矩阵（enum 轴，fix-r13 半边化）：{_m12_rows} 格中 "
+                         f"{len(_m12_bad)} 失败（前 6）：{_m12_bad[:6]}")
+        # P2-3（MM boundary#3 ≡ DS boundary#1 ≡ simplify#1 三撞，fix-r13 随轮）：
+        # 矩阵分母守卫由 fix-r12 P2-1 的「len(forms)×2×2 单源算」改**字面下界**——
+        # 单源算在 forms 元组被删空时恒真（0 格 0 失败假绿），期望值与被测对象不得
+        # 同源。字面量＝本轮各矩阵真实格数：r10 矩阵 3 链形×9 gap×2 拼写×3 issues
+        # ＝162；r11 矩阵 4 臂×2 gap×2 issues＝16（fix-r13 加后向简写臂）；r12 enum
+        # 矩阵同 16。轴扩展只许调大字面量（矩阵缩水即红）；另加轴元组非空断言
+        # （空元组会让循环体静默零迭代——分母守卫之外的第二道假绿面）
+        if _mat_rows < 162:
+            fails.append(f"fix-r13 P2-3：fix-r10 矩阵格数 {_mat_rows} < 162——矩阵轴被删空"
+                        "（字面下界，勿改回 len(forms) 单源算）")
+        if _m11_rows < 16:
+            fails.append(f"fix-r13 P2-3：fix-r11 矩阵格数 {_m11_rows} < 16——矩阵轴被删空")
+        if _m12_rows < 16:
+            fails.append(f"fix-r13 P2-3：fix-r12 enum 矩阵格数 {_m12_rows} < 16——矩阵轴被删空")
+        if not (_arm_forms and _e12_forms and _forms and _gaps):
+            fails.append("fix-r13 P2-3：矩阵轴元组非空断言——空轴元组＝循环静默零迭代")
+
+        # —— #3074 fix-r13（MM+DS r12 复审 P1×2 同根「enum 门半边化」+ 协调者追加
+        # MM sibling#2「收集臂 i<0 双空」；lexical-verdict-fix-nonconvergence 第 4 轮，
+        # 轴空间收口见 RESULT 288 格表更新节；before 实测 _tmp/20261114-3074-fixr13/
+        # probe-side-by-side.out）——
+        # P1-1/P1-2 协调者四孪生直钉（修后四行全须为拒收形）：非枚举孪生＝r11/r12
+        # 既有拒收（不回退面）；枚举孪生（加一条无关链）＝本修前 ([], []) 静默放行，
+        # 修后照非枚举口径进 foreign；枚举孪生-署名族＝本修前 ([16], []) 假声明轮号
+        # 计入（A/B 语料 6 实例），修后 foreign 拒收
+        if gate._scan_pairs("fix(scripts) #3056 P1×3 fix-r2 交付",
+                            frozenset({"3056"})) != ([], [(2, frozenset({"3056"}))]):
+            fails.append("fix-r13 四孪生·非枚举：归属存疑照进 foreign 拒收（r11 口径不回退）")
+        if gate._scan_pairs("fix(scripts) #3056 P1×3 fix-r2 交付；#9991 复盘",
+                            frozenset({"3056"})) != ([], [(2, frozenset({"3056"}))]):
+            fails.append("fix-r13 P1-1 四孪生·枚举：加一条无关链不再绕过拒收（修前 "
+                        "([], [])＝静默放行，enum 相交半边照非枚举同判）")
+        if gate._scan_pairs("fix(scripts) #3056 MM r16 评审意见修正；#9991 复盘",
+                            frozenset({"3056"})) != ([], [(16, frozenset({"3056"}))]):
+            fails.append("fix-r13 P1-2 四孪生·枚举署名族：enum 相交半边不再计入假声明"
+                        "轮号（修前 ([16], [])，评审轮引用不是 fix 轮）")
+        if gate._scan_pairs("fix(scripts) #3056 MM r16 评审意见修正",
+                            frozenset({"3056"})) != ([], [(16, frozenset({"3056"}))]):
+            fails.append("fix-r13 四孪生·非枚举署名族：r12「不计但拒收」钉不回退")
+        # MM sibling#2（协调者追加，收集臂 i<0 双空）：简写 token 前方无 #N 链时旧版
+        # 整条丢弃 → ([], []) 双空＝修复轮义务整段跳过；全拼同形走后向臂拒收＝简拼/
+        # 全拼拼写分裂。修后 ri=-1 进 entries 流经后向臂同口径评价
+        if gate._scan_pairs("fix(scripts) 修 + 2932 r2 交付 + #2957 P1×3",
+                            frozenset({"2957"})) != ([], [(2, frozenset({"2957"}))]):
+            fails.append("fix-r13 sibling#2：简写 token 前方无链不再整条丢弃（修前 "
+                        "([], []) 双空＝拼写分裂；与全拼同形后向臂拒收同判）")
+        if gate.fix_round_from_title("fix(scripts) 修 + 2932 r2 交付 + #2957 P1×3",
+                                     frozenset({"2957"})) is not None:
+            fails.append("fix-r13 sibling#2 e2e：双空形不得判修复轮（义务由 foreign 拒收承担）")
+        if gate._scan_pairs("fix(scripts) 修 r2 交付 + #2957 P1×3",
+                            frozenset({"2957"})) != ([2], []):
+            fails.append("fix-r13 sibling#2 正控：简写后向臂归属完好（无裸号）照计入 2"
+                        "（修前整条丢弃＝假 PASS；封堵不为拒收而拒收）")
+        if gate._scan_pairs("修补 补 r2 交付 + #2957 P1×3；#9991 P1×2",
+                            frozenset({"2957"}), allow_unpaired=False) != ([2], []):
+            fails.append("fix-r13 sibling#2 正控·enum：简写后向臂归属完好在 enum 相交"
+                        "半边照计入 2（半边化只压 foreign 半边，计入半边不回退）")
+        # P2-5（DS sibling#3）⑳ 全拼 enum 对照钉：计入半边（全拼 token 不经收集臂
+        # 守卫）在 enum 相交半边不回退——半边化只把简写归属存疑 token 从计入/静默
+        # 放行改拒收，不压全拼合法计入
+        if gate._scan_pairs("fix(scripts) #3056+3074 补 fix-r5 #2957 P1×3",
+                            frozenset({"3056"})) != ([5], []):
+            fails.append("fix-r13 P2-5：全拼 enum 相交半边照计入 5（enum 只作用于收集/"
+                        "前向/后向臂的 foreign 判定，不压全拼计入半边）")
+        # P2-6（DS boundary#3）收集臂 enum 不相交半边抑制钉：本修后抑制面缩小到
+        # 不相交半边，钉住保留的抑制形（board 并记各归各单的保护——链 ∩ issues=∅
+        # 时 board 形态不误报）
+        if gate._scan_pairs("fix(scripts) #3056+3074 补 + 3074 r5 #2957 P1×3",
+                            frozenset({"9999"})) != ([], []):
+            fails.append("fix-r13 P2-6：不相交半边 enum 抑制保留（抑制面缩小后不回宽——"
+                        "board 并记形态保护不变）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
