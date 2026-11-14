@@ -128,7 +128,18 @@ class Roster(unittest.TestCase):
                          'native_process::tests::fake', '#1642 bound')]
             argv = ['negative_controls.py', '--compile-only', str(out),
                     'fake-registry-mutation']
+            # #2572 fix-r1 (DS rev2 boundary P1#1): the main()-level
+            # registered() re-check reads the execution table main() was
+            # about to run, so the drive must hand the guard a roster that
+            # matches the fake one-row table -- the guard keeps running and
+            # passes against the matching pair (the drive's real drift
+            # coverage lives in test_roster_drift_refuses_with_rc2 and in
+            # test_negative_roster_guards' patched-table case), instead of
+            # refusing every protocol drive as a roster drift before any
+            # guarded-path phase is reached.
             patches = [patch.object(RUNNER, 'mutations', fake_row),
+                       patch.object(RUNNER, 'EXPECTED_NAMES',
+                                    tuple(row[0] for row in fake_row)),
                        patch.object(RUNNER, 'test_body', fake_body),
                        patch.object(RUNNER, 'mutating_sources', guard),
                        patch.object(RUNNER, 'run_owned', run_owned),

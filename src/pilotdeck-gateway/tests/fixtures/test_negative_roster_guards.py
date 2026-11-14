@@ -1729,8 +1729,13 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         self.base = Path(tempfile.mkdtemp(prefix='negctl-2572-'))
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
 
-    def drive(self, module, argv, *, shrink=False, target=True):
-        """Run a loaded entry's main() under a synthetic argv; capture I/O."""
+    def drive(self, module, argv, *, shrink=False, target=True, table=None):
+        """Run a loaded entry's main() under a synthetic argv; capture I/O.
+
+        ``table`` additionally swaps the execution table (``mutations``)
+        for the given rows, after import-time checks have run -- the shape
+        the protocol drives in native-registry-switch/test_roster.py use.
+        """
         out = self.base / 'out'
         names = module.EXPECTED_NAMES[:-1] if shrink else module.EXPECTED_NAMES
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -1760,6 +1765,10 @@ class TripleFixtureRosterGuard(unittest.TestCase):
             raise AssertionError(
                 f'{module.__name__}: no execution entry (mutating_sources/'
                 f'run_owned/run_cases) found to stub; the guard went inert')
+        # #2572 fix-r1 (DS rev2 boundary P1#1): an optional patched
+        # execution table; the roster guard must still meet it.
+        if table is not None:
+            stubs = [patch.object(module, 'mutations', table), *stubs]
         with contextlib.ExitStack() as stack:
             for entered in [patch.dict(os.environ, environment, clear=True),
                             patch.object(module, 'EXPECTED_NAMES', names),
@@ -1806,6 +1815,32 @@ class TripleFixtureRosterGuard(unittest.TestCase):
                 self.assertTrue(code == 2,
                                 f'{tag} a drifted roster must refuse to start '
                                 f'(2), got {code}')
+                self.assertTrue('drifted' in stderr,
+                                f'{tag} the refusal must name the drift: '
+                                f'{stderr!r}')
+                self.assertTrue(not out.exists(),
+                                f'{tag} a refusal must not claim the '
+                                'evidence directory')
+
+    def test_a_patched_execution_table_still_meets_the_roster(self):
+        # #2572 fix-r1 (DS rev2 boundary P1#1): the main()-level roster
+        # re-check fires on an execution table that drifted between import
+        # and run. native-registry-switch's protocol drive swaps
+        # ``mutations`` for a one-row fake table (and hands the guard the
+        # matching EXPECTED_NAMES); this pins the other side of that
+        # coexistence -- a patched table WITHOUT a matching roster is a
+        # never-started refusal, so neither deleting the guard nor
+        # short-circuiting it to pass can hide behind the fixture.
+        for directory, tag, _total in TRIPLE_ENTRIES:
+            with self.subTest(directory=directory):
+                module = load_named_entry(directory)
+                out = self.base / 'out'
+                code, out, _stdout, stderr = self.drive(
+                    module, [str(out)], table=[('fake-2572-roster-row',)])
+                self.assertTrue(code == 2,
+                                f'{tag} a patched execution table must meet '
+                                f'the roster and refuse to start (2), got '
+                                f'{code}')
                 self.assertTrue('drifted' in stderr,
                                 f'{tag} the refusal must name the drift: '
                                 f'{stderr!r}')
