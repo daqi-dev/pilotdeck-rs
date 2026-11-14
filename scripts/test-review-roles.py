@@ -13,10 +13,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-import time
 import time
 import warnings
 from pathlib import Path
@@ -160,6 +160,18 @@ if trace:
     with open(trace, "a") as f:
         f.write(f"end {time.time()}\n")
 '''
+
+
+def _signame(rc: int) -> str:
+    """fix-r20（MM r19 concurrency#2 P2）：探针 returncode<0＝子进程被信号杀——翻成
+    信号名（如 -24 → SIGXCPU）写进失败文案；裸负数看不出是哪路资源超限（CPU 硬限/
+    墙钟超时/kill），诊断要多翻一层日志。"""
+    if rc >= 0:
+        return str(rc)
+    try:
+        return f"{rc} {signal.Signals(-rc).name}"
+    except ValueError:  # 非信号取值（理论不可达）——退回裸数字
+        return str(rc)
 
 
 def main() -> int:
@@ -1058,6 +1070,11 @@ def _run(gate, rrr, out_base: Path) -> int:
             # 不空转」）。
             "import resource\n"
             "resource.setrlimit(resource.RLIMIT_CPU, (4, 4))\n"
+            # fix-r20（MM r19 concurrency#2 P2）：SIGXCPU 的默认动作含写 core——探针死在
+            # cwd（仓库根）时每次回退红都会留一个未跟踪 core 文件（CPython + 65514 字符
+            # 串，几百 MB 量级）污染 git status / 吃 CI 磁盘。RLIMIT_CORE 归零：内核直接
+            # 丢 core 不落盘（父侧失败文案由 _signame 翻信号名，不再只看裸 -24）。
+            "resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n"
             # fix-r19（#3074 家族级）：探针加挂兄弟脚本 tb（scope/personday 模式用），并把
             # r18 的 ECHO_HEAD 就地计时 + WAIVER/NO_ISSUE/SCOPE_BODY/PERSON_DAY 失败形计时
             # 全部并入本护栏（fix-r16 教训 :1035-1038——回退态＝子进程被杀＝干净 FAIL）。
@@ -1096,6 +1113,16 @@ def _run(gate, rrr, out_base: Path) -> int:
             "elif mode == 'personday':\n"
             "    t0 = time.perf_counter(); r = tb.PERSON_DAY.search('合计' + ' '*n + 'x')\n"
             "    print('ELAPSED %.4f %s' % (time.perf_counter() - t0, 'None' if r is None else 'HIT'))\n"
+            # fix-r20（#3074 P1-B，DS r19 boundary#1）：多前缀失败形走 check() 端到端（修法
+            # 在调用点预扫 `-->`，不是改正则——直调 WAIVER.search 量不到修的面）。语义结果
+            # ＝错误条数（≥1＝fail-closed 拒收，不得静默放行）；n//21、n//15＝按两种前缀
+            # 长度缩放使总长 ≈ n。修前实测 m=8000：waiver 3.04 s / noissue 2.23 s（Θ(M·N)）。
+            "elif mode == 'waiver_multi':\n"
+            "    t0 = time.perf_counter(); es = gate.check('<!--pr-gate:waiver x'*(n//21) + '\\nCloses #3056\\n', '', '', '', '')\n"
+            "    print('ELAPSED %.4f %d' % (time.perf_counter() - t0, len(es)))\n"
+            "elif mode == 'noissue_multi':\n"
+            "    t0 = time.perf_counter(); es = gate.check('<!--no-issue x'*(n//15) + '\\n', '', '', '', '')\n"
+            "    print('ELAPSED %.4f %d' % (time.perf_counter() - t0, len(es)))\n"
         )
         _gate_py = str(ROOT / "scripts" / "check-pr-gate.py")
         for _mode, _n, _want, _why in (
@@ -1113,7 +1140,7 @@ def _run(gate, rrr, out_base: Path) -> int:
                              "闸门会挂起（作者可控标题/正文），修法见 check-pr-gate.py fix-r15 注释")
                 continue
             if _cp.returncode != 0:
-                fails.append(f"fix-r15 探针异常退出 {_cp.returncode}: {_cp.stderr[-300:]}")
+                fails.append(f"fix-r15 探针异常退出 {_signame(_cp.returncode)}: {_cp.stderr[-300:]}")
             elif _cp.stdout.strip() != _want:
                 fails.append(f"fix-r15 {_mode} 语义漂移：得 {_cp.stdout.strip()!r} 期望 {_want!r}")
         # fix-r19（#3074 家族级，P0/P1 计时护栏）：r18 的 ECHO_HEAD 就地计时钉与本轮的
@@ -1136,7 +1163,7 @@ def _run(gate, rrr, out_base: Path) -> int:
                              "闸门会挂起（作者可控正文/任务书）")
                 continue
             if _cp.returncode != 0:
-                fails.append(f"fix-r19 探针异常退出 {_cp.returncode}: {_cp.stderr[-300:]}")
+                fails.append(f"fix-r19 探针异常退出 {_signame(_cp.returncode)}: {_cp.stderr[-300:]}")
                 continue
             _parts = _cp.stdout.strip().split()
             if len(_parts) != 3 or _parts[0] != "ELAPSED" or _parts[2] != "None":
@@ -1149,6 +1176,40 @@ def _run(gate, rrr, out_base: Path) -> int:
                 continue
             if _el >= 2.0:
                 fails.append(f"fix-r19 {_subj} 性能钉：N=65514 失败形 {_el:.3f}s ≥ 2.0s——"
+                             f"{_why}（改动须过 P0/P1 通道重新登记）")
+        # fix-r20（#3074 P1-B，DS r19 boundary#1）：多前缀失败形计时钉——r19 的五模式只
+        # 覆盖单前缀，多前缀（M 个 `<!--` 前缀、全文无 `-->`）每个起点各把惰性组扩到
+        # 串尾＝Θ(M·N)（修前实测 m=8000：waiver 3.04 s / noissue 2.23 s）。修法在调用点
+        # 预扫（check() 里 `-->` in masked），故探针走 check() 端到端；同口径断言
+        # N=65514 <2.0 s ＋ fail-closed 拒收（错误条数 ≥1，不得静默放行）。
+        for _mode, _why in (
+                ("waiver_multi", "WAIVER 多前缀（M 个 `<!--pr-gate:waiver x`、无 `-->`）Θ(M·N)"),
+                ("noissue_multi", "NO_ISSUE 多前缀（M 个 `<!--no-issue x`、无 `-->`）Θ(M·N)")):
+            try:
+                _cp = subprocess.run([sys.executable, "-I", "-c", _probe, _gate_py, _mode, "65514"],
+                                     capture_output=True, text=True, timeout=5)
+            except subprocess.TimeoutExpired:
+                fails.append(f"fix-r20 多前缀计时护栏：{_mode} 探针超时（>5s）——{_why}，"
+                             "闸门会挂起（作者可控正文），修法见 check-pr-gate.py fix-r20 预扫")
+                continue
+            if _cp.returncode != 0:
+                fails.append(f"fix-r20 探针异常退出 {_signame(_cp.returncode)}: {_cp.stderr[-300:]}")
+                continue
+            _parts = _cp.stdout.strip().split()
+            if len(_parts) != 3 or _parts[0] != "ELAPSED" or not _parts[2].isdigit():
+                fails.append(f"fix-r20 {_mode} 探针输出不解析：{_cp.stdout.strip()!r}")
+                continue
+            if int(_parts[2]) < 1:
+                fails.append(f"fix-r20 {_mode} 语义钉：无 `-->` 的多前缀正文须 fail-closed 拒收"
+                             f"（不得静默放行）：{_cp.stdout.strip()!r}")
+                continue
+            try:
+                _el = float(_parts[1])
+            except ValueError:
+                fails.append(f"fix-r20 {_mode} 探针计时不解析：{_cp.stdout.strip()!r}")
+                continue
+            if _el >= 2.0:
+                fails.append(f"fix-r20 {_mode} 性能钉：N=65514 多前缀 {_el:.3f}s ≥ 2.0s——"
                              f"{_why}（改动须过 P0/P1 通道重新登记）")
         # fix-r14（DS r13 sibling#1 P2）：类型词表单源——ECHO_HEAD 与 TITLE_HEAD 只准引
         # `_TYPE_WORDS`，一处加词另一处漏改会让 CI 路径与本地回显路径的修复轮判定分裂
@@ -2581,12 +2642,13 @@ def _run(gate, rrr, out_base: Path) -> int:
         #（上方 echo 模式，N=65514 断言 <2.0 s＝预注册 10 s 的 5× 余量；fix-r16
         # 教训——就地断言在回退态会把套件挂死在永不返回的调用上）；本块只留语义面
         #（失败形不命中/成功形命中），对照块的死赋值 perf_counter（MM r18
-        # concurrency#2 P3）随迁移一并删除。
-        if gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "fix-r5：x") is not None:
+        # concurrency#2 P3）随迁移一并删除。**fix-r20（DS r19 boundary#2 P2 + #6 P3）**：
+        # 语义断言与 N 无关——N 从 65514 降到 40：回退态探针先红之后，执行流不再在
+        # 父进程把同一条 35 s 调用重跑一遍（「子进程干净 FAIL」对就地大 N 形不成立）。
+        if gate.ECHO_HEAD.match("fix(scripts)" + " " * 40 + "fix-r5：x") is not None:
             fails.append("fix-r18 性能钉语义面：失败形（N 空格 + fix-r5：x）不得命中"
                          "（正则改写不得引入新匹配面）")
-        _t0 = time.perf_counter()
-        if gate.ECHO_HEAD.match("fix(scripts)" + " " * 65514 + "#3056") is None:
+        if gate.ECHO_HEAD.match("fix(scripts)" + " " * 40 + "#3056") is None:
             fails.append("fix-r18 性能钉对照：成功形（N 空格 + #N）须照常命中（贪心首刀）")
         # 冒号位形双向钉（等价面）：`\)` 后 W* C? W* 的位形族两版同判——命中族/
         # 拒收族各钉；多冒号形两版都不命中＝单可选冒号语义不得放宽成 (?:\s|[:：])*。
@@ -2642,7 +2704,9 @@ def _run(gate, rrr, out_base: Path) -> int:
         # (0) 族级静态扫描钉（主护栏）：两脚本全部 re.compile 模式扫「同一字符类可被
         # 相邻两个量词同时匹配」，白名单外即红；含探测器自检（修前反形态样本全命中，
         # 防扫描器静默全放行）。实现与白名单在模块级 _fscan_* / _FSCAN_WHITELIST。
-        fails.extend(f"fix-r19 族级静态扫描：{e}" for e in _family_scan_fails(gate, tb))
+        fails.extend(f"fix-r19 族级静态扫描：{e}" for e in _family_scan_fails(
+            ((gate, ROOT / "scripts" / "check-pr-gate.py"),
+             (tb, ROOT / "scripts" / "check-taskbook-segments.py"))))
         # (1) 形态字面量钉 ×4：写回反模式形态（重开回溯面）或任何其他改写必红。
         if gate.WAIVER.pattern != r"<!--\s*pr-gate:waiver\s+(\S.*?)-->":
             fails.append(f"fix-r19 形态钉：WAIVER 形态被改（现值 {gate.WAIVER.pattern!r}"
@@ -2802,6 +2866,62 @@ def _run(gate, rrr, out_base: Path) -> int:
                 != ["fix(scripts) #1 fix-r2：y", "fix(scripts) #2 fix-r3：z"]:
             fails.append("fix-r19 _echo_head_lines 直调钉：strip 后逐行 ECHO_HEAD.match"
                          "（非回显行剔除、行尾空白剥掉）——两半边（foreign/rounds）共用的行提取")
+
+        # —— #3074 fix-r20（DS/MM r19 双谱系增量评审：P1-A 族级白名单 fail-open 负控 +
+        # P1-B 多前缀预扫语义钉 + DS P2#4 多 marker 宁拒不漏；协调者实测仲裁
+        # _tmp/20261114-3074-fixr20/）——
+        # (1) P1-A 篡改负控（护栏的护栏）：白名单改整条 pattern 相等后，篡改副本 ISSUE_NUM
+        # 尾拼反模式必须红——旧 startswith 前缀判据下该尾拼不失豁免（fail-open 实锤，
+        # MM r19 concurrency#1 / DS r19 boundary#3 双撞）。锚点＝ISSUE_NUM 结尾字面量，
+        # 源中不唯一时本夹具失效＝先红（防篡改实验静默变空转）。
+        _gate_src20 = (ROOT / "scripts" / "check-pr-gate.py").read_text(encoding="utf-8")
+        _tamper_anchor = ')(?![A-Za-z0-9_])", re.I)'
+        if _gate_src20.count(_tamper_anchor) != 1:
+            fails.append("fix-r20 负控锚点：ISSUE_NUM 结尾字面量在源中不唯一——篡改夹具失效，"
+                         "须先修本测试锚点")
+        else:
+            _tam_dir = tmp / "fscan-tamper"
+            _tam_dir.mkdir()
+            _tam_path = _tam_dir / "check-pr-gate.py"
+            _tam_path.write_text(_gate_src20.replace(
+                _tamper_anchor,
+                ')(?![A-Za-z0-9_])[^\\S\\r\\n]*[:：]?[^\\S\\r\\n]*", re.I)'), encoding="utf-8")
+            _tam_spec = importlib.util.spec_from_file_location("gate_tampered_r20", _tam_path)
+            gate_t = importlib.util.module_from_spec(_tam_spec)
+            assert _tam_spec.loader is not None
+            _tam_spec.loader.exec_module(gate_t)
+            _tam_fails = _family_scan_fails(((gate_t, _tam_path),))
+            if not _tam_fails:
+                fails.append("fix-r20 P1-A 负控：篡改副本 ISSUE_NUM 尾拼反模式"
+                             r"（`[^\S\r\n]*[:：]?[^\S\r\n]*`，r18 相邻星号形）必须红——"
+                             "白名单整条相等失效＝fail-open 回归")
+        # (2) DS P2#4 多 marker 位形两向钉：任一全空白理由的 waiver marker 即拒收
+        # （r19 收窄让空白 marker 与另一条 marker 并存时经跨界命中以垃圾长理由放行；
+        # 实测 r18 旧形同款跨界放行——DS「旧形拒收」静态推断不成立，本修按宁拒不漏
+        # 收口为两向都拒，见 WAIVER_BLANK 定义处登记）。
+        for _mb in ("<!--pr-gate:waiver   -->\n<!--pr-gate:waiver 纯文档变更无需角色审计结果块 -->\nCloses #3056\n",
+                    "<!--pr-gate:waiver 纯文档变更无需角色审计结果块 -->\n<!--pr-gate:waiver   -->\nCloses #3056\n"):
+            _mb_errs = gate.check(_mb, "", "", "", "")
+            if not any("豁免理由太短" in e for e in _mb_errs):
+                fails.append(f"fix-r20 多 marker 位形：任一全空白理由 marker 即拒收（两向都"
+                             f"拒，宁拒不漏；跨界命中垃圾理由不得放行）：{_mb!r} → {_mb_errs}")
+        # (3) P1-B 预扫语义钉：无字面 `-->` 的正文对 WAIVER/NO_ISSUE 都不可能命中——
+        # 预扫跳过 search 不得改变任何判定（语言等价）；多前缀计时钉在 _probe
+        # （waiver_multi/noissue_multi 模式，上方）。
+        _np_errs = gate.check("<!--pr-gate:waiver x\nCloses #3056\n", "", "", "", "")
+        if not any("缺角色审计结果块" in e for e in _np_errs):
+            fails.append(f"fix-r20 预扫语义钉：无 `-->` 的未闭合 waiver 前缀不得因跳过 search"
+                         f"而改变判定（照走「缺结果块」拒收）：{_np_errs}")
+        _np2_errs = gate.check("<!--no-issue 纯文档说明\n", "", "", "", "")
+        if not any("缺角色审计结果块" in e for e in _np2_errs) \
+                or not any("缺 issue 关联" in e for e in _np2_errs):
+            fails.append(f"fix-r20 预扫语义钉：无 `-->` 的未闭合 no-issue 前缀不得因跳过 search"
+                         f"而改变判定（照走「缺结果块」+「缺 issue 关联」双拒收——该体"
+                         f"issues=∅，NO_ISSUE 调用点实际执行）：{_np2_errs}")
+        if gate.check("<!-- pr-gate:waiver 纯文档变更无需角色审计结果块 -->\nCloses #3056\n",
+                      "", "", "", ""):
+            fails.append("fix-r20 正常态对照：含 `-->` 的合法豁免不得被预扫/收口破坏"
+                         "（r19 正常路径钉同轴复钉）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
@@ -3227,11 +3347,24 @@ def _fscan_hits(pat, flags=0):
 
 
 # 白名单（已仲裁条目；改动/新增正则命中扫描且不在表内＝红，登记须给理由与实测依据）
+# fix-r20（#3074 P1-A，MM r19 concurrency#1 + DS r19 boundary#3 双撞）：豁免判据从
+# `startswith` 前缀改为**整条 pattern 相等**——前缀只钉开头，ISSUE_NUM 尾部再改出
+# 反模式不失豁免＝fail-open（实测尾拼 `[^\S\r\n]*[:：]?[^\S\r\n]*` 后扫描仍绿，与本
+# 文件自述「日后给任一脚本改正则不过本扫＝当场被抓」相反）。ISSUE_NUM 由
+# `_ISSUE_KEYWORDS`/`_GAP_EDGE`/`_ISSUE_GAP_PUNCT` 运行时拼接，此处登记**展开后的
+# 完整 .pattern 字面量**：任一组件改动都使整条失配即红（变更即红，须重新仲裁进本表）。
 _FSCAN_WHITELIST = (
     # gate ISSUE_NUM（#3056 fix-r14/r15 定谳形态，勿动）：标点分支内层 `(?:hws* 标点)*`
     # 重复组后随尾部 GAP 空白——头-头同吃非换行空白，但每轮迭代必先吃一个标点＝轮划分
     # 唯一（r14 修法本身），punct/punct_mix/punct_nl 三条 _probe 计时钉钉住该形态不回退。
-    ("check-pr-gate.py", r"(?<![A-Za-z0-9_])(?:close[sd]?"),
+    # 下方字面量＝展开后的完整 .pattern（拼自 _ISSUE_KEYWORDS + _GAP_EDGE + _ISSUE_GAP_PUNCT
+    # ＝ `(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)` + `[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?`
+    # + `[\+,/、，]`），改任何一个组件＝失配即红。
+    ("check-pr-gate.py",
+     r"(?<![A-Za-z0-9_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+"
+     r"#(?P<nums>\d+(?:(?:[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?[\+,/、，]"
+     r"(?:[^\S\r\n]*[\+,/、，])*[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?|[^\S\r\n]+|)"
+     r"#\d+)*)(?![A-Za-z0-9_])"),
     # tb SECTION：`\s+(.*)$` 相邻——逐行匹配（section_text 用 text.splitlines() 的行，
     # 行内无 \n），`.*$` 恒成功 → 无失败重扫路径（改回全文匹配须重审本条）。
     ("check-taskbook-segments.py", r"^(#{2,3})\s+(.*)$"),
@@ -3240,8 +3373,9 @@ _FSCAN_WHITELIST = (
 )
 
 
-def _family_scan_fails(gate, tb) -> list[str]:
-    """fix-r19 族级静态扫描：返回失败清单（空＝过）。"""
+def _family_scan_fails(mods) -> list[str]:
+    """fix-r19 族级静态扫描：返回失败清单（空＝过）。mods＝(模块, 源文件路径) 序列
+    （fix-r20 签名参数化：负控篡改副本用同一扫描器，不复制第二份判据）。"""
     errs: list[str] = []
     # 探测器自检（护栏的护栏）：r19 修前反模式字面样本必须全命中——静默全放行＝坏灯。
     for _label, _pat, _flags in (
@@ -3254,8 +3388,7 @@ def _family_scan_fails(gate, tb) -> list[str]:
             ("nested (P+)+", r"Closes(?:[,\s]+)+#3056", re.I)):
         if not _fscan_hits(_pat, _flags):
             errs.append(f"族级扫描探测器自检：{_label} 反形态必须命中（检测面退化＝改回反模式不红）")
-    for mod, path in ((gate, ROOT / "scripts" / "check-pr-gate.py"),
-                      (tb, ROOT / "scripts" / "check-taskbook-segments.py")):
+    for mod, path in mods:
         base = path.name
         src = path.read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(src)):
@@ -3277,7 +3410,9 @@ def _family_scan_fails(gate, tb) -> list[str]:
                     errs.append(f"{base} 有未登记的不可求值 re.compile：{seg[:70]!r}")
                 continue
             hits = _fscan_hits(rx.pattern, rx.flags)
-            if hits and not any(base == b and rx.pattern.startswith(s) for b, s in _FSCAN_WHITELIST):
+            # fix-r20（P1-A）：整条 pattern 相等才豁免（startswith 只钉前缀＝尾部改出
+            # 反模式不失豁免，fail-open——篡改负控钉在 fix-r20 块）。
+            if hits and not any(base == b and rx.pattern == s for b, s in _FSCAN_WHITELIST):
                 errs.append(f"{base} {seg[:70]!r} 命中未登记的相邻量词形态：{hits[:2]}"
                              "（新反模式须仲裁：改写消歧或进白名单给理由）")
     return errs

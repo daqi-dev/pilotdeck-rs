@@ -196,7 +196,7 @@
      正文回显行是唯一 foreign 出口，声明形跳过＝吞掉唯一出口（与 ㉚ 场景 A「首行即
      回显行是唯一出口」同构）＝本地过、CI 拒的漏检。修法＝check() 跳过条件加
      标题路径存在半边：本地形态（titles=None）照跑正文回显 foreign 扫描
-     （fail-closed 向），CI 形态（titles 在，含全不命中的空集列表）声明形跳过照旧
+     （fail-closed 向），CI 形态（titles 非空）声明形跳过照旧
      （r15 修的假 FAIL 面保持）——r17 当时写的是 `titles is not None`，**fix-r19
      订正为「titles 非空」**（空集 [] 同样无主信号，见 ㉟）；r15 面钉翻转 + 本地/CI 双向钉 + 半角冒号判据改写
      （MM r16 boundary#2，选项②：保留半角、理由句改写、补端到端两向钉）+ 窄窗第二向
@@ -238,6 +238,19 @@
      （_tmp/20261114-3074-fixr19/），失败形 N=65514 全部 <0.003 s。族级护栏＝
      test-review-roles.py fix-r19 块（全部 re.compile 模式静态扫描钉「同一字符类
      被相邻两个量词同时匹配」+ 计时钉迁 _probe 子进程护栏〔fix-r16 教训〕）。
+     fix-r20（#3074，DS/MM r19 双谱系增量评审，P1-B 多前缀 + P2 捆绑，协调者实测
+     _tmp/20261114-3074-fixr20/）：㊱ **WAIVER/NO_ISSUE 多前缀失败形预扫**——r19 的
+     线性化只证单前缀；正文 M 个 `<!--` 前缀重复且全文无字面 `-->` 时 search 对每个
+     起点各把惰性组扩到串尾＝Θ(M·N)（实测 m=8000：waiver 3.04 s / noissue 2.23 s，
+     1 MiB 外推分钟级＝准挂起面）。修法＝调用处 O(N) 预扫 `-->` in masked：不含
+     字面 `-->` 直接跳过两模式 search（都要求字面 `-->`，语言等价）。**任一全空白
+     理由的 waiver marker 即拒收**（DS boundary#4：空白 marker 与另一条 marker 并存
+     时，r18/r19 都经跨界命中以垃圾长理由放行——实测旧形并不拒收该体，DS 静态推断
+     不成立，登记见 WAIVER_BLANK 定义处；单独空白 marker 两版都拒不动）＝补
+     WAIVER_BLANK 扫描、命中即置空 reason 走既有「豁免理由太短」通道（宁拒不漏）。
+     titles 措辞两处订正（:199/:1845「titles 非空」，DS boundary#5）。族级白名单
+     整条 pattern 相等（P1-A）与 RLIMIT_CORE/多前缀计时钉在 test-review-roles.py
+     fix-r20 块。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -282,6 +295,16 @@ MARKER = re.compile(r"<!--\s*pr-gate:v1(?![A-Za-z0-9_])([^>]*)-->")
 # （字母表枚举 + 形状差分证据 _tmp/20261114-3074-fixr19/，等价差分钉在 test-review-roles.py
 # fix-r19 块）。
 WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(\S.*?)-->", re.S)
+# fix-r20（#3074 DS r19 boundary#4 P2，marker 次序翻转收口）：r19 收窄后 WAIVER 不命中
+# 纯空白理由的 marker——但正文同时还有另一条 marker 时（空白在前），search 会从空白
+# marker 的 `<!--` 起点跨界吃进下一条的 `-->`，group＝`-->\n<!--pr-gate:waiver 合法理由`
+# 垃圾长串过闸（r18 旧形同样跨界放行——实测两版该体都 rc0，DS 评审「旧形拒收」的
+# 静态推断不成立，证据 _tmp/20261114-3074-fixr20/）；单独一条空白 marker 两版都拒收
+# （r18「豁免理由太短」/ r19「缺结果块」，登记收窄面不变）。按「宁拒不漏」收口：
+# 任一全空白理由的 waiver marker 即拒收——check() 豁免半边命中本模式即置空 reason、
+# 走既有「豁免理由太短」通道。`\s*` 后钉字面 `-->`、无跨界组：失败路径线性，别写回
+# 任何「组能跨界吃 `-->`」的形态（r19/r20 反模式族）。
+WAIVER_BLANK = re.compile(r"<!--\s*pr-gate:waiver\s*-->", re.S)
 # fix-r13（DS r12 simplify#1 P2）：删除 ISSUE_LINK——规则 2 原用它判「有没有 issue 关联」，
 # 但它与 ISSUE_NUM 是「关键词 + #N」的同前缀正则，check() 里 issues = pr_issues(masked)
 # 已算过同一信息；两份词表/边界正是 r9-r12 反复漂移的形态（ISSUE_LINK 比 ISSUE_NUM 松时
@@ -1842,7 +1865,7 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
         # **fix-r17 P1（MM r16 boundary#1，协调者实测仲裁
         # _tmp/20261114-3074-fixr16-mm2-probe/ARBITRATION.md，探针 p1-probe.py）**：
         # r16 的声明形跳过再限定**标题路径存在**——上段的前提「首行是主信号，正文
-        # 回显不是信号」仅在标题路径已给出主信号（titles 非 None）时成立；本兜底块
+        # 回显不是信号」仅在标题路径已给出主信号（titles 非空）时成立；本兜底块
         # 恰是主信号缺失的形态：本地 --body-file（无 --base/--head/--repo）时
         # pr_commit_titles 返回 None，上方 foreign_fixround_pairs(titles or []) 是
         # 空集 ⇒ 正文回显行是唯一异单出口，声明形跳过＝吞掉唯一出口（与场景 A
@@ -1868,7 +1891,13 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
             errs.extend(_foreign_reject_errs(
                 foreign_fixround_pairs(_echo_head_lines(masked), issues), issues, "正文回显行"))
         fix_round = fix_round_from_body(masked, echo_scan=True, issues=issues)
-    w = WAIVER.search(masked)
+    # fix-r20（#3074 P1-B，DS r19 boundary#1，协调者实测）：多前缀失败形预扫——r19 的
+    # 线性化只证单前缀；`"<!--pr-gate:waiver x"*M`（全文无字面 `-->`）时 search 对每个
+    # `<!--` 起点各把惰性 `\S.*?` 扩到串尾＝Θ(M·N)（m=8000 实测 3.04 s，1 MiB 外推
+    # 分钟级＝准挂起面，正文作者可控）。WAIVER/NO_ISSUE 都要求字面 `-->`——正文不含
+    # `-->` 时跳过 search，语言等价（无 `-->` 必不命中），下方 NO_ISSUE 调用点同款。
+    has_close = "-->" in masked
+    w = WAIVER.search(masked) if has_close else None
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
         for n, m in enumerate(blocks, 1):
@@ -1897,6 +1926,12 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
             errs.extend(check_na_path(base, repo, head))
     elif w:
         reason = w.group(1).strip()
+        # fix-r20（DS r19 boundary#4）：正文另存在全空白理由的 waiver marker（含上面的
+        # 跨界命中形）→ 豁免无效：置空 reason 走既有「豁免理由太短」通道（与 r18 单独
+        # 空白 marker 同通道；多 marker 位形两向钉见 test-review-roles.py fix-r20 块）。
+        # w 非空 ⇒ `-->` 在文，WAIVER_BLANK 的 `-->` 前提天然满足。
+        if WAIVER_BLANK.search(masked):
+            reason = ""
         # 声明即查（MM sibling#7；与结果块侧 :check_block 的 fixtype 校验同口径）：标记内声明了
         # fixtype 就查值，是否必填才看修复轮判定——非修复轮写 fixtype=结构派生 / 不适用 也不再静默放行。
         # fix-r3 P1-2（MM sibling#1）：fixtype= 载体**至多一次**（块侧同口径）——旧码只取首个匹配，
@@ -1936,7 +1971,7 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
             errs.extend(check_na_path(base, repo, head))
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not issues and not NO_ISSUE.search(masked):
+    if not issues and not (has_close and NO_ISSUE.search(masked)):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     return errs
 
