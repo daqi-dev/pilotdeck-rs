@@ -2969,9 +2969,14 @@ async fn absent_run_registry_drops_the_run_reads() {
         _ => panic!("#1642 describe_server must carry a capabilities array"),
     };
     capabilities.sort();
+    // #3143 fix-r1 (sibling#3): the three run-read names come from their
+    // single owner (`methods/runs.rs`), never a hand copy -- the same
+    // single-source rule the cron case below applies through
+    // `crate::runtime::cron::CRON_METHODS`.
+    let run_reads = super::methods::RUN_METHODS;
     let expected: Vec<&str> = expected_capabilities(true)
         .into_iter()
-        .filter(|name| !matches!(*name, "run_get" | "run_events" | "run_reattach"))
+        .filter(|name| !run_reads.contains(name))
         .collect();
     negative_assert_eq!(
         capabilities,

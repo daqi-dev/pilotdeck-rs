@@ -10,7 +10,9 @@ use crate::{
 };
 use pilotdeck_protocol::{JsString, JsValue};
 
-pub(super) const METHODS: &[&str] = &["run_get", "run_events", "run_reattach"];
+// #3143 fix-r1 (sibling#3): crate-visible for the management test's
+// single-source filter, the same visibility `settings::METHODS` carries.
+pub(crate) const METHODS: &[&str] = &["run_get", "run_events", "run_reattach"];
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::run_request);
 
 fn read_error(error: read::TurnReadError) -> RequestError {
