@@ -779,8 +779,13 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
                                     'asserts vacuously')
 
     def test_every_roster_guard_entry_is_registered(self):
+        # fix-r10（DS r9 sibling#1 P2）：扫描面从精确名扩到 negative_controls*.py，
+        # 与 CHECK_MISUSE_REFUSAL 扫描（下方 negative_controls*.py）同形——编号
+        # 变体（negative_controls_1947.py 等）一旦写入 roster-mismatch.json 也要
+        # 显式登记进 ROSTER_GUARDED，不能借精确名漏在扫描面外。今日树内编号
+        # 变体 0 命中 ROSTER_MISMATCH_WRITE，扩面对现有行为是空的。
         found = {str(path.relative_to(FIXTURES))
-                 for path in FIXTURES.rglob('negative_controls.py')
+                 for path in FIXTURES.rglob('negative_controls*.py')
                  if ROSTER_MISMATCH_WRITE.search(path.read_text(encoding='utf-8'))}
         self.assertTrue(found == set(ROSTER_GUARDED),
                         f'#2804 every entry that publishes roster-mismatch.json '
