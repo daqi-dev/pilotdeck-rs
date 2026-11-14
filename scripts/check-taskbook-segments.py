@@ -183,12 +183,24 @@ def placeholder_in(text):
 
 # fix-r24（#3074 修 1）：`_gate_module()` 从本文件后段（FIXTYPE_VALUES 取件处，原 :1214）
 # 整体上移到这里——scope 关键字片段（SCOPEISH，:187）与 SCOPE_BODY 前缀改经
-# `_marker_kw_re()` 派生，模块级取件须先于使用点定义；函数体一字未改。
+# `_marker_kw_re()` 派生，模块级取件须先于使用点定义。
+# fix-r25 修 3（MM concurrency#2 ≡ DS concurrency#1，a 档）：**进程内 memo**——本模块
+# import 期有 11 处 `_gate_module()` 取件，旧形每处都独立 `exec_module` 一遍 2,475 行
+# check-pr-gate.py ⇒ 同一进程内 11 个互不相干的模块快照（并发改文件时 SCOPEISH 取快照 A、
+# SCOPE_BODY 取快照 B ⇒ 两正则来自两个文件版本＝口径分裂不可复现；一轮测试 ≈124×11 次模块
+# 执行）。memo 后同进程只取一份快照，分裂面归零（篡改类测试自载 gate 副本、不走本入口，
+# 不受影响；`.pattern/.flags` 断言只查源码含 `_gate_module()`，同样不受影响）。
+_GATE_MEMO = None
+
+
 def _gate_module():
     """懒加载同目录 check-pr-gate.py 取字面三值常量（#3056 fix-r1，DS sibling#8）：run-review-roles.py
     的 _gate_module() 是先例——三值改名 / 加值时任务书闸门与 PR 闸门用同一对象，不再各写一份
     （各写一份会在改名后一侧放行另一侧永久拒收，假 FAIL）。加载失败让位后续 FIXTYPE_RE 检查报错
-    （fail-closed：拿不到正本就不做静默放行）。"""
+    （fail-closed：拿不到正本就不做静默放行）。fix-r25 起进程内 memo（见上）。"""
+    global _GATE_MEMO
+    if _GATE_MEMO is not None:
+        return _GATE_MEMO
     import importlib.util
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check-pr-gate.py")
     spec = importlib.util.spec_from_file_location("pdrs_gate_for_taskbook_3056", p)
@@ -197,6 +209,7 @@ def _gate_module():
         raise SystemExit(2)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    _GATE_MEMO = mod
     return mod
 
 

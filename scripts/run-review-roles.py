@@ -65,12 +65,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+# fix-r25 修 3（MM concurrency#1①，a 档）：进程内 memo——修前每次调用都 `exec_module`
+# 一遍 check-pr-gate.py，且结果块生成序列（:687）里新增的 `_gate_module()` 调用成了
+# 四角色跑完收尾段（status.json 已落、summary.md 未写）唯一的可抛点：同树并发改文件
+# 时 SyntaxError 冒 traceback ⇒ rc1 与「有非 PASS」不可区分 + 原件在无结论 ⇒ 整轮花费
+# 作废。memo 后 :534（argparse 期）首载，收尾段复用同一对象，不再有新可抛点。
+_GATE_MEMO = None
+
+
 def _gate_module():
-    """懒加载 check-pr-gate.py（补丁指纹与 fixtype 字面三值的同一正本，不复制常量）。"""
+    """懒加载 check-pr-gate.py（补丁指纹与 fixtype 字面三值的同一正本，不复制常量）。
+    fix-r25 起进程内 memo（同进程一份快照——与 check-taskbook-segments.py 同款）。"""
+    global _GATE_MEMO
+    if _GATE_MEMO is not None:
+        return _GATE_MEMO
     spec = importlib.util.spec_from_file_location("check_pr_gate", ROOT / "scripts" / "check-pr-gate.py")
     gate = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(gate)
+    _GATE_MEMO = gate
     return gate
 
 
@@ -684,7 +697,7 @@ def main() -> int:
     # 任务书骨架（check-taskbook-segments.py 的 SKELETON）同轮同款派生。
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- {_gate_module()._marker_kw('pr-gate:')}v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv}{fixtype_kv}{rerun_kv} runner={a.runner} model={model} readonly=tools -->", "",
+        f"<!-- {_gate_module()._marker_kw('pr-gate:')}{_gate_module()._V1_WORD} head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv}{fixtype_kv}{rerun_kv} runner={a.runner} model={model} readonly=tools -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:
