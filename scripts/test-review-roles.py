@@ -2305,6 +2305,61 @@ def _run(gate, rrr, out_base: Path) -> int:
                             frozenset()) != ([], [(10, frozenset({"407"}))]):
             fails.append("fix-r14 窄窗登记·board散文Ⅱ：散文 rN+后方异单链拒收（钉住不漂移）")
 
+        # —— #3074 fix-r15（DS r14 增量评审 P1 + P2×3；P1 协调者实测仲裁
+        # _tmp/20261114-3074-fixr15/p1-probe.txt，修前现场 probe-before.out）——
+        # P1：正文回显 foreign 拒收受首行早退限制（与 echo_scan 同条件同口径）——首行
+        # 非空行命中 fix-rN 时 check() 不再对 ECHO_HEAD 行跑 foreign（修前该形一边按
+        # 首行判 5、一边硬拒收「异单旁路」＝假 FAIL）；首行命中的修复轮义务照走
+        # （fixtype/residual 仍由首行轮号触发）。首行干净 + 回显行引异单的对照半边
+        # 由上方 fix-r14 P0 扩面钉（nohead_neg）钉住，两向都不漂移。
+        p1_body = ("修复fix-r5：停泊补 waker\n\nfix(scripts): #3074 fix-r3：x\n\n"
+                   + blk_t.format(h="") + "Refs #1\n")
+        p1_errs = gate.check(p1_body, "", "", "", "")
+        if any("异单旁路" in e and "正文回显行" in e for e in p1_errs):
+            fails.append(f"fix-r15 P1：首行命中（fix-r5）时正文回显行不得 foreign 拒收"
+                         f"（echo_scan 早退同口径）：{[e for e in p1_errs if '旁路' in e]}")
+        if not any("fix-r5" in e and "fixtype" in e for e in p1_errs) \
+                or not any("pdrs-residual" in e for e in p1_errs):
+            fails.append(f"fix-r15 P1：首行命中的修复轮义务照走（fixtype+residual 仍触发）：{p1_errs}")
+        # P2#1：同侧守卫只压 foreign 半边——链异侧且与 issues 不相交才不计不拒
+        # （board 尾各归各单，r14 语义保留）；异侧相交（SELF 同形真修复轮）照后向配对
+        # 计入（修前 ([],[]) → fix_round=None → 义务整段跳过＝假 PASS）；异侧相交但裸号
+        # 断归属 → 归属存疑拒收（三臂口径不变）；board 尾链恰为本单计入＝登记残余代价
+        # （A/B 复算量化，wordlist-ab-r15.txt）。
+        if gate._scan_pairs("fix(scripts) 修闸门 r5：#3056", frozenset({"3056"})) != ([5], []):
+            fails.append("fix-r15 P2#1：SELF 同形真修复轮（异侧相交）须计入 5（修前 ([],[])＝假 PASS）")
+        if gate.fix_round_from_title("fix(scripts) 修闸门 r5：#3056", frozenset({"3056"})) != 5:
+            fails.append("fix-r15 P2#1：同形整链判修复轮 5（义务不再整段跳过）")
+        if gate._scan_pairs("chore(state) board 12:01 r2：coord 11:4x 增量——#2040 合入计 9 笔 + #2123 入队",
+                            frozenset({"1"})) != ([], []):
+            fails.append("fix-r15 P2#1：board 尾异侧不相交保持不计不拒（r14 语义不回退）")
+        if gate._scan_pairs("chore(state) board 12:01 r2：coord 11:4x 增量——#2040 合入计 9 笔 + #2123 入队",
+                            frozenset({"2040"})) != ([2], []):
+            fails.append("fix-r15 P2#1 残余代价钉：board 尾链恰为本单计入 2（登记取舍，A/B 量化）")
+        if gate._scan_pairs("fix(scripts) 修 + 2932 r5 交付：#3056", frozenset({"3056"})) \
+                != ([], [(5, frozenset({"3056"}))]):
+            fails.append("fix-r15 P2#1：异侧相交但裸号断归属 → 归属存疑拒收（三臂口径不变）")
+        # P2#2：全拼 SELF 假 FAIL 拼写分裂**登记不收口**（订正 r14「全拼不经本守卫…自然
+        # 同侧」的不成立注释；收口尝试经 A/B 证伪回退——closure-reject-proof.txt 静默
+        # 44 条真修复轮：括注形 `fix(scope) 名 fix-rN：…（#refs 在后）` 32 + 散文引单形
+        # 12，语料 0 条落 board 散文窗）——board 散文全拼「token 区内、链区外不相交」
+        # SELF 照计＝登记窄窗（假 FAIL 向，r14 语义原样）；全拼 SELF 实修形相交/不相交
+        # 都照计（收口必须先过「标题静默回归 0」A/B，不得无复算重引入）。
+        if gate._scan_pairs("chore(state) board 12:01 fix-r2：coord …——#2040 合入计 9 笔",
+                            frozenset({"1"})) != ([2], []):
+            fails.append("fix-r15 P2#2 登记钉：board 散文全拼异侧不相交 SELF 照计 2"
+                         "（登记窄窗，收口被 A/B 证伪回退——closure-reject-proof.txt）")
+        if gate._scan_pairs("chore(state) board 12:01 fix-r2：coord …——#2040 合入计 9 笔",
+                            frozenset({"2040"})) != ([2], []):
+            fails.append("fix-r15 P2#2：board 散文全拼异侧相交照计 2（r14 语义不回退）")
+        if gate._scan_pairs("fix(scripts) 修闸门 fix-r5：#3074", frozenset({"3074"})) != ([5], []) \
+                or gate._scan_pairs("fix(scripts) 修闸门 fix-r5：#3074", frozenset({"1"})) != ([5], []):
+            fails.append("fix-r15 P2#2：全拼 SELF 实修形（括注 refs）相交/不相交都照计 5"
+                         "（收口须先过静默回归 0 的 A/B 复算）")
+        # P2#3：窄窗登记文字订正为实际判据（题头区内无前链简写 + 同侧后方链不相交 →
+        # 拒收，与类型词/裸号无关）——行为面即上方 fix-r14 四条钉（不漂移，无新钉）；
+        # docstring 侧由 check-naming/评审复核覆盖。
+
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
         for mode_name, serial_flag in (("serial", True), ("parallel", False)):
