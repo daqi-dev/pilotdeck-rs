@@ -28,11 +28,11 @@ fn read_error(error: read::TurnReadError) -> RequestError {
 /// ToPrimitive's failure surfaces (`{toString: null}` → the boundary's
 /// `gateway_request_failed` "Cannot convert object to primitive value",
 /// deep arrays → "Maximum call stack size exceeded"; #1604 probes
-/// `_tmp/20261026-issue-1604/ts-probe/output2.txt` q3/q7).
+/// `_tmp/20261026-issue-1604/ts-probe/output2.txt` q3/q7). #2692 fix-r1
+/// sibling#6: the submit side's `template_key_checked` is the same
+/// conversion — one implementation, not two.
 fn template_text(value: &JsValue) -> Result<JsString, RequestError> {
-    js_value::to_string_units_checked(value)
-        .map(JsString::from_utf16)
-        .map_err(|error| RequestError::new(error.message()))
+    js_value::template_key_checked(value).map_err(|error| RequestError::new(error.message()))
 }
 
 /// The run reference, read in the TS key template's own order

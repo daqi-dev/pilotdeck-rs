@@ -22,31 +22,44 @@ impl Requests {
             // TS reads `input.sessionKey` straight into the replay Map lookup
             // (getActiveTurnSnapshot → GatewayTurnReplayStore.snapshot,
             // GatewayTurnReplayStore.ts:107-109): a nullish params throws on
-            // the read (probe a4), and any other non-string key is a Map miss
-            // answered with the input's own value echoed — `sessionKey` is
-            // dropped from the miss object exactly when the field is absent or
-            // undefined, like JSON.stringify drops an undefined (probes
-            // a1/a2/a5, #1604).
+            // the read (probe a4). #2692 fix-r1 (sibling#2): that Map is the
+            // router domain — a null request meets a null-born turn while
+            // "" / "null" miss it (ts-prodkey-probe cell b) — and both the
+            // hit and the miss echo the input's own value, dropped exactly
+            // when the field is absent or undefined, like JSON.stringify
+            // drops an undefined (probes a1/a2/a5, #1604). A spelling that
+            // throws in the registry template (a too-deep array) is still a
+            // reference key for the Map in TS; Rust has no spelling that can
+            // consult it, so it answers the miss shape (registered
+            // divergence).
             let raw_key = input_property(&params, "sessionKey")?;
-            let Some(session_key) = raw_key.as_ref().and_then(JsValue::as_string).cloned() else {
+            let miss = |raw: Option<JsValue>| {
                 let mut miss: Vec<(&'static str, JsValue)> = vec![("active", JsValue::Bool(false))];
-                if let Some(value) = raw_key.filter(|value| !matches!(value, JsValue::Undefined)) {
+                if let Some(value) = raw.filter(|value| !matches!(value, JsValue::Undefined)) {
                     miss.push(("sessionKey", value));
                 }
                 miss.push(("events", JsValue::Array(vec![])));
-                return Ok(object(miss));
+                object(miss)
+            };
+            let lookup = match raw_key.as_ref() {
+                None | Some(JsValue::Undefined) => crate::js_value::router_key(&JsValue::Undefined),
+                Some(value) => crate::js_value::router_key(value),
+            };
+            let Some(session_key) = lookup.ok() else {
+                return Ok(miss(raw_key));
             };
             // `includeEvents` is read only on the hit path, after the Map
             // lookup (GatewayTurnReplayStore.ts:117), and only an explicit
             // `false` suppresses events.
-            Ok(read::active_turn_snapshot(
+            let snapshot = read::active_turn_snapshot(
                 &self.coordinator,
                 &ActiveTurnSnapshotInput {
                     session_key,
                     include_events: params.get("includeEvents") != Some(&JsValue::Bool(false)),
                 },
             )
-            .to_json())
+            .to_json();
+            Ok(read::echo_request_session_key(snapshot, raw_key.as_ref()))
         })
     }
 }

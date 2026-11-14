@@ -248,6 +248,9 @@ struct Publication {
     changed: Notify,
     registry: Option<Arc<dyn TurnRunRegistry>>,
     run: RunRef,
+    /// #2692: the raw-value key the coordinator (sinks, replay) indexes by;
+    /// `run` keeps the template spelling for the registry record.
+    router_key: JsString,
     executor: tokio::runtime::Handle,
     #[cfg(test)]
     predecessor_waiting: Notify,
@@ -413,8 +416,11 @@ pub struct TurnPublisher {
 }
 impl TurnPublisher {
     /// Call only after accept_turn returns Accepted, inside a Tokio runtime.
+    /// `router_key` is the raw-value session key the coordinator indexes by
+    /// (#2692); `run` keeps the template spelling for the registry record.
     pub fn start(
         run: RunRef,
+        router_key: JsString,
         registry: Option<Arc<dyn TurnRunRegistry>>,
         coordinator: Arc<TurnEventCoordinator>,
     ) -> Self {
@@ -423,12 +429,13 @@ impl TurnPublisher {
             changed: Notify::new(),
             registry,
             run: run.clone(),
+            router_key: router_key.clone(),
             executor: tokio::runtime::Handle::current(),
             #[cfg(test)]
             predecessor_waiting: Notify::new(),
         });
         let weak = Arc::downgrade(&publication);
-        let registration = coordinator.start(&run.session_key, &run.run_id, move |event| {
+        let registration = coordinator.start(&router_key, &run.run_id, move |event| {
             if let Some(publication) = weak.upgrade() {
                 publication.enqueue(event.clone());
             }
@@ -445,8 +452,7 @@ impl TurnPublisher {
     /// underlying coordinator's emit directly during an active publication.
     pub fn emit(&self, event: &JsValue) -> bool {
         let _pump = lock(&self.pump);
-        self.coordinator
-            .emit(&self.publication.run.session_key, event)
+        self.coordinator.emit(&self.publication.router_key, event)
     }
     /// Already-derived pump events, serialized with external emits and finish.
     pub fn gateway_event(&self, event: JsValue) -> bool {
@@ -464,7 +470,7 @@ impl TurnPublisher {
         }
         drop(state);
         self.coordinator
-            .record(&self.publication.run.session_key, &event);
+            .record(&self.publication.router_key, &event);
         self.publication.enqueue(event);
         true
     }
@@ -514,7 +520,7 @@ impl TurnPublisher {
             };
             for event in deferred {
                 self.coordinator
-                    .record(&self.publication.run.session_key, &event);
+                    .record(&self.publication.router_key, &event);
                 self.publication.enqueue(event);
             }
             lock(&self.publication.state).pending.clone()
@@ -552,10 +558,8 @@ impl TurnPublisher {
                 // close and are still drained first, like TS's `queue.close`.
                 self.publication.wait_for_trailing_writes(&writes).await;
                 let _pump = lock(&self.pump);
-                self.coordinator.retain_terminal(
-                    &self.publication.run.session_key,
-                    &self.publication.run.run_id,
-                );
+                self.coordinator
+                    .retain_terminal(&self.publication.router_key, &self.publication.run.run_id);
                 return None;
             }
             notified.await;

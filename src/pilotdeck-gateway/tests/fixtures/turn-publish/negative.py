@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Temporarily mutate the owned implementation, require assertion failure, restore.
 
+--check (fix-r5) is read-only: anchor uniqueness and roster sanity, no cargo.
+
 No tests/oracle are changed. Run alone: the shared tree flock plus a HEAD
 byte baseline prevents another mutation run from adopting a mutant. Every mutation and the original SHA are recorded before
 writing. finally restores the exact bytes, including on failed controls.
@@ -16,16 +18,235 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed
+from negative_selection import baseline_passed, refuse, registered
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import declares_test
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
 repo = rust.parent
-output = Path(sys.argv[1]).resolve()
-output.mkdir(parents=True, exist_ok=True)
 source = rust / 'pilotdeck-gateway/src/runtime/turn/publish.rs'
 connection = rust / 'pilotdeck-gateway/src/runtime/connection/mod.rs'
+tests_source = rust / 'pilotdeck-gateway/src/runtime/turn/publish_tests.rs'
+
+mutants = [
+    ('drop-event', source,
+     '                    state.queue.push_back(event);',
+     '                    let _ = event;', 'ordered_durable_terminal_after_session_end'),
+    ('duplicate-event', source,
+     '                    state.queue.push_back(event);',
+     '                    state.queue.push_back(event.clone()); state.queue.push_back(event);',
+     'ordered_durable_terminal_after_session_end'),
+    ('visible-before-durable', source,
+     '        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
+     '        state.queue.push_back(event.clone());\n        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
+     'ordered_durable_terminal_after_session_end'),
+    ('early-terminal-before-session-end', source,
+     '        if is(&event, "type", "turn_completed") {',
+     '        if false && is(&event, "type", "turn_completed") {',
+     'ordered_durable_terminal_after_session_end'),
+    ('missing-result-unknown', source,
+     '            Err(_) if !state.failure_published => {',
+     '            Err(_) if false => {', 'append_failure_then_success_single_unknown'),
+    ('repeated-result-unknown', source,
+     '                state.failure_published = true;',
+     '                state.failure_published = false;', 'all_appends_fail_only_one_unknown'),
+    ('close-with-append-pending', source,
+     '\n        self.publication.wait_for(&writes).await;\n',
+     '\n        let _ = writes;\n',
+     'close_waits_for_pending_append'),
+    ('duplicate-replay-lost', source,
+     '        Ok(Some(events)) => TurnAcceptance::Replay(events),',
+     '        Ok(Some(_events)) => TurnAcceptance::Replay(vec![]),', 'duplicate_replays_durable_events'),
+    ('conflict-treated-as-unknown', source,
+     '            let conflict = error.code() == Some("conflict");',
+     '            let conflict = false;', 'conflict_does_not_start_pump'),
+    ('accept-failure-as-conflict', source,
+     '            let conflict = error.code() == Some("conflict");',
+     '            let conflict = true;', 'accept_failure_result_unknown'),
+    ('preflight-failure-exposes-original', source,
+     '        return persistence_failure(&run.run_id, true);',
+     '        return event;', 'preflight_registry_failure'),
+    ('reverse-visible-order', source,
+     '                    state.queue.push_back(event);',
+     '                    state.queue.push_front(event);', 'file_registry_publication_preserves_fifo_across_workers'),
+    ('late-append-not-awaited', source,
+     '                self.publication.wait_for_trailing_writes(&writes).await;\n                let _pump = lock(&self.pump);',
+     '                let _ = writes;\n                let _pump = lock(&self.pump);',
+     'late_event_while_terminal_append_pending'),
+    ('duplicate-terminal-suppressed', source,
+     '            state.deferred.push(event);',
+     '            if state.deferred.is_empty() { state.deferred.push(event); }',
+     'duplicate_terminal_is_registry_failure'),
+    ('ws-seq-confused-with-module', connection,
+     '            out.insert("seq".into(), JsValue::Number(stream.0 as f64));',
+     '            out.insert("seq".into(), JsValue::Number((stream.0 + 71) as f64));',
+     'ordered_durable_terminal_after_session_end'),
+    ('ws-final-too-early', connection,
+     '            out.insert("final".into(), JsValue::Bool(false));',
+     '            out.insert("final".into(), JsValue::Bool(true));',
+     'ordered_durable_terminal_after_session_end'),
+    ('storage-failure-exposes-original', source,
+     '            Err(_) if !state.failure_published => {',
+     '            Err(_) if !state.failure_published => { state.queue.push_back(event);',
+     'real_storage_persist_failure'),
+    ('external-emitter-skipped', source,
+     '        self.coordinator.emit(&self.publication.router_key, event)',
+     '        let _ = event; false', 'ordered_durable_terminal_after_session_end'),
+    ('file-adapter-skips-durable', source,
+     '            return self.call(move |registry| registry.append(&run, &event));',
+     '            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });',
+     'file_registry_publication_preserves_fifo_across_workers'),
+]
+# #2692 fix-r10 (review boundary#1): the denominator is this literal roster,
+# never `len(mutants)` -- the printed anchor count and the twin's expectation
+# both used to derive from the same runtime table, so a dropped or renamed row
+# kept --check green while one control silently stopped being audited (the
+# #1666 shape; `registered()` refuses on any drift, the native-blankkey
+# EXPECTED_NAMES precedent).
+EXPECTED_NAMES = (
+    'drop-event',
+    'duplicate-event',
+    'visible-before-durable',
+    'early-terminal-before-session-end',
+    'missing-result-unknown',
+    'repeated-result-unknown',
+    'close-with-append-pending',
+    'duplicate-replay-lost',
+    'conflict-treated-as-unknown',
+    'accept-failure-as-conflict',
+    'preflight-failure-exposes-original',
+    'reverse-visible-order',
+    'late-append-not-awaited',
+    'duplicate-terminal-suppressed',
+    'ws-seq-confused-with-module',
+    'ws-final-too-early',
+    'storage-failure-exposes-original',
+    'external-emitter-skipped',
+    'file-adapter-skips-durable',
+)
+# #2692 closure-r4 (MM closure sibling#1, P1, two-lineages-raised): the roster
+# above only catches one-sided drift. This family's rows carry no separate
+# assertion column, so the shared identity is the bound test name -- nine
+# rows ride a test name another row also carries (seven on
+# ordered_durable_terminal_after_session_end, two on the FIFO worker pair),
+# and deleting one of them from `mutants` *and* `EXPECTED_NAMES` together
+# kept `registered()` aligned and the surviving sibling bound to the same
+# test -- `--check` stayed green (its count printed `len(mutants)`, CI
+# ci.yml) while one control silently stopped being audited. ROW_PINS is a
+# third denominator outside both tables, keyed on the bound test name (the
+# turn-submit shape, whose rows key on the effective assertion string;
+# check_row_pins stays the fifth same-shaped copy -- the three-way
+# convergence is the simplify#1 P2 follow-up, not this round).
+ROW_PINS = (
+    'drop-event',
+    'duplicate-event',
+    'visible-before-durable',
+    'early-terminal-before-session-end',
+    'ws-seq-confused-with-module',
+    'ws-final-too-early',
+    'external-emitter-skipped',
+    'reverse-visible-order',
+    'file-adapter-skips-durable',
+)
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-test rows lost one to a both-tables edit.
+
+    The forward loop catches a pinned row that disappeared; the reverse
+    direction is computed from this runtime table: every row whose bound test
+    name another row also carries must be pinned, so the next row reusing a
+    sibling's test name without a ROW_PINS entry refuses here instead of
+    silently widening the pool a both-tables drop can shrink unnoticed (the
+    closure-r2 turn-submit shape; this family keys on the test name because
+    its rows have no assertion column).
+    """
+    names = {row[0] for row in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            refuse(f'#2692 row pin names a row that is gone: {name}')
+    counts = {}
+    for _name, _path, _before, _after, test in rows:
+        counts[test] = counts.get(test, 0) + 1
+    shared = {test for test, total in counts.items() if total >= 2}
+    unpinned = sorted({row[0] for row in rows if row[4] in shared}
+                      - set(ROW_PINS))
+    if unpinned:
+        refuse('#2692 turn-publish shared-test rows missing from '
+               f'ROW_PINS: {", ".join(unpinned)}')
+
+
+args = sys.argv[1:]
+# fix-r5 (review sibling#3): read-only --check — anchor uniqueness per
+# target file, unique roster names, zero cargo. The mutating run below is
+# unchanged. fix-r6 (review boundary#5) adds two more static gates: a no-op
+# mutation (before == after) used to stay green until the host's cargo round
+# reported SURVIVED, and a bound test name that is no longer declared in
+# publish_tests.rs (plain fn, `=>` table row, or scenario! macro form) used
+# to keep the roster green with the name living only in this string table.
+if args and args[0] == '--check':
+    if len(args) != 1:
+        refuse('turn-publish --check takes no output directory and no mutation names')
+    # fix-r7 (review concurrency#1): the source reads and the declares_test
+    # gate live inside the refusal envelope — a missing or renamed tests file
+    # is a clean rc 2 "never started" (#2391 contract), not a traceback rc 1.
+    try:
+        names = [name for name, *_ in mutants]
+        if len(set(names)) != len(names):
+            refuse('turn-publish roster has duplicate mutation names')
+        # fix-r10 (review boundary#1): the static roster. A dropped, renamed
+        # or reordered row used to shrink the printed anchor count and the
+        # twin's expectation together, so --check stayed green while one
+        # control silently stopped being audited (the #1666 shape).
+        # closure-r4 (MM sibling#1): the three denominator guards now run
+        # before the per-row audits below -- a twin reusing a sibling's
+        # anchor text trips the stale-anchor count first, so the pin-table
+        # refusal would never be the one a red side sees (each fix-r10 leg
+        # still hits its own refusal: its splice drifts one table only).
+        try:
+            registered(mutants, EXPECTED_NAMES)
+        except ValueError as error:
+            refuse(f'turn-publish mutation roster drifted: {error}')
+        check_row_pins(mutants)
+        texts = {path: path.read_text() for path in (source, connection)}
+        tests_text = tests_source.read_text()
+        # fix-r9 (review boundary#2, same fix as native-config): the second
+        # count is what the bound-test gate actually passed -- a truncated or
+        # deleted loop used to keep printing `len(mutants)`.
+        declared = 0
+        for name, path, before, after, test in mutants:
+            count = texts[path].count(before)
+            if count != 1:
+                refuse(f'turn-publish {name}: stale anchor (expected 1, got {count})')
+            if before == after:
+                refuse(f'turn-publish {name}: no-op mutation (before == after)')
+            if not (declares_test(tests_text, test)
+                    or declares_test(tests_text, test, macro='scenario!')):
+                refuse(f'turn-publish {name}: bound test not declared in publish_tests.rs: {test}')
+            declared += 1
+    except (ValueError, OSError) as error:
+        refuse(f'turn-publish --check could not audit the tree: {error}')
+    print(f'turn-publish: {len(mutants)} mutation anchors OK; '
+          f'{declared} bound tests declared')
+    raise SystemExit(0)
+if len(args) != 1:
+    print('usage: negative.py --check | NEW_OUTPUT', file=sys.stderr)
+    raise SystemExit(2)
+# fix-r10 (review boundary#1): the mutating run carries the same static roster
+# -- a dropped row used to print `18 ... mutants killed` and exit 0 (#1666);
+# refuse before any evidence directory is claimed.
+try:
+    registered(mutants, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(f'turn-publish mutation roster drifted: {error}')
+# closure-r4 (MM sibling#1): the mutating run carries the same third
+# denominator -- a both-tables drop must refuse before any evidence
+# directory is claimed.
+check_row_pins(mutants)
+output = Path(args[0]).resolve()
+output.mkdir(parents=True, exist_ok=True)
+
 with mutating_sources(repo, [source, connection]) as snapshots:
     originals = {source: snapshots[source], connection: snapshots[connection]}
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
@@ -33,75 +254,6 @@ with mutating_sources(repo, [source, connection]) as snapshots:
         sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     prefix = 'runtime::turn::publish::tests::'
-    mutants = [
-        ('drop-event', source,
-         '                    state.queue.push_back(event);',
-         '                    let _ = event;', 'ordered_durable_terminal_after_session_end'),
-        ('duplicate-event', source,
-         '                    state.queue.push_back(event);',
-         '                    state.queue.push_back(event.clone()); state.queue.push_back(event);',
-         'ordered_durable_terminal_after_session_end'),
-        ('visible-before-durable', source,
-         '        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
-         '        state.queue.push_back(event.clone());\n        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));',
-         'ordered_durable_terminal_after_session_end'),
-        ('early-terminal-before-session-end', source,
-         '        if is(&event, "type", "turn_completed") {',
-         '        if false && is(&event, "type", "turn_completed") {',
-         'ordered_durable_terminal_after_session_end'),
-        ('missing-result-unknown', source,
-         '            Err(_) if !state.failure_published => {',
-         '            Err(_) if false => {', 'append_failure_then_success_single_unknown'),
-        ('repeated-result-unknown', source,
-         '                state.failure_published = true;',
-         '                state.failure_published = false;', 'all_appends_fail_only_one_unknown'),
-        ('close-with-append-pending', source,
-         '\n        self.publication.wait_for(&writes).await;\n',
-         '\n        let _ = writes;\n',
-         'close_waits_for_pending_append'),
-        ('duplicate-replay-lost', source,
-         '        Ok(Some(events)) => TurnAcceptance::Replay(events),',
-         '        Ok(Some(_events)) => TurnAcceptance::Replay(vec![]),', 'duplicate_replays_durable_events'),
-        ('conflict-treated-as-unknown', source,
-         '            let conflict = error.code() == Some("conflict");',
-         '            let conflict = false;', 'conflict_does_not_start_pump'),
-        ('accept-failure-as-conflict', source,
-         '            let conflict = error.code() == Some("conflict");',
-         '            let conflict = true;', 'accept_failure_result_unknown'),
-        ('preflight-failure-exposes-original', source,
-         '        return persistence_failure(&run.run_id, true);',
-         '        return event;', 'preflight_registry_failure'),
-        ('reverse-visible-order', source,
-         '                    state.queue.push_back(event);',
-         '                    state.queue.push_front(event);', 'file_registry_publication_preserves_fifo_across_workers'),
-        ('late-append-not-awaited', source,
-         '                self.publication.wait_for_trailing_writes(&writes).await;\n                let _pump = lock(&self.pump);',
-         '                let _ = writes;\n                let _pump = lock(&self.pump);',
-         'late_event_while_terminal_append_pending'),
-        ('duplicate-terminal-suppressed', source,
-         '            state.deferred.push(event);',
-         '            if state.deferred.is_empty() { state.deferred.push(event); }',
-         'duplicate_terminal_is_registry_failure'),
-        ('ws-seq-confused-with-module', connection,
-         '            out.insert("seq".into(), JsValue::Number(stream.0 as f64));',
-         '            out.insert("seq".into(), JsValue::Number((stream.0 + 71) as f64));',
-         'ordered_durable_terminal_after_session_end'),
-        ('ws-final-too-early', connection,
-         '            out.insert("final".into(), JsValue::Bool(false));',
-         '            out.insert("final".into(), JsValue::Bool(true));',
-         'ordered_durable_terminal_after_session_end'),
-        ('storage-failure-exposes-original', source,
-         '            Err(_) if !state.failure_published => {',
-         '            Err(_) if !state.failure_published => { state.queue.push_back(event);',
-         'real_storage_persist_failure'),
-        ('external-emitter-skipped', source,
-         '        self.coordinator\n            .emit(&self.publication.run.session_key, event)',
-         '        let _ = event; false', 'ordered_durable_terminal_after_session_end'),
-        ('file-adapter-skips-durable', source,
-         '            return self.call(move |registry| registry.append(&run, &event));',
-         '            return self.call(move |_registry| { let _ = (&run, &event); Ok(()) });',
-         'file_registry_publication_preserves_fifo_across_workers'),
-    ]
     summary = []
     failures = []
     try:

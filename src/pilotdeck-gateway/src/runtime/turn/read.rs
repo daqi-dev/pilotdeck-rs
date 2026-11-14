@@ -300,33 +300,107 @@ pub async fn read_session_messages(
             "read_session_messages is not configured. Wire `readSessionMessages` via createLocalGateway.",
         ));
     };
-    let session_key = input
-        .get("sessionKey")
-        .and_then(JsValue::as_string)
-        .cloned()
-        .unwrap_or_default();
+    // #2692 fix-r1 (sibling#5): TS reads the raw `input.sessionKey` into the
+    // replay Map lookup (SameValueZero), so both epoch snapshots consult the
+    // router domain — a null request meets a null-born turn while "" /
+    // "null" miss it (ts-prodkey-probe cell b) — and the stream echoes the
+    // request's own value (patched in the merge; the store's lookup key is
+    // the tagged spelling). A spelling that throws (a too-deep array) is a
+    // reference key in TS that no Rust spelling can consult, so it answers
+    // the miss shape on both snapshots (registered divergence).
+    let raw_key = input.get("sessionKey");
+    let session_key = raw_key
+        .map(js_value::router_key)
+        .unwrap_or_else(|| js_value::router_key(&JsValue::Undefined))
+        .ok();
+    let snapshot = |include_events: bool| ActiveTurnSnapshotInput {
+        session_key: session_key.clone().unwrap_or_default(),
+        include_events,
+    };
+    let unspellable = session_key.is_none();
     for _ in 0..HISTORY_EPOCH_ATTEMPTS {
-        let before = coordinator
-            .snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()).without_events());
+        let before = if unspellable {
+            ActiveTurnSnapshot::default_echo()
+        } else {
+            coordinator.snapshot(&snapshot(false))
+        };
         let history = history.read(input).await?;
-        let stream = coordinator.snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()));
+        let stream = if unspellable {
+            ActiveTurnSnapshot::default_echo()
+        } else {
+            coordinator.snapshot(&snapshot(true))
+        };
         if !same_turn_epoch(&before, &stream) {
             continue;
         }
-        return Ok(merge_history_and_stream(history, &stream));
+        return Ok(merge_history_and_stream(history, &stream, raw_key));
     }
     Err(TurnReadError::plain(
         "Session changed during transcript synchronization; retry the snapshot.",
     ))
 }
 
+/// The store-less miss a request whose spelling throws answers (see
+/// [`read_session_messages`]): same shape the replay store's miss produces,
+/// with a placeholder echo the merge replaces.
+impl ActiveTurnSnapshot {
+    fn default_echo() -> Self {
+        Self {
+            active: false,
+            session_key: JsString::default(),
+            run_id: None,
+            events: Vec::new(),
+            truncated: false,
+            terminal: false,
+        }
+    }
+}
+
 /// InProcessGateway.ts:2858: `{ ...history, stream }`. Key order follows the
 /// history object; a `stream` key the host already returned keeps its position
-/// and gets the fresh snapshot's value.
-fn merge_history_and_stream(history: JsValue, stream: &ActiveTurnSnapshot) -> JsValue {
+/// and gets the fresh snapshot's value. The stream echoes the request's own
+/// `sessionKey` (#2692: the store's lookup key is the tagged spelling).
+fn merge_history_and_stream(
+    history: JsValue,
+    stream: &ActiveTurnSnapshot,
+    raw_key: Option<&JsValue>,
+) -> JsValue {
     let mut merged = history.as_object().cloned().unwrap_or_default();
-    merged.insert("stream".into(), stream.to_json());
+    merged.insert(
+        "stream".into(),
+        echo_request_session_key(stream.to_json(), raw_key),
+    );
     JsValue::Object(merged)
+}
+
+/// The TS snapshot object echoes `input.sessionKey` — the raw request value,
+/// not the tagged spelling the store was keyed by — and drops the field
+/// exactly when it is absent or undefined, like JSON.stringify (#2692:
+/// a null request that meets its null-born turn answers `sessionKey: null`,
+/// ts-prodkey-probe cell b).
+pub(crate) fn echo_request_session_key(
+    mut snapshot: JsValue,
+    raw_key: Option<&JsValue>,
+) -> JsValue {
+    match raw_key {
+        None | Some(JsValue::Undefined) => {
+            if let JsValue::Object(object) = &mut snapshot {
+                let mut rebuilt = JsObject::new();
+                for (key, value) in object.entries() {
+                    if !key.equals_str("sessionKey") {
+                        rebuilt.insert(key.clone(), value.clone());
+                    }
+                }
+                *object = rebuilt;
+            }
+        }
+        Some(raw) => {
+            if let JsValue::Object(object) = &mut snapshot {
+                object.insert("sessionKey".into(), raw.clone());
+            }
+        }
+    }
+    snapshot
 }
 
 /// InProcessGateway.ts:2525-2529.

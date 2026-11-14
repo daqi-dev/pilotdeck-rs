@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _negkit.contract import Case
 from _negkit import submit as adapter
+from negative_selection import refuse, registered
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -35,7 +36,7 @@ mutants = [
     ('busy-code-changed', 'if sdk_admission {\n                    "SESSION_BUSY"\n                } else {\n                    "session_busy"\n                }', 'if sdk_admission { "session_busy" } else { "SESSION_BUSY" }', 'session-busy', '#813 session-busy: step 0 "observe": submit scenario must match', None),
     ('sdk-capability-ignored', 'let error = if !self.host.has_sdk_config() {', 'let error = if false && !self.host.has_sdk_config() {', 'sdk-unavailable', '#813 sdk-unavailable: step 0 "observe": submit scenario must match', None),
     ('sdk-validation-ignored', '.validate_sdk_config(field(&input, "sdkSessionConfig"))\n                    .err()', '.validate_sdk_config(field(&input, "sdkSessionConfig"))\n                    .err().filter(|_| false)', 'sdk-invalid', '#813 sdk-invalid: step 0 "observe": submit scenario must match', None),
-    ('sdk-dirty-skipped', '.mark_session_dirty(&run.session_key, "sdk_session_config_changed");', '.mark_session_dirty(&run.session_key, "");', 'sdk-changed', 'changed SDK config must dirty the cached handle', None),
+    ('sdk-dirty-skipped', '.mark_session_dirty(&router_key, "sdk_session_config_changed");', '.mark_session_dirty(&router_key, "");', 'sdk-changed', 'changed SDK config must dirty the cached handle', None),
     ('sdk-abort-ignored', 'let event = if completion.is_cancelled() {', 'let event = if false && completion.is_cancelled() {', 'abort-during-sdk-failure', '#813 abort-during-sdk-failure: step 2 "sdk": submit scenario must match', None),
     ('refresh-error-propagated', 'let _ = self.host.refresh().await;', 'self.host.refresh().await?;', 'refresh-failed-keeps-snapshot', '#813 refresh-failed-keeps-snapshot: step 0 "observe": submit scenario must match', None),
     ('accepted-commit-skipped', 'self.host.commit_accepted_input(run).await?;', 'let _ = run;', 'commit-failed', '#813 commit-failed: step 1 "accept": submit scenario must match', None),
@@ -44,7 +45,7 @@ mutants = [
     ('early-terminal-before-session-end', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let terminal = is(&event, "type", "turn_completed"); publisher.gateway_event(event); if terminal { publisher.finish().await; }\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', '#813 durable-accept-and-session-end: step 2 "terminal": submit scenario must match', None),
     ('finally-error-swallowed', 'self.host.after_turn(&run)', 'let _ = self.host.after_turn(&run); Ok(())', 'finally-failed', '#813 finally-failed: step 3 "end": submit scenario must match', None),
     ('input-ack-before-native-durable', 'let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'publisher.gateway_event(object([("type", "input_accepted".into()), ("runId", JsValue::String(run.run_id.clone()))]));\n        let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'durable-accept-and-session-end', '#813 durable-accept-and-session-end: step 0 "observe": submit scenario must match', None),
-    ('stale-completion-filter-skipped', '|| !self\n                    .owner\n                    .is_current_completion(&run.session_key, completion)', '|| false', 'superseded-completion', '#813 superseded-completion: step 2 "accept": submit scenario must match', None),
+    ('stale-completion-filter-skipped', '|| !self.owner.is_current_completion(router_key, completion)', '|| false', 'superseded-completion', '#813 superseded-completion: step 2 "accept": submit scenario must match', None),
     # fix-r2 (opus r2 concurrency #1): the request_started dedup event is
     # built from four explicit keys. Both mutants share this anchor: one
     # drops the event, the other reverts to the shared model_event fold —
@@ -63,12 +64,12 @@ mutants = [
     ('utf16-busy-lossy', 'JsValue::String(JsString::from_utf16(units))\n}', 'JsValue::String(String::from_utf16_lossy(&units).into())\n}', 'session-busy', 'UTF-16 busy status message', None),
     ('workspace-reservation-skipped', 'if !self.workspace_admissions.reserve(id, &run)', 'if false && !self.workspace_admissions.reserve(id, &run)', 'workspace-busy-before-sdk', '#813 workspace-busy-before-sdk: step 0 "observe": submit scenario must match', None),
     ('workspace-release-skipped', '.release(&workspace, self.run);', '.release(&workspace, &RunRef { session_key: "wrong".into(), project_key: None, run_id: "wrong".into() });', 'workspace-released-after-turn', '#813 workspace-released-after-turn: step 4 "second": submit scenario must match', None),
-    ('cwd-update-skipped', 'self.host.set_session_cwd(&run.session_key, cwd)', 'Ok::<(), SubmitError>(())', 'workspace-cwd', '#813 workspace-cwd: step 0 "observe": submit scenario must match', None),
+    ('cwd-update-skipped', 'self.host.set_session_cwd(&router_key, cwd)', 'Ok::<(), SubmitError>(())', 'workspace-cwd', '#813 workspace-cwd: step 0 "observe": submit scenario must match', None),
     ('timeout-disabled', 'tokio::time::sleep_until(started + Duration::from_millis(delay)).await;', 'tokio::time::sleep_until(started + Duration::from_millis(delay + 10000)).await;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
     ('timeout-status-skipped', 'publisher.gateway_event(with_run(failure, &run));', 'let _ = failure;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
     ('timeout-error-skipped', '                        publisher.gateway_event(event);', '                        let _ = event;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
     ('timeout-abort-skipped', 'let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());', 'let _ = &handle;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
-    ('timeout-close-skipped', 'let close = self.owner.close(&run.session_key);', 'let close = std::future::ready(Ok::<(), crate::runtime::project::RuntimeError>(()));', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+    ('timeout-close-skipped', 'let close = self.owner.close(&router_key);', 'let close = std::future::ready(Ok::<(), crate::runtime::project::RuntimeError>(()));', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
     ('timeout-prepare-revived', 'if timed_out.load(Ordering::SeqCst) {\n            return Ok(());\n        }', 'if false && timed_out.load(Ordering::SeqCst) { return Ok(()); }', 'timeout-prepare-no-revival-live-consumer', '#813 timeout-prepare-no-revival-live-consumer: step 2 "prepare": submit scenario must match', None),
     ('deadline-skipped', '"operationDeadline",\n                deadline.as_str().into(),', '"wrongDeadline",\n                deadline.as_str().into(),', 'timeout-active', '#813 timeout-active: step 0 "observe": submit scenario must match', None),
     ('timeout-status-record-error-ignored', 'if self.host.record_failure(&run, &record).await.is_ok()', 'if self.host.record_failure(&run, &record).await.is_err()', 'timeout-status-record-failed', '#813 timeout-status-record-failed: step 2 "timeout": submit scenario must match', None),
@@ -82,7 +83,7 @@ mutants = [
     ('failureguard-model-observe-skipped', '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "turn_continued") && let Some(trip) = guard.observe(&event)', 'guard-model-trip', '#813 guard-model-trip: step 2 "terminal": submit scenario must match', None),
     ('snapshot-capability-refusal-skipped', 'if workspace.snapshots_required &&', 'if false && workspace.snapshots_required &&', 'invalid-mode', 'snapshot-recorder-unavailable: explicit capability refusal', 'snapshot-recorder-unavailable'),
     ('snapshot-cwd-refusal-skipped', 'return Err(SubmitError::new(\n                    "CAPABILITY_UNAVAILABLE",\n                    "Workspace snapshot cwd is unavailable.",\n                ));', '/* silently skip missing snapshot cwd */', 'invalid-mode', 'snapshot-cwd-unavailable: explicit capability refusal', 'snapshot-cwd-unavailable'),
-    ('cwd-capability-error-ignored', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd).or(Ok::<(), SubmitError>(()))', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),
+    ('cwd-capability-error-ignored', 'let Err(error) = self.host.set_session_cwd(&router_key, cwd)', 'let Err(error) = self.host.set_session_cwd(&router_key, cwd).or(Ok::<(), SubmitError>(()))', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),
     # Production-host mutants live in submit_host.rs; the lease guard's
     # exactly-once assertion lives in the unit tests there. The host lease
     # mutant skips the release outright: a mutation that would release
@@ -113,6 +114,103 @@ mutants = [
     # an attachment-free case must fail the absence assertion.
     ('always-acquire-lease', 'false => None,', 'false => Some(self.services.resolve_attachments(input).await?),', None, None, None),
 ]
+# #2692 fix-r12 (MM sibling P1): the denominator is this literal roster,
+# never `len(mutants)` -- the printed count and every downstream gate used to
+# derive from the same runtime table, so a row dropped from the roster alone,
+# or renamed, kept --check green while one control silently stopped being
+# audited (the #1666 shape; `registered()` refuses on any drift, the
+# turn-read / turn-publish / native-config / native-blankkey EXPECTED_NAMES
+# precedent). fix-r13 (DS + MM sibling/boundary): the guard only sees
+# one-sided drift -- a row deleted from `mutants` *and* this roster together
+# is caught by ROW_PINS below, not by `registered()`.
+EXPECTED_NAMES = (
+    'permission-check-skipped',
+    'run-id-check-skipped',
+    'budget-check-skipped',
+    'trusted-context-check-skipped',
+    'busy-code-changed',
+    'sdk-capability-ignored',
+    'sdk-validation-ignored',
+    'sdk-dirty-skipped',
+    'sdk-abort-ignored',
+    'refresh-error-propagated',
+    'accepted-commit-skipped',
+    'projection-drop-event',
+    'projection-duplicate-event',
+    'early-terminal-before-session-end',
+    'finally-error-swallowed',
+    'input-ack-before-native-durable',
+    'stale-completion-filter-skipped',
+    'model-selection-event-skipped',
+    'request-started-fold-leaked',
+    'actual-text-model-skipped',
+    'lease-release-skipped',
+    'fingerprint-includes-reconnect-metadata',
+    'explicit-null-sdk-treated-absent',
+    'cancel-hides-recovery-failure',
+    'history-epoch-error-hidden',
+    'utf16-mode-lossy',
+    'utf16-busy-lossy',
+    'workspace-reservation-skipped',
+    'workspace-release-skipped',
+    'cwd-update-skipped',
+    'timeout-disabled',
+    'timeout-status-skipped',
+    'timeout-error-skipped',
+    'timeout-abort-skipped',
+    'timeout-close-skipped',
+    'timeout-prepare-revived',
+    'deadline-skipped',
+    'timeout-status-record-error-ignored',
+    'snapshot-pre-skipped',
+    'snapshot-pre-error-ignored',
+    'snapshot-post-skipped',
+    'snapshot-success-post-added',
+    'snapshot-timeout-kind-wrong',
+    'timeout-live-close-skipped',
+    'invalid-deadline-accepted',
+    'failureguard-model-observe-skipped',
+    'snapshot-capability-refusal-skipped',
+    'snapshot-cwd-refusal-skipped',
+    'cwd-capability-error-ignored',
+    'guard-config-not-provided',
+    'host-lease-release-skipped',
+    'cwd-host-unavailable-ok',
+    'lease-poison-unwrap-finish',
+    'lease-poison-unwrap-prepare',
+    'lease-order-records-swapped',
+    'lease-acquisition-skipped',
+    'always-acquire-lease',
+)
+# #2692 fix-r13 (DS + MM sibling/boundary, both families): the roster above
+# only catches one-sided drift. Sixteen rows ride an assertion string another
+# row also carries (the #813 markers / capability refusals above), so deleting
+# one of them from `mutants` *and* `EXPECTED_NAMES` together kept
+# `registered()` aligned and the surviving sibling kept the shared anchor
+# bound -- `--check` stayed green while one control silently stopped being
+# audited. ROW_PINS is a third denominator outside both tables: every
+# shared-assertion row must be present, so a both-tables drop refuses like a
+# one-sided one (the native-blankkey fix-r12 shape).
+ROW_PINS = (
+    'model-selection-event-skipped',
+    'request-started-fold-leaked',
+    'actual-text-model-skipped',
+    'projection-drop-event',
+    'projection-duplicate-event',
+    'input-ack-before-native-durable',
+    'failureguard-model-observe-skipped',
+    'guard-config-not-provided',
+    'timeout-disabled',
+    'timeout-status-skipped',
+    'timeout-error-skipped',
+    'timeout-abort-skipped',
+    'timeout-close-skipped',
+    'timeout-live-close-skipped',
+    'cwd-capability-error-ignored',
+    'cwd-host-unavailable-ok',
+)
+
+
 mutant_source = {'guard-config-not-provided': host_source,
                  'host-lease-release-skipped': host_source,
                  'cwd-host-unavailable-ok': host_source,
@@ -150,15 +248,89 @@ mutant_anchor = {
 }
 
 
+def shareable_anchor(row):
+    """The effective ``(kind, anchor)`` pair a row's binding asserts on.
+
+    closure-r3 (DS simplify#1, P2): the rule used to live twice -- `build()`
+    and `check_row_pins` each re-derived ``mutant_anchor.get(name, ('message',
+    marker))``, so a new anchor source added to `build()` left the reverse
+    check silently judging the old rule (the #1890 six-copy drift shape).
+    Both consumers now read this one function; `build()` keeps the location
+    expansion at its call site, so the reverse check stays free of I/O.
+    """
+    name, _, _, _, marker, _ = row
+    return mutant_anchor.get(name, ('message', marker))
+
+
+def check_row_pins(rows):
+    """Refuse a run whose shared-assertion rows lost one to a both-tables edit.
+
+    closure-r2 (MM concurrency #1, P1): the forward loop below is one-sided
+    -- it catches a pinned row that disappeared, but a row ADDED with a
+    sibling's assertion string and no ROW_PINS entry is the one drift nothing
+    guards since the structural census left with closure-r1 (the README
+    invariant-1 rule). The reverse direction is computed from this runtime
+    table. A row's assertion is the anchor `build()` actually binds -- the
+    marker column unless `mutant_anchor` overrides it; the location-kind
+    poison pair asserts a computed site, so their marker slot (which holds a
+    test name) is not a shareable assertion. Every row whose effective
+    assertion string another row also carries must be pinned.
+    """
+    names = {row[0] for row in rows}
+    for name in ROW_PINS:
+        if name not in names:
+            refuse(f'#2692 row pin names a row that is gone: {name}')
+    anchors = []
+    counts = {}
+    for row in rows:
+        kind, anchor = shareable_anchor(row)
+        if kind == 'location' or not isinstance(anchor, str):
+            continue
+        anchors.append((row[0], anchor))
+        counts[anchor] = counts.get(anchor, 0) + 1
+    shared = {anchor for anchor, total in counts.items() if total >= 2}
+    unpinned = sorted({name for name, anchor in anchors if anchor in shared}
+                      - set(ROW_PINS))
+    if unpinned:
+        refuse('#2692 turn-submit shared-assertion rows missing from '
+               f'ROW_PINS: {", ".join(unpinned)}')
+
+
+# #2692 fix-r7 (review sibling#1): --check also proves every bound test is
+# still declared in the one file that owns its module (adapter.check's
+# module-table gate, the same one native-blankkey / turn-read / turn-publish
+# carry from fix-r6).
+AUDITED_MODULES = (
+    ('runtime::turn::submit::tests::', test_source),
+    ('runtime::turn::submit_host::tests::', host_source.with_name('submit_host_tests.rs')),
+)
+
+
 def build():
+    # #2692 fix-r12 (MM sibling P1): the static-roster startup comparison --
+    # build() is the common entry of --check and the mutating run, so a
+    # dropped, renamed, duplicated or reordered row is a clean rc 2 refusal
+    # (printed by `negative_selection.refuse`) before any count is printed or
+    # any evidence directory is claimed. fix-r13 limits the claim: "dropped"
+    # here means from one table alone -- a row deleted from both tables at
+    # once is caught by `check_row_pins` below (the ROW_PINS denominator).
+    try:
+        registered(mutants, EXPECTED_NAMES)
+    except (ValueError, OSError) as error:
+        refuse(f'turn-submit mutation roster drifted: {error}')
+    # #2692 fix-r13: the third denominator, outside both tables -- a
+    # shared-assertion row dropped from both at once must refuse exactly
+    # like a one-sided drift.
+    check_row_pins(mutants)
     oracle = json.loads((fixture / 'oracle.json').read_text())['cases']
     inventory = adapter.test_inventory(test_source, test) + adapter.test_inventory(
         host_source.with_name('submit_host_tests.rs'), host_test)
     entries = [adapter.Mutation(Case('baseline', test, '#1110 positive baseline',
                                     kind='positive', positive_tests=inventory))]
-    for name, before, after, scenario, marker, capability in mutants:
+    for row in mutants:
+        name, before, after, scenario, marker, capability = row
         target = mutant_source.get(name, source)
-        kind, anchor = mutant_anchor.get(name, ('message', marker))
+        kind, anchor = shareable_anchor(row)
         if kind == 'location':
             anchor = adapter.unwrap_site(rust, target, before, after, target.read_bytes())
         elif anchor.startswith('#813 '):
@@ -168,7 +340,7 @@ def build():
                        prelude=('poison the leases mutex mid-turn',) if kind == 'location' else (),
                        payload_pattern=adapter.legacy_payload(anchor) if kind == 'message' else '')
         entries.append(adapter.Mutation(binding, target, before, after, scenario, capability))
-    adapter.check(entries, oracle)
+    adapter.check(entries, oracle, AUDITED_MODULES)
     return entries, oracle
 
 

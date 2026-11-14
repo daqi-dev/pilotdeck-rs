@@ -149,7 +149,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 282 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 78 in both; 1547 keys: 417 bare-filename joins and 1130 shared-helper import keys.
+# 283 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 2 with unresolvable shapes only, 78 in both; 1570 keys: 419 bare-filename joins and 1151 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -158,7 +158,7 @@ KNOWN_BLIND = {
     '_negkit/negative_compare_verdicts.py': '1 key',
     '_negkit/negative_contract.py': '4 keys',
     '_negkit/negative_non_head.py': '5 keys',
-    '_negkit/negative_submit_migration.py': '10 keys',
+    '_negkit/negative_submit_migration.py': '13 keys',
     '_shared/negative_control.py': '6 keys + 6 unresolvable',
     '_shared/negative_sqlite_header.py': '6 keys',
     '_shared/regeneration-negative.py': '6 keys',
@@ -189,11 +189,11 @@ KNOWN_BLIND = {
     'cli-parity-mock-gateway/negative_controls.py': '1 key + 1 unresolvable',
     'closure_guard_negative.py': '3 keys + 2 unresolvable',
     'commands-catalog/negative_controls.py': '4 keys',
-    'console-panic-safety/negative_controls.py': '4 keys + 2 unresolvable',
     'config-changes/negative_coverage.py': '6 keys',
     'config-error-names/negative_controls.py': '4 keys + 1 unresolvable',
     'config-store/negative_controls.py': '6 keys',
     'connection-context/negative.py': '7 keys + 3 unresolvable',
+    'console-panic-safety/negative_controls.py': '4 keys + 2 unresolvable',
     'cron-schedule/negative_controls.py': '8 keys',
     'cron-scheduler/negative_controls.py': '9 keys',
     'cron-store/negative_controls.py': '6 keys',
@@ -236,7 +236,7 @@ KNOWN_BLIND = {
     'edgeclaw-text/negative.py': '4 keys',
     'exact-receipt-yaml/negative_controls.py': '1 key',
     'exact-rerun-receipt/negative_controls.py': '1 key',
-    'failure-guard/negative.py': '7 keys',
+    'failure-guard/negative.py': '13 keys',
     'fe-baseline-report/negative_controls.py': '2 keys + 2 unresolvable',
     'fe-coexist/negative_controls.py': '2 keys',
     'file-history-cwd/negative_controls.py': '9 keys',
@@ -287,6 +287,7 @@ KNOWN_BLIND = {
     'native-archive-cwd/negative_controls.py': '7 keys',
     'native-archive-cwd/negative_proxy.py': '6 keys',
     'native-archive-cwd/negative_regeneration.py': '6 keys',
+    'native-blankkey-submit/negative_controls.py': '6 keys',
     'native-collation/negative_controls.py': '8 keys',
     'native-config/negative_controls.py': '6 keys + 1 unresolvable',
     'native-cron/negative_controls.py': '6 keys',
@@ -324,9 +325,6 @@ KNOWN_BLIND = {
     'output-schema/negative.py': '5 keys',
     'p01-preflight/negative_controls.py': '6 keys + 1 unresolvable',
     'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
-    # #2398 parity-subprocess-hardening 与 #1891 sidecar-liveness：随 #2136
-    # fix-r41 合并 main（c3100a2b7）到达的两张新表，无 DISCOVERY_ANCHORS，
-    # 按 #2141 规则以实测键数登记为 blind；补锚点归 #2141 修表清单。
     'parity-subprocess-hardening/negative_controls.py': '2 keys',
     'pending-reanchor/negative_controls.py': '4 keys',
     'permission-mode-surrogate/negative_controls.py': '6 keys',
@@ -346,8 +344,8 @@ KNOWN_BLIND = {
     'regex-proto-budget/negative_controls.py': '7 keys + 1 unresolvable',
     'replacement/negative-518.py': '3 keys',
     'replacement/negative.py': '1 key',
-    'retry-after-dialects/negative_controls.py': '6 keys',
     'retirement-negctl-roster/negative_controls.py': '5 keys',
+    'retry-after-dialects/negative_controls.py': '6 keys',
     'run-registry/count-negative.py': '8 keys + 1 unresolvable',
     'run-registry/timestamp-negative.py': '7 keys + 1 unresolvable',
     'runtime-spawn-panic/helpers_negative.py': '3 keys',
@@ -407,8 +405,8 @@ KNOWN_BLIND = {
     'turn-gateway-clock-edge/negative_controls.py': '6 keys',
     'turn-gateway/negative-fence.py': '10 keys',
     'turn-gateway/negative.py': '6 keys',
-    'turn-publish/negative.py': '5 keys',
-    'turn-read/negative.py': '5 keys',
+    'turn-publish/negative.py': '7 keys',
+    'turn-read/negative.py': '7 keys',
     'turn-replay/negative.py': '7 keys',
     'turn-runner/forward_negative.py': '13 keys',
     'turn-runner/input_negative.py': '10 keys',
@@ -419,7 +417,7 @@ KNOWN_BLIND = {
     'turn-runner/runner_negative.py': '4 keys',
     'turn-submit-admission/negative_controls.py': '2 keys',
     'turn-submit-panic-close/negative.py': '5 keys + 2 unresolvable',
-    'turn-submit/negative.py': '6 keys',
+    'turn-submit/negative.py': '10 keys',
     'ui-server-parity-isolation/negative_controls.py': '3 unresolvable',
     'unsafe-config-boundary/negative_controls.py': '4 keys',
     'upload-gateway/negative_controls.py': '3 keys',
@@ -4920,10 +4918,6 @@ class DiscoveryAnchorTests(unittest.TestCase):
                         (FIXTURES / name).read_text(encoding='utf-8')))[0])
                     for name in TABLES),),
             'registered table count': (len(TABLES),),
-            # fix-bump (#1087 reanchor review, DS sibling#3): the "#2133 名字
-            # 后的 4 张"是同段唯一没被任何 pattern 绑定的数字副本——某张 #2133
-            # 表被换掉而总数不变时它会静默过期，按同段同法绑定。
-            'registered #2133 table count': (len(TABLES) - 1,),
             'head-timeout split': (
                 len(blind['channel-sms-head-timeout/negative_controls.py']),
                 sum(1 for rows in blind['channel-sms-head-timeout/'
@@ -4961,7 +4955,6 @@ class DiscoveryAnchorTests(unittest.TestCase):
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
             'registered table count': r'本闸门当前登记 (\d+) 张表（#2133 点名的',
-            'registered #2133 table count': r'(\d+) 张，加 #3043',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

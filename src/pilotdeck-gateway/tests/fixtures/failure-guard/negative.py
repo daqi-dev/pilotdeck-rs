@@ -108,6 +108,14 @@ config_start = block.index('        let mut failure_guard = self')
 before_refresh = block[config_start:] + block[:config_start]
 mutants.append(mutation('config-snapshotted-before-refresh', submit, block, before_refresh, 'guard-refresh-enables',
     submit_marker('guard-refresh-enables', 2, 'terminal')))
+# #2692 fix-r7 (review sibling#1): --check also proves every bound test is
+# still declared in the one file that owns its module (adapter.check's
+# module-table gate, the same one native-blankkey / turn-read / turn-publish
+# carry from fix-r6).
+AUDITED_MODULES = (
+    ('runtime::turn::failure_guard::tests::', turn / 'failure_guard_tests.rs'),
+    ('runtime::turn::submit::tests::', turn / 'submit_tests.rs'),
+)
 
 
 def build():
@@ -119,7 +127,7 @@ def build():
         binding = Case(control['name'], control['test'], control['marker'])
         entries.append(adapter.Mutation(binding, control['path'], control['before'],
                                         control['after'], control['case']))
-    adapter.check(entries, oracle)
+    adapter.check(entries, oracle, AUDITED_MODULES)
     return entries, oracle
 
 
