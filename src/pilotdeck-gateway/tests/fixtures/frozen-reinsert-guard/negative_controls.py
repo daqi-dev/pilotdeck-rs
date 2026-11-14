@@ -524,6 +524,16 @@ EXPECTED_NAMES = (
     'parity_controls_multimodal_py_reinsert',
     'parity_controls_multimodal_py_old_python',
     'parity_controls_multimodal_py_unloaded_os',
+    # #2513 fix-r11: the merge 8c8f13659 carried main's #1642 fix-r5
+    # EXPECTED_NAMES past this lane's #1066 mutation rows for
+    # scripts/parity/controls/{host_env_isolation,round_head_guard}.py
+    # (rows above, table order kept); the roster missed these six.
+    'parity_controls_host_env_isolation_py_reinsert',
+    'parity_controls_host_env_isolation_py_old_python',
+    'parity_controls_host_env_isolation_py_unloaded_os',
+    'parity_controls_round_head_guard_py_reinsert',
+    'parity_controls_round_head_guard_py_old_python',
+    'parity_controls_round_head_guard_py_unloaded_os',
     'parity_controls_review_r1_py_reinsert',
     'parity_controls_review_r1_py_old_python',
     'parity_controls_review_r1_py_unloaded_os',

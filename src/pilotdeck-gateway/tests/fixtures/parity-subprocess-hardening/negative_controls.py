@@ -44,13 +44,19 @@ from negative_selection import claim_dir, refuse, registered
 
 root = Path(__file__).resolve().parents[5]
 mutations = [
+    # #2513 fix-r11: scripts/parity/check_frozen.py git() was aligned to the
+    # ui-server r10 hardened shape — absolute /usr/bin/git plus a fresh
+    # three-key env. The anchors below follow that literal; each mutant keeps
+    # its kill vector (inherit the caller's hostile GIT_* / honor the caller's
+    # GIT_CONFIG_GLOBAL instead of pinning os.devnull).
     ('parity-git-env-strip', root / 'scripts/parity/check_frozen.py',
-     "env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}",
+     "env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "           'GIT_CONFIG_GLOBAL': os.devnull}",
      'env = dict(os.environ)',
      'control_check_frozen_hostile_env'),
     ('parity-git-config-global', root / 'scripts/parity/check_frozen.py',
-     "env['GIT_CONFIG_GLOBAL'] = os.devnull",
-     "env['GIT_CONFIG_GLOBAL'] = os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull",
+     "'GIT_CONFIG_GLOBAL': os.devnull}",
+     "'GIT_CONFIG_GLOBAL': os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull}",
      'control_check_frozen_hostile_config'),
     ('g03-git-env-strip', root / 'scripts/parity/g03_compare.py',
      'env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}',
