@@ -1263,8 +1263,18 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 纯函数负控：题头区内非空不相交链 → foreign；题头区外 / 链有交集 → 不 foreign
         if len(gate.foreign_fixround_pairs(["fix(gateway) #3056 fix-r5：x"], frozenset())) != 1:
             fails.append("fix-r2 P0 纯函数：题头区引用 + 空关联集应列 1 条 foreign")
+        # fix-r12 P2-2（sibling#2）口径收窄：本断言只覆盖「无裸号引用、无散文间隔」的
+        # 相交半边（紧邻配对 → 计入，不 foreign）；裸号引用/散文间隔断归属的相交半边
+        # 自 fix-r11 起照进 foreign 拒收（归属存疑）——正控见下一条。
         if gate.foreign_fixround_pairs(["fix(gateway) #3056 fix-r5：x"], frozenset({"3056"})):
-            fails.append("fix-r2 P0 纯函数：链 ∩ issues ≠ ∅ 不得列 foreign")
+            fails.append("fix-r2 P0 纯函数：无裸号引用、无散文间隔时链 ∩ issues ≠ ∅ 不得列 foreign")
+        # fix-r12 P2-2 正控（与 fix-r11 P1-1 的 _scan_pairs「前向臂相交半边」钉成对）：
+        # 裸号引用断归属的相交半边，纯函数 foreign_fixround_pairs 同样拒收——两入口
+        # 钉与真实行为同步，防「只钉 _scan_pairs、check() 实际路径漂移」
+        if not gate.foreign_fixround_pairs(["fix(gateway) #3056 P1×3 + 2932 fix-r2：x"],
+                                          frozenset({"3056"})):
+            fails.append("fix-r12 P2-2：裸号引用断归属的相交半边，foreign_fixround_pairs "
+                        "应非空拒收（与 fix-r11 P1-1 的 _scan_pairs 钉成对）")
         if gate.foreign_fixround_pairs([board_t], frozenset({"3074"})):
             fails.append("fix-r2 P0 纯函数：board 尾（题头区外引用别的单）不得列 foreign")
         if gate.foreign_fixround_pairs(["chore: 无轮号提交"], frozenset()):
@@ -1394,6 +1404,15 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r3 P0 负控：题头区外括注里的 r4（决策卡注记）不应判修复轮")
         if gate.fix_round_from_title("fix(scripts) #3056 MM r16 评审意见修正", frozenset({"3056"})) is not None:
             fails.append("fix-r3 P0 负控：rN 与 #N 链之间有字母（MM/DS 署名）不紧邻，不计")
+        # fix-r12 P1-2（sibling#1，协调者裁定 b 案：确属有意 fail-closed 拒收）：上方冻结
+        # 负控只钉了 rounds 半边（不计），与收集臂 fix-r11 起的 foreign 真实行为脱节——
+        # 补 foreign 半边钉：「不计但拒收」（rounds=[] 且 foreign 含 (16,{3056})）。
+        # 修法=把引用移出题头区（首个全角「：」之后），不是补全拼——全拼 fix-r16 对
+        # 本族＝假声明修复轮 16，N≥4 触发 residual 连锁假 FAIL（文案已同步）
+        if gate._scan_pairs("fix(scripts) #3056 MM r16 评审意见修正",
+                            frozenset({"3056"})) != ([], [(16, frozenset({"3056"}))]):
+            fails.append("fix-r12 P1-2：评审署名族简写轮号「不计但拒收」——rounds=[] 且 "
+                        "foreign 含 (16,{3056})（钉与真实行为同步；修法=移出题头区，不是补全拼）")
         if gate.fix_round_from_title("chore(state) 交接段：#9999 复盘 r8 现场", frozenset({"9999"})) is not None:
             fails.append("fix-r3 P0 负控：题头区外的 rN（交接段板尾）不计")
         # P0② 负控：去类型词化不放开散文——无 #N 配对的 non-TITLE_HEAD token 不计
@@ -1971,6 +1990,12 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not _ei11 or any("题头区引用 #3056 不在本 PR 关联单（#3056）" in e for e in _errs11):
             fails.append(f"fix-r11 P1-1 e2e：相交半边 foreign 拒收应报「归属存疑」而非"
                          f"「不在本 PR 关联单」（假指引）：{_errs11[:3]}")
+        # fix-r12 P1-2（b 案第三件）文案同步断言：相交半边建议改为「移出题头区 …或与
+        # 链写紧邻」，不得再建议「全拼 fix-rN」——对本族（评审署名 + 简写轮号）＝假
+        # 声明修复轮 N，N≥4 触发 residual 连锁假 FAIL
+        if not any("移出题头区" in e for e in _errs11) or any("全拼 fix-r" in e for e in _errs11):
+            fails.append("fix-r12 P1-2 e2e：相交半边文案应建议「移出题头区」，不得建议"
+                        f"「全拼 fix-rN」（假指引）：{_errs11[:3]}")
         # 全矩阵扩展（任务书硬判据，同处第四轮补轴）：fix-r10 矩阵（拼写×链形×gap
         # 长度×issues）之上加 **gap 内容轴**（纯 PAIR_SEP 间隙 / 散文间隔）与 **臂轴**
         # （前向 / 收集 / 后向各形）——不变式「任何格子不得 rounds=[] ∧ foreign=[]」
@@ -2023,6 +2048,80 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r11 P2-4：_GapScan.clear 契约违约应 raise（静默 fallback 回潮）")
         except RuntimeError:
             pass
+
+        # —— #3074 fix-r12（MM+DS r11 复审 P1×2 + P2×2；同词汇位第 3 轮，memory
+        # 「lexical-verdict-fix-nonconvergence」硬要求轴空间收口，RESULT 附全枚举表）——
+        # P1-1（concurrency#1）enum 维度残留：收集臂在枚举型标题下（题头区内 ≥2 条互不
+        # 相交 #N 链）对散文间隔简写 token 整条 continue 丢弃 → ([], []) → fix_round=None
+        # → fixtype/N≥4 residual/多块一致三段义务整段跳过＝假 PASS；同结构全拼对照计 5
+        # （before 实测 _tmp/20261114-3074-fixr12/probe-p1-before.out）
+        if gate._scan_pairs("fix(scripts) #3056+3074 补 r5 #2957 P1×3",
+                            frozenset({"3056"})) != ([5], []):
+            fails.append("fix-r12 P1-1：枚举型标题下散文间隔简写 token 照走 rounds 路径"
+                        "（enum 只压 foreign 半边）——链∩issues≠∅ 计 5（修前 ([], [])＝假 PASS）")
+        if gate.fix_round_from_title("fix(scripts) #3056+3074 补 r5 #2957 P1×3",
+                                     frozenset({"3056"})) != 5:
+            fails.append("fix-r12 P1-1 e2e：触发形标题应判修复轮 5（修前 None＝义务整段跳过）")
+        # 不相交半边：enum 下 foreign=[] 是登记在案的抑制（硬不变式②，board 并记形态
+        # 各归各单的保护；与全拼形同判——`_enum_title` docstring 窄窗表）
+        if gate._scan_pairs("fix(scripts) #3056+3074 补 r5 #2957 P1×3",
+                            frozenset({"9999"})) != ([], []):
+            fails.append("fix-r12 P1-1：不相交半边 enum 下 foreign=[] 是登记在案的抑制"
+                        "（非静默丢弃，board 形态保护不变——全拼对照同判）")
+        # 裸号引用（含数字散文 `P1×3 + 2932`）断归属的相交半边 + enum：登记抑制直钉
+        # （_enum_title docstring 窄窗表；非枚举对照＝fix-r11 P1-1 钉）——防「登记了
+        # 但行为静默漂移」；修法=移出题头区或与链写紧邻
+        if gate._scan_pairs("fix(scripts) #3056 P1×3 + 2932 fix-r2 交付；#9991 P1×2",
+                            frozenset({"3056"})) != ([], []):
+            fails.append("fix-r12 P1-1：裸号引用断归属的相交半边在 enum 下 rounds=[]∧"
+                        "foreign=[]＝登记抑制（非枚举对照照进 foreign，见 fix-r11 P1-1 钉）")
+        # P1-1 矩阵补 enum 轴（任务书硬判据）：3 臂 × 2 gap 内容 × 2 issues 相交性 ×
+        # 2 enum（单链/枚举）＝ 24 格——非枚举半边＝上方 fix-r11 矩阵 12 格（裸号引用
+        # 形态族），枚举半边在此（enum 判定用题头区 ≥2 互不相交链的真实形，如
+        # `#3056+3074 … #2957 P1×3`；gap＝纯 PAIR_SEP/散文间隔两档，散文档不含裸号
+        # 引用——裸号引用维度由 r11 矩阵 + 上方直钉 + _enum_title 登记窄窗覆盖）。
+        # 硬不变式：① 归属完好（gap 无裸号引用）且 链∩issues≠∅ → rounds≠[]；② 不相交
+        # 半边 enum 下 foreign=[] 是登记在案的抑制（非静默丢弃）。全矩阵直调
+        # allow_unpaired=False＝生产非 TITLE_HEAD 口径（后向臂需它走后向分支而非 SELF
+        # 兜底；前向/收集臂不经 allow_unpaired 敏感分支，两侧同判）
+        _m12_bad: list[str] = []
+        _m12_rows = 0
+        _e12_forms = (
+            ("前向", lambda gc: f"fix(scripts) #3056{gc}fix-r2 交付；#9991 P1×2",
+             frozenset({"3056"}), 2),
+            ("收集", lambda gc: f"fix(scripts) #3056+3074{gc}r5 修闸门 #2957 P1×3",
+             frozenset({"3056"}), 5),
+            ("后向", lambda gc: f"修补{gc}fix-r2 交付 + #2957 P1×3；#9991 P1×2",
+             frozenset({"2957"}), 2),
+        )
+        for _arm, _mk, _chain, _num in _e12_forms:
+            for _gname, _gc in (("纯间隙", " + "), ("散文间隔", " 补 ")):
+                _title = _mk(_gc)
+                for _iss in (_chain, frozenset({"9999"})):
+                    _rs, _fo = gate._scan_pairs(_title, _iss, allow_unpaired=False)
+                    _m12_rows += 1
+                    if not _chain.isdisjoint(_iss):
+                        # ① 归属完好 + 相交 → 计入（enum 只压 foreign 半边）
+                        if _rs != [_num] or _fo:
+                            _m12_bad.append(f"计入格（enum）：{_arm}/{_gname}：{_title!r} "
+                                            f"issues={sorted(_iss)} → {_rs}/{_fo}")
+                    else:
+                        # ② 不相交半边 enum 下 ([], [])＝登记抑制（非静默丢弃）
+                        if _rs or _fo:
+                            _m12_bad.append(f"抑制格（enum）：{_arm}/{_gname}：{_title!r} "
+                                            f"issues={sorted(_iss)} → {_rs}/{_fo}")
+        if _m12_bad:
+            fails.append(f"fix-r12 矩阵（enum 轴）：{_m12_rows} 格中 {len(_m12_bad)} 失败"
+                         f"（前 6）：{_m12_bad[:6]}")
+        # P2-1（boundary#1）：矩阵分母下界断言——期望格数按轴单源算（len(forms)×gap
+        # 内容×issues 相交性），不写死字面量（enum 轴并入后格数变过，单源算防再次
+        # 漂移）；防「删空元组 → 0 格 0 失败假绿」（矩阵静默失效）
+        if _m11_rows != len(_arm_forms) * 2 * 2:
+            fails.append(f"fix-r12 P2-1：fix-r11 矩阵格数 {_m11_rows} ≠ 期望 "
+                        f"{len(_arm_forms) * 2 * 2}（轴单源算）——矩阵可能被删空")
+        if _m12_rows != len(_e12_forms) * 2 * 2:
+            fails.append(f"fix-r12 P2-1：fix-r12 enum 矩阵格数 {_m12_rows} ≠ 期望 "
+                        f"{len(_e12_forms) * 2 * 2}（轴单源算）——矩阵可能被删空")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
