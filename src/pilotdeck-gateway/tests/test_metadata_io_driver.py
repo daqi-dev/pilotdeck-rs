@@ -1675,7 +1675,10 @@ class EnvironmentControls(unittest.TestCase):
             # #3043 fix-r5 给该夹具补了 StaticRosterTests 四向名册守卫
             # （rename / reorder / 双删 / 纯净宽度），口径=当前 test_ 方法数：
             # 20→24，不抬则删掉那四条 CI 仍绿（下限漂移洞）。
-            ('sdk-signals-close-order-pin/test_negative_controls.py', 24),
+            # #3043 fix-r10（P1 + P2#2）：GuardedSourceWindowTests 两用例
+            # （祖先持锁窗口内 bound 读取仍绿 = P1 回归钉；repo 锁 busy 分支
+            # 具名诊断 + 预算内拒 + 正控），同口径 24→26。
+            ('sdk-signals-close-order-pin/test_negative_controls.py', 26),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -3548,6 +3551,16 @@ class EnvironmentControls(unittest.TestCase):
              'out_catalog = path\n'
              '                        out_catalog.write_text(changed, '
              'encoding="utf-8")'),
+            # fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：结构判据只看
+            # 名字形状，名字正好取成 ``out`` 即放行——``out = path`` 之后
+            # ``out.write_text(...)`` 在 r9 判据下存活。绑定来源判（名字只能
+            # 由调用赋值）必须杀：该伪装自己引入了 ``out = path`` 绑定。
+            ('rebound-out-receiver-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'out = path\n'
+             '                        out.write_text(changed, '
+             'encoding="utf-8")'),
         ),
         # #3043 fix-r9（DS sibling，同族 P1）：sdk-signals 本体的两个发布点。
         'sdk-signals/negative_controls.py': (
@@ -3558,6 +3571,17 @@ class EnvironmentControls(unittest.TestCase):
             ('truncating-restore-write',
              'write_source_atomic(root, path, originals[path])',
              'path.write_bytes(originals[path])'),
+            # fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：sdk-signals
+            # 模块级 ``output = root / "src/.../output.rs"`` 本是被变异的
+            # 产物源（变异行目标），名字形状判据放行任何 ``output`` 接收者。
+            # 绑定来源判按文件收窄后此处 ``output`` 判红——该伪装在 r9
+            # 判据下存活（现状即证明洞存在）。
+            ('rebound-output-receiver-write',
+             'write_source_atomic(\n'
+             '                            root, path, changed.encode("utf-8"))',
+             'output = path\n'
+             '                        output.write_text(changed, '
+             'encoding="utf-8")'),
         ),
     }
 
@@ -4272,7 +4296,55 @@ class EnvironmentControls(unittest.TestCase):
         return body
 
     @staticmethod
-    def receiver_is_output_directory(func):
+    def output_name_has_only_call_bindings(tree, name):
+        """fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：名字只认**绑定来源**。
+
+        名字形状（r9）之后还差绑定形状：把伪装变量正好命名为 ``out``
+        （``out = path`` 之后 ``out.write_text(...)``）或 ``output`` 即可放行，
+        而 ``sdk-signals`` 模块级 ``output = root / "src/.../output.rs"``
+        本就是被变异的产物源，放行任何 ``output`` 接收者都是 #1903 半文件
+        形态的假 PASS。本判定按文件收窄：名字在本文件里只能由**调用**赋值
+        （``new_output_directory(...)``、``Path(args[0]).resolve()`` 这类构造
+        调用）——健康六夹具的 ``out``/``output`` 绑定全是调用形态
+        （native-config 的 ``out = Path(args[0]).resolve()``、
+        native-stimulus-plan 的 ``out = args.output.resolve()``、
+        shared-runner:668 与 pin:419、sdk-signals:616 的
+        ``new_output_directory``）；绑定到名字 / 路径链 / 常量 / 解包 /
+        循环目标的一律视为「不证明是输出目录」。据此 ``out`` 在现存夹具里
+        全放行，``output`` 只在 sdk-signals 判红（其模块级绑定正是产物源）。
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        if target.id == name and not isinstance(node.value, ast.Call):
+                            return False
+                    elif isinstance(target, ast.Tuple):
+                        if any(isinstance(element, ast.Name) and element.id == name
+                               for element in target.elts):
+                            return False
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                if isinstance(node.target, ast.Name) and node.target.id == name:
+                    return False
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                if isinstance(node.target, ast.Name) and node.target.id == name:
+                    return False
+                if isinstance(node.target, ast.Tuple) and any(
+                        isinstance(element, ast.Name) and element.id == name
+                        for element in node.target.elts):
+                    return False
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if (isinstance(item.optional_vars, ast.Name)
+                            and item.optional_vars.id == name):
+                        return False
+            elif isinstance(node, ast.ExceptHandler):
+                if node.name == name:
+                    return False
+        return True
+
+    @staticmethod
+    def receiver_is_output_directory(func, tree):
         """fix-r9（DS boundary#1，b-档）：接收者按 AST 结构判，不按源码文本前缀。
 
         放行的只有两种形态：接收者名字本身是 ``out`` / ``output``，或以它们为
@@ -4282,11 +4354,18 @@ class EnvironmentControls(unittest.TestCase):
         ``get_source_segment`` 的源码文本，对它们假放行，把截断写藏进一个
         ``out`` 开头的变量名就能过（正是逐词补词表必出新洞的形态）。链条的
         最左端必须是那两个名字本身，中间一环换名（``a / out``）同样判红。
+        fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：结构之上再补**绑定**
+        判（见 ``output_name_has_only_call_bindings``，按整棵树收窄）——名字
+        在本文件里还只能由调用赋值，``out = path`` / ``output = <产物源路径>``
+        这类绑定让名字不再是可放行的输出目录。
         """
         value = func.value
         while isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
             value = value.left
-        return isinstance(value, ast.Name) and value.id in ('out', 'output')
+        if not (isinstance(value, ast.Name) and value.id in ('out', 'output')):
+            return False
+        return EnvironmentControls.output_name_has_only_call_bindings(
+            tree, value.id)
 
     def sibling_write_guards(self, source, relative):
         """#1692 §9 r2/r4/r9：被变异源一处原地截断写都不许有，全走原子发布。
@@ -4302,18 +4381,25 @@ class EnvironmentControls(unittest.TestCase):
         前缀（`startswith('out')`）——`out_path.write_bytes(…)` 这种伪装接收者
         照样放行。白名单收成结构判定（见 `receiver_is_output_directory`），
         并配 `disguised-out-receiver-write` 存活变异钉住，不再往词表里逐词补。
+        fix-r10（DS boundary#1 ≡ MM concurrency#3，双撞）：结构判定对「名字正好
+        取成 out/output」的伪装仍放行（`out = path` 之后 `out.write_text(…)`），
+        补绑定来源判（`output_name_has_only_call_bindings`）并配
+        `rebound-out-receiver-write` / `rebound-output-receiver-write` 两条
+        存活变异钉住。
         """
         offenders = []
-        for node in ast.walk(ast.parse(source)):
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
             if node.func.attr not in ('write_text', 'write_bytes'):
                 continue
             receiver = (ast.get_source_segment(source, node.func.value) or '').strip()
             # 证据目录是唯一允许的原地写目标：接收者必须是 `out` / `output`
-            # 名字本身或以它为最左端的 `/` 链（AST 结构判，fix-r9）。被变异源
+            # 名字本身或以它为最左端的 `/` 链（AST 结构判，fix-r9），且该
+            # 名字在本文件里只由调用赋值（绑定判，fix-r10）。被变异源
             # 一律走原子发布。
-            if self.receiver_is_output_directory(node.func):
+            if self.receiver_is_output_directory(node.func, tree):
                 continue
             offenders.append(f'line {node.lineno}: {receiver}.{node.func.attr}(…)')
         self.assertEqual(offenders, [],

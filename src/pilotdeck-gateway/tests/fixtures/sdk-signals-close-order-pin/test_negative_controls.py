@@ -157,6 +157,12 @@ from negative_process import tree_lock
 # (the roster_guards twin, one level shallower at ``fixtures/`` itself, uses
 # ``parents[4]`` for the same root).
 REPO_ROOT = Path(__file__).resolve().parents[5]
+# fix-r10 (P2#4, DS simplify#1 ≡ MM simplify#1): the depth constant is
+# self-proved against FIXTURES. A relocated or flattened fixture tree would
+# otherwise derive some other *existing* directory, and ``tree_lock``
+# (``os.open(..., O_CREAT)``) would silently create a stranger's lock file
+# there -- the window would stay green while locking nothing at all.
+assert (REPO_ROOT / 'src/pilotdeck-gateway/tests/fixtures').resolve() == FIXTURES
 
 
 @contextlib.contextmanager
@@ -172,7 +178,22 @@ def guarded_source_window(*, timeout=2):
     explicit and short (the roster_guards ``fast_tree_lock`` precedent): a
     holder outliving it fails closed with a holder-naming diagnostic instead
     of TreeLock's silent 900 s default outlasting the CI step's own timeout.
+
+    fix-r10 (P1, four-way review: DS sibling#1/concurrency#1, MM
+    sibling#1/boundary#1): the close-order-reader round runs this file's
+    bound test as a subprocess *inside* its own ``mutating_sources``
+    window, so the descendant's lock can only ever wait on its own
+    ancestor -- no amount of waiting resolves (the Rust read-lease
+    precedent, ``tests/common/read_lease.rs:61-96``). The ancestor is also
+    the byte writer for the very sources this window guards, which is
+    exactly what the bypass asserts (the ``sdk-signals:650`` export shape):
+    the mutation leg must read the parent-published mutant off the disk,
+    and the pristine/restored legs read the restored pristine -- reading
+    straight through yields the correct bytes on all three legs.
     """
+    if os.environ.get('PDRS_NEGATIVE_LEASE_HELD_ROOT') == str(REPO_ROOT):
+        yield
+        return
     try:
         with tree_lock(REPO_ROOT, timeout=timeout):
             yield
@@ -182,6 +203,39 @@ def guarded_source_window(*, timeout=2):
             f'round holds {REPO_ROOT}/.negative-source.lock for over '
             f'{timeout} s and mutant bytes would be read as pristine; '
             f'refusing: {error}') from error
+
+
+# fix-r10 (P2#1, DS sibling#2 ≡ MM concurrency#2, 双撞): the pin runner's
+# fixture import closure -- its own ``from negative_selection import …`` /
+# ``from negative_suite import …`` plus the two modules those pull in
+# transitively (negative_suite imports pending_reanchor and negative_panic;
+# negative_panic imports negative_scope). A staged runner that resolves any
+# of these from the *real* fixtures directory reads them unlocked, and
+# ``negative_suite.py`` is the shared-runner round's own mutation target --
+# the import channel leaked exactly the TOCTOU the staging exists to close.
+# ``negative_process.py`` is deliberately absent from the harness-flow set:
+# the harness imports the real module first to patch its guard boundaries
+# (the runner's from-import then hits ``sys.modules``), while the direct-run
+# flows below stage it alongside.
+PIN_RUNNER_SHARED_SOURCES = (
+    'negative_suite.py',
+    'negative_selection.py',
+    'pending_reanchor.py',
+    'negative_panic.py',
+    'negative_scope.py',
+)
+DIRECT_RUNNER_SHARED_SOURCES = ('negative_process.py',) + PIN_RUNNER_SHARED_SOURCES
+
+
+def stage_shared_sources(fixtures_root, names):
+    """Copy shared fixture modules into a temp fixtures tree (fix-r10 P2#1).
+
+    Only ever called inside ``guarded_source_window()``: the real bytes are
+    read while the repo tree lock is held, exactly like the staged runner and
+    catalog themselves, so a sibling round's on-disk mutant cannot travel.
+    """
+    for name in names:
+        (fixtures_root / name).write_bytes((FIXTURES / name).read_bytes())
 
 # The first per-ID row and the first boundary row of the registered table: one
 # of each criterion family, in table order.
@@ -505,6 +559,15 @@ class _PinDriver:
         with guarded_source_window():
             staged_pin.write_bytes(PIN_SCRIPT.read_bytes())
             catalog.write_bytes(CATALOG_SCRIPT.read_bytes())
+            # fix-r10 (P2#1, DS sibling#2 ≡ MM concurrency#2): stage the
+            # runner's fixture import closure next to the staged catalog, so
+            # the staged runner's own ``sys.path.insert(parents[1])`` (the
+            # temp tree) resolves every shared module first. Before this the
+            # temp tree resolved none of them and the imports fell back to
+            # the real fixtures directory, where a sibling round can hold a
+            # mutant on disk -- the same TOCTOU the staging exists for,
+            # leaking through the import channel.
+            stage_shared_sources(catalog.parent, PIN_RUNNER_SHARED_SOURCES)
         for ledger in ('D1-SDK-WS-CLOSE-ORDER-001.md',
                        'D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md'):
             path = tree / 'specs/gateway-parity/diffs' / ledger
@@ -532,6 +595,17 @@ class _PinDriver:
     def counts_line(stdout):
         lines = [line for line in stdout.split('\n') if line.strip()]
         return json.loads(lines[-1]) if lines else None
+
+    @staticmethod
+    def _kill_holder(holder):
+        # Group kill, not a bare kill(): the holder runs in its own session
+        # (the issue-2495 cleanup shape). A vanished group is not an error.
+        if holder.poll() is None:
+            try:
+                os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        holder.wait(timeout=30)
 
 
 class AbortAccountingTests(_PinDriver, unittest.TestCase):
@@ -610,17 +684,6 @@ class AbortAccountingTests(_PinDriver, unittest.TestCase):
                    '/negative_controls.py')
         self.assertEqual(catalog.read_bytes(), before,
                          '#1800 an entry-phase abort never wrote the catalog')
-
-    @staticmethod
-    def _kill_holder(holder):
-        # Group kill, not a bare kill(): the holder runs in its own session
-        # (the issue-2495 cleanup shape). A vanished group is not an error.
-        if holder.poll() is None:
-            try:
-                os.killpg(os.getpgid(holder.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        holder.wait(timeout=30)
 
     def test_mid_run_restore_failure_revokes_and_completes_accounting(self):
         # The #1800 core: a restore failure after a green row must revoke the
@@ -1188,9 +1251,25 @@ class PreGuardRefusalTests(unittest.TestCase):
     def refusal(self, argv, env):
         base = Path(tempfile.mkdtemp(prefix='pdrs-1800-refusal-'))
         _BASES.append(base)
+        fixtures = base / 'src/pilotdeck-gateway/tests/fixtures'
+        staged_pin = (fixtures / 'sdk-signals-close-order-pin'
+                      / 'negative_controls.py')
+        staged_pin.parent.mkdir(parents=True)
+        # fix-r10 (P2#5, MM sibling#2): this used to exec the real PIN_SCRIPT
+        # directly, unlocked -- the one remaining execution of a guarded
+        # source outside a window in this file, and PIN_SCRIPT is exactly
+        # the close-order-reader round's RUNNER, so a sibling round's mutant
+        # could rewrite the refusal contract under it. Take a staged copy
+        # inside the window (the run_pin shape) and run the staged bytes; the
+        # tree shape keeps the runner's own ``parents[1]`` sys.path derivation
+        # inside the temp tree, and the whole import closure is staged with
+        # it (P2#1 -- a direct run imports negative_process itself).
+        with guarded_source_window():
+            staged_pin.write_bytes(PIN_SCRIPT.read_bytes())
+            stage_shared_sources(fixtures, DIRECT_RUNNER_SHARED_SOURCES)
         out = base / 'out'
         result = subprocess.run(
-            [sys.executable, '-I', str(PIN_SCRIPT), str(out), *argv],
+            [sys.executable, '-I', str(staged_pin), str(out), *argv],
             capture_output=True, text=True, timeout=60, env=env)
         return result, out
 
@@ -1278,6 +1357,15 @@ class StaticRosterTests(unittest.TestCase):
         tree.mkdir(parents=True)
         copy = tree / 'negative_controls.py'
         copy.write_text(source, encoding='utf-8')
+        # fix-r10 (P2#1, the same family as run_pin's staging): the copy's
+        # own ``sys.path.insert(parents[1])`` puts the temp fixtures dir
+        # first, so stage the runner's whole import closure there inside the
+        # tree lock (a direct run imports negative_process itself) --
+        # otherwise every shared module still resolves from the real
+        # fixtures directory, where a sibling round can hold a mutant on
+        # disk (``negative_suite.py`` is shared-runner's SUITE).
+        with guarded_source_window():
+            stage_shared_sources(tree.parent, DIRECT_RUNNER_SHARED_SOURCES)
         boot = base / 'boot.py'
         boot.write_text(
             ROSTER_BOOT_SOURCE.replace('__REAL_FIXTURES__',
@@ -1390,6 +1478,111 @@ class StaticRosterTests(unittest.TestCase):
                          f'{result.stderr!r}')
         self.assertIn('#1382 CARGO_TARGET_DIR must be supplied', result.stderr)
         self.assertFalse(out.exists())
+
+
+class GuardedSourceWindowTests(_PinDriver, unittest.TestCase):
+    """fix-r10 (P1 + P2#2): the repo-tree lock window's two observable legs.
+
+    P1 (four-way review, coordinator-measured red: the close-order-reader
+    round went INVALID=6 because the bound test's guarded window waited
+    2 s on its own ancestor): the bypass leg needs a regression pin -- a
+    sibling process holds the very repo lock a real round would hold, the
+    ``PDRS_NEGATIVE_LEASE_HELD_ROOT`` bypass is exported exactly as
+    ``run_bound`` now exports it, and the bound-shaped staged read must
+    stay green. P2#2 (DS sibling#3): the busy branch itself had no paired
+    control anywhere -- nothing held the *repo* lock and asserted the
+    named diagnostic within the budget.
+    """
+
+    def _hold_repo_lock(self):
+        # The real repo lock, held by a sibling process in the round's own
+        # shape (LOCK_HOLDER_SOURCE: acquire, publish the ready file
+        # atomically, sleep). Positive control is the same window acquiring
+        # cleanly once the holder is gone.
+        base = Path(tempfile.mkdtemp(prefix='pdrs-3043-repolock-'))
+        _BASES.append(base)
+        ready = base / 'held'
+        holder = subprocess.Popen(
+            [sys.executable, '-I', '-c', LOCK_HOLDER_SOURCE,
+             str(FIXTURES), str(REPO_ROOT), str(ready)],
+            start_new_session=True)
+        self.addCleanup(self._kill_holder, holder)
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertIsNone(
+                holder.poll(),
+                'the repo lock holder died before holding the tree lock')
+            self.assertLess(time.monotonic(), deadline,
+                            'the repo lock holder never published its '
+                            'ready file')
+            time.sleep(0.05)
+        return holder
+
+    def test_bound_reads_stay_green_inside_an_ancestors_lock_window(self):
+        # The P1 regression pin: without the env bypass this exact shape
+        # waited 2 s on its own ancestor and failed closed (the round's
+        # whole table INVALID). With it, the staged read runs to its green
+        # verdict while the ancestor still holds the lock.
+        self._hold_repo_lock()
+        saved = os.environ.get('PDRS_NEGATIVE_LEASE_HELD_ROOT')
+        os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = str(REPO_ROOT)
+        try:
+            process, summary, tree, before = self.run_pin('killed')
+        finally:
+            if saved is None:
+                del os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT']
+            else:
+                os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = saved
+        self.assertEqual(process.returncode, 0,
+                         '#3043 a bound read inside the ancestor lock window '
+                         f'must stay green: {process.stderr!r}'
+                         f'{process.stdout!r}')
+        self.assertEqual([row['status'] for row in summary['results']],
+                         ['KILLED'] * len(SELECTION))
+        self.assertEqual(summary['counts'],
+                         {'KILLED': len(SELECTION), 'SURVIVED': 0,
+                          'INVALID': 0})
+        catalog = (tree / 'src/pilotdeck-gateway/tests/fixtures/sdk-signals'
+                   '/negative_controls.py')
+        self.assertEqual(catalog.read_bytes(), before,
+                         '#3043 the bypassed window must still stage and '
+                         'restore the catalog byte for byte')
+
+    def test_a_busy_repo_lock_fails_closed_within_the_budget(self):
+        # P2#2 (DS sibling#3): the busy branch of guarded_source_window had
+        # no paired control. The holder sleeps far longer than the budget,
+        # so the refusal landing at ~2 s proves the window really waited
+        # its budget out and then failed closed with the named diagnostic
+        # -- never outlasting the holder, never refusing instantly.
+        holder = self._hold_repo_lock()
+        saved = os.environ.pop('PDRS_NEGATIVE_LEASE_HELD_ROOT', None)
+        try:
+            started = time.monotonic()
+            with self.assertRaises(AssertionError) as raised:
+                with guarded_source_window():
+                    PIN_SCRIPT.read_bytes()
+            elapsed = time.monotonic() - started
+        finally:
+            if saved is not None:
+                os.environ['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = saved
+        message = str(raised.exception)
+        self.assertIn('#3043 the guarded source was busy', message)
+        self.assertIn('.negative-source.lock', message)
+        self.assertGreaterEqual(
+            elapsed, 1.0,
+            'the window must really wait its 2 s budget out before '
+            'refusing, not fail on some earlier error')
+        self.assertLessEqual(
+            elapsed, 5.0,
+            'the refusal must land at the 2 s budget (50 ms poll), never '
+            'outlast it toward the holder\'s sleep horizon')
+        # Positive control: once the holder is gone the very same window
+        # acquires and reads the guarded bytes cleanly.
+        self._kill_holder(holder)
+        with guarded_source_window():
+            self.assertTrue(PIN_SCRIPT.read_bytes(),
+                            'the window must read the guarded source once '
+                            'the holder is gone')
 
 
 def tearDownModule():
