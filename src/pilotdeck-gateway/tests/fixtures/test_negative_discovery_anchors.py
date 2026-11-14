@@ -4920,6 +4920,10 @@ class DiscoveryAnchorTests(unittest.TestCase):
                         (FIXTURES / name).read_text(encoding='utf-8')))[0])
                     for name in TABLES),),
             'registered table count': (len(TABLES),),
+            # fix-bump (#1087 reanchor review, DS sibling#3): the "#2133 名字
+            # 后的 4 张"是同段唯一没被任何 pattern 绑定的数字副本——某张 #2133
+            # 表被换掉而总数不变时它会静默过期，按同段同法绑定。
+            'registered #2133 table count': (len(TABLES) - 1,),
             'head-timeout split': (
                 len(blind['channel-sms-head-timeout/negative_controls.py']),
                 sum(1 for rows in blind['channel-sms-head-timeout/'
@@ -4957,6 +4961,7 @@ class DiscoveryAnchorTests(unittest.TestCase):
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
             'registered table count': r'本闸门当前登记 (\d+) 张表（#2133 点名的',
+            'registered #2133 table count': r'(\d+) 张，加 #3043',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

@@ -1001,8 +1001,11 @@ class LeaseAcquireBudgetTests(unittest.TestCase):
                 # fix-r3 (MM sibling#3/#7): the family maximum is derived
                 # live, above -- a hand-copied number in a runner comment
                 # silently drifted once already (62,460 -> 62,320), so no
-                # roster member may carry the number in prose.
-                self.assertNotIn('62,320', source,
+                # roster member may carry the number in prose.  fix-bump
+                # (#1087 reanchor review, DS sibling#2): the pin follows the
+                # live family_max instead of a frozen literal -- a stale
+                # literal only ever blocked the deprecated old number.
+                self.assertNotIn(f'{family_max:,}', source,
                                  marker + f': {relative}: the family maximum '
                                  'is derived live here, not restated in prose')
                 # The stage timeout must still be the runner's own literal
