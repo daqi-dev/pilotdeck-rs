@@ -1704,10 +1704,27 @@ CHECK_MISUSE_EXEMPTIONS = {
     # path -- the TRIPLE startup-refusal pins do not apply. Its own pin
     # lives in the #2572 follow-up, not here.
     'native-management': '#1642 fixture family, different startup shape',
+    # #2856 fix-r6 (DS sibling P1): #2495's refusal is the same startup
+    # family ("--check takes no output directory, no mutation names, ...")
+    # but a different argparse shape -- its --check contract forbids the
+    # output slot / names / --compile-only, so the TRIPLE tuple-table and
+    # ordering pins do not transplant. rc 2 + the wording are pinned by its
+    # own tests (issue-2495/test_negative_controls.py); the
+    # "misuse refusal before the stale scan" ordering pin for it rides the
+    # #2572 follow-up lane, not this table.
+    'issue-2495': '#2495 argparse contract differs, pinned by its own tests',
 }
 # #2856 fix-r5: the sibling-form refusal text the reverse scan keys on --
-# #1437 phrases it without "positional", both spellings count.
-CHECK_MISUSE_REFUSAL = re.compile(r'--check takes no (?:positional )?arguments')
+# #1437 phrases it without "positional", both spellings count. fix-r6
+# (DS sibling P1) widens the key to the family prefix `--check takes no `
+# instead of one spelling's tail: #2495's "takes no output directory, ..."
+# is the same refusal family and used to fall outside the denominator,
+# giving the scan a false PASS against its own claim of "every fixture
+# with the refusal". The negative.py / *_negative.py entries stay outside
+# the scan by filename (specs/negative-controls/README.md #1666 batch),
+# and non-`--check` refusals (e.g. session-factory's `--audit`) are not
+# this key's family.
+CHECK_MISUSE_REFUSAL = re.compile(r'--check takes no ')
 
 
 def load_named_entry(directory):
@@ -1834,13 +1851,16 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         # refusal must be a table member or carry a REGISTERED exemption
         # with a reason. ROSTER_GUARDED has the same two-way shape in
         # test_every_roster_guard_entry_is_registered.
+        # #2856 fix-r6 (DS sibling P1): the key is the family prefix
+        # `--check takes no `, not one spelling's tail -- the message says
+        # the same.
         found = {str(path.relative_to(FIXTURES)).split('/')[0]
                  for path in FIXTURES.rglob('negative_controls.py')
                  if CHECK_MISUSE_REFUSAL.search(path.read_text(encoding='utf-8'))}
         members = {row[0] for row in TRIPLE_ENTRIES}
         self.assertTrue(
             found == members | set(CHECK_MISUSE_EXEMPTIONS),
-            f'#2572 every fixture with the `--check takes no arguments` '
+            f'#2572 every fixture with the `--check takes no ...` '
             f'refusal must be pinned through TRIPLE_ENTRIES or carry a '
             f'registered exemption '
             f'(unregistered={sorted(found - members - set(CHECK_MISUSE_EXEMPTIONS))} '
