@@ -350,6 +350,14 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         sidecar.into_os_string(),
     ])
     .expect("#1320 the native options must parse");
+    let project = Arc::new(ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(NoRuntimeFactory),
+    ));
+    // #1444: the real submit-lane services so a steer carrying attachments
+    // composes through prepare_attachment_turn.
+    let submit_services =
+        Requests::stub_submit_services(&options, &project, &options.environment(Env::new()), owner);
     Requests {
         env: options.environment(Env::new()),
         options: options.clone(),
@@ -358,10 +366,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         coordinator: Arc::default(),
         runs: None,
         owner: owner.clone(),
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoRuntimeFactory),
-        )),
+        project,
         replacement: Arc::new(ReplacementCoordinator::new(
             Default::default(),
             Arc::new(owner.clone()),
@@ -383,6 +388,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         always_on: None,
         settings: Requests::stub_settings(owner),
         session_overrides: Arc::default(),
+        submit_services,
     }
 }
 

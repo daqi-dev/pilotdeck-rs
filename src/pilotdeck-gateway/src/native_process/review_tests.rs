@@ -946,11 +946,31 @@ async fn project_path_boundaries_worker() {
     let mut owner_options = SessionOwnerOptions::new(Arc::new(NoPathResources));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
-    let requests = requests::Requests {
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoPathResources),
+    let project = Arc::new(ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(NoPathResources),
+    ));
+    let services = Arc::new(services::Services {
+        options: options.clone(),
+        env: options.environment(Env::new()),
+        project: project.clone(),
+        recorders: Arc::default(),
+        owner: owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &pilotdeck_protocol::JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unavailable in test",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
         )),
+    });
+    let requests = requests::Requests {
+        project,
         options: options.clone(),
         env: options.environment(Env::new()),
         snapshot_enabled: false,
@@ -987,28 +1007,10 @@ async fn project_path_boundaries_worker() {
         always_on: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
-    };
-    let services = services::Services {
-        options: options.clone(),
-        env: options.environment(Env::new()),
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoPathResources),
-        )),
-        recorders: Arc::default(),
-        owner,
-        snapshot_recorder: None,
-        upload_store: Arc::new(crate::upload::UploadStore::new(
-            crate::upload::UploadStoreOptions::new(
-                |_: &pilotdeck_protocol::JsString| {
-                    Err(crate::upload::UploadError::dialog(
-                        "PROJECT_NOT_FOUND",
-                        "unavailable in test",
-                    ))
-                },
-                || Ok(vec![]),
-            ),
-        )),
+        // #1444: the same submit-lane services the worker's `services`
+        // provides, so a steer carrying attachments composes through
+        // prepare_attachment_turn.
+        submit_services: services.clone(),
     };
     std::env::set_current_dir(scratch.0.join("other")).expect("#1137 enter other cwd");
     let oracle = marker_oracle();

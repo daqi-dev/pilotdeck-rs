@@ -65,32 +65,40 @@ fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
         .map_err(|_| RequestError::new(js_value::StackOverflow::MESSAGE))
 }
 
-/// An attachments field carries nothing when it is absent, null/undefined,
-/// or an empty array.
-fn attachments_empty(value: &JsValue) -> bool {
-    matches!(value, JsValue::Undefined | JsValue::Null)
-        || matches!(value, JsValue::Array(items) if items.is_empty())
-}
-
-/// TS `steerTurn` merges non-empty `attachments` into the content array via
+/// TS `steerTurn` merges `attachments` into the content array through
 /// `prepareAttachmentTurn` and never reads `uploadedAttachments` (only
-/// `submitTurn` consumes uploads; InProcessGateway.ts:1864-1870). This native
-/// slice cannot steer with attachments yet: a non-empty `attachments` payload
-/// is rejected explicitly — at the TS attachment-preparation position, right
-/// after the admission branches and before the resource gates — instead of
-/// being silently dropped (ledger A7.2-STEER-ATTACH-001, corrected by
-/// A7.2-STEER-ATTACH-001-R1); `uploadedAttachments` is accepted and ignored,
-/// matching the TS baseline.
-fn attachments_unsupported(field: &str) -> RequestError {
-    RequestError {
-        code: "STEER_ATTACHMENTS_UNSUPPORTED".into(),
-        message: format!(
-            "steer_turn does not support attachments in this native slice: `{field}` \
-             must be absent, null, or an empty array."
-        )
-        .into(),
-        details: None,
-        validation: None,
+/// `submitTurn` consumes uploads; InProcessGateway.ts:1864-1870). The
+/// field's non-array spellings keep the composer's own boundary
+/// (GatewayAttachmentTurnComposer.ts:97/:177/:199 — each pass opens with
+/// `!attachments || attachments.length === 0` and then iterates): every
+/// falsy non-nullish value short-circuits to the no-attachment turn
+/// (`""`/`0`/`false`, probe `_tmp/20261026-issue-1444/ts-probe/output.txt`
+/// a4/a5/a6), a non-empty string iterates to single-char "attachments"
+/// whose missing path/type/content every pass skips (a10), and only a
+/// truthy non-iterable value reaches `for (const attachment of
+/// attachments)` and throws the boundary TypeError (a7/a8/a9). The front
+/// door reads the length off the raw value, so an object carrying the
+/// number 0 folds the same way as the falsy spellings (`{length:0}` and
+/// `{0:{…},length:0}` both compose the plain text turn — fix-r1 probe
+/// b1/b2, `_tmp/20261026-issue-1444/fix-r1/ts-probe/output.txt`), while
+/// every other object still reaches the `for...of` and throws
+/// (`{length:2}` b3, `{length:"0"}` b4 — the check is `=== 0` on the raw
+/// value, so a string "0" or a nonzero number does not fold).
+fn steer_attachments(value: &JsValue) -> Result<Vec<JsValue>, RequestError> {
+    match value {
+        // `input.attachments ?? []` — only the nullish values default.
+        JsValue::Undefined | JsValue::Null => Ok(Vec::new()),
+        JsValue::Array(items) => Ok(items.clone()),
+        JsValue::String(_) | JsValue::Bool(false) => Ok(Vec::new()),
+        JsValue::Number(value) if *value == 0.0 || value.is_nan() => Ok(Vec::new()),
+        // `attachments.length === 0` on the raw object: the number 0 (and
+        // -0, matching JS `===`) short-circuits every composer pass.
+        JsValue::Object(_) if value.get("length").and_then(JsValue::as_number) == Some(0.0) => {
+            Ok(Vec::new())
+        }
+        JsValue::Bool(true) | JsValue::Number(_) | JsValue::Object(_) => {
+            Err(RequestError::new("attachments is not iterable"))
+        }
     }
 }
 
@@ -135,22 +143,81 @@ impl Requests {
             return Ok(turn_mismatch("accepted"));
         }
 
-        // Attachments are rejected immediately after the admission branches,
-        // mirroring the TS order: steerTurn prepares attachments right after
-        // the activeTurnRunId gates (InProcessGateway.ts:1864-1870), while the
-        // session/run resource gates run later, inside router.steer
-        // (SessionRouter.ts:307-314, AgentSession.ts:290-297). The caller
-        // still learns no_active_turn / turn_mismatch before the slice's
-        // explicit attachments error.
-        if params
-            .get("attachments")
-            .is_some_and(|value| !attachments_empty(value))
-        {
-            return Err(attachments_unsupported("attachments"));
-        }
-        // `uploadedAttachments` is never read by TS `steerTurn` (only
-        // `submitTurn` consumes uploads): a non-empty payload is accepted
-        // and ignored here, matching the baseline.
+        // TS steerTurn prepares the attachment turn immediately after the
+        // admission branches (InProcessGateway.ts:1864-1870), before the
+        // session/run resource gates inside router.steer (SessionRouter.ts:
+        // 307-314, AgentSession.ts:290-297): a non-iterable `attachments`
+        // payload throws here (probe a7-a9) and the composed input is ready
+        // before the steer slot is consulted. `uploadedAttachments` is never
+        // read by TS `steerTurn` (only `submitTurn` consumes uploads): a
+        // non-empty payload is accepted and ignored, matching the baseline.
+        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
+        let attachments = steer_attachments(
+            &input_property(&params, "attachments")?.unwrap_or(JsValue::Undefined),
+        )?;
+        let (content, allowed_read_files) = if attachments.is_empty() {
+            // The composer's plain path (GatewayAttachmentTurnComposer.ts:
+            // 67-72): the text block embeds the raw wire message verbatim
+            // (probe s6/a11), exactly the shape this handler built before
+            // the merge (#1444, ledger A7.2-STEER-ATTACH-001/-R1/-R2).
+            (
+                JsValue::Array(vec![object([
+                    ("type", "text".into()),
+                    ("text", message_text.clone()),
+                ])]),
+                Vec::new(),
+            )
+        } else {
+            // The same submit-lane prepare (#1321): profile validation, the
+            // string-message contract and the composition all run inside
+            // `Services::prepare_attachment_turn`, so steer inherits them
+            // (ledger A7.2-STEER-ATTACH-001-R2).
+            let prepared = self
+                .submit_services
+                .prepare_attachment_turn(
+                    &message_text,
+                    attachments,
+                    input_property(&params, "projectKey")?
+                        .as_ref()
+                        .and_then(JsValue::as_string),
+                    Some(session_key),
+                )
+                .await
+                .map_err(|error| RequestError {
+                    code: error.code,
+                    message: error.message.into(),
+                    details: None,
+                    validation: None,
+                })?;
+            // TS steerTurn :1873-1875: `agentInput.type === "text"` wraps
+            // the text block, anything else takes the composed content
+            // array verbatim.
+            let content = if prepared.get("type") == Some(&JsValue::from("text")) {
+                JsValue::Array(vec![object([
+                    ("type", "text".into()),
+                    (
+                        "text",
+                        prepared.get("text").cloned().unwrap_or(JsValue::Undefined),
+                    ),
+                ])])
+            } else {
+                prepared
+                    .get("content")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined)
+            };
+            // The composer returns `allowedReadFiles` as an array (always
+            // present in TS); the Rust compose attaches the key only when a
+            // path registered, so a missing key is the empty list.
+            let allowed_read_files = match prepared.get("allowedReadFiles") {
+                Some(JsValue::Array(paths)) => paths
+                    .iter()
+                    .filter_map(|path| path.as_string().cloned())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            (content, allowed_read_files)
+        };
 
         // Same shared lookup as the async-hook registry's turn resolution:
         // fetch the steer slot and guard it against the admission run ID
@@ -170,24 +237,14 @@ impl Requests {
         #[cfg(test)]
         race_hook::pause(session_key).await;
 
-        // Canonical TS steer message format (InProcessGateway.ts:1871-1883).
-        // The composer passes the raw wire message through as the text block
-        // (`text: agentInput.text` with no attachments,
-        // GatewayAttachmentTurnComposer.ts:67-71), so a non-string `message`
-        // is embedded verbatim (probe s6), and `queueItemId` carries the
-        // item id's coerced form (see `item_id_string`).
+        // Canonical TS steer message format (InProcessGateway.ts:1871-1883):
+        // role + the prepared content + the steer metadata. `queueItemId`
+        // carries the item id's coerced form (see `item_id_string`).
         let item_id =
             item_id_string(&input_property(&params, "itemId")?.unwrap_or(JsValue::Undefined))?;
-        let message_text = input_property(&params, "message")?.unwrap_or(JsValue::Undefined);
         let message = crate::metadata::object([
             ("role", "user".into()),
-            (
-                "content",
-                JsValue::Array(vec![object([
-                    ("type", "text".into()),
-                    ("text", message_text),
-                ])]),
-            ),
+            ("content", content),
             (
                 "metadata",
                 object([
@@ -201,7 +258,7 @@ impl Requests {
             .enqueue(SteerMessage {
                 item_id,
                 message,
-                allowed_read_files: Some(Vec::new()),
+                allowed_read_files: Some(allowed_read_files),
             })
             .await
             .map_err(|e| RequestError::new(e.message.clone()))?;

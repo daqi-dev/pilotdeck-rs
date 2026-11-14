@@ -308,21 +308,21 @@ async fn registry_management_gate_agrees() {
 }
 
 #[tokio::test]
-async fn steer_turn_rejects_attachments_explicitly() {
-    // Reuse the isolated registry fixture. Without a live turn every
-    // attachment-shaped input takes the ordinary no-active-turn path: TS
-    // steerTurn never reads `uploadedAttachments`, and its attachment merge
-    // runs after the activeTurnRunId gates (InProcessGateway.ts:1859-1870).
-    // With a live turn staged, a non-empty `attachments` payload is
-    // rejected explicitly instead of being silently dropped.
+async fn steer_turn_merges_attachments_into_content() {
+    // #1444: TS steerTurn merges `attachments` into the content array via
+    // prepareAttachmentTurn (InProcessGateway.ts:1864-1870) and never reads
+    // `uploadedAttachments`. Without a live turn every attachment-shaped
+    // input takes the ordinary no-active-turn path — the admission gates run
+    // before the attachment prep (probe
+    // `_tmp/20261026-issue-1444/ts-probe/output.txt` a14).
     use crate::runtime::turn::gateway::GatewayRequests;
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1307 registry fixture setup");
-    let upload = || {
+    let text_attachment = || {
         JsValue::Array(vec![crate::metadata::object([
             ("type", "text".into()),
-            ("text", "attachment".into()),
+            ("content", "attachment body".into()),
         ])])
     };
     let steer_params = |extra: Option<(&'static str, JsValue)>| {
@@ -337,15 +337,15 @@ async fn steer_turn_rejects_attachments_explicitly() {
         .collect();
         crate::metadata::object(fields)
     };
-    // No attachments, an explicit empty array, a non-empty
-    // `uploadedAttachments` (never read by TS steerTurn), and a non-empty
-    // `attachments` with no active turn: all report the ordinary
-    // no-active-turn rejection in TS order (state gates before attachments).
+    // No attachments, an explicit empty array, a non-empty `attachments`, and
+    // a non-empty `uploadedAttachments` (never read by TS steerTurn) with no
+    // active turn: all report the ordinary no-active-turn rejection in TS
+    // order (admission gates before attachments).
     for params in [
         steer_params(None),
         steer_params(Some(("attachments", JsValue::Array(vec![])))),
-        steer_params(Some(("uploadedAttachments", upload()))),
-        steer_params(Some(("attachments", upload()))),
+        steer_params(Some(("attachments", text_attachment()))),
+        steer_params(Some(("uploadedAttachments", text_attachment()))),
     ] {
         let result = requests
             .request("steer_turn".into(), params)
@@ -370,33 +370,42 @@ async fn steer_turn_rejects_attachments_explicitly() {
         .expect("#1307 admission slot");
     let steer = steer_resource(&requests);
     let _turn = start_steer_run(&steer, "s", "t", "r");
-    // With a live turn, a non-empty `attachments` payload is rejected with the
-    // domain error rather than a fake accepted.
-    let error = requests
-        .request(
-            "steer_turn".into(),
-            steer_params(Some(("attachments", upload()))),
-        )
-        .await
-        .expect_err("#1307 attachments must be rejected with a live turn");
-    negative_assert_eq!(
-        error.code,
-        "STEER_ATTACHMENTS_UNSUPPORTED",
-        "#1307 attachments rejection uses the domain code"
-    );
-    // A non-empty `uploadedAttachments` stays accepted-and-ignored with a live
-    // turn: TS steerTurn never reads the field, so the steer itself proceeds.
+    // With a live turn a non-empty `attachments` composes: the message text
+    // block plus the attachment's own text block (probe a13).
     let result = requests
         .request(
             "steer_turn".into(),
-            steer_params(Some(("uploadedAttachments", upload()))),
+            steer_params(Some(("attachments", text_attachment()))),
         )
         .await
-        .expect("#1307 uploadedAttachments stays Ok with a live turn");
+        .expect("#1444 attachments merge stays Ok with a live turn");
     negative_assert_eq!(
         result.get("accepted"),
         Some(&JsValue::Bool(true)),
-        "#1307 uploadedAttachments does not block the steer"
+        "#1444 attachments do not block the steer"
+    );
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        1,
+        "#1444 exactly the composed steer message is queued"
+    );
+    let delivered = &drained[0];
+    negative_assert_eq!(
+        delivered.message.get("content"),
+        Some(&JsValue::Array(vec![
+            crate::metadata::object([("type", "text".into()), ("text", "hello".into()),]),
+            crate::metadata::object([("type", "text".into()), ("text", "attachment body".into()),]),
+        ])),
+        "#1444 attachments merge into the content array (probe a13)"
+    );
+    negative_assert_eq!(
+        delivered.allowed_read_files,
+        Some(Vec::new()),
+        "#1444 an inline text attachment registers no read files"
     );
     requests
         .owner
@@ -471,25 +480,27 @@ async fn hook_async_result_validates_ids_before_registry_lookup() {
 
 #[tokio::test]
 async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
-    // TS steerTurn order (re-read this round, InProcessGateway.ts:1859-1883):
-    // the two activeTurnRunId branches (:1860-1862) come first, attachments
-    // are prepared immediately after (:1864-1870), and the session/run
-    // resource gates only run inside router.steer (:1878-1883 →
-    // SessionRouter.ts:307-314, AgentSession.ts:290-297). The slice's
-    // explicit attachments rejection must therefore fire once the admission
-    // branches pass — even when the steer-side resource gate would still
-    // have reported no_active_turn — while turn_mismatch still wins outright.
+    // TS steerTurn order (probe a7-a9/a14/a15): the two activeTurnRunId
+    // branches come first (InProcessGateway.ts:1860-1862), the composer's
+    // `for...of` boundary TypeError for a truthy non-iterable `attachments`
+    // fires immediately after (:1864-1870), and the session/run resource
+    // gates only run inside router.steer (:1878-1883 → SessionRouter.ts:
+    // 307-314, AgentSession.ts:290-297). The boundary TypeError therefore
+    // fires once the admission branches pass — even when the steer-side
+    // resource gate would still have reported no_active_turn — while
+    // turn_mismatch still wins outright.
     use crate::runtime::turn::gateway::GatewayRequests;
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1307 registry fixture setup");
-    let upload = || {
+    let bad = || JsValue::Number(1.0);
+    let good = || {
         JsValue::Array(vec![crate::metadata::object([
             ("type", "text".into()),
-            ("text", "attachment".into()),
+            ("content", "attachment body".into()),
         ])])
     };
-    let steer_params = |run_id: &str, attachments: bool| {
+    let steer_params = |run_id: &str, attachments: Option<JsValue>| {
         let fields: Vec<(&'static str, JsValue)> = [
             ("sessionKey", "s".into()),
             ("runId", run_id.into()),
@@ -497,18 +508,29 @@ async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
             ("message", "hello".into()),
         ]
         .into_iter()
-        .chain(attachments.then(|| ("attachments", upload())))
+        .chain(attachments.map(|value| ("attachments", value)))
         .collect();
         crate::metadata::object(fields)
     };
-    // turn_mismatch precedes the attachments rejection: the admission branch
-    // fires first (InProcessGateway.ts:1862).
+    // No admission slot at all: the activeTurnRunId miss wins over the
+    // boundary TypeError (probe a14).
+    let result = requests
+        .request("steer_turn".into(), steer_params("r", Some(bad())))
+        .await
+        .expect("#1444 no-active-turn branch stays Ok");
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+        "#1444 no_active_turn precedes the attachments boundary"
+    );
+    // turn_mismatch precedes the TypeError: the admission branch fires first
+    // (probe a15).
     let _reservation = requests
         .owner
         .begin_turn(&"s".into(), &"r".into())
         .expect("#1307 admission slot");
     let result = requests
-        .request("steer_turn".into(), steer_params("x", true))
+        .request("steer_turn".into(), steer_params("x", Some(bad())))
         .await
         .expect("#1307 mismatch branch stays Ok");
     negative_assert_eq!(
@@ -521,30 +543,47 @@ async fn steer_turn_attachments_sit_between_admission_and_resource_gates() {
         Some(&pilotdeck_protocol::JsString::from("turn_mismatch")),
         "#1307 mismatched run reports turn_mismatch, not the attachments error"
     );
-    // Admission matched but no steer run staged: TS would still have prepared
-    // the attachments before router.steer reports no_active_turn, so the
-    // slice's explicit rejection fires here.
+    // Admission matched but no steer run staged: TS still prepares the
+    // attachments before router.steer reports no_active_turn, so the
+    // boundary TypeError fires here instead.
     let error = requests
-        .request("steer_turn".into(), steer_params("r", true))
+        .request("steer_turn".into(), steer_params("r", Some(bad())))
         .await
-        .expect_err("#1307 attachments rejected before the resource gate");
+        .expect_err("#1444 attachments boundary precedes the resource gate");
+    negative_assert_eq!(
+        error.message,
+        pilotdeck_protocol::JsString::from("attachments is not iterable"),
+        "#1444 the boundary error keeps the JS TypeError text"
+    );
     negative_assert_eq!(
         error.code,
-        "STEER_ATTACHMENTS_UNSUPPORTED",
-        "#1307 attachments rejection precedes the resource gate"
+        "gateway_request_failed",
+        "#1444 the boundary error rides the request error code"
     );
     // Same when a steer run exists but its run ID disagrees with the
     // admission slot: that resource gate only runs after attachment prep.
     let steer = steer_resource(&requests);
     let _turn = start_steer_run(&steer, "s", "t", "other");
     let error = requests
-        .request("steer_turn".into(), steer_params("r", true))
+        .request("steer_turn".into(), steer_params("r", Some(bad())))
         .await
-        .expect_err("#1307 attachments rejected before the slot-mismatch gate");
+        .expect_err("#1444 attachments boundary precedes the slot-mismatch gate");
     negative_assert_eq!(
-        error.code,
-        "STEER_ATTACHMENTS_UNSUPPORTED",
-        "#1307 attachments rejection precedes the slot-mismatch gate"
+        error.message,
+        pilotdeck_protocol::JsString::from("attachments is not iterable"),
+        "#1444 the boundary error precedes the slot-mismatch gate"
+    );
+    // The success side proves the compose precedes the gate the same way: a
+    // valid attachment payload with no matching steer run still reports the
+    // resource gate's no_active_turn instead of an error.
+    let result = requests
+        .request("steer_turn".into(), steer_params("r", Some(good())))
+        .await
+        .expect("#1444 composed attachments reach the resource gate");
+    negative_assert_eq!(
+        result.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+        "#1444 a composed steer still reports the resource gate"
     );
     requests
         .owner
@@ -646,6 +685,1043 @@ async fn steer_turn_uploads_never_reach_the_canonical_message() {
         Some(Vec::new()),
         "#1307 allowedReadFiles stay empty without attachments"
     );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_non_array_attachments_follow_the_composer_boundary() {
+    // #1444: the non-array spellings keep the composer's own boundary
+    // (GatewayAttachmentTurnComposer.ts:97/:177/:199) — each pass opens with
+    // `!attachments || attachments.length === 0` and then iterates, so every
+    // falsy non-nullish value short-circuits to the plain-text turn while a
+    // truthy non-iterable throws (probe a4-a10). Unlike the submit family's
+    // spread, `0`/`false` do NOT throw here.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let plain_content = JsValue::Array(vec![crate::metadata::object([
+        ("type", "text".into()),
+        ("text", "hello".into()),
+    ])]);
+    let mut accepted = 0;
+    for (index, (reading, value)) in [
+        ("empty string", JsValue::from("")),
+        ("zero", JsValue::Number(0.0)),
+        ("NaN", JsValue::Number(f64::NAN)),
+        ("false", JsValue::Bool(false)),
+        ("non-empty string", JsValue::from("ab")),
+        ("null", JsValue::Null),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // Distinct item ids: the mailbox's durable claim gate discards a
+        // repeat id within one turn (A7.2-STEER-INPUT-001 差异 6).
+        let item_id = format!("i{index}");
+        let result = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    ("runId", "r".into()),
+                    ("itemId", JsValue::from(item_id.as_str())),
+                    ("message", "hello".into()),
+                    ("attachments", value),
+                ]),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("#1444 {reading} attachments must stay Ok"));
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(true)),
+            "#1444 {reading} attachments keep the plain turn"
+        );
+        accepted += 1;
+    }
+    // Every accepted cell delivered the plain no-attachment message.
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        accepted,
+        "#1444 each plain spelling enqueues exactly one steer"
+    );
+    for delivered in &drained {
+        negative_assert_eq!(
+            delivered.message.get("content"),
+            Some(&plain_content),
+            "#1444 falsy/non-nullish attachments compose the plain text turn"
+        );
+        negative_assert_eq!(
+            delivered.allowed_read_files,
+            Some(Vec::new()),
+            "#1444 non-array attachments register no read files"
+        );
+    }
+    // Truthy non-iterables throw the composer's boundary TypeError
+    // (probe a7/a8/a9) — after the admission gates, before the resource
+    // gates (see steer_turn_attachments_sit_between_admission_and_resource_
+    // gates).
+    for (reading, value) in [
+        ("one", JsValue::Number(1.0)),
+        ("true", JsValue::Bool(true)),
+        ("object", crate::metadata::object([])),
+    ] {
+        let error = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    ("runId", "r".into()),
+                    ("itemId", "i".into()),
+                    ("message", "hello".into()),
+                    ("attachments", value),
+                ]),
+            )
+            .await
+            .expect_err("#1444 truthy non-iterable attachments must throw");
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from("attachments is not iterable"),
+            "#1444 {reading} keeps the JS TypeError text"
+        );
+        negative_assert_eq!(
+            error.code,
+            "gateway_request_failed",
+            "#1444 {reading} rides the request error code"
+        );
+    }
+    // Nothing further was queued by the error cells.
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        0,
+        "#1444 the boundary TypeError enqueues nothing"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_object_attachments_follow_the_length_zero_front_door() {
+    // #1444 fix-r1 (review MM boundary #1): the composer's front door
+    // short-circuits on the raw value's `length === 0`
+    // (GatewayAttachmentTurnComposer.ts:97/:177/:199), not just on
+    // falsiness: a truthy object carrying the number 0 folds to the plain
+    // turn like the falsy spellings (`{length:0}` b1 and `{0:{…},length:0}`
+    // b2 — fix-r1 probe
+    // `_tmp/20261026-issue-1444/fix-r1/ts-probe/output.txt`), while every
+    // other object still reaches the `for...of` TypeError (`{length:2}` b3,
+    // `{length:"0"}` b4 — the check is `=== 0` on the raw value, so a
+    // nonzero number or a string "0" does not fold).
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let plain_content = JsValue::Array(vec![crate::metadata::object([
+        ("type", "text".into()),
+        ("text", "hello".into()),
+    ])]);
+    // Distinct item ids: the mailbox's durable claim gate discards a repeat
+    // id within one turn (A7.2-STEER-INPUT-001 差异 6).
+    for (index, (reading, value)) in [
+        (
+            "numeric zero length",
+            crate::metadata::object([("length", JsValue::Number(0.0))]),
+        ),
+        (
+            "array-like with zero length",
+            crate::metadata::object([
+                (
+                    "0",
+                    crate::metadata::object([
+                        ("type", "text".into()),
+                        ("content", "attachment body".into()),
+                    ]),
+                ),
+                ("length", JsValue::Number(0.0)),
+            ]),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let item_id = format!("i{index}");
+        let result = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    ("runId", "r".into()),
+                    ("itemId", JsValue::from(item_id.as_str())),
+                    ("message", "hello".into()),
+                    ("attachments", value),
+                ]),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("#1444 {reading} attachments must stay Ok"));
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(true)),
+            "#1444 {reading} attachments keep the plain turn"
+        );
+    }
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        2,
+        "#1444 each zero-length object spelling enqueues exactly one steer"
+    );
+    for delivered in &drained {
+        negative_assert_eq!(
+            delivered.message.get("content"),
+            Some(&plain_content),
+            "#1444 zero-length objects compose the plain text turn"
+        );
+        negative_assert_eq!(
+            delivered.allowed_read_files,
+            Some(Vec::new()),
+            "#1444 zero-length objects register no read files"
+        );
+    }
+    // Every other object still throws (b3/b4): the front door is `=== 0` on
+    // the raw value, so a nonzero number or the string "0" does not fold.
+    for (reading, value) in [
+        (
+            "numeric length two",
+            crate::metadata::object([("length", JsValue::Number(2.0))]),
+        ),
+        (
+            "string zero length",
+            crate::metadata::object([("length", JsValue::from("0"))]),
+        ),
+    ] {
+        let error = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    ("runId", "r".into()),
+                    ("itemId", "i".into()),
+                    ("message", "hello".into()),
+                    ("attachments", value),
+                ]),
+            )
+            .await
+            .expect_err(&format!(
+                "#1444 {reading} must reach the for...of TypeError"
+            ));
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from("attachments is not iterable"),
+            "#1444 {reading} keeps the JS TypeError text"
+        );
+        negative_assert_eq!(
+            error.code,
+            "gateway_request_failed",
+            "#1444 {reading} rides the request error code"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_message_cells_keep_the_raw_block_and_the_submit_guard() {
+    // #1444: without attachments the text block embeds the raw wire message
+    // verbatim (probe a11/a16/a17). With a non-empty `attachments` the steer
+    // reuses the submit-lane prepare, whose string-message guard fires
+    // before the composer — TS instead drops the raw message block and
+    // composes the attachment turn (probe a12): ledger
+    // A7.2-STEER-ATTACH-001-R2 差异 1.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    // The empty-attachment lane keeps the pre-#1444 raw message shape.
+    // Distinct item ids: the mailbox's durable claim gate discards a repeat
+    // id within one turn (A7.2-STEER-INPUT-001 差异 6).
+    for (reading, fields) in [
+        (
+            "number message",
+            vec![
+                ("sessionKey", JsValue::from("s")),
+                ("runId", JsValue::from("r")),
+                ("itemId", JsValue::from("i0")),
+                ("message", JsValue::Number(5.0)),
+            ],
+        ),
+        (
+            "null message",
+            vec![
+                ("sessionKey", JsValue::from("s")),
+                ("runId", JsValue::from("r")),
+                ("itemId", JsValue::from("i1")),
+                ("message", JsValue::Null),
+            ],
+        ),
+        (
+            "absent message",
+            vec![
+                ("sessionKey", JsValue::from("s")),
+                ("runId", JsValue::from("r")),
+                ("itemId", JsValue::from("i2")),
+            ],
+        ),
+    ] {
+        let mut fields = fields;
+        let expected_text = match reading {
+            "number message" => JsValue::Number(5.0),
+            "null message" => JsValue::Null,
+            _ => JsValue::Undefined,
+        };
+        let result = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object(fields.drain(..)),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("#1444 {reading} must stay Ok"));
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(true)),
+            "#1444 {reading} keeps the plain turn"
+        );
+        let drained = steer
+            .mailbox_for_test(&"s".into())
+            .expect("#1307 session mailbox")
+            .drain(&"t".into());
+        negative_assert_eq!(
+            drained.len(),
+            1,
+            "#1444 {reading} enqueues exactly one steer"
+        );
+        negative_assert_eq!(
+            drained[0].message.get("content"),
+            Some(&JsValue::Array(vec![crate::metadata::object([
+                ("type", "text".into()),
+                ("text", expected_text),
+            ])])),
+            "#1444 {reading} embeds the raw wire value in the text block"
+        );
+    }
+    // Non-empty attachments + non-string message: the submit-lane guard
+    // rejects instead of composing the TS shape (residual, probe a12).
+    let error = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "s".into()),
+                ("runId", "r".into()),
+                ("itemId", "i".into()),
+                ("message", JsValue::Number(5.0)),
+                (
+                    "attachments",
+                    JsValue::Array(vec![crate::metadata::object([
+                        ("type", "text".into()),
+                        ("content", "attachment body".into()),
+                    ])]),
+                ),
+            ]),
+        )
+        .await
+        .expect_err("#1444 the submit-lane message guard fires for attachments");
+    negative_assert_eq!(
+        error.code,
+        "gateway_submit_failed",
+        "#1444 the guard keeps the submit error code"
+    );
+    negative_assert_eq!(
+        error.message,
+        pilotdeck_protocol::JsString::from("message must be a string."),
+        "#1444 the guard keeps the submit message text"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_registers_leased_attachment_paths() {
+    // #1444: through the submit-lane prepare a channel-registered path
+    // attachment inlines its body, appends the session path note, and
+    // registers allowedReadFiles exactly like TS steerTurn (probe a18).
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let lease_dir = requests
+        .options
+        .project
+        .join(".tmp")
+        .join("chat-upload-leases")
+        .join("u1");
+    std::fs::create_dir_all(&lease_dir).expect("#1444 lease directory");
+    let path = lease_dir.join("note.txt");
+    // No trailing newline: the inline template adds its own separator lines
+    // (probe a18's file was written the same way).
+    std::fs::write(&path, "note body").expect("#1444 lease file");
+    let path = path.to_str().expect("#1444 lease UTF-8").to_owned();
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let result = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "s".into()),
+                ("runId", "r".into()),
+                ("itemId", "reg".into()),
+                ("message", "hello".into()),
+                (
+                    "attachments",
+                    JsValue::Array(vec![crate::metadata::object([
+                        ("path", path.as_str().into()),
+                        ("mimeType", "text/plain".into()),
+                        (
+                            "metadata",
+                            crate::metadata::object([("channelKey", "chan-1".into())]),
+                        ),
+                    ])]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1444 a registered attachment composes the steer");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1444 a registered attachment does not block the steer"
+    );
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        1,
+        "#1444 exactly the composed steer message is queued"
+    );
+    let delivered = &drained[0];
+    let blocks = match delivered.message.get("content") {
+        Some(JsValue::Array(blocks)) => blocks.clone(),
+        other => panic!("#1444 composed content must be an array, got {other:?}"),
+    };
+    negative_assert_eq!(
+        blocks.len(),
+        3,
+        "#1444 message + inlined body + path note (probe a18)"
+    );
+    negative_assert_eq!(
+        blocks[0].get("text"),
+        Some(&JsValue::from("hello")),
+        "#1444 the message text block leads"
+    );
+    negative_assert_eq!(
+        blocks[1].get("text"),
+        Some(&JsValue::from(
+            format!("<attachment path=\"{path}\">\nnote body\n</attachment>").as_str()
+        )),
+        "#1444 the lease file body is inlined with its path reference"
+    );
+    let note = match blocks[2]
+        .get("text")
+        .and_then(|value| value.as_string().and_then(|text| text.to_utf8().ok()))
+    {
+        Some(note) => note,
+        None => panic!("#1444 the path note must be a text block"),
+    };
+    negative_assert_eq!(
+        note,
+        format!(
+            "\n\n[Registered attachment files in this session:]\n- note.txt: {path}\n\
+             These are path references for reuse. If an image/PDF is already visible in this \
+             turn, do not call read_file just to view it."
+        ),
+        "#1444 the registered path note matches the TS composer shape"
+    );
+    negative_assert_eq!(
+        delivered.allowed_read_files,
+        Some(vec![pilotdeck_protocol::JsString::from(path.as_str())]),
+        "#1444 the lease path is registered in allowedReadFiles"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_attachments_reuse_the_profile_capability_gate() {
+    // #1444 residual 2: the non-empty-attachment lane reuses the submit-side
+    // prepare, whose profile validation gates the request — TS steerTurn
+    // composes through the plain composer with no profile concept (ledger
+    // A7.2-STEER-ATTACH-001-R2 差异 2). Without attachments the inline path
+    // never consults the profile and is unaffected.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    // A configured plugin directory makes validate_profile refuse the
+    // isolated native profile (assembly.rs).
+    std::fs::create_dir_all(requests.options.home.join("plugins"))
+        .expect("#1444 plugins directory");
+    std::fs::write(requests.options.home.join("plugins/x.js"), "").expect("#1444 plugin file");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    // Without attachments the inline path never consults the profile.
+    let result = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "s".into()),
+                ("runId", "r".into()),
+                ("itemId", "i".into()),
+                ("message", "hello".into()),
+            ]),
+        )
+        .await
+        .expect("#1444 the inline path ignores the profile");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1444 a plain steer stays accepted under an invalid profile"
+    );
+    // With attachments the submit-lane capability gate fires instead of
+    // composing.
+    let error = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "s".into()),
+                ("runId", "r".into()),
+                ("itemId", "i".into()),
+                ("message", "hello".into()),
+                (
+                    "attachments",
+                    JsValue::Array(vec![crate::metadata::object([
+                        ("type", "text".into()),
+                        ("content", "attachment body".into()),
+                    ])]),
+                ),
+            ]),
+        )
+        .await
+        .expect_err("#1444 the submit-lane profile gate fires for attachments");
+    negative_assert_eq!(
+        error.code,
+        "CAPABILITY_UNAVAILABLE",
+        "#1444 the profile gate keeps the capability error code"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+/// fix-r5 (review DS boundary #1 + concurrency #1, both P1): a lost FIFO
+/// rendezvous must not strand the fixture FIFO. A releaser exit while no
+/// writer exists would park a late config read forever inside
+/// `open(FIFO, O_RDONLY)`, and the `#[tokio::test]` teardown then waits for
+/// the already-started blocking task, so the test binary hangs with no
+/// verdict at all (experiment: `_tmp/20261115-2800-fixr5/pre-fix-e1c.out` —
+/// the only thing that saved the pre-fix red verdict was this test's
+/// `Scratch` cleanup dropping the FIFO during the unwind, a sub-millisecond
+/// race ahead of the reader). Dropping the guard unstrands the FIFO in an
+/// order that leaves no parkable reader: the `O_RDWR` rescue open never
+/// blocks on a FIFO (it is its own writer), so a reader already parked in
+/// the read-side open pairs with it and reads EOF once it closes, and the
+/// unlink makes every reader that has not arrived yet fail fast with
+/// ENOENT instead of waiting for a writer that no longer exists.
+struct FifoUnstrand<'a>(&'a std::path::Path);
+impl Drop for FifoUnstrand<'_> {
+    fn drop(&mut self) {
+        let rescue = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(self.0);
+        let _ = std::fs::remove_file(self.0);
+        drop(rescue);
+    }
+}
+
+#[tokio::test]
+async fn steer_turn_profile_gate_does_not_block_the_serial_host_executor() {
+    // #1444 fix-r1 (review MM concurrency #2): the request future is
+    // polled by the current-thread turn-gateway host
+    // (`ConnectionTurnGateway::start_with_clock_and_cleanup` builds
+    // `new_current_thread()`), so the profile gate's FS sweep (the MCP
+    // config load, the plugin/skill `read_dir`s and the project config
+    // load) now runs inside `spawn_blocking` — the same treatment the
+    // composition gets. A steer with non-empty attachments whose config
+    // load parks on a FIFO (in place of the home `pilotdeck.yaml`) must
+    // leave the executor free: the 10ms probe below completes while the
+    // load is still parked, before the release write. The request itself
+    // must still complete with the composed turn once the FIFO is fed the
+    // fixture's own config bytes.
+    //
+    // fix-r3 (review DS a-档 + b-档 P1): every wait here is bounded and
+    // the verdict is causal, not a wall-clock race. r1 judged "probe
+    // before release" with a 500ms recv_timeout — a scheduling-delay
+    // criterion: an OS-starved executor thread flips it red with
+    // production code untouched (600ms injected delay, experiment A in
+    // _tmp/20261114-2800-fixr3/item2-repro/). The rendezvous now only
+    // asks whether the executor probe *completes while the FIFO is held
+    // closed*; the 20s wait below exists solely to release a genuinely
+    // blocked executor (the regression this test pins — or a real hang)
+    // so the failure turns red instead of hanging, per this file's
+    // established "bounded everywhere … merely misses its deadline and
+    // turns this red" convention (:4384-4388). A loaded host delaying the
+    // executor by whole seconds stays green (experiment B, same
+    // directory); a false FAIL now needs 20s of total executor silence
+    // while the harness threads still run — indistinguishable from the
+    // pinned regression and past every bound this file already uses.
+    //
+    // fix-r5 (review DS boundary #1 + concurrency #1, both P1): a lost
+    // rendezvous must still leave no parked reader behind. The deadline
+    // below used to be a bare releaser panic — a late config read then
+    // parked forever inside open(FIFO, O_RDONLY) and the runtime teardown
+    // waited for it, hanging the binary instead of turning it red; the
+    // `FifoUnstrand` guard and the lost-rendezvous branch below keep that
+    // path red (see the guard's doc for the measured before/after forms).
+    use crate::runtime::turn::gateway::GatewayRequests;
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let config_path = requests.options.home.join("pilotdeck.yaml");
+    let config = std::fs::read(&config_path).expect("#1444 fixture config bytes");
+    std::fs::remove_file(&config_path).expect("#1444 drop the fixture config for the FIFO");
+    negative_assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&config_path)
+            .status()
+            .expect("#1444 mkfifo launch")
+            .success(),
+        "#1444 config FIFO fixture"
+    );
+    // The releaser's FIFO open only succeeds once the reader opened, so a
+    // successful rendezvous proves the config load is parked in the read.
+    // fix-r3: a POSIX writer open without a reader blocks forever, so the
+    // open is non-blocking and polled to a deadline — ENXIO is the
+    // no-reader-yet spelling while the gate's FS sweep walks towards the
+    // config (milliseconds observed); five seconds is three orders beyond
+    // that rendezvous while still turning a lost one red, not a hang.
+    // fix-r5: every exit before that rendezvous unwinds through the
+    // `FifoUnstrand` guard, so a deadline-triggered exit cannot leave a
+    // late reader parked on the writerless FIFO (see the guard's doc).
+    let (parked, parked_rx) = tokio::sync::oneshot::channel::<()>();
+    let (probe_done, probe_done_rx) = std::sync::mpsc::channel::<()>();
+    let releaser = std::thread::Builder::new()
+        .name("pdrs-1444-fifo-releaser".into())
+        .spawn(move || {
+            let open_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut writer = {
+                let unstrand = FifoUnstrand(&config_path);
+                let writer = loop {
+                    match std::fs::OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&config_path)
+                    {
+                        Ok(writer) => break writer,
+                        Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                            assert!(
+                                std::time::Instant::now() < open_deadline,
+                                "#1444 the config read never reached the FIFO \
+                                 within the rendezvous bound"
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("#1444 FIFO writer open failed: {error}"),
+                    }
+                };
+                // The rendezvous is proven and the writer below holds the
+                // released read side; disarm the guard so the FIFO keeps
+                // serving the release write.
+                std::mem::forget(unstrand);
+                writer
+            };
+            let _ = parked.send(());
+            // 20s guard, not a 500ms criterion: the probe completes in
+            // ~10ms once the executor is free, and the guard's only job is
+            // to bound the blocked-executor path (regression or hang) by
+            // releasing the config read — the outer 30s bound below then
+            // has room to observe the red verdict instead of tripping on
+            // the join itself.
+            let probe_first = probe_done_rx
+                .recv_timeout(std::time::Duration::from_secs(20))
+                .is_ok();
+            writer
+                .write_all(&config)
+                .expect("#1444 release the config read");
+            drop(writer);
+            probe_first
+        })
+        .expect("#1444 releaser thread");
+    let request = requests.request(
+        "steer_turn".into(),
+        crate::metadata::object([
+            ("sessionKey", "s".into()),
+            ("runId", "r".into()),
+            ("itemId", "i".into()),
+            ("message", "hello".into()),
+            (
+                "attachments",
+                JsValue::Array(vec![crate::metadata::object([
+                    ("type", "text".into()),
+                    ("content", "attachment body".into()),
+                ])]),
+            ),
+        ]),
+    );
+    // The probe: once the config read is parked, a 10ms sleep must
+    // complete on this executor while the load is still blocked. The whole
+    // rendezvous is bounded (fix-r3): a lost FIFO rendezvous, a hung gate
+    // or a wedged executor turns this join red within 30s — the guard
+    // (20s) plus the post-release composition both fit inside that outer
+    // bound, so the deadline only trips for a genuinely stuck test.
+    // fix-r5: a lost rendezvous no longer fails the join above via a bare
+    // `expect` — that would drop the still-pending request here and only
+    // leave its verdict to the teardown — but settles the request first,
+    // so the lost path both observes the reader's fast failure and keeps
+    // the red verdict inside the outer bound.
+    let (result, rendezvous) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        tokio::join!(request, async {
+            let rendezvous = parked_rx.await.is_ok();
+            if rendezvous {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                let _ = probe_done.send(());
+            }
+            rendezvous
+        })
+    })
+    .await
+    .expect("#1444 the steer FIFO rendezvous must settle within the outer bound");
+    if !rendezvous {
+        // fix-r5: the releaser hit the open deadline and unwound through
+        // the unstrand guard, so the late config read cannot be parked on
+        // a writerless FIFO — it must settle inside the outer bound above,
+        // with the reader's error. This assertion is the pair of the
+        // guard: it turns "the reader was left parked" (which would hang
+        // the runtime teardown with no verdict at all) into a red of its
+        // own.
+        negative_assert!(
+            result.is_err(),
+            "#1444 the unstranded config read fails fast within the outer bound"
+        );
+        negative_assert!(
+            false,
+            "#1444 the config read never reached the FIFO within the rendezvous bound"
+        );
+    }
+    let probe_first = releaser.join().expect("#1444 releaser join");
+    negative_assert!(
+        probe_first,
+        "#1444 the profile gate's config load must not block the serial host executor"
+    );
+    let result = result.expect("#1444 the parked steer still composes");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1444 the parked steer is accepted once released"
+    );
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        1,
+        "#1444 the parked steer enqueues exactly one message"
+    );
+    negative_assert_eq!(
+        drained[0].message.get("content"),
+        Some(&JsValue::Array(vec![
+            crate::metadata::object([("type", "text".into()), ("text", "hello".into()),]),
+            crate::metadata::object([("type", "text".into()), ("text", "attachment body".into()),]),
+        ])),
+        "#1444 the parked steer composes message and attachment blocks"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_skips_non_object_attachment_elements() {
+    // #1444 fix-r1 (review DS boundary #1): a real array whose elements are
+    // not attachment-shaped objects is filtered element-wise by the
+    // composer's passes — TS reads `attachment.path` / `attachment.type` on
+    // the raw element, so `[1]`/`["x"]`/`[{}]` skip every pass and compose
+    // the plain text turn (probe
+    // `_tmp/20261026-issue-1444/fix-r1/ts-probe/output.txt` e2-e4), while a
+    // `null` element throws the property-read TypeError there (e1). Rust's
+    // field access returns None for those elements and skips them silently,
+    // so all four cells accept and deliver the plain turn — the `null` cell
+    // is residual 3 (ledger A7.2-STEER-ATTACH-001-R2), the other three are
+    // aligned shapes pinned here.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let plain_content = JsValue::Array(vec![crate::metadata::object([
+        ("type", "text".into()),
+        ("text", "hello".into()),
+    ])]);
+    // Distinct item ids: the mailbox's durable claim gate discards a repeat
+    // id within one turn (A7.2-STEER-INPUT-001 差异 6).
+    for (index, (reading, element)) in [
+        ("null element", JsValue::Null),
+        ("number element", JsValue::Number(1.0)),
+        ("string element", JsValue::from("x")),
+        ("object element", crate::metadata::object([])),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let item_id = format!("i{index}");
+        let result = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    ("runId", "r".into()),
+                    ("itemId", JsValue::from(item_id.as_str())),
+                    ("message", "hello".into()),
+                    ("attachments", JsValue::Array(vec![element])),
+                ]),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("#1444 {reading} must stay Ok"));
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(true)),
+            "#1444 {reading} keeps the plain turn"
+        );
+    }
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        4,
+        "#1444 each non-object element spelling enqueues exactly one steer"
+    );
+    for delivered in &drained {
+        negative_assert_eq!(
+            delivered.message.get("content"),
+            Some(&plain_content),
+            "#1444 non-object elements are skipped, the plain text turn composes"
+        );
+        negative_assert_eq!(
+            delivered.allowed_read_files,
+            Some(Vec::new()),
+            "#1444 non-object elements register no read files"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_turn_skips_mistyped_attachment_fields_and_keeps_the_plain_turn() {
+    // #1444 fix-r3 (review DS boundary #1): element-level object fields with
+    // mistyped values. TS reads the fields raw (probe
+    // `_tmp/20261026-issue-1444/fixr3-probe/output.txt`, same steer harness
+    // as the e2-e4 round): a truthy non-string `path` reaches the pdf
+    // else-if and throws `attachment.path.toLowerCase is not a function`;
+    // a truthy non-string `content` under `type:"text"` passes the truthy
+    // guard and embeds the raw value (`{type:"text",text:5}`); a
+    // non-string `type` matches no branch and keeps the plain turn. Rust's
+    // field access only produces `JsString`s — a non-string `path` folds
+    // to the empty skip arm, a non-string `content` drops the block, a
+    // non-string `type` defaults to `""` — so all three cells accept and
+    // deliver the plain turn. The `path` and `content` cells are the
+    // registered divergences (residuals 4/5, ledger
+    // A7.2-STEER-ATTACH-001-R2 fix-r3 section); the `type` cell is the
+    // aligned shape.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let plain_content = JsValue::Array(vec![crate::metadata::object([
+        ("type", "text".into()),
+        ("text", "hello".into()),
+    ])]);
+    // Distinct item ids: the mailbox's durable claim gate discards a repeat
+    // id within one turn (A7.2-STEER-INPUT-001 差异 6).
+    for (index, (reading, element)) in [
+        (
+            "numeric path",
+            crate::metadata::object([("path", JsValue::Number(5.0))]),
+        ),
+        (
+            "numeric type",
+            crate::metadata::object([("type", JsValue::Number(5.0))]),
+        ),
+        (
+            "text type with numeric content",
+            crate::metadata::object([("type", "text".into()), ("content", JsValue::Number(5.0))]),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let item_id = format!("i{index}");
+        let result = requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    ("runId", "r".into()),
+                    ("itemId", JsValue::from(item_id.as_str())),
+                    ("message", "hello".into()),
+                    ("attachments", JsValue::Array(vec![element])),
+                ]),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("#1444 {reading} must stay Ok"));
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(true)),
+            "#1444 {reading} keeps the plain turn"
+        );
+    }
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        3,
+        "#1444 each mistyped-field element enqueues exactly one steer"
+    );
+    for delivered in &drained {
+        negative_assert_eq!(
+            delivered.message.get("content"),
+            Some(&plain_content),
+            "#1444 mistyped fields are skipped, the plain text turn composes"
+        );
+        negative_assert_eq!(
+            delivered.allowed_read_files,
+            Some(Vec::new()),
+            "#1444 mistyped fields register no read files"
+        );
+    }
     requests
         .owner
         .shutdown()
