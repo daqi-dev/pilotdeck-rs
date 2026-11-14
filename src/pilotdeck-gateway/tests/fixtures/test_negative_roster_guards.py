@@ -1713,18 +1713,41 @@ CHECK_MISUSE_EXEMPTIONS = {
     # "misuse refusal before the stale scan" ordering pin for it rides the
     # #2572 follow-up lane, not this table.
     'issue-2495': '#2495 argparse contract differs, pinned by its own tests',
+    # #2856 fix-r7 (DS sibling P1, census corrected by the coordinator's
+    # own grep -- the review named 7, the real count is 11): the second
+    # spelling family "--check does not take output or names" is the same
+    # refusal (extra CLI shape refused before any mutation, ValueError
+    # caught by the entrypoint, rc 2) but a different argparse shape, so
+    # the TRIPLE tuple-table and ordering pins do not transplant. Their
+    # own ordering/wording pins ride the #3189 follow-up lane.
+    'api-web': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'channel-slack': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'channel-sms': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'channel-sms-head-timeout': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'locale-adaptive': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'mcp-resolver-lease': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'module-host': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'module-host-approvals': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'native-http-basic': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'session-cwd-timing': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    'webhook-channel': 'spelling-2 refusal family (ValueError/rc-2 shape)',
 }
 # #2856 fix-r5: the sibling-form refusal text the reverse scan keys on --
 # #1437 phrases it without "positional", both spellings count. fix-r6
 # (DS sibling P1) widens the key to the family prefix `--check takes no `
-# instead of one spelling's tail: #2495's "takes no output directory, ..."
-# is the same refusal family and used to fall outside the denominator,
-# giving the scan a false PASS against its own claim of "every fixture
-# with the refusal". The negative.py / *_negative.py entries stay outside
-# the scan by filename (specs/negative-controls/README.md #1666 batch),
-# and non-`--check` refusals (e.g. session-factory's `--audit`) are not
-# this key's family.
-CHECK_MISUSE_REFUSAL = re.compile(r'--check takes no ')
+# instead of one spelling's tail. fix-r7 (DS sibling P1, third round on
+# this lexical position) closes it structurally instead of adding one
+# more word: the alternation below is the COMPLETE census of `--check`
+# misuse-refusal spellings across every negative_controls.py as of
+# 2026-11-15 (`takes no ...` x6, `does not take ...` x11) -- a fixture
+# with a future third spelling falls outside the family until this
+# census is widened, and that boundary plus a behavior-driven denominator
+# (drive each fixture's --check instead of grepping wording) is tracked
+# in the #3189 follow-up. The negative.py / *_negative.py entries stay
+# outside the scan by filename (specs/negative-controls/README.md #1666
+# batch), and non-`--check` refusals (e.g. session-factory's `--audit`)
+# are not this key's family.
+CHECK_MISUSE_REFUSAL = re.compile(r'--check (?:takes no|does not take) ')
 
 
 def load_named_entry(directory):
@@ -1853,16 +1876,37 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         # test_every_roster_guard_entry_is_registered.
         # #2856 fix-r6 (DS sibling P1): the key is the family prefix
         # `--check takes no `, not one spelling's tail -- the message says
-        # the same.
+        # the same. fix-r7 widens it to both census spellings.
+        matches = [path for path in FIXTURES.rglob('negative_controls.py')
+                   if CHECK_MISUSE_REFUSAL.search(
+                       path.read_text(encoding='utf-8'))]
+        # #2856 fix-r7 (DS sibling P2c): a refusal nested under a member
+        # directory (native-settings/negative/ and session-factory/
+        # append-delta/ prove nested negative_controls.py exist) used to be
+        # silently bucketed into the top-level entry -- it must fail with
+        # its full path instead, so it cannot hide behind its parent.
+        nested = [str(path.relative_to(FIXTURES)) for path in matches
+                  if len(path.relative_to(FIXTURES).parts) != 2]
+        self.assertFalse(
+            nested,
+            f'#2572 nested refusal fixtures must be registered by their '
+            f'full relative path, not their parent directory: {nested}')
         found = {str(path.relative_to(FIXTURES)).split('/')[0]
-                 for path in FIXTURES.rglob('negative_controls.py')
-                 if CHECK_MISUSE_REFUSAL.search(path.read_text(encoding='utf-8'))}
+                 for path in matches}
         members = {row[0] for row in TRIPLE_ENTRIES}
+        # #2856 fix-r7 (DS sibling P2c): a directory sitting in both the
+        # table and the exemptions would let a later deletion from
+        # TRIPLE_ENTRIES pass silently on the exemption's backstop.
+        overlap = members & set(CHECK_MISUSE_EXEMPTIONS)
+        self.assertFalse(
+            overlap,
+            f'#2572 a directory must be either a table member or an '
+            f'exemption, not both: {sorted(overlap)}')
         self.assertTrue(
             found == members | set(CHECK_MISUSE_EXEMPTIONS),
-            f'#2572 every fixture with the `--check takes no ...` '
-            f'refusal must be pinned through TRIPLE_ENTRIES or carry a '
-            f'registered exemption '
+            f'#2572 every fixture with the `--check (takes no|does not '
+            f'take) ...` refusal must be pinned through TRIPLE_ENTRIES or '
+            f'carry a registered exemption '
             f'(unregistered={sorted(found - members - set(CHECK_MISUSE_EXEMPTIONS))} '
             f'stale={sorted((members | set(CHECK_MISUSE_EXEMPTIONS)) - found)})')
         for exempt, reason in CHECK_MISUSE_EXEMPTIONS.items():
