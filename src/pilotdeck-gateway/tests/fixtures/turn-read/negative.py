@@ -18,7 +18,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed, refuse, registered
+from negative_selection import (baseline_passed, refuse, registered,
+                                require_pinned_by_roster)
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import declares_test
 
@@ -284,15 +285,10 @@ def check_row_pins(rows):
     if unpinned:
         refuse('#2692 turn-read shared-test rows missing from '
                f'ROW_PINS: {", ".join(unpinned)}')
-    # fix-r6 增量 (DS simplify#1): the completeness refuse — a name in the
-    # roster with no pin row used to stay green because the shared-test
-    # reverse rule only ever widens the pool, so the row could sit unpinned
-    # in both tables at once. Every EXPECTED_NAMES entry must now be pinned
-    # (ROW_PINS stays a literal; this refuses, never rewrites).
-    missing = sorted(set(EXPECTED_NAMES) - set(ROW_PINS))
-    if missing:
-        refuse(f'#2692 turn-read roster entries missing from ROW_PINS: '
-               f'{", ".join(missing)}')
+    # fix-r7 增量 (DS simplify#1 P2 / sibling#2): the completeness refuse
+    # converged into the shared `negative_selection` helper — this was the
+    # third same-shaped copy (the refusal keeps the family label).
+    require_pinned_by_roster(EXPECTED_NAMES, ROW_PINS, 'turn-read')
 
 
 args = sys.argv[1:]

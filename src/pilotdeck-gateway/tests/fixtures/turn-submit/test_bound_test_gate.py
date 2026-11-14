@@ -143,6 +143,29 @@ class RosterGate(unittest.TestCase):
                       '#2692 closure-r2: the refusal names the family and '
                       'the unpinned twin')
 
+    def test_check_refuses_a_unique_assertion_row_missing_from_row_pins(self):
+        # fix-r7 增量 (DS sibling#2): the r6 completeness clause's own red
+        # side — the closure-r2 leg above only proves the shared-assertion
+        # reverse rule, so a twin whose effective assertion no sibling
+        # carries (the natural shape of a real new row with its own marker)
+        # used to sit unpinned in both tables with --check green; the
+        # roster-completeness refuse must fire and name the twin.
+        source = next(row for row in nc.mutants
+                     if row[0] == 'sdk-dirty-skipped')
+        twin = list(source)
+        twin[0] = 'sdk-dirty-skipped-unpinned-twin'
+        twin[4] = 'changed SDK config must dirty the cached handle uniquely'
+        rows = nc.mutants + [tuple(twin)]
+        names = list(nc.EXPECTED_NAMES) + [twin[0]]
+        code, out, err = run_check(rows=rows, expected_names=names)
+        self.assertTrue(code == 2,
+                        f'#2692 fix-r7: an unpinned unique-assertion row '
+                        f'must refuse --check: rc={code} out={out!r}')
+        self.assertIn(f'#2692 turn-submit roster entries missing from '
+                      f'ROW_PINS: {twin[0]}', err,
+                      '#2692 fix-r7: the refusal names the family and '
+                      'the unpinned twin')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # #2692 fix-r13 (DS + MM sibling/boundary, both families): a row whose
         # assertion string another row also carries used to survive a

@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _negkit.contract import Case
 from _negkit import submit as adapter
-from negative_selection import refuse, registered
+from negative_selection import refuse, registered, require_pinned_by_roster
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -346,15 +346,10 @@ def check_row_pins(rows):
     if unpinned:
         refuse('#2692 turn-submit shared-assertion rows missing from '
                f'ROW_PINS: {", ".join(unpinned)}')
-    # fix-r6 增量 (DS simplify#1): the completeness refuse — a name in the
-    # roster with no pin row used to stay green because the shared-assertion
-    # reverse rule only ever widens the pool, so the row could sit unpinned
-    # in both tables at once. Every EXPECTED_NAMES entry must now be pinned
-    # (ROW_PINS stays a literal; this refuses, never rewrites).
-    missing = sorted(set(EXPECTED_NAMES) - set(ROW_PINS))
-    if missing:
-        refuse('#2692 turn-submit roster entries missing from ROW_PINS: '
-               f'{", ".join(missing)}')
+    # fix-r7 增量 (DS simplify#1 P2 / sibling#2): the completeness refuse
+    # converged into the shared `negative_selection` helper — this was the
+    # third same-shaped copy (the refusal keeps the family label).
+    require_pinned_by_roster(EXPECTED_NAMES, ROW_PINS, 'turn-submit')
 
 
 # #2692 fix-r7 (review sibling#1): --check also proves every bound test is

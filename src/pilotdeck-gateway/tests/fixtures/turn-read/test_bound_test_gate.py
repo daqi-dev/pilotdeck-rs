@@ -190,6 +190,28 @@ class BoundTestGate(unittest.TestCase):
                       '#2692 closure-r4: the refusal names the family and '
                       'the unpinned twin')
 
+    def test_check_refuses_a_unique_test_row_missing_from_row_pins(self):
+        # fix-r7 增量 (DS sibling#2): the r6 completeness clause's own red
+        # side — the closure-r4 leg above only proves the shared-test reverse
+        # rule, so a twin bound to a test no sibling carries (the natural
+        # shape of a real new row with its own new test) used to sit unpinned
+        # in both tables with --check green; the roster-completeness refuse
+        # must fire and name the twin.
+        twin = 'corrupt-snapshot-name-flattened-unpinned-twin'
+        surgery = (
+            "_row = next(row for row in mutants if row[0] == 'corrupt-snapshot-name-flattened')\n"
+            f"mutants = list(mutants) + [({twin!r},) + _row[1:4]"
+            " + ('run_corrupt_snapshot_errors_unique',)]\n"
+            f"EXPECTED_NAMES = tuple(EXPECTED_NAMES) + ({twin!r},)\n")
+        code, out, err, _module = self._run_surgered(surgery)
+        self.assertTrue(code == 2,
+                        f'#2692 fix-r7: an unpinned unique-test row must '
+                        f'refuse --check: rc={code} out={out!r}')
+        self.assertIn(f'#2692 turn-read roster entries missing from '
+                      f'ROW_PINS: {twin}', err,
+                      '#2692 fix-r7: the refusal names the family and '
+                      'the unpinned twin')
+
     def test_check_refuses_a_row_dropped_from_both_tables(self):
         # closure-r4 (MM closure sibling#1, P1): a row whose bound test
         # another row also carries used to survive a both-tables drop --

@@ -26,10 +26,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-// #2692 fix-r6: the fault-injection flag is #[cfg(test)]-only, so its type
+// #2692 fix-r7: the fault-injection flag is #[cfg(test)]-only, so its type
 // import rides with it (a plain import would warn in the production build).
 #[cfg(test)]
-use std::sync::atomic::AtomicBool;
+use std::cell::Cell;
 
 // RunRegistry.ts:43-44. `pub(crate)` so the tool-result spill wait
 // (`runtime/context/tool_budget.rs::SPILL_WAIT_TIMEOUT`, #637 fix-r4) can
@@ -838,71 +838,125 @@ static UNREKEYABLE_REPORTED: LazyLock<Mutex<HashSet<PathBuf>>> =
 /// (fix-merge-r4, MM src2 concurrency#1). Once per path per process: the
 /// first read that skips announces the coming drop, later reads stay quiet
 /// and the cumulative counter carries the per-read half.
+/// fix-r7 (DS 增量 concurrency#1 P1 ≡ boundary#2 P2 / concurrency#2 P2a):
+/// the claim is one atomic step again — the lock-held insert answers
+/// "first" (the `first_report_for` shape), so concurrent first readers of
+/// one path elect exactly one writer; fix-r6's check-then-write could let
+/// them all write the line, and a write that blocked held every later read
+/// up instead of just its own. The claim is released when the write fails,
+/// so a transient stderr failure (EPIPE, a closed fd) still retries on the
+/// next read — fix-r6's retry contract, kept.
 fn report_unrekeyable(path: &Path, count: usize) {
     if count == 0 {
         return;
     }
-    if already_reported(path) {
+    if !claim_report_slot(path) {
         return;
     }
-    // #2692 fix-r6 (DS 增量 concurrency#3 ≡ boundary#3, P2 a): the write now
-    // happens before the mark — `writeln!`'s Result decides whether the path
-    // enters the reported set, so a transient stderr failure (EPIPE, a closed
-    // fd) retries on the next read instead of silencing the path for the rest
-    // of the process (the old mark-first shape made "write failed" and
-    // "already reported" indistinguishable). The mark stays out of every
-    // lock the write could hold (fix-merge-r4's out-of-lock property), and
-    // the write keeps the #2558 non-panicking family contract: the error is
-    // consumed here, never unwrapped (`production_tree_stays_eprintln_free`
-    // pins the family; the writer call site itself moved inline so its
-    // Result can be observed).
-    let mut stderr = io::stderr();
     let line = format!(
         "run registry {}: skipped {} un-rekeyable record(s); the next persist rewrites the file without them",
         path.display(),
         count
     );
-    // Test-only fault injection (see `REPORT_WRITE_FAILURES`); a production
-    // build never injects, so the write's own Result is the whole condition.
-    #[cfg(test)]
-    let inject_failure = REPORT_WRITE_FAILURES.load(Ordering::Relaxed);
-    #[cfg(not(test))]
-    let inject_failure = false;
-    let written = !inject_failure && writeln!(stderr, "{line}").is_ok();
-    if written {
-        mark_reported(path);
+    // The write's own Result decides the slot: Ok keeps it (the path stays
+    // reported), Err releases it so the next read retries. The error is
+    // consumed here, never unwrapped — the #2558 non-panicking writer family
+    // contract (`production_tree_stays_eprintln_free` pins the family; the
+    // write lives in `write_skip_report` so its Result can be observed here).
+    if write_skip_report(&mut io::stderr(), &line).is_err() {
+        release_report_slot(path);
     }
 }
 
-/// Whether `path`'s skip signal has already been written by this process
-/// (the throttle set's read half). The lock is never held across the write.
-fn already_reported(path: &Path) -> bool {
+/// #2692 fix-r7 (DS 增量 boundary#3 P2 / simplify#4 P3): the write half of
+/// the skip report, extracted so its `io::Result` can drive the claim above.
+/// The write itself stays the #2558 non-panicking family's single
+/// `writeln!`; the #[cfg(test)] fault injection answers with the very `Err`
+/// a broken pipe would (`ErrorKind::BrokenPipe`), so the retry contract is
+/// exercised on the write's real failure branch instead of a short-circuit
+/// that bypasses the write. A production build never injects.
+fn write_skip_report(stderr: &mut impl Write, line: &str) -> io::Result<()> {
+    if report_write_forced_failure() {
+        return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+    }
+    writeln!(stderr, "{line}")
+}
+
+/// Atomically claims `path`'s report slot: `true` only for the caller whose
+/// insert made the path present (the `first_report_for` shape), so
+/// concurrent first readers elect exactly one writer — the lock is never
+/// held across the write (fix-merge-r4's out-of-lock property).
+fn claim_report_slot(path: &Path) -> bool {
+    let mut reported = UNREKEYABLE_REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    reported.insert(path.to_path_buf())
+}
+
+/// Releases a claimed slot whose write failed, so the next read retries —
+/// the write's Err half (a claimed-but-unwritten path must never read as
+/// "already reported").
+fn release_report_slot(path: &Path) {
+    let mut reported = UNREKEYABLE_REPORTED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    reported.remove(path);
+}
+
+/// #2692 fix-r6: test-only read of the throttle set, so the retry test can
+/// observe whether a path is marked without reaching for the private set.
+#[cfg(test)]
+pub(crate) fn unrekeyable_reported(path: &Path) -> bool {
     let reported = UNREKEYABLE_REPORTED
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     reported.contains(path)
 }
 
-/// Records that `path`'s skip signal has been written — called only after a
-/// successful write, so a failed one retries on the next read.
-fn mark_reported(path: &Path) {
-    let mut reported = UNREKEYABLE_REPORTED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    reported.insert(path.to_path_buf());
+/// #2692 fix-r7 (DS 增量 simplify#5 P2 ≡ concurrency#5 / boundary#5 P3):
+/// test-only forced failure of [`write_skip_report`]'s write. Thread-local
+/// `Cell`, never a process-wide static: libtest runs its cases on parallel
+/// threads, so a process-level flag let one test's injection window
+/// silence another test's skip report, and a panicking test used to leak
+/// the flag past its manual trailing reset. The guard below resets on
+/// unwind, so no window survives its test.
+#[cfg(test)]
+thread_local! {
+    static REPORT_WRITE_FAILURES: Cell<bool> = const { Cell::new(false) };
 }
 
-/// #2692 fix-r6 (DS 增量 concurrency#3): test-only fault injection for
-/// [`report_unrekeyable`]'s write — forced "failures" prove the retry
-/// contract in-process (no mark on a failed write; the next read retries).
+/// #2692 fix-r7: the injection's RAII half — forces [`write_skip_report`]
+/// failures until dropped, including through a panic in the window (the old
+/// manual trailing reset was dead code once an assertion panicked above it).
 #[cfg(test)]
-pub(crate) static REPORT_WRITE_FAILURES: AtomicBool = AtomicBool::new(false);
+pub(crate) struct ReportWriteFailureGuard;
 
-/// #2692 fix-r6: test-only read of the throttle set, so the retry test can
-/// observe whether a path is marked without reaching for the private set.
 #[cfg(test)]
-pub(crate) fn unrekeyable_reported(path: &Path) -> bool {
-    already_reported(path)
+impl ReportWriteFailureGuard {
+    pub(crate) fn force_failures() -> Self {
+        REPORT_WRITE_FAILURES.with(|flag| flag.set(true));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for ReportWriteFailureGuard {
+    fn drop(&mut self) {
+        REPORT_WRITE_FAILURES.with(|flag| flag.set(false));
+    }
+}
+
+/// The #[cfg(test)] half of the injection read: the thread-local flag above.
+#[cfg(test)]
+fn report_write_forced_failure() -> bool {
+    REPORT_WRITE_FAILURES.with(Cell::get)
+}
+
+/// The production half: a production build never injects (the fix-r6
+/// `#[cfg(test)] let inject_failure` shape, one constant answer per build).
+#[cfg(not(test))]
+fn report_write_forced_failure() -> bool {
+    false
 }
 
 /// `${projectKey ?? ""}\0${sessionKey}\0${runId}` (RunRegistry.ts:70).

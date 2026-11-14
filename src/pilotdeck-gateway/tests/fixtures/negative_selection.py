@@ -183,6 +183,22 @@ def refuse(message):
     raise SystemExit(2)
 
 
+def require_pinned_by_roster(roster, pins, label):
+    """Refuse a roster entry no pin row carries (the completeness clause).
+
+    The reverse pin rules only ever widen the pool they check, so a name
+    could sit unpinned in both tables at once — added to the roster and the
+    runtime table together, dropped from neither comparison. Every roster
+    entry must be pinned; ``label`` names the fixture in the refusal so the
+    family stays identifiable (#2692 fix-r7, DS sibling#2 ≡ simplify#1:
+    converged from the turn families' three same-shaped copies).
+    """
+    missing = sorted(set(roster) - set(pins))
+    if missing:
+        refuse(f'#2692 {label} roster entries missing from ROW_PINS: '
+               f'{", ".join(missing)}')
+
+
 def verdict_exit(rows, *, key='verdict', killed='KILLED'):
     """Exit code for a finished negative-control run.
 

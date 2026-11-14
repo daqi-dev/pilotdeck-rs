@@ -1270,6 +1270,32 @@ fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
     .stderr(std::process::Stdio::piped())
     .spawn()
     .expect("#2692 the stderr-line probe spawns");
+    // fix-r7 (DS 增量 concurrency#3 ≡ boundary#1, P1 / sibling#3 P2 /
+    // simplify#2 P2): both pipes are drained concurrently with the wait,
+    // never read inside it — `read_to_string` on a live child's pipe blocks
+    // until the child's write end closes (i.e. until it exits), so the old
+    // timeout branch's read-then-kill order could hang the very wait it was
+    // there to bound (a child stuck on a lock it will never get), and an
+    // undrained stdout could block a chatty child's own writes past the
+    // pipe buffer (the #2301/#2558 drain-before-wait precedent). The drain
+    // threads see EOF as soon as the child dies, so kill-then-drain below
+    // stays bounded.
+    let stderr_pipe = child.stderr.take();
+    let stderr_drain = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_string(&mut text);
+        }
+        text
+    });
+    let stdout_pipe = child.stdout.take();
+    let stdout_drain = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let _ = pipe.read_to_string(&mut text);
+        }
+        text
+    });
     // fix-r6 (DS 增量 concurrency#1, P2 a): a bounded wait — 30 s on the
     // child, then kill + reap before the named failure, with the partial
     // console embedded (the #2301 bounded-wait precedent; the old
@@ -1284,12 +1310,14 @@ fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
             Err(error) => panic!("#2692 the stderr-line probe is not waitable: {error}"),
         }
         if std::time::Instant::now() >= deadline {
-            let mut partial = String::new();
-            if let Some(mut pipe) = child.stderr.take() {
-                let _ = pipe.read_to_string(&mut partial);
-            }
+            // Kill + reap FIRST, then drain: the kill closes the child's
+            // pipe write ends, so both drains return whatever the pipes
+            // still held — reading before the kill could block forever on
+            // exactly the stuck child this deadline exists for.
             let _ = child.kill();
             let _ = child.wait();
+            let partial = stderr_drain.join().unwrap_or_default();
+            let _ = stdout_drain.join();
             crate::negative_assert!(
                 false,
                 "#2692 the stderr-line probe child did not finish within 30s (partial stderr):\n{partial}"
@@ -1298,10 +1326,8 @@ fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
         }
         thread::sleep(Duration::from_millis(50));
     };
-    let mut stderr = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = pipe.read_to_string(&mut stderr);
-    }
+    let stderr = stderr_drain.join().unwrap_or_default();
+    let _ = stdout_drain.join();
     crate::negative_assert!(
         status.success(),
         "#2692 the stderr-line probe itself must pass (exit {status}):\n{stderr}"
@@ -1324,6 +1350,11 @@ fn unrekeyable_skip_logs_the_stderr_signal_once_per_path() {
 // leave the path unmarked (so the next read retries), the retried write must
 // mark it, and a further read must stay quiet — the write-then-mark order,
 // proven in-process through the #[cfg(test)] fault injection.
+// fix-r7 (DS 增量 boundary#3 P2 ≡ simplify#5 P2): the injection now answers
+// from inside `write_skip_report` with the `Err` a broken pipe returns, so
+// the retry walks the write's real failure branch; the RAII guard replaces
+// the manual flag stores (a panic mid-window used to leak the flag into
+// the process's other tests, and the trailing reset was dead code).
 #[test]
 fn unrekeyable_report_retries_after_a_failed_write() {
     let scratch = Scratch::new();
@@ -1338,7 +1369,7 @@ fn unrekeyable_report_retries_after_a_failed_write() {
     .unwrap();
     // First read with the write forced to fail: no line, and — the contract
     // under test — no mark, so the failure is not mistaken for "reported".
-    super::run_registry::REPORT_WRITE_FAILURES.store(true, Ordering::SeqCst);
+    let failing_writes = super::run_registry::ReportWriteFailureGuard::force_failures();
     let registry = FileRunRegistry::open(&path).unwrap();
     assert_eq!(
         registry.skipped_unrekeyable(),
@@ -1349,9 +1380,9 @@ fn unrekeyable_report_retries_after_a_failed_write() {
         !super::run_registry::unrekeyable_reported(&path),
         "#2692 a failed report write must not mark the path as reported"
     );
+    drop(failing_writes);
     // Second read with the write healthy again: the retry lands the line
     // and takes the mark.
-    super::run_registry::REPORT_WRITE_FAILURES.store(false, Ordering::SeqCst);
     assert!(
         registry.get(&run(None, "", "run-deep")).unwrap().is_none(),
         "#2692 the second read still skips the deep record"
@@ -1370,5 +1401,4 @@ fn unrekeyable_report_retries_after_a_failed_write() {
         super::run_registry::unrekeyable_reported(&path),
         "#2692 the mark survives further reads (the throttle set is stable)"
     );
-    super::run_registry::REPORT_WRITE_FAILURES.store(false, Ordering::SeqCst);
 }

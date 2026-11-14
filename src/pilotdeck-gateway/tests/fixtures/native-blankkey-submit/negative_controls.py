@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#2692 fix-r1/fix-r2/fix-r3/fix-r5/fix-r6: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
+"""#2692 fix-r1/fix-r2/fix-r3/fix-r5/fix-r6/fix-r7: --check; [--compile-only] NEW_OUTPUT [mutation ...]. Commit first.
 
 The submit chain keeps TS's two key domains apart (`ts-prodkey-probe.out`):
 the composite run key spells `String(sessionKey)` (null → "null", absent →
@@ -49,6 +49,16 @@ test that must die:
   (`already_reported` answers false), so the probe child's second triggering
   read logs again and the parent's exact count of 1 goes red — the old
   parent only `contains`-ed, so this half had no kill point.
+- `registry-mark-before-write` (fix-r7 增量, simplify#7): the claim is taken
+  atomically before the write and released only on the write's `Err`; the
+  mutation deletes the release arm, so a failed write keeps the mark (the
+  fix-r6 mark-before-write shape) and the in-process retry test's first
+  assertion goes red.
+- `registry-probe-child-stuck` (fix-r7 增量, concurrency#3 ≡ boundary#1 P1):
+  the probe's child half deadlocks on a lock another thread never releases,
+  so the parent must kill + reap before draining and fail at the named
+  30 s timeout assertion — the pre-fix read-before-kill order hangs instead
+  of failing.
 - `registry-band-leaf-depth` (fix-r6, review sibling#2): the band criterion
   reverts to the old leaf/node-depth caliber, which under-reports the
   empty-innermost-array shape by exactly one, so the band's first
@@ -125,6 +135,10 @@ signal_test = ('storage::run_registry_tests::'
                'unrekeyable_skips_advances_in_production_on_every_read')
 writer_test = ('storage::run_registry_tests::'
                'unrekeyable_skip_logs_the_stderr_signal_once_per_path')
+# fix-r7 增量 (simplify#7): the claim-release order's bound test — the
+# in-process retry contract (a failed write releases the claim).
+retry_test = ('storage::run_registry_tests::'
+              'unrekeyable_report_retries_after_a_failed_write')
 echo_test = ('runtime::turn::read::tests::'
              'read_session_messages_reads_the_router_domain_and_echoes_the_raw_key')
 deep_echo_test = ('runtime::turn::read::tests::'
@@ -285,34 +299,80 @@ mutations = [
     # #2301 child_probe_token shape — a stale env alone can no longer divert
     # the parent into the child half), the child performs reads that skip,
     # and the parent — owning the child's stderr pipe — counts the line.
-    # fix-r6 增量 (DS concurrency#3 ≡ boundary#3): re-anchored to the
-    # write-then-mark shape (the old console_log_line span left with the
-    # writer call); the mutation deletes only the `writeln!` while keeping
-    # the mark, so the throttle state looks healthy but no line reaches
-    # the pipe.
+    # fix-r7 增量 (DS concurrency#1 ≡ boundary#1 P1, re-anchor): the write
+    # moved into `write_skip_report`; the mutation makes it answer Ok
+    # without writing, so the claim is kept (the throttle state looks
+    # healthy) while no line reaches the pipe.
     ('registry-skip-writer-silent', REGISTRY,
-     '    let written = !inject_failure && writeln!(stderr, "{line}").is_ok();\n',
+     '    writeln!(stderr, "{line}")\n',
      '    let _ = (stderr, line);\n'
-     '    let written = !inject_failure;\n',
+     '    Ok(())\n',
      writer_test,
      '#2692 the skip\'s stderr signal never reached the pipe'),
-    # fix-r6 增量 (DS boundary#2 ≡ concurrency#2, P1 / #3197): the throttle
-    # half — the parent used to `contains`-only, so reverting the
-    # once-per-path-per-process set kept the probe green. The mutation makes
-    # `already_reported` answer false, the probe child's two triggering reads
-    # both log, and the parent's exact-count assertion (1) goes red.
+    # fix-r7 增量 (DS boundary#2 ≡ concurrency#2 P1 / #3197, re-anchor):
+    # the throttle half — the parent used to `contains`-only, so reverting
+    # the once-per-path-per-process set kept the probe green. The mutation
+    # makes the atomic claim answer true for every caller, the probe child's
+    # two triggering reads both log, and the parent's exact-count assertion
+    # (1) goes red.
     ('registry-throttle-removed', REGISTRY,
-     'fn already_reported(path: &Path) -> bool {\n'
-     '    let reported = UNREKEYABLE_REPORTED\n'
+     'fn claim_report_slot(path: &Path) -> bool {\n'
+     '    let mut reported = UNREKEYABLE_REPORTED\n'
      '        .lock()\n'
      '        .unwrap_or_else(PoisonError::into_inner);\n'
-     '    reported.contains(path)\n'
+     '    reported.insert(path.to_path_buf())\n'
      '}\n',
-     'fn already_reported(_path: &Path) -> bool {\n'
-     '    false\n'
+     'fn claim_report_slot(_path: &Path) -> bool {\n'
+     '    true\n'
      '}\n',
      writer_test,
      '#2692 the skip signal is once per path per process'),
+    # fix-r7 增量 (simplify#7, rides the P1 concurrency#1 atomic-claim fix):
+    # the claim-release order's own kill point — the mutation deletes the
+    # release-on-failure arm, so the claim (the mark) is taken before the
+    # write and survives its failure (the fix-r6 mark-before-write shape);
+    # the retry test's first assertion goes red because a forced-failed
+    # write must leave the path unmarked.
+    ('registry-mark-before-write', REGISTRY,
+     '    if write_skip_report(&mut io::stderr(), &line).is_err() {\n'
+     '        release_report_slot(path);\n'
+     '    }\n',
+     '    let _ = write_skip_report(&mut io::stderr(), &line);\n',
+     retry_test,
+     '#2692 a failed report write must not mark the path as reported'),
+    # fix-r7 增量 (concurrency#3 ≡ boundary#1 P1): the bounded wait's own
+    # kill point — the child half deadlocks on a lock another thread never
+    # releases (the exact shape the 30 s deadline exists for), so the parent
+    # must kill + reap before draining and fail at the named timeout
+    # assertion inside the bound; the pre-fix order (reading the pipe
+    # before the kill) hangs the parent instead of failing it.
+    ('registry-probe-child-stuck', REGISTRY_TESTS,
+     '        let registry = FileRunRegistry::open(&path).unwrap();\n'
+     '        assert_eq!(\n'
+     '            registry.skipped_unrekeyable(),\n'
+     '            1,\n'
+     '            "#2692 the probe\'s deep record sits inside the fold band, so the read skips it"\n'
+     '        );\n',
+     '        let gate = std::sync::Arc::new(std::sync::Mutex::new(()));\n'
+     '        let held = gate.clone();\n'
+     '        let (ready, ready_signal) = std::sync::mpsc::channel::<()>();\n'
+     '        thread::spawn(move || {\n'
+     '            let _held = held.lock().unwrap();\n'
+     '            let _ = ready_signal.send(());\n'
+     '            loop {\n'
+     '                thread::sleep(Duration::from_secs(3600));\n'
+     '            }\n'
+     '        });\n'
+     '        let _ = ready.recv();\n'
+     '        let _stuck = gate.lock().unwrap();\n'
+     '        let registry = FileRunRegistry::open(&path).unwrap();\n'
+     '        assert_eq!(\n'
+     '            registry.skipped_unrekeyable(),\n'
+     '            1,\n'
+     '            "#2692 the probe\'s deep record sits inside the fold band, so the read skips it"\n'
+     '        );\n',
+     writer_test,
+     '#2692 the stderr-line probe child did not finish within 30s'),
 
     # fix-r6 (review sibling#2): the band criterion mutates back to the old
     # leaf/node-depth caliber (container_depth), which counts the deepest
@@ -405,6 +465,14 @@ LITERAL_ANCHORS = [
     # fix-r6 增量 (DS boundary#2): the throttle row's own assertion —
     # the probe parent's exact-count negative_assert.
     (REGISTRY_TESTS, '#2692 the skip signal is once per path per process'),
+    # fix-r7 增量 (simplify#7): the claim-release row's own assertion — the
+    # retry test's first negative_assert.
+    (REGISTRY_TESTS,
+     '#2692 a failed report write must not mark the path as reported'),
+    # fix-r7 增量 (concurrency#3 ≡ boundary#1): the stuck-child row's own
+    # assertion — the probe parent's bounded-wait timeout negative_assert.
+    (REGISTRY_TESTS,
+     '#2692 the stderr-line probe child did not finish within 30s'),
     (READ_TESTS, '#2692 the miss echoes the raw request value'),
     # fix-r6 (review sibling#1): the deep-echo test's caliber pin.
     (READ_TESTS, '#2692 the capped provider-body serializer refuses the same value'),
@@ -429,6 +497,8 @@ EXPECTED_NAMES = (
     'registry-skip-silent',
     'registry-skip-writer-silent',
     'registry-throttle-removed',
+    'registry-mark-before-write',
+    'registry-probe-child-stuck',
     'registry-band-leaf-depth',
     'echo-drops-raw-key',
     'echo-capped-serializer',

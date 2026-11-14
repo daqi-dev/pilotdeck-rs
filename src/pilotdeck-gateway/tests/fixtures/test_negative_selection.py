@@ -20,7 +20,8 @@ from contextlib import redirect_stderr
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from negative_selection import (baseline_passed, claim_dir, refuse, registered,
-                                select, verdict_exit)
+                                require_pinned_by_roster, select,
+                                verdict_exit)
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -151,6 +152,36 @@ class StaticRoster(unittest.TestCase):
         self.assertEqual(registered(rows, ['baseline', 'mutant-a'],
                                     name=lambda row: row['name']),
                          ['baseline', 'mutant-a'])
+
+
+class RosterCompleteness(unittest.TestCase):
+    """#2692 fix-r7 (DS simplify#1 / sibling#2): the completeness clause.
+
+    The three turn fixtures each carried a same-shaped 9-line refuse -- every
+    roster entry must appear in ROW_PINS -- so the clause converged into this
+    helper. Its red side is a roster entry no pin row carries.
+    """
+
+    def test_a_complete_roster_is_returned(self):
+        self.assertIsNone(
+            require_pinned_by_roster(['a', 'b', 'c'], ['c', 'a', 'b'], 'turn-x'))
+
+    def test_a_roster_entry_missing_from_the_pins_refuses(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                require_pinned_by_roster(['a', 'b'], ['a'], 'turn-x')
+        self.assertTrue(raised.exception.code == 2,
+                        '#2692 the completeness clause is a refusal (rc 2)')
+        self.assertEqual(
+            stderr.getvalue(),
+            'INVALID: #2692 turn-x roster entries missing from ROW_PINS: b\n')
+
+    def test_pins_may_carry_names_the_roster_does_not(self):
+        # The forward direction (a pin naming a gone row) is the family's own
+        # per-fixture rule on the runtime table; this helper only refuses the
+        # reverse, so extra pins are not its business.
+        self.assertIsNone(require_pinned_by_roster(['a'], ['a', 'b'], 'turn-x'))
 
 
 class Refuse(unittest.TestCase):
