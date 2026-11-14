@@ -274,18 +274,23 @@ fn harness() -> Harness {
         config,
     }));
 
+    let env = options.environment(Env::new());
+    let project = Arc::new(ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(NoRuntimeFactory),
+    ));
+    // #1444: the real submit-lane services so a steer carrying attachments
+    // composes through prepare_attachment_turn.
+    let submit_services = Requests::stub_submit_services(&options, &project, &env, &owner);
     let requests = Requests {
-        env: options.environment(Env::new()),
+        env,
         options: options.clone(),
         snapshot_enabled: false,
         memory: Arc::new(MemoryGateway::disabled()),
         coordinator: Arc::default(),
         runs: None,
         owner: owner.clone(),
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoRuntimeFactory),
-        )),
+        project,
         replacement: Arc::new(ReplacementCoordinator::new(
             Default::default(),
             Arc::new(owner.clone()),
@@ -308,6 +313,7 @@ fn harness() -> Harness {
         always_on: None,
         settings: Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        submit_services,
     };
     Harness {
         requests,

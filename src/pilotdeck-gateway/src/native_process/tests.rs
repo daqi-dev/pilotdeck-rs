@@ -1914,6 +1914,14 @@ async fn requests_registry_switch_gates_run_reads() {
         .expect("#1369 requests run registry"),
     );
     for (runs, on) in [(Some(runs), true), (None, false)] {
+        // #1444: the real submit-lane services so a steer carrying
+        // attachments composes through prepare_attachment_turn.
+        let submit_services = requests::Requests::stub_submit_services(
+            &options,
+            &project,
+            &options.environment(Env::new()),
+            &owner,
+        );
         let requests = requests::Requests {
             options: options.clone(),
             env: options.environment(Env::new()),
@@ -1951,6 +1959,7 @@ async fn requests_registry_switch_gates_run_reads() {
             always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            submit_services,
         };
         let described = requests
             .describe_server()
