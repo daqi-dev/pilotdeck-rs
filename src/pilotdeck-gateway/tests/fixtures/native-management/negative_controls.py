@@ -837,8 +837,15 @@ def _template_covers(template, assertion):
     `return True` as soon as every chunk had been found in order, so
     `_template_covers('head {method} tail', 'head apply tail extra')` held
     and an assertion the payload never carries read as anchored.
+    #3143 fix-r2 (P0, DS boundary#1): a template with no static text at all
+    (a bare `{}`, `re.split` gives two empty chunks) instantiates to any
+    string, so it anchors nothing -- both chunks hit `continue` and the old
+    `return trailing` was unconditionally True, making every assertion read
+    as anchored (the kept body's `parse_json("{}")` shape).
     """
     chunks = re.split(r'\{[^{}]*\}', template)
+    if not any(chunks):
+        return False
     # A trailing empty chunk is the region after the last placeholder: text
     # there is a prefix of that placeholder's value, so the assertion may
     # continue into it. Without it the instantiation ends with the last
@@ -925,7 +932,7 @@ def check_binding_scope():
     fixture = {
         management: '#[test]\n'
                     'fn target() {\n    helper();\n    own_template();\n'
-                    '    tail_template();\n'
+                    '    tail_template();\n    bare_template();\n'
                     '    // panic!("#1642 comment carrier");\n'
                     '}\n'
                     '#[test]\n'
@@ -935,6 +942,10 @@ def check_binding_scope():
                     'fn own_template() {\n    panic!("#1642 covers {method}");\n}\n'
                     'fn tail_template() {\n    panic!("#1642 head {method} tail");\n}\n'
                     'fn plain_carrier() {\n    panic!("#1642 plain non-test carrier");\n}\n'
+                    # #3143 fix-r2 (P0, DS boundary#1): a literal that is a
+                    # bare `{}` template carries no static text, so it must
+                    # anchor nothing (the kept body's `parse_json("{}")` shape).
+                    'fn bare_template() {\n    panic!("{}");\n}\n'
                     '/*\n'
                     '#[test]\n'
                     'fn ghost() {\n'
@@ -974,6 +985,14 @@ def check_binding_scope():
                                  '#1642 head apply tail extra'), sources=fixture):
         raise RuntimeError('#1642 binding checker accepted a tail-extending '
                            'assertion as a template instantiation')
+    # #3143 fix-r2 (P0, DS boundary#1): the red side of the zero-static-chunk
+    # rule -- a bare `{}` literal used to anchor any assertion (both chunks
+    # empty, `continue` twice, `return trailing` = True), so a drifted
+    # assertion string still read as anchored.
+    if not binding_failures(rows('native_process::management_tests::target',
+                                 'unanchored bare prose'), sources=fixture):
+        raise RuntimeError('#1642 binding checker accepted an assertion on a '
+                           'zero-static-chunk template')
     if not binding_failures(rows('native_process::management_tests::target',
                                  '#1642 marker of another test'), sources=fixture):
         raise RuntimeError('#1642 binding checker accepted a sibling-only assertion')

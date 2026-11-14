@@ -36,7 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (GIT_TIMEOUT, KILL_TIMEOUT, SourceBaselineError,
                               defer_signal_exit, mutating_sources, run_owned,
                               tree_lock, write_source_atomic)
-from negative_selection import claim_dir, refuse, registered, select, verdict_exit
+from negative_selection import (claim_dir, refuse, registered, select,
+                                verdict_exit, withdraw_claim)
 
 session = root / 'scripts/gateway-parity/session_domain.py'
 native = root / 'scripts/gateway-parity/native_evidence.py'
@@ -420,13 +421,13 @@ def main():
         # A guard that never started (dirty tree, lease or source-lock wait
         # exhausted, git or scanner timeout) is a startup refusal, not a red
         # run: rc 2 and no evidence dir that looks finished
-        # (specs/negative-controls/README.md:142/:145/:167).  rmdir only
-        # removes the empty dir claim_dir made -- a run that already wrote
-        # logs keeps them.
-        try:
-            out.rmdir()
-        except OSError:
-            pass
+        # (specs/negative-controls/README.md:142/:145/:167).  The shared
+        # atomic withdrawal (rename + rmtree in one helper) removes the
+        # claimable path in a single step, empty or not.
+        # #3143 fix-r2 (DS sibling#1): the same migration the four
+        # fix-r1 runners carry -- never a bare rmdir that races a
+        # later claimant.
+        withdraw_claim(out)
         refuse('guard refused to start: ' + repr(error))
 
     # Startup is everything the guard does before the first mutation: baseline

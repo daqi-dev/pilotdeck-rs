@@ -181,8 +181,13 @@ impl Temp {
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir(&path).unwrap();
-        Self(fs::canonicalize(path).unwrap())
+        // #3143 fix-r2 (DS sibling#5, #2335): the guard exists before the
+        // first fallible disk op; the canonical path is written back into
+        // the guard, never a second `Temp(...)`.
+        let mut temp = Self(path);
+        fs::create_dir(&temp.0).unwrap();
+        temp.0 = fs::canonicalize(&temp.0).unwrap();
+        temp
     }
 }
 impl Drop for Temp {
