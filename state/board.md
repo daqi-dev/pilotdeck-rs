@@ -1,24 +1,45 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-14 20:42（20:15 段后滚动；**3042 已入队（bs8avewp5 GraphQL 紧凑形报错改手动入队，队位 3）**、**3074 fix-r25 双谱系 P0/P1 全清 + body 手术（r8–r25 块、旧块存档形）→ 第二次 pr-gate 在跑**、**#3152 批次 17 条派 macmini-01 在跑**、**#2558 保持 OPEN（#3131/#3146 前置未清）**、队列 3158/3163/3042）：**主线 = 3074 pr-gate 绿入队 → #3056 收口 + 3042 MERGED 后串行链（2959→3088→2856）+ #3152 批次收货（前置于 #1357 A 阶段收口）**
+updated: 2026-11-14 20:58（巡场+交接轮，巡场卡 patrol-2055.md：红灯全已知无 P0；**3074 pr-gate 绿（43595919727）+ ci 尾项 negative-controls pending → watch4 全绿自动入队**、队列 3158(1)/3163(2)/3042(3)、**state PR 事件投递异常：3174/3175 无 opened 事件且旧血统 DIRTY → 换 origin/main 全新血统单提交重开**、#3152 批次 macmini 在跑、#2558 保持 OPEN）：**主线 = 3074 入队 → #3056 收口 + 3042 MERGED 后串行链（2959→3088→2856）+ #3152 批次收货（前置于 #1357 A 阶段收口）**
 
-- #3074 | impl | doing | 3056 收口 PR：**fix-r25 已实施并双谱系全清**（r24 评审 DS P1×2 实测仲裁：sibling#1 waiver 续字符形两正则分裂假红坐实当轮修；boundary#1 en dash 缺类无分裂降级登记边界 → 协调者本机亲改 fc49db0c5：子形/尾界四常量单源 + 表键 fail-loud + `_gate_module()` 双 memo + 真值表钉；自证 `_tmp/20261114-3074-fixr25/selfcheck/unit-tests.txt` 两套件 rc=0）→ **r25 双谱系增量评审（DS `_tmp/20261114-3074-fixr25-review-ds/` P2=5 / MM `-mm/` P2=13）P0=0 P1=0**，P2 去重五簇按修复轮上限 3 + 协作工具口径全部判定不修（触发条件与簇清单 `_tmp/20261114-3074-fixr25/arbitration.md`）→ **body 手术完成**（r8–r25 历史块补齐 39 存档形 + r25 双谱系活块盖 fc49db0c5 + 终轮处置节；首版历史块未标存档致 pr-gate 红 43595780531，存档形重手术后本地预检 PASS）→ **第二次 pr-gate 在跑，绿即入队** → #3056 收口 + #3154 销账
+- #3074 | impl | doing | 3056 收口 PR：**fix-r25 已实施并双谱系全清**（r24 评审 DS P1×2 实测仲裁：sibling#1 waiver 续字符形两正则分裂假红坐实当轮修；boundary#1 en dash 缺类无分裂降级登记边界 → 协调者本机亲改 fc49db0c5：子形/尾界四常量单源 + 表键 fail-loud + `_gate_module()` 双 memo + 真值表钉；自证 `_tmp/20261114-3074-fixr25/selfcheck/unit-tests.txt` 两套件 rc=0）→ **r25 双谱系增量评审（DS `_tmp/20261114-3074-fixr25-review-ds/` P2=5 / MM `-mm/` P2=13）P0=0 P1=0**，P2 去重五簇按修复轮上限 3 + 协作工具口径全部判定不修（触发条件与簇清单 `_tmp/20261114-3074-fixr25/arbitration.md`）→ **body 手术完成**（r8–r25 历史块补齐 39 存档形 + r25 双谱系活块盖 fc49db0c5 + 终轮处置节；首版历史块未标存档致 pr-gate 红 43595780531，存档形重手术后本地预检 PASS）→ **pr-gate 绿（run 43595919727）+ ci 仅剩 negative-controls pending → watch4（pid 66791）全绿即自动入队** → #3056 收口 + #3154 销账
 - #3042 | impl | doing | 1087 收口 PR：**终轮闭环**——DS 终轮覆盖评审（--base 18d349140 全量 31,639 行，head 044ce4b6f）四角色 PASS P0=0 P1=1 P2=4；**P1（damaged owner.json 不 fast-fail 不接管）仲裁既有 main 侧不挡**（`common.py` 在 044ce4b6f 与 d8b5fa89b 逐字节一致、main :373 已 63900 同量级、DS 对照基准 18d349140 的 timeout=60 已被重锚淘汰）→ #3172 条目 4 登记（issuecomment-6876728550）；P2 处置：sibling#1→#3152 条 7、concurrency#1+boundary#2（guard/TreeLock 预算+ABBA）→#3172 条目 5（6876742491）、simplify#1→#3166 → **PR body 手术**（旧 live 块标存档 + DS 终轮活块 + 终轮条目处置节）→ pr-gate run 43591378721 **绿** → **入队等待器 bs8avewp5**（negative-controls 完成即自动 GraphQL enqueue）→ MERGED → #3001 条1/#3100 条2/3 + 1087-p2-batch 开单 + 2959 合并轮即派 + 2800 重锚再入队
 - #2959 | impl | blocked | 2499 收口 PR CONFLICTING——与 #3042 共享冲突文件，**串行排 3042 MERGED 后**即派合并轮（任务书已备 _tmp/20261114-2959-merge/，树 wt-2499）
 - #3088 | impl | doing | 1723 收口 PR：pr-gate 红 = 旧 payload → 04:27 追加重钉注释触发新 run（bw6fu77gb）；合并侧 CONFLICTING 同族 → 入串行链尾 3042→2959→3088 → MERGED 后 #1723 收尾自查关单
-- #3143 | impl | doing | 2931 重锚评审残余 P1-跟进：fix-r2 双谱系收敛 + P2-跟进 **#3162 已开** → PR #3163 20:0x clean+绿但不在队 → **重入队（现队位 3）** → MERGED 核邮箱 → #1642 链收口终核（#3139 处置、#2572 并入、#3157 重判已评论 issuecomment-6873291666）
+- #3143 | impl | doing | 2931 重锚评审残余 P1-跟进：fix-r2 双谱系收敛 + P2-跟进 **#3162 已开** → PR #3163 20:0x clean+绿但不在队 → **重入队（现队位 2）** → MERGED 核邮箱 → #1642 链收口终核（#3139 处置、#2572 并入、#3157 重判已评论 issuecomment-6873291666）
 - #2944 | 收账 | **MERGED 20:09:25（落 main 为 2441172dc）+ 邮箱核毕（225912+zhengdaqi@users.noreply.github.com，noreply 形态无暴露）+ #2098 关账 + P2 处置登记（#3148 三次并入的跟踪单评论为依据）**——已收账销账
 - #2969 | 收账 | **MERGED 18:12（落 main 为 ba07afb53）+ 邮箱核毕（noreply 形态干净）**；#2558 链收口核对发现 **#3131/#3146 前置未清 → #2558 已重开**（评论 6876934694），两单处置排 #3152 批次后（同文件串行）
 - #3152 | impl | doing | P2 集中清批次（**前置于 #1357**，承接 #3160 已并修部分）：任务书 17 条（a 档=条 7 transport sidecar 9 处 console 宏+条 8 测试支撑凭据族；随批 13 条；条 5+16 结构性单列待设计卡排除；条 14 并 #3137 条 6 残余；条 17 补编 issuecomment-6876873446）→ **已派远端 macmini-01**（本机 P1 满 2/2；树 wt-3152 基 origin/main=d8b5fa89b，54/60；worker pid 61049 + bf8vn0tyk 哨兵；任务书 `_build/wt-3152/_tmp/20261114-3152-p2batch/task.md`，TASKBOOK-VERSION c4d90e17f2a3）→ 收货 → 补推+ls-remote 复核 → 评审 → PR
 - #3043 | impl | doing | close-order-pin 第四格（行首原 #3058，其 PR #3058 已 MERGED 致 sweep 红灯 5，前段改正）：fix-r11 双 P1 端到端实测仲裁成立当轮修 → **PR #3159（8733cdfd8）CONFLICTING 无 checks**——与 2929/3042 家族共享 anchors → **排 3042 MERGED 后单父重锚+覆盖评审（patch-id 指纹变则全量）** → gate → 入队 → #3043 收口（#3156/#3138/#3145 前置处置；c 档 #3150 已处置）
 - mirror-confluence | impl | doing | A2：#3102/#2967/#3015 均 MERGED（#2043 已关账）；#3042/2959/3088 串行链排后；**A1 #2800：r6regen 已收货**（复验绿、与 3042 队列语义冲突判定同改 anchors 汇总数字——3042 merge 态 282/1547 vs 2800 283/1496，先入后者必被 per-commit 重放踢；登记 issuecomment-6875958096）→ **等 3042 落 main 后重锚再入队**；B 19 张真合并工作单（#2911 先例）排期派车道；C 7 张 blocked 待判
-- decisions-20261114 | impl | doing | **PR #3158：rerun 43584166768 八 job 全绿（bc1p3cmxw）→ 20:0x 重入队（现队位 2）** → MERGED 后核邮箱 + decisions 落 main + #3143 关单核对 + 决策增补小 PR（两笔 AI 代批已备案）
+- decisions-20261114 | impl | doing | **PR #3158：rerun 43584166768 八 job 全绿（bc1p3cmxw）→ 20:0x 重入队（现队位 1）** → MERGED 后核邮箱 + decisions 落 main + #3143 关单核对 + 决策增补小 PR（两笔 AI 代批已备案）
 - #2572 | impl | ready | 负控夹具 EXPECTED_TOTAL 静态名册（**前置于 #1357 A 阶段收口**）：PR #2856 CONFLICTING 86h → **merge-tree 单父重锚 + patch-id 指纹判定（变则重评审）→ gate → 入队**——下一步即派（本机）
 - premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605。#2448/#2459 修法已拍板（decisions-20261113 两张卡，AI 代批待人复核），任务书素材齐；其余六张派单前按同模式先探针；前置 = mirror-confluence A2/B 批次
 - 1087-p2-batch | impl | blocked | #3001 条2/3+#3094+#3109+#3110 机械小修合批（≈6-10h）+ #3108 单独走冻结程序；前置 = #3042 合入（同域串行）
 - legacy-batches | coord | blocked | 红灯 3 六十四张老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
+
+### 交接段（20:42–20:58，coord2/e7，巡场+交接轮；巡场卡 patrol-2055.md）
+
+**做了什么**：
+1. **3074 fix-r25 全链收口到入队前**：pr-gate 第二次 run 43595919727 **绿**；ci 8 项 7 绿（rust 23m46s 过），仅 negative-controls pending → watch4 等待器（pid 66791）持带空格形 GraphQL mutation，全绿自动入队。
+2. **巡场四件 + 判读**（sweep-2001.md/fleet/探针/human-comments 空）：红灯 1/2/7/8 全 0；红灯 3（71 老单）按 legacy-batches 口径滚动；红灯 4 三张均绑各自收口节点（#2572 绑 #1357 到点硬闸）；红灯 5（#2929/#2969 陈旧行）根因 = 20:40 销账提交在 state PR 分支、#3171 20:10 才落 main；红灯 9 两单绑 3042/2959 计划内；红灯 10 mbp2 已知停用；本机机器级卷余 28 GiB WARN（仓内 53.4/200 正常，不开新树）。**无 P0，不叫人。**
+3. **3173/3174/3175 零 run 诊断有果**：同窗口 #3074 pull_request 事件正常（排除仓库级故障）；3174/3175 **timeline 无 opened 事件**（事件未投递）且均 **CONFLICTING/DIRTY**——分支血统停在 squash 前 a32433f0 链（#3171 squash 落 main 0df591cd0），新 PR 带旧提交对 main 冲突，事件恢复也合不进；synchronize 空提交实验（54119ccfa）同样零 run。处置：废弃三连路线，**从 origin/main 全新血统 commit-tree 单父重开 state PR**（本段所在提交），close 3174/3175；若新 PR 仍零 run 则登记 GitHub 侧事件投递异常转独立工作（board 内容经巡场卡与本段保底，不挡产品线）。
+4. **队列核对**：3158(1)/3163(2)/3042(3) 均 AWAITING_CHECKS，merge_group runs 在跑（43593356177/43593496752/43594911675）；#3171 已确认 MERGED（main→0df591cd0，邮箱形态 noreply 干净，19:00 段已记）。
+
+**下一步**：①3074 watch4 入队 → MERGED → 核邮箱 → **#3056 收口**（大步骤收尾自查 + 前置 P2 处置：#3154 逐条、#3107 判定不修口径核对）+ #3152 批次收货（bf8vn0tyk）；②新 state PR 事件投递观察（15 min 内无 run 即登记异常转独立工作）；③队列 3158/3163/3042 出队即收账；④3042 MERGED 后串行链启动（#3001 条1/#3100 条2/3 关账 + 1087-p2-batch 开单 + 2959 合并轮即派 + 2800 重锚再入队）；⑤#3131/#3146 排 #3152 批次后。
+
+未结义务表（20:58）：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3074 入队 → MERGED → 核邮箱 → #3056 收口自查 + #3154 销账 | coord2/e7 | watch4/bkhgbkdoo 触发即收 |
+| 2 | 新 state PR 零 run 处置：15 min 无 run → 登记事件投递异常转独立工作 | coord2/e7 | 本段后 15 min |
+| 3 | 3042 MERGED 后：#3001 条1/#3100 条2/3 + 1087-p2-batch + 2959 即派 + 2800 重锚 | coord2/e7 | 队列出队即收 |
+| 4 | #3152 批次收货 → 补推+ls-remote → 评审 → PR；#3131/#3146 排其后 | coord2/e7 | bf8vn0tyk 触发即收 |
+| 5 | 3158/3163/3042 收账（核邮箱 + #1642 链收口终核 + decisions 落 main） | coord2/e7 | 出队即收 |
+| 6 | #2856（#2572 车道）串行链尾不提前派；#2572 到点（#1357 收口）须有处置 | coord2/e7 | 3088 合入后当轮 |
+| 7 | 盘：本机机器级卷余 28 GiB WARN（不开新树）、仓内 53.4/200 GiB；每轮 df/du -sk | coord2/e7 | 每轮 |
 
 ### 交接段（20:15–20:42，coord2/e7，轮中段）
 
