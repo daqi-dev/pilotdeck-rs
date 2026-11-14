@@ -148,11 +148,20 @@ async fn observe(name: &str) -> (Value, Value) {
     let mut owner_options = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options.idle_sweep_interval_ms = 0;
     let owner = SessionOwner::new(owner_options);
+    let project = Arc::new(ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(NoResources),
+    ));
+    // #1444: the real submit-lane services so a steer carrying attachments
+    // composes through prepare_attachment_turn.
+    let submit_services = requests::Requests::stub_submit_services(
+        &options,
+        &project,
+        &options.environment(Env::new()),
+        &owner,
+    );
     let requests = requests::Requests {
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoResources),
-        )),
+        project,
         options: options.clone(),
         env: options.environment(Env::new()),
         snapshot_enabled: false,
@@ -189,6 +198,7 @@ async fn observe(name: &str) -> (Value, Value) {
         always_on: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        submit_services,
     };
     let services = services::Services {
         options: options.clone(),
@@ -513,11 +523,20 @@ async fn observe_archive(name: &str) {
     let owner = SessionOwner::new(owner_options);
     let mut owner_options_2 = SessionOwnerOptions::new(Arc::new(NoResources));
     owner_options_2.idle_sweep_interval_ms = 0;
+    let project = Arc::new(ProjectRuntimeRegistry::new(
+        options.project.clone(),
+        Arc::new(NoResources),
+    ));
+    // #1444: the real submit-lane services so a steer carrying attachments
+    // composes through prepare_attachment_turn.
+    let submit_services = requests::Requests::stub_submit_services(
+        &options,
+        &project,
+        &options.environment(Env::new()),
+        &owner,
+    );
     let requests = requests::Requests {
-        project: Arc::new(ProjectRuntimeRegistry::new(
-            options.project.clone(),
-            Arc::new(NoResources),
-        )),
+        project,
         options: options.clone(),
         env: options.environment(Env::new()),
         snapshot_enabled: false,
@@ -559,6 +578,7 @@ async fn observe_archive(name: &str) {
         always_on: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        submit_services,
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

@@ -13,6 +13,7 @@ use crate::{
         settings::SettingsGateway,
         turn::{
             coordinator::TurnEventCoordinator, gateway::GatewayRequests, publish::FileRegistry,
+            submit_host::SubmitHostServices,
         },
     },
     upload::gateway::UploadGateway,
@@ -71,6 +72,12 @@ pub struct Requests {
     /// `set_output_style`) write and the session factory's prepare closure
     /// reads back. One instance shared with the factory.
     pub session_overrides: Arc<SessionOverrides>,
+    /// #1444: the submit-lane turn services, so `steer_turn` composes
+    /// attachments through the same `prepare_attachment_turn` mechanism as
+    /// `submit_turn` (ledger A7.2-STEER-ATTACH-001, converged by
+    /// A7.2-STEER-ATTACH-001-R2). The production instance is the same
+    /// `Arc<Services>` the `GatewaySubmitHost` holds.
+    pub submit_services: Arc<dyn SubmitHostServices>,
 }
 
 #[cfg(test)]
@@ -157,6 +164,34 @@ impl Requests {
             reload_config: None,
             reload_extensions: None,
         }))
+    }
+
+    /// A `SubmitHostServices` for test fixtures that do not exercise the
+    /// submit family: the real `Services` with no snapshot recorder and a
+    /// no-op upload store, so a `steer_turn` carrying attachments runs the
+    /// real `prepare_attachment_turn` (compose) machinery of #1444 — the
+    /// same shape production wires from the assembly's single `Arc<
+    /// Services>`.
+    pub fn stub_submit_services(
+        options: &Options,
+        project: &Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+        env: &crate::config::Env,
+        owner: &SessionOwner,
+    ) -> Arc<dyn SubmitHostServices> {
+        Arc::new(super::services::Services {
+            options: options.clone(),
+            project: project.clone(),
+            env: env.clone(),
+            recorders: Arc::default(),
+            owner: owner.clone(),
+            snapshot_recorder: None,
+            upload_store: Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_| Ok(std::path::PathBuf::new()),
+                    || Ok(Vec::new()),
+                ),
+            )),
+        })
     }
 }
 impl GatewayRequests for Requests {
