@@ -9,20 +9,29 @@ unless every selected mutant is KILLED.
 
 Bound guards (all in ``src/pilotdeck-gateway/tests/console_panic_safety.rs``):
 
-* ``error_console_writes_stay_non_panicking`` — the listed-file scan
-* ``shared_writer_call_sites_stay_listed`` — the derived listing rule
 * ``production_tree_stays_eprintln_free`` — fix-r3's whole-tree production
-  scan plus its listed-file anchor
+  scan, since #3152 item 15 the one lexical gate (the ``EPRINTLN_FREE_SOURCES``
+  listed-file scan and the derived listing rule it superseded are deleted;
+  the two mutants bound to them below are rebound to this scan)
 * ``assert_no_eprintln_kills_a_real_eprintln`` — the detector self-test
   (fix-r4: the widened match set; fix-r5: ``eprint``, the fourth macro)
 * ``test_family_files_stay_declaration_gated`` — fix-r8's declaration pin,
-  made path-resolving in fix-r9 (the anchor set the production walk's
-  name exemption shares)
+  made path-resolving in fix-r9; since #3152 item 14 the name families'
+  own gate (the production walk's exemption is the declaration mount
+  closure, name-blind)
 * ``assert_no_eprintln_skips_only_cfg_test_items`` — the skip-boundary
-  fixture self-test (fix-r9: the keyword-follower whitelist)
+  fixture self-test (fix-r9: the keyword-follower whitelist, #3152
+  items 6/14: the fail-closed terminator exhaustion and the
+  ``cfg(all(test, …))`` in-file spelling)
 * ``anchor_scanner_resolves_rustc_module_semantics`` — fix-r10/fix-r11's
   module-resolution fixture (the rustc-pinned scanner semantics every
-  earlier anchor decision is judged against)
+  earlier anchor decision is judged against; #3152 items 1/2/3 add the
+  crate-root parent-directory, ``cfg(all(…))`` gate, and file-form
+  literal decisions' own kill points)
+* ``startup_survives_a_failed_stderr_write`` — the entry's own EPIPE
+  receipt under the deterministic dead sink (#3152 item 4: the
+  socketpair's peer is dropped before the spawn, so the metadata
+  line's write must fail from the first byte)
 
 Use: CARGO_TARGET_DIR=... python3 -I -B .../negative_controls.py <new output
 directory> [mutation name ...] (no names: every mutant).
@@ -52,27 +61,32 @@ MAIN = 'src/pilotdeck-gateway/src/main.rs'
 # literal observes (tests/common/source_inputs.rs).
 SHARED_LEXER = 'src/pilotdeck-gateway/tests/common/source_inputs.rs'
 
-LIST_SCAN = 'error_console_writes_stay_non_panicking'
-LISTING_RULE = 'shared_writer_call_sites_stay_listed'
 TREE_SCAN = 'production_tree_stays_eprintln_free'
 DETECTOR_SELF_TEST = 'assert_no_eprintln_kills_a_real_eprintln'
 DECLARATION_PIN = 'test_family_files_stay_declaration_gated'
 SKIP_TEST = 'assert_no_eprintln_skips_only_cfg_test_items'
 SCANNER_TEST = 'anchor_scanner_resolves_rustc_module_semantics'
+SURVIVES_WRITE = 'startup_survives_a_failed_stderr_write'
 
 # Each mutant is applied to the original, never cumulatively. #2558 fix-r3
-# review P1: the tls-warn-line-reverted / tls-guard-unlisted pair pins the
-# listed-file scan and the listing rule over the new tls.rs entry; the tree
+# review P1: tls-warn-line-reverted pins the tree scan over the tls.rs
+# entry (bound to the listed-file scan before #3152 item 15 deleted it —
+# the same revert must turn the one remaining lexical gate red). The tree
 # mutants pin the whole-tree scan, its listed-file anchor, and both
 # directions of the test-support exclusion. fix-r4 review P1-1: the
 # stdout-banner-reverted / guard-stdout-macros-dropped pair pins the
 # stdout face of the same scans — the entry's banner lines reverting to
-# bare `println!` must turn the listed-file scan red, and the detector's
-# widened match set reverting to `eprintln` alone must turn the self-test
-# red. fix-r5 review P1: guard-eprint-macro-dropped pins the fourth macro
-# alone — dropping just `eprint` while keeping the fix-r4 three must fail
-# the self-test's fourth loop iteration, so the set cannot silently
-# regress to r4's shape either.
+# bare `println!` must turn the tree scan red (the listed-file scan
+# before item 15 deleted it), and the detector's widened match set
+# reverting to `eprintln` alone must turn the self-test red. fix-r5
+# review P1: guard-eprint-macro-dropped pins the fourth macro alone —
+# dropping just `eprint` while keeping the fix-r4 three must fail the
+# self-test's fourth loop iteration, so the set cannot silently regress
+# to r4's shape either. #3152 item 15 also deleted the
+# tls-guard-unlisted row: its anchor was the EPRINTLN_FREE_SOURCES list,
+# and the escape class it pinned (a source file missing from the list)
+# is now the tree scan's own subject — an unlisted eprintln! fails the
+# walk itself, so no separate unlisting mutant can exist.
 # fix-r11 (B2, MM sibling#1 ≡ DS sibling#2): every fix-r10/fix-r11
 # scanner decision gets its paired mutant, the fix-r9 pairing rule —
 # each row degrades one decision back to the shape it replaced and the
@@ -92,6 +106,25 @@ SCANNER_TEST = 'anchor_scanner_resolves_rustc_module_semantics'
 # boundary#1): the `..` normalization's inline-body call site gets its
 # own fixture and its own paired mutant, the same one-decision-one-
 # mutant rule.
+# #3152 (P2 batch) rebinds and new rows, the same pairing rule:
+# * item 14 moved the production walk's test-support exemption to the
+#   declaration mount closure (test_only_sources), so the two exclusion
+#   mutants — which degrade is_test_support_source, the name predicate
+#   that now feeds only the declaration pin and the anchor fixpoint —
+#   rebind to DECLARATION_PIN (the walk itself is name-blind now);
+#   declaration-mount-closure-gate-ignored degrades the closure's own
+#   gate check, the decision item 14 added;
+# * items 1/2/3 add the crate-root parent-directory arm, the
+#   `cfg(all(…))` gate branch, and the file-form literal's
+#   no-default-fallback rule, each with its own fixture kill point;
+# * item 4 adds metadata-cwd-reverted (main.rs's metadata line back to
+#   `eprintln!` under the deterministic dead sink);
+# * item 6 adds list-member-exhaustion-fail-open (the terminator search
+#   returning the slice end again, the fail-open shape the P0
+#   arbitration downgraded to P2-c);
+# * the follower whitelist moved out to is_non_item_follower in the
+#   word-list convergence (#3152 item 14, the #3137 item-6 residual),
+#   so its row degrades the named helper's body, same decision.
 mutations = [
     ('tls-warn-line-reverted', TLS,
      '            // #2558: the load_pem warn line\'s non-panicking shape.\n'
@@ -106,11 +139,6 @@ mutations = [
      '                "Warning: could not read CA directory {}: {error}",\n'
      '                dir.display()\n'
      '            );'),
-    ('tls-guard-unlisted', GUARD,
-     '    "src/lib.rs",\n    "src/runtime/model/http/tls.rs",\n'
-     '    "src/host/tests/resume.rs",',
-     '    "src/lib.rs",\n    "src/main.rs",\n'
-     '    "src/host/tests/resume.rs",'),
     ('stdout-banner-reverted', MAIN,
      '    // #2558: best-effort console lines, like TS\'s `console.log` — a raw\n'
      '    // `println!` here panics when the write fails (std behavior), and these\n'
@@ -187,41 +215,34 @@ mutations = [
      '            PathAttribute::Literal(literal) => '
      'Some(normalize_mounted(&dir.join(literal))),\n'),
     ('follower-whitelist-reverted', GUARD,
-     '                    return match tokens.get(index + 1) {\n'
-     '                        Some(SourceToken::Literal(_)) => true,\n'
-     '                        Some(SourceToken::Ident(name)) => !matches!(\n'
-     '                            name.as_str(),\n'
-     '                            "if" | "else"\n'
-     '                                | "while"\n'
-     '                                | "for"\n'
-     '                                | "loop"\n'
-     '                                | "match"\n'
-     '                                | "break"\n'
-     '                                | "continue"\n'
-     '                                | "return"\n'
-     '                                | "in"\n'
-     '                                | "ref"\n'
-     '                                | "mut"\n'
-     '                                | "as"\n'
-     '                                | "where"\n'
-     '                                | "move"\n'
-     '                                | "dyn"\n'
-     '                                | "self"\n'
-     '                                | "Self"\n'
-     '                                | "true"\n'
-     '                                | "false"\n'
-     '                                | "await"\n'
-     '                        ),\n'
-     '                        Some(SourceToken::Punct(\'<\' | \'!\' | \'\\\'\')) => true,\n'
-     '                        _ => false,\n'
-     '                    };\n',
-     '                    if matches!(\n'
-     '                        tokens.get(index + 1),\n'
-     '                        Some(SourceToken::Punct(\':\' | \'=\' | \',\' | \'>\'))\n'
-     '                    ) {\n'
-     '                        return false;\n'
-     '                    }\n'
-     '                    return true;\n'),
+     'fn is_non_item_follower(word: &str) -> bool {\n'
+     '    matches!(\n'
+     '        word,\n'
+     '        "if" | "else"\n'
+     '            | "while"\n'
+     '            | "for"\n'
+     '            | "loop"\n'
+     '            | "match"\n'
+     '            | "break"\n'
+     '            | "continue"\n'
+     '            | "return"\n'
+     '            | "in"\n'
+     '            | "ref"\n'
+     '            | "mut"\n'
+     '            | "as"\n'
+     '            | "where"\n'
+     '            | "move"\n'
+     '            | "dyn"\n'
+     '            | "self"\n'
+     '            | "Self"\n'
+     '            | "true"\n'
+     '            | "false"\n'
+     '            | "await"\n'
+     '    )\n'
+     '}\n',
+     'fn is_non_item_follower(_word: &str) -> bool {\n'
+     '    false\n'
+     '}\n'),
 
     # fix-r11 (B2): the fix-r10/fix-r11 scanner decisions, one paired
     # mutant each, all bound to the fixture that pins the rustc
@@ -372,11 +393,104 @@ mutations = [
      '                                let mounted = '
      'normalize_mounted(&base.join(literal));\n',
      '                                let mounted = base.join(literal);\n'),
+    # #3152 item 1: the crate-root parent-directory arm of
+    # declaration_module_dir (the fix-r11 B1 scanner decision the
+    # fixture-table header promised a paired mutant) — degrading it to
+    # the plain source_module_dir rule (the `src/lib/` shape) resolves
+    # the fixture root's gated `mod helper_tests;` to no file, so the
+    # fixture's first assertion fails on its own marker.
+    ('crate-root-parent-dropped', GUARD,
+     '        Some("lib.rs" | "main.rs") => file.parent().map(Path::to_path_buf).unwrap_or_default(),\n'
+     '        _ => source_inputs::source_module_dir(file),\n',
+     '        _ => source_inputs::source_module_dir(file),\n'),
+    # #3152 item 2: the `cfg(all(…))` branch of the one gate predicate
+    # (`is_test_gating_predicate`, shared by the declaration gates and
+    # the in-file skip since item 14) — keeping only the exact
+    # `cfg(test)` spelling leaves the fixture's `#[cfg(all(test, unix))]`
+    # mount ungated, so allgate_tests.rs anchors nothing and its
+    # assertion fails on its own marker.
+    ('cfg-all-gate-dropped', GUARD,
+     '    match arguments.as_slice() {\n'
+     '        [SourceToken::Ident(test)] => test == "test",\n'
+     '        [\n'
+     '            SourceToken::Ident(all),\n'
+     '            SourceToken::Group {\n'
+     '                delimiter: proc_macro2::Delimiter::Parenthesis,\n'
+     '                tokens: list,\n'
+     '            },\n'
+     '        ] => {\n'
+     '            all == "all"\n'
+     '                && list\n'
+     '                    .iter()\n'
+     '                    .any(|token| matches!(token, SourceToken::Ident(word) if word == "test"))\n'
+     '        }\n'
+     '        _ => false,\n'
+     '    }\n',
+     '    match arguments.as_slice() {\n'
+     '        [SourceToken::Ident(test)] => test == "test",\n'
+     '        _ => false,\n'
+     '    }\n'),
+    # #3152 item 3: the file-form `#[path]` literal's own mount —
+    # degrading the literal arm into the default candidates (the
+    # pre-item-3 fallback shape) makes the fixture's
+    # `#[path = "linked_tests.rs"] mod linked;` resolve to no file (the
+    # fixture tree holds no `linked.rs`), so the mount vanishes and the
+    # assertion placed BEFORE the boundary#3 pin fails on its own
+    # marker, never as a preemption of the inline-literal one.
+    ('file-path-literal-default-fallback', GUARD,
+     '        PathBase::Module(base) => match path_attr {\n'
+     '            PathAttribute::Literal(literal) => Some(normalize_mounted(&base.join(literal))),\n'
+     '            PathAttribute::Unreadable => None,\n',
+     '        PathBase::Module(_) => match path_attr {\n'
+     '            PathAttribute::Literal(_) => [\n'
+     '                dir.join(format!("{name}.rs")),\n'
+     '                dir.join(name).join("mod.rs"),\n'
+     '            ]\n'
+     '            .into_iter()\n'
+     '            .find(|candidate| candidate.is_file()),\n'
+     '            PathAttribute::Unreadable => None,\n'),
+    # #3152 item 4: main.rs's metadata line back to `eprintln!` — under
+    # the deterministic dead sink (the socketpair whose peer is dropped
+    # BEFORE the spawn) the write fails EPIPE from the first byte, so the
+    # panic kills the entry between the banners and the accept loop; the
+    # served-502 receipt the bound test demands is the kill point, and
+    # the marker names the shared `why` of every failure step there.
+    ('metadata-cwd-reverted', MAIN,
+     '    pilotdeck_gateway::native_process::console_log_line(\n'
+     '        &mut std::io::stderr(),\n'
+     '        &format!("metadata cwd: {}", std::env::current_dir()?.display()),\n'
+     '    );\n',
+     '    eprintln!("metadata cwd: {}", std::env::current_dir()?.display());\n'),
+    # #3152 item 6: the terminator search's exhaustion rule — returning
+    # the slice end again (the fail-open shape the P0 arbitration
+    # downgraded to P2-c) swallows the production arm behind a gated
+    # member with no trailing `,`, so the adjacent fixture's expect_err
+    # fails with its own marker.
+    ('list-member-exhaustion-fail-open', GUARD,
+     '    // No terminator anywhere in the slice: rescan from the member\'s own\n'
+     '    // first token — never skip to the slice end.\n'
+     '    attribute + 2\n',
+     '    tokens.len()\n'),
+    # #3152 item 14: the production closure's own gate check — following
+    # gated mounts too makes every test-only file "production" (the
+    # walk loses the declaration-mount exemption), so the walk's first
+    # test-support file with a bare console macro fails the scan; the
+    # marker pins the same first file in the walk's deterministic order
+    # the exclusion mutants reach from the name side.
+    ('declaration-mount-closure-gate-ignored', GUARD,
+     '            for target in targets {\n'
+     '                if !mounts.gated.contains(target) {\n'
+     '                    queue.push_back(target.clone());\n'
+     '                }\n'
+     '            }\n',
+     '            for target in targets {\n'
+     '                queue.push_back(target.clone());\n'
+     '            }\n'),
 ]
 # #1666: static denominator. `len(mutations)` is not a denominator: deleting a
 # row shortens the run silently, and an emptied table prints `0/0 killed`.
 EXPECTED_NAMES = (
-    'tls-warn-line-reverted', 'tls-guard-unlisted', 'stdout-banner-reverted',
+    'tls-warn-line-reverted', 'stdout-banner-reverted',
     'guard-stdout-macros-dropped', 'guard-eprint-macro-dropped',
     'unlisted-file-eprintln',
     'tree-walk-no-descend', 'exclusion-widened-to-everything',
@@ -392,18 +506,21 @@ EXPECTED_NAMES = (
     'inline-path-literal-ignored', 'conditional-key-value-any',
     'shared-lexer-rpath-kept', 'dot-dot-mount-text-joined',
     'inline-dot-normalize-dropped',
+    'crate-root-parent-dropped', 'cfg-all-gate-dropped',
+    'file-path-literal-default-fallback', 'metadata-cwd-reverted',
+    'list-member-exhaustion-fail-open', 'declaration-mount-closure-gate-ignored',
 )
 # The bound guard and the assertion-message fragment that must appear in
 # that guard's own panic payload (negative_panic.panic_evidence scope).
 CHECKS = {
+    # #3152 item 15 rebound both former listed-file-scan mutants to the
+    # one remaining lexical gate: the reverted lines must fail the whole
+    # tree scan on their own file's marker.
     'tls-warn-line-reverted': (
-        LIST_SCAN,
+        TREE_SCAN,
         'src/runtime/model/http/tls.rs still writes an error console line'),
-    'tls-guard-unlisted': (
-        LISTING_RULE,
-        'names the shared writer but is not in'),
     'stdout-banner-reverted': (
-        LIST_SCAN,
+        TREE_SCAN,
         'src/main.rs still writes an error console line'),
     'guard-stdout-macros-dropped': (
         DETECTOR_SELF_TEST,
@@ -418,23 +535,22 @@ CHECKS = {
         TREE_SCAN,
         'the production walk skipped the #2558 source '
         'src/runtime/memory/maintenance.rs'),
-    # fix-r9: the name exemption is anchor-aware, so widening the
-    # predicate to `true` no longer drops src/main.rs (unmounted files
-    # stay in the walk). fix-r10 (sibling#2): the widened predicate now
-    # empties the anchor seeds outright — name-exempted files no longer
-    # contribute gated mounts, and under `true` every file counts as
-    # name-exempted, so nothing is anchored and every file stays in the
-    # walk; the guard goes red scanning the test-support spellings' own
-    # diagnostics. The marker pins the first such file in the walk's
-    # deterministic order (the same one the narrowed mutant reaches from
-    # the other side: the exemption is what keeps it out of the walk,
-    # and only a mounted one at that).
+    # #3152 item 14 rebound both exclusion mutants: the production walk
+    # is name-blind now (its exemption is the declaration mount closure,
+    # with its own mutant below), so degrading is_test_support_source —
+    # the name predicate that now feeds only the declaration pin's
+    # exempted set and the anchor fixpoint's seed filter — must fail the
+    # pin itself. Widened to `true` every file counts as name-exempted,
+    # so the anchor seeds empty and the pin's test_process gate
+    # assertion fails; narrowed to the two file-family spellings the
+    # `test_` anchor vanishes from the exempted set and the pin's
+    # family-anchor loop fails first.
     'exclusion-widened-to-everything': (
-        TREE_SCAN,
-        'src/test_process.rs still writes an error console line'),
+        DECLARATION_PIN,
+        'the derived anchor set is wrong'),
     'exclusion-narrowed-test-family': (
-        TREE_SCAN,
-        'src/test_process.rs still writes an error console line'),
+        DECLARATION_PIN,
+        'the family anchor is gone'),
     # fix-r9 (DS sibling#3 + DS boundary#2 P2b): the pin's path-resolved
     # anchor set and the follower whitelist must be killable — each new
     # mutant degrades one fix-r9 decision back to the shape it replaced.
@@ -506,6 +622,37 @@ CHECKS = {
     'inline-dot-normalize-dropped': (
         SCANNER_TEST,
         'fix-r13 sibling#1/boundary#1 regressed'),
+    # #3152 items 1/2/3: the new scanner decisions, the same pairing
+    # rule — each marker the fragment of the fixture's own first-failing
+    # assertion that names the regressed decision.
+    'crate-root-parent-dropped': (
+        SCANNER_TEST,
+        'the crate-root parent-directory rule regressed'),
+    'cfg-all-gate-dropped': (
+        SCANNER_TEST,
+        'the `cfg(all(test, unix))` gate resolved no mount'),
+    'file-path-literal-default-fallback': (
+        SCANNER_TEST,
+        'the file-form literal must mount its own file'),
+    # #3152 item 4: the entry dies between the banners and the accept
+    # loop, so whichever step observes the death fails with the shared
+    # `why` the bound test passes to its 502 receipt.
+    'metadata-cwd-reverted': (
+        SURVIVES_WRITE,
+        '#2558 the gateway keeps its listener after the failed write'),
+    # #3152 item 6: the no-terminator adjacent fixture's expect_err —
+    # the swallowed production site hands the scan a clean slice.
+    'list-member-exhaustion-fail-open': (
+        SKIP_TEST,
+        '#2558 a production site must still fail the scan'),
+    # #3152 item 14: the closure's gate check degraded — the declaration-
+    # mounted test family joins the production closure and the walk's
+    # first such file with a bare console macro fails the scan (the
+    # #[path]-mounted http_store_park_tests.rs, in the scan's emission
+    # order).
+    'declaration-mount-closure-gate-ignored': (
+        TREE_SCAN,
+        'src/user_dialog/http_store_park_tests.rs still writes an error console line'),
 }
 selected = sys.argv[2:]
 # #1666: ordinary raises, so `python3 -O` cannot strip these guards.
@@ -544,7 +691,16 @@ def run(full):
     return result.returncode, result.stdout + result.stderr
 
 
-with mutating_sources(ROOT, sorted({ROOT / row[1] for row in run_rows})) as snapshots:
+# The session-factory suites' precedent: a baseline object may be
+# supplied when the tree under review is not (yet) a commit — a
+# remote-worker round that must not `git commit` mints one with
+# `git add` + `git write-tree` + `git commit-tree` and names it here.
+# mutating_sources byte-verifies every mutated path AND the whole
+# workspace against the baseline either way, so the override names the
+# provenance; it never weakens a check.
+with mutating_sources(
+        ROOT, sorted({ROOT / row[1] for row in run_rows}),
+        baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as snapshots:
     def source_path(relative):
         return ROOT / relative
 
@@ -614,6 +770,39 @@ with mutating_sources(ROOT, sorted({ROOT / row[1] for row in run_rows})) as snap
             if restored != before:
                 raise RuntimeError(
                     f'{name}: restore failed ({restored} != {before}); the tree is dirty')
+            # #3152 item 17: the shared-lexer row pulls a shared build
+            # input (tests/common/source_inputs.rs) into the mutation
+            # window, and the tree lock only excludes another negctl
+            # runner — an ordinary cargo build during the window compiles
+            # the mutant bytes into the example binaries that embed it
+            # (workspace_inputs / lex_fn_items), branding
+            # `scanner_sha256`; every later anchor-selfcheck /
+            # metadata-IO run on this tree then refuses to rebuild them
+            # and nothing self-heals. The restore publishes fresh bytes
+            # by rename, so a plain example rebuild here recompiles from
+            # the clean source and un-brands the shared target dir
+            # (option ②'s forced window-end rebuild; a no-op Fresh when
+            # nothing branded). A failed repair fails the run — a
+            # branded tree must not limp on as a pass.
+            if path == ROOT / SHARED_LEXER:
+                slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
+                                     timeout=CARGO_SLOTS_WAIT_SECONDS)
+                (out / f'{name}.repair.slots.log').write_text(slots.stdout + slots.stderr)
+                repair = run_owned(
+                    ['cargo', 'build', '--locked',
+                     '--manifest-path', 'src/Cargo.toml',
+                     '-p', 'pilotdeck-gateway',
+                     '--example', 'workspace_inputs',
+                     '--example', 'lex_fn_items'],
+                    cwd=ROOT, env=env, timeout=900)
+                (out / f'{name}.repair.log').write_text(repair.stdout + repair.stderr)
+                if repair.returncode != 0:
+                    failures.append(f'{name}-repair')
+                    print(f'{name}: repair build FAILED rc={repair.returncode}',
+                          flush=True)
+                else:
+                    print(f'{name}: examples rebuilt from restored bytes',
+                          flush=True)
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}

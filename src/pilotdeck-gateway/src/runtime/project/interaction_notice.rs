@@ -83,9 +83,16 @@ impl DiscardNotice {
     /// because no next turn binds this session again.
     pub fn log(&self) {
         // #2558: the outlet itself must not panic on the write (std panics
-        // when a raw console write fails) — the callers log while holding the
-        // interaction state lock, before the notice is pushed, so a panicking
-        // write would poison the lock and drop the very notice reported here.
+        // when a raw console write fails). The old comment here claimed a
+        // panicking write "would poison the lock and drop the very notice"
+        // — wrong on both counts once the write is non-panicking and the
+        // state locks recover poison anyway (`runtime::cleanup_task::lock`
+        // reclaims a poisoned guard without clearing it). The real hazard
+        // was the one #3152 item 12 removes: callers used to log WHILE
+        // HOLDING their locks (steer's `applying` tokio mutex, the
+        // permission/hooks std state mutexes), parking every waiter on a
+        // blocking `write(2)` — the line construction (`to_event`) is now
+        // the only work under a lock, and the write happens outside.
         crate::native_process::channels::console_log_line(&mut std::io::stderr(), &self.log_line());
     }
     /// Next-turn visible outlet. The active turn identity satisfies the event

@@ -1754,6 +1754,7 @@ mod cwd_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_console;
 
     /// #978: watchdog for the bounded (200 ms) spill/media wait, not an
     /// assertion about it — a working bound returns in ~200 ms, but a host
@@ -1892,7 +1893,7 @@ mod tests {
             &JsString::from("a".repeat(4096)),
         )
         .expect_err("a spill write past RLIMIT_FSIZE must fail");
-        println!("WRITE_ERROR={}", error.message);
+        test_console::receipt_line(&format!("WRITE_ERROR={}", error.message));
     }
 
     /// The spill write is TS's `writeFile(path, content, { flag: "wx" })`:

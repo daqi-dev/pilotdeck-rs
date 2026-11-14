@@ -9,18 +9,41 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// One best-effort console line (#2558 transport twin, #3152 item 7): the
+/// write error is dropped, like TS's `console.log` / `console.error`, while
+/// std's `println!` / `eprintln!` panic when the write fails — a closed
+/// stdout/stderr pipe would kill this process (exit 101) instead of letting
+/// it serve or exit with its own receipt, and the gateway side of the same
+/// contract is `pilotdeck-gateway`'s `native_process::console_log_line`
+/// (`native_process/channels.rs`, #2301 / #2558), which this crate cannot
+/// import (transport must not depend on the gateway). Same shape, locally:
+/// one buffer, one `write_all`, so a concurrent writer can never interleave
+/// between a line and its newline (#3152 item 11).
+fn console_line(sink: &mut dyn io::Write, message: &str) {
+    let mut line = String::with_capacity(message.len() + 1);
+    line.push_str(message);
+    line.push('\n');
+    let _ = sink.write_all(line.as_bytes());
+}
+
 fn main() -> ExitCode {
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
     if arguments == ["--version"] {
-        println!(
-            "pilotdeck-agent-loop-sidecar {} implementation=rust wire=2.0 source={}",
-            env!("CARGO_PKG_VERSION"),
-            env!("PILOTDECK_SOURCE_COMMIT")
+        console_line(
+            &mut io::stdout(),
+            &format!(
+                "pilotdeck-agent-loop-sidecar {} implementation=rust wire=2.0 source={}",
+                env!("CARGO_PKG_VERSION"),
+                env!("PILOTDECK_SOURCE_COMMIT")
+            ),
         );
         return ExitCode::SUCCESS;
     }
     if !accepts_launch_arguments(&arguments) {
-        eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
+        console_line(
+            &mut io::stderr(),
+            "Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]",
+        );
         return ExitCode::from(2);
     }
     for option in [
@@ -28,7 +51,10 @@ fn main() -> ExitCode {
         "PILOTDECK_AGENT_LOOP_TCP_PORT",
     ] {
         if std::env::var_os(option).is_some_and(|value| !value.is_empty()) {
-            eprintln!("Rust candidate does not yet support the {option} deployment profile.");
+            console_line(
+                &mut io::stderr(),
+                &format!("Rust candidate does not yet support the {option} deployment profile."),
+            );
             return ExitCode::from(2);
         }
     }
@@ -46,23 +72,29 @@ fn main() -> ExitCode {
                 match pilotdeck_transport::loop_stimulus::LoopStimulus::global() {
                     Some(stimulus) => {
                         if let Err(message) = stimulus.plan() {
-                            eprintln!("{message}");
+                            console_line(&mut io::stderr(), message);
                             return ExitCode::from(2);
                         }
                     }
                     // The entry above only exists when the variable is set.
                     None => {
-                        eprintln!(
-                            "native loop stimulus could not resolve {}.",
-                            pilotdeck_transport::loop_stimulus::STIMULUS_ENV
+                        console_line(
+                            &mut io::stderr(),
+                            &format!(
+                                "native loop stimulus could not resolve {}.",
+                                pilotdeck_transport::loop_stimulus::STIMULUS_ENV
+                            ),
                         );
                         return ExitCode::from(2);
                     }
                 }
-                eprintln!("native loop stimulus on {}", dir.display());
+                console_line(
+                    &mut io::stderr(),
+                    &format!("native loop stimulus on {}", dir.display()),
+                );
             }
             Err(message) => {
-                eprintln!("{message}");
+                console_line(&mut io::stderr(), &message);
                 return ExitCode::from(2);
             }
         }
@@ -74,7 +106,10 @@ fn main() -> ExitCode {
     }) {
         Ok(cwd) => cwd.into(),
         Err(error) => {
-            eprintln!("Sidecar initialization failed: {error}");
+            console_line(
+                &mut io::stderr(),
+                &format!("Sidecar initialization failed: {error}"),
+            );
             return ExitCode::from(2);
         }
     };
@@ -101,9 +136,12 @@ fn main() -> ExitCode {
     } else {
         // The OS process is the final supervisor for a stuck input/output/host
         // worker. Do not report graceful thread cleanup which did not happen.
-        eprintln!(
-            "Sidecar shutdown incomplete: reader_joined={} writer_joined={} worker_joined={}",
-            report.reader_joined, report.writer_joined, report.worker_joined
+        console_line(
+            &mut io::stderr(),
+            &format!(
+                "Sidecar shutdown incomplete: reader_joined={} writer_joined={} worker_joined={}",
+                report.reader_joined, report.writer_joined, report.worker_joined
+            ),
         );
         ExitCode::from(3)
     }

@@ -1728,17 +1728,6 @@ mod tests {
     /// TS so its 101 passes the upstream handshake check.
     const PROBE_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-    fn stderr_probe_token() -> Option<String> {
-        let value = std::env::var_os(STDERR_PROBE_ENV)?.to_str()?.to_owned();
-        let (_, token) = value.split_once(':')?;
-        if token.is_empty() {
-            return None;
-        }
-        std::env::args()
-            .any(|argument| argument == token)
-            .then(|| token.to_owned())
-    }
-
     /// #2558: this module's four error lines (`WS pairing` on the
     /// upstream-connect failure and inside the spawned pairing task,
     /// `HTTP upstream` in the plain proxy path, `downstream upgrade` on the
@@ -1750,103 +1739,34 @@ mod tests {
     /// sockets drop), while TS's `console.error` never loses either. The
     /// fix is the shared `console_log_line`, which drops the write error.
     /// This control drives all four sites in a re-exec'd child whose stderr
-    /// is a pipe with the read end already dropped (every write fails with
-    /// EPIPE); the child installs a panic hook first, so a panicking
-    /// `eprintln!` leaves a marker file and exits 33 instead of passing. A
-    /// read-only fd is not a failing sink for this purpose: `std::io::Stderr`
-    /// redirects EBADF to a fresh `/dev/null` and reports success, so only
-    /// EPIPE reaches the `eprintln!` panic.
+    /// is the shared module's dead sink: a socketpair whose peer was
+    /// dropped and whose probe write failed `BrokenPipe` on the parent's
+    /// side before the spawn (#3152 item 9), so every write fails with
+    /// EPIPE; the child installs a panic hook first, so a panicking
+    /// `eprintln!` leaves a marker file and exits 33 instead of passing.
     #[tokio::test]
     async fn error_console_lines_survive_a_failed_stderr_write() {
-        if let Some(token) = stderr_probe_token() {
+        if let Some(token) = crate::failed_stderr_probe::probe_token(STDERR_PROBE_ENV) {
             stderr_probe_child(&token).await;
             return;
         }
-        let token = format!("pdrs-2558-{}", uuid::Uuid::new_v4().simple());
-        let marker = std::env::temp_dir().join(format!("{token}.marker"));
-        let mut child = tokio::process::Command::new(
-            std::env::current_exe().expect("#2558 the probe binary path"),
-        )
-        .args([
-            "--exact",
-            "http_proxy::tests::error_console_lines_survive_a_failed_stderr_write",
-            "--nocapture",
-            "--test-threads=1",
-            &token,
-        ])
-        .env(STDERR_PROBE_ENV, format!("run:{token}"))
-        .env(STDERR_MARKER_ENV, &marker)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("#2558 the failed-stderr probe child spawns");
-        // The failing sink: a pipe whose read end is dropped before the child
-        // writes, so every stderr write fails with EPIPE.
-        drop(child.stderr.take());
-        // The stdout pipe is drained concurrently with the wait, never after
-        // it (the #2301 probe's drain-before-wait shape): a full pipe — a
-        // failing child prints a whole backtrace — would block the child
-        // before it could exit.
-        let stdout = child.stdout.take();
-        let console_task = tokio::spawn(async move {
-            let mut out = Vec::new();
-            if let Some(mut pipe) = stdout {
-                let _ = pipe.read_to_end(&mut out).await;
-            }
-            String::from_utf8_lossy(&out).into_owned()
-        });
-        // Every wait states its termination condition: 30 seconds on the
-        // child, then kill + reap before the named failure.
-        let status = match timeout(Duration::from_secs(30), child.wait()).await {
-            Ok(status) => status.expect("#2558 the failed-stderr probe child is waitable"),
-            Err(_) => {
-                child
-                    .kill()
-                    .await
-                    .expect("#2558 the timed-out probe child is killed");
-                let _ = child.wait().await;
-                crate::negative_assert!(
-                    false,
-                    "#2558 the failed-stderr probe child did not finish within 30s"
-                );
-                unreachable!("negative_assert! panics");
-            }
-        };
-        let console = console_task
-            .await
-            .expect("#2558 the probe's stdout drain finishes");
-        crate::negative_assert!(
-            status.success(),
-            "#2558 the error lines survive a failed stderr write (exit {status})\n{console}"
-        );
-        // Positive receipt — success alone is not evidence the probe case
-        // ran: a renamed test makes the `--exact` filter match nothing and
-        // libtest still exits 0 (the #273 / fix-r1 lesson).
-        crate::negative_assert!(
-            crate::test_exact_receipt::single_pass(
-                &status,
-                "http_proxy::tests::error_console_lines_survive_a_failed_stderr_write",
-                &console,
-            ),
-            "#2558 the child's libtest receipt proves the probe case ran\n{console}"
-        );
-        // The child leaves one reached marker per scenario, each written only
-        // after that error line's code path has provably run.
-        for scenario in ["a", "b", "c", "d"] {
-            let reached = std::env::temp_dir().join(format!("{token}.reached.{scenario}"));
-            crate::negative_assert!(
-                reached.exists(),
-                "#2558 the child never reached error-line scenario {scenario}"
-            );
-            let _ = std::fs::remove_file(&reached);
+        crate::failed_stderr_probe::FailedStderrProbe {
+            probe_env: STDERR_PROBE_ENV,
+            marker_env: STDERR_MARKER_ENV,
+            test_path: "http_proxy::tests::error_console_lines_survive_a_failed_stderr_write",
+            tag: "#2558",
+            token_prefix: "pdrs-2558-",
+            success_line: "the error lines survive a failed stderr write",
+            marker_line: "no panic marker after the error lines",
+            reached: &[
+                ("a", "the child never reached error-line scenario a"),
+                ("b", "the child never reached error-line scenario b"),
+                ("c", "the child never reached error-line scenario c"),
+                ("d", "the child never reached error-line scenario d"),
+            ],
         }
-        crate::negative_assert!(
-            !marker.exists(),
-            "#2558 no panic marker after the error lines ({}): {:?}",
-            marker.display(),
-            std::fs::read_to_string(&marker).unwrap_or_default()
-        );
+        .drive()
+        .await;
     }
 
     /// The child half of [`error_console_lines_survive_a_failed_stderr_write`]:
@@ -1854,14 +1774,7 @@ mod tests {
     /// scenarios in sequence. Nothing here prints to stdout: the
     /// single-threaded receipt needs the whole test line intact.
     async fn stderr_probe_child(token: &str) {
-        let marker = std::env::var(STDERR_MARKER_ENV)
-            .unwrap_or_else(|_| panic!("#2558 {token} is missing the marker env"));
-        std::panic::set_hook(Box::new(move |info| {
-            // The default hook would print to the failed stderr; the marker is
-            // the parent's evidence instead.
-            let _ = std::fs::write(&marker, format!("{info}"));
-            std::process::exit(33);
-        }));
+        crate::failed_stderr_probe::install_panic_hook(STDERR_MARKER_ENV, "#2558", token);
         let reached =
             |scenario: char| std::env::temp_dir().join(format!("{token}.reached.{scenario}"));
 

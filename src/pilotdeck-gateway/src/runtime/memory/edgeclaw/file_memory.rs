@@ -3656,12 +3656,6 @@ mod round6_tests {
 #[cfg(all(test, unix))]
 mod write_stage_tests {
     use super::*;
-    // #2558 fix-r4: the `WRITE_ERROR=` receipts below go through the shared
-    // writer so the widened console-macro scan
-    // (`tests/console_panic_safety.rs`) stays green — it cannot see this
-    // module's `#[cfg(all(test, unix))]` gating spelling; the printed text
-    // (which `child_write_error` parses) is unchanged.
-    use crate::native_process::channels::console_log_line;
 
     #[test]
     #[ignore = "spawned by overwrite_reports_the_write_stage_like_node"]
@@ -3683,10 +3677,7 @@ mod write_stage_tests {
             &[b'a'; 4096],
         )
         .expect_err("a write past RLIMIT_FSIZE must fail");
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!("WRITE_ERROR={}", FileMemoryError::Io(error)),
-        );
+        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
     }
 
     #[test]
@@ -3724,10 +3715,7 @@ mod write_stage_tests {
             [b'a'; 4096],
         )
         .expect_err("a write past RLIMIT_FSIZE must fail");
-        console_log_line(
-            &mut std::io::stdout(),
-            &format!("WRITE_ERROR={}", FileMemoryError::Io(error)),
-        );
+        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
     }
 
     #[test]

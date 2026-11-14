@@ -474,6 +474,7 @@ mod tests {
     use crate::host::HostClient;
     #[cfg(unix)]
     use crate::process_spawn::{child_signals, test_support};
+    use crate::test_console;
     use std::time::Duration;
 
     #[cfg(unix)]
@@ -561,7 +562,9 @@ mod tests {
         assert_eq!(frame.get("frame").and_then(JsValue::as_number), Some(3.0));
         drop(frame);
         connection.close().await.unwrap();
-        println!("NDJSON_PASS one write: frames 1,2 + partial 3; second write: completed 3");
+        test_console::receipt_line(
+            "NDJSON_PASS one write: frames 1,2 + partial 3; second write: completed 3",
+        );
     }
     #[tokio::test]
     #[cfg(all(
@@ -597,8 +600,8 @@ mod tests {
         assert_eq!(connection.pid(), None);
         connection.close().await.unwrap();
         assert!(connection.group.is_none());
-        println!(
-            "GROUP_LIFETIME_PASS exited leader retained until group signal; no pgid after wait"
+        test_console::receipt_line(
+            "GROUP_LIFETIME_PASS exited leader retained until group signal; no pgid after wait",
         );
     }
     #[tokio::test]
@@ -853,8 +856,8 @@ mod tests {
         assert_eq!(error.kind, HostErrorKind::Disconnected);
         assert_eq!(error.last_applied_sequence, Some(0.0));
         assert_eq!(handler.observations.load(Ordering::SeqCst), 0);
-        println!(
-            "TERMINAL_RECONNECT_PASS required enqueue failure after final remains fail-closed; no reconnect observation"
+        test_console::receipt_line(
+            "TERMINAL_RECONNECT_PASS required enqueue failure after final remains fail-closed; no reconnect observation",
         );
     }
 }

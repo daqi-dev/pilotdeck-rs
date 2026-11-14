@@ -427,6 +427,20 @@ mod tests {
         fs::remove_dir_all(home).unwrap();
     }
 
+    /// #3152 item 8, the cli-crate twin of the gateway's
+    /// `tests/common/test_console.rs`: one best-effort stdout receipt
+    /// line — the write error is dropped, never a panic that would kill
+    /// this child before the parent reads the marker (the gateway's
+    /// #2558 `console_log_line` shape, local here because the cli crate
+    /// has no test_console of its own).
+    fn receipt_line(message: &str) {
+        use std::io::Write;
+        let mut line = String::with_capacity(message.len() + 1);
+        line.push_str(message);
+        line.push('\n');
+        let _ = std::io::stdout().write_all(line.as_bytes());
+    }
+
     /// Child half of `marker_write_reports_the_write_stage_like_node`: runs
     /// under `ulimit -f 0`, so even the fixed 10-byte marker write fails at
     /// the descriptor write stage. The parent pre-creates the home and the
@@ -456,7 +470,7 @@ mod tests {
             .warnings
             .first()
             .expect("the failed marker write must warn");
-        println!("WRITE_ERROR={warning}");
+        receipt_line(&format!("WRITE_ERROR={warning}"));
     }
 
     /// The marker write is `writeFileSync(completionMarker, "completed\n")`

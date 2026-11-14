@@ -485,19 +485,6 @@ async fn cancelled_invocation_releases_flight_and_retries() {
 const DIAGNOSTIC_STDERR_PROBE_ENV: &str = "PDRS_2558_MAINTENANCE_STDERR_PROBE";
 const DIAGNOSTIC_STDERR_MARKER_ENV: &str = "PDRS_2558_MAINTENANCE_STDERR_MARKER";
 
-fn diagnostic_stderr_probe_token() -> Option<String> {
-    let value = std::env::var_os(DIAGNOSTIC_STDERR_PROBE_ENV)?
-        .to_str()?
-        .to_owned();
-    let (_, token) = value.split_once(':')?;
-    if token.is_empty() {
-        return None;
-    }
-    std::env::args()
-        .any(|argument| argument == token)
-        .then(|| token.to_owned())
-}
-
 /// #2558: the default diagnostic closure was an `eprintln!`, which panics
 /// when the stderr write fails (std behavior). The panic would kill the
 /// maintenance loop's task after it already recorded the failure it is
@@ -505,102 +492,30 @@ fn diagnostic_stderr_probe_token() -> Option<String> {
 /// while TS's `console.error` only loses the line. The fix is the shared
 /// `console_log_line`, which drops the write error. This control drives the
 /// default closure itself (no `diagnostic` override) with a failing
-/// maintenance round, in a re-exec'd child whose stderr is a pipe with the
-/// read end already dropped (every write fails with EPIPE); the child
-/// installs a panic hook first, so a panicking `eprintln!` leaves a marker
-/// file and exits 33 instead of passing. A read-only fd is not a failing
-/// sink for this purpose: `std::io::Stderr` redirects EBADF to a fresh
-/// `/dev/null` and reports success, so only EPIPE reaches the `eprintln!`
-/// panic.
+/// maintenance round, in a re-exec'd child whose stderr is the shared
+/// module's dead sink: a socketpair whose peer was dropped and whose probe
+/// write failed `BrokenPipe` on the parent's side before the spawn
+/// (#3152 item 9), so every write fails with EPIPE; the child installs a
+/// panic hook first, so a panicking `eprintln!` leaves a marker file and
+/// exits 33 instead of passing.
 #[tokio::test]
 async fn default_diagnostic_survives_a_failed_stderr_write() {
-    use tokio::io::AsyncReadExt as _;
-    if let Some(token) = diagnostic_stderr_probe_token() {
+    if let Some(token) = crate::failed_stderr_probe::probe_token(DIAGNOSTIC_STDERR_PROBE_ENV) {
         default_diagnostic_stderr_probe_child(&token).await;
         return;
     }
-    let token = format!("pdrs-2558-{}", uuid::Uuid::new_v4().simple());
-    let marker = std::env::temp_dir().join(format!("{token}.marker"));
-    let mut child = tokio::process::Command::new(
-        std::env::current_exe().expect("#2558 the probe binary path"),
-    )
-    .args([
-        "--exact",
-        "runtime::memory::maintenance::tests::default_diagnostic_survives_a_failed_stderr_write",
-        "--nocapture",
-        "--test-threads=1",
-        &token,
-    ])
-    .env(DIAGNOSTIC_STDERR_PROBE_ENV, format!("run:{token}"))
-    .env(DIAGNOSTIC_STDERR_MARKER_ENV, &marker)
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::piped())
-    .spawn()
-    .expect("#2558 the failed-stderr probe child spawns");
-    // The failing sink: a pipe whose read end is dropped before the child
-    // writes, so every stderr write fails with EPIPE.
-    drop(child.stderr.take());
-    // The stdout pipe is drained concurrently with the wait, never after it
-    // (the #2301 probe's drain-before-wait shape).
-    let stdout = child.stdout.take();
-    let console_task = tokio::spawn(async move {
-        let mut out = Vec::new();
-        if let Some(mut pipe) = stdout {
-            let _ = pipe.read_to_end(&mut out).await;
-        }
-        String::from_utf8_lossy(&out).into_owned()
-    });
-    // Every wait states its termination condition: 30 seconds on the child,
-    // then kill + reap before the named failure.
-    let status = match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await
-    {
-        Ok(status) => status.expect("#2558 the failed-stderr probe child is waitable"),
-        Err(_) => {
-            child
-                .kill()
-                .await
-                .expect("#2558 the timed-out probe child is killed");
-            let _ = child.wait().await;
-            crate::negative_assert!(
-                false,
-                "#2558 the failed-stderr probe child did not finish within 30s"
-            );
-            unreachable!("negative_assert! panics");
-        }
-    };
-    let console = console_task
-        .await
-        .expect("#2558 the probe's stdout drain finishes");
-    crate::negative_assert!(
-        status.success(),
-        "#2558 the default diagnostic survives a failed stderr write (exit {status})\n{console}"
-    );
-    // Positive receipt — success alone is not evidence the probe case
-    // ran: a renamed test makes the `--exact` filter match nothing and
-    // libtest still exits 0 (the #273 / fix-r1 lesson).
-    crate::negative_assert!(
-        crate::test_exact_receipt::single_pass(
-            &status,
-            "runtime::memory::maintenance::tests::default_diagnostic_survives_a_failed_stderr_write",
-            &console,
-        ),
-        "#2558 the child's libtest receipt proves the probe case ran\n{console}"
-    );
-    // The child leaves a reached marker once the diagnostic has provably
-    // run: it clears `in_flight` only after the failure report.
-    let reached = std::env::temp_dir().join(format!("{token}.reached"));
-    crate::negative_assert!(
-        reached.exists(),
-        "#2558 the child never reached the default diagnostic line"
-    );
-    let _ = std::fs::remove_file(&reached);
-    crate::negative_assert!(
-        !marker.exists(),
-        "#2558 no panic marker after the default diagnostic ({}): {:?}",
-        marker.display(),
-        std::fs::read_to_string(&marker).unwrap_or_default()
-    );
+    crate::failed_stderr_probe::FailedStderrProbe {
+        probe_env: DIAGNOSTIC_STDERR_PROBE_ENV,
+        marker_env: DIAGNOSTIC_STDERR_MARKER_ENV,
+        test_path: "runtime::memory::maintenance::tests::default_diagnostic_survives_a_failed_stderr_write",
+        tag: "#2558",
+        token_prefix: "pdrs-2558-",
+        success_line: "the default diagnostic survives a failed stderr write",
+        marker_line: "no panic marker after the default diagnostic",
+        reached: &[("", "the child never reached the default diagnostic line")],
+    }
+    .drive()
+    .await;
 }
 
 /// The child half of [`default_diagnostic_survives_a_failed_stderr_write`]:
@@ -610,14 +525,7 @@ async fn default_diagnostic_survives_a_failed_stderr_write() {
 /// its flight. Nothing here prints to stdout: the single-threaded receipt
 /// needs the whole test line intact.
 async fn default_diagnostic_stderr_probe_child(token: &str) {
-    let marker = std::env::var(DIAGNOSTIC_STDERR_MARKER_ENV)
-        .unwrap_or_else(|_| panic!("#2558 {token} is missing the marker env"));
-    std::panic::set_hook(Box::new(move |info| {
-        // The default hook would print to the failed stderr; the marker is
-        // the parent's evidence instead.
-        let _ = std::fs::write(&marker, format!("{info}"));
-        std::process::exit(33);
-    }));
+    crate::failed_stderr_probe::install_panic_hook(DIAGNOSTIC_STDERR_MARKER_ENV, "#2558", token);
     let events = Events::default();
     let service = Arc::new(Service {
         id: "A",

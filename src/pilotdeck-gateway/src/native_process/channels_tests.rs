@@ -2031,6 +2031,92 @@ fn console_log_line_drops_a_failed_write_without_panicking() {
     );
 }
 
+/// #3152 item 11: one logical line must reach the sink as one `write` call.
+/// The recording sink captures every call boundary; two threads each write
+/// their own lines through the shared writer concurrently, and every captured
+/// call is asserted to carry exactly one whole line (message plus its own
+/// `\n`, nothing else). The old `writeln!`-through-`dyn Write` shape failed
+/// here deterministically — its default `write_fmt` adapter hands the message
+/// and the newline to the sink as two separate calls, and the first captured
+/// call does not end in `\n` — the exact call pair a concurrent writer can
+/// interleave between on a raw fd, tearing the line (std's sink lock is taken
+/// per call, not per format; see the item-11 RESULT evidence for the measured
+/// call boundaries of both shapes). Scheduling cannot make the old shape pass:
+/// the assertion reads the call log, not the interleaving.
+struct CallLogSink {
+    calls: std::sync::Mutex<Vec<Vec<u8>>>,
+}
+
+/// Per-thread `&mut dyn Write` handle into the shared recording sink, locking
+/// per call exactly like std's per-call raw-fd locking.
+struct SharedSinkHandle(std::sync::Arc<CallLogSink>);
+
+impl std::io::Write for SharedSinkHandle {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .calls
+            .lock()
+            .expect("#3152 the recording sink's log is not poisoned")
+            .push(buffer.to_vec());
+        Ok(buffer.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn console_log_line_writes_one_line_as_one_call() {
+    const THREADS: usize = 2;
+    const LINES_PER_THREAD: usize = 64;
+    let sink = std::sync::Arc::new(CallLogSink {
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let mut threads = Vec::new();
+    for thread_index in 0..THREADS {
+        let mut handle = SharedSinkHandle(std::sync::Arc::clone(&sink));
+        threads.push(std::thread::spawn(move || {
+            for line in 0..LINES_PER_THREAD {
+                let writer: &mut dyn std::io::Write = &mut handle;
+                super::channels::console_log_line(
+                    writer,
+                    &format!("#3152 thread {thread_index} line {line}"),
+                );
+            }
+        }));
+    }
+    for thread in threads {
+        thread
+            .join()
+            .expect("#3152 the concurrent writers must not panic");
+    }
+    let sink = match Arc::try_unwrap(sink) {
+        Ok(sink) => sink,
+        Err(_) => panic!("#3152 the recording sink is not shared anymore"),
+    };
+    let calls = sink
+        .calls
+        .into_inner()
+        .expect("#3152 the recording sink's log is not poisoned");
+    assert_eq!(
+        calls.len(),
+        THREADS * LINES_PER_THREAD,
+        "#3152 one write call per line, got {} calls for {} lines",
+        calls.len(),
+        THREADS * LINES_PER_THREAD
+    );
+    for call in &calls {
+        let whole_line = call.ends_with(b"\n")
+            && call.iter().filter(|byte| **byte == b'\n').count() == 1
+            && call.starts_with(b"#3152 thread ");
+        assert!(
+            whole_line,
+            "#3152 a write call carried a torn line: {:?}",
+            String::from_utf8_lossy(call)
+        );
+    }
+}
+
 /// The child marker for [`console_ports_survive_a_failing_sink`]: when the
 /// `failing-console` token pair matches (see [`CHILD_PROBE_ENV`]), this
 /// process is the probe itself.

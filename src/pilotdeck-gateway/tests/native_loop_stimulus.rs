@@ -17,6 +17,11 @@ mod test_permission_faults;
 #[allow(dead_code)]
 #[path = "../src/test_process.rs"]
 mod test_process;
+// #3152 item 8: `src/test_process.rs` writes its receipt lines through
+// `crate::test_console` — the same module-name rule the lib's mount uses.
+#[allow(dead_code)]
+#[path = "common/test_console.rs"]
+mod test_console;
 #[path = "common/scratch.rs"]
 mod test_scratch;
 // #1371 real binaries, isolated state, Node observer and local-only provider.
