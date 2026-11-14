@@ -587,11 +587,25 @@ def descriptions(test):
     return (f'{method} (__main__.{test})', f'{method} (__main__.{owner})')
 
 
+# fix-r4 (DS boundary#1, P1): a docstring'd bound method renders as a third
+# layout -- the identity line stands alone and the verdict lands on the
+# docstring's own line ('<docstring> ... ok' / the FAIL block title carries
+# the docstring as its second line). The five rows bound to
+# SqliteHeaderExecutorTests docstring methods (#1076) were permanently
+# INVALID under the fix-r5 judge: positive control rejected, and even a
+# passing control would never reach KILLED. The canonical
+# gateway-entry-guard judge pins closures without docstrings, so this is a
+# deliberate local extension of the #991/#1060 set, not a copy drift.
 def passed(result, test):
     log = result.stdout + result.stderr
-    return (result.returncode == 0
-            and any(description + ' ... ok' in log.splitlines()
-                    for description in descriptions(test))
+    lines = log.splitlines()
+    direct = any(description + ' ... ok' in lines
+                 for description in descriptions(test))
+    stacked = any(
+        lines[i] == description and lines[i + 1].endswith(' ... ok')
+        for description in descriptions(test)
+        for i in range(len(lines) - 1))
+    return (result.returncode == 0 and (direct or stacked)
             and single_test(log) and log.rstrip().endswith('\nOK')
             and 'skipped' not in log)
 
@@ -612,7 +626,10 @@ def classify(result, test, message):
     separator = '\n' + '-' * 70 + '\n'
     for block in log.split('\n' + '=' * 70 + '\n')[1:]:
         title, found, body = block.partition(separator)
-        if not found or not header.fullmatch(title):
+        # fix-r4 (DS boundary#1): a docstring'd bound method puts the
+        # docstring on the FAIL title's second line; the identity stays on
+        # the first, so that is the line the header matches.
+        if not found or not header.fullmatch(title.splitlines()[0]):
             continue
         body = body.split(separator, 1)[0]
         assertion = re.search(r'^AssertionError: (.*)', body, re.MULTILINE | re.DOTALL)
