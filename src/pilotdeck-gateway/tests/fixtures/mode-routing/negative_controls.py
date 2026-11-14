@@ -275,7 +275,11 @@ def main():
         print(f'#1354 {len(mutations)} mutation anchors OK')
         return 0
     if len(sys.argv) < 2:
-        raise SystemExit('usage: negative_controls.py --check | NEW_OUTPUT [mutation ...]')
+        # #3143 fix-r2 (DS sibling#3): an empty argv is a never-started
+        # refusal (rc 2), the same exit-code four-way table entry the
+        # siblings carry -- a bare `SystemExit(str)` exits 1 and reads as
+        # "it ran and was not green".
+        refuse('usage: negative_controls.py --check | NEW_OUTPUT [mutation ...]')
     # No baseline row exists in this suite: the suite's own positive controls
     # run per case, so the selector's baseline default is turned off here.
     # `select` returns the table's own rows (tuples); the runner below

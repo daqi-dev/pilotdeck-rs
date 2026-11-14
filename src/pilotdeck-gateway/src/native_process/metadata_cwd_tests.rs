@@ -82,8 +82,15 @@ async fn observe(name: &str) -> (Value, Value) {
         .find(|r| r["name"] == name.replace('_', "-"))
         .expect("#1154 named TS case");
     let path = std::env::temp_dir().join(format!("pdrs-1154-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&path).expect("#1154 create isolated root");
-    let work = Work(path.canonicalize().expect("#1154 canonical isolated root"));
+    // #3143 fix-r2 (DS sibling#5, #2335): the guard exists before the first
+    // fallible disk op -- a failure below unwinds through `Drop` (which also
+    // restores the cwd) instead of leaking the isolated root.
+    let mut work = Work(path);
+    std::fs::create_dir_all(&work.0).expect("#1154 create isolated root");
+    work.0 = work
+        .0
+        .canonicalize()
+        .expect("#1154 canonical isolated root");
     let case = work.0.join(name.replace('_', "-"));
     for dir in ["home", "project", "other", "deleted"] {
         std::fs::create_dir_all(case.join(dir)).expect("#1154 create isolated directory");

@@ -87,9 +87,16 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("pdrs-skills-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&dir).unwrap();
+        // #3143 fix-r2 (DS sibling#5, #2335): the guard exists before the
+        // first fallible disk op -- a panic below otherwise leaks the tree,
+        // because only a constructed `Scratch` unwinds through `Drop`. The
+        // canonical path is written back into the guard, never a second
+        // `Scratch(...)`, which would drop-and-delete the tree it points at.
+        let mut scratch = Self(dir);
+        fs::create_dir(&scratch.0).unwrap();
         // Results carry resolved paths; compare against the canonical spelling.
-        Self(fs::canonicalize(&dir).unwrap())
+        scratch.0 = fs::canonicalize(&scratch.0).unwrap();
+        scratch
     }
     fn root(&self) -> String {
         self.0.to_string_lossy().into_owned()

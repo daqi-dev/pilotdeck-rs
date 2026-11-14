@@ -425,7 +425,7 @@ class Protocol(unittest.TestCase):
         fixture = {
             management: '#[test]\n'
                         'fn target() {\n    helper();\n    own_template();\n'
-                        '    tail_template();\n'
+                        '    tail_template();\n    bare_template();\n'
                         '    // panic!("#1642 comment carrier");\n'
                         '}\n'
                         '#[test]\n'
@@ -434,6 +434,9 @@ class Protocol(unittest.TestCase):
                         'fn own_template() {\n    panic!("#1642 covers {method}");\n}\n'
                         'fn tail_template() {\n    panic!("#1642 head {method} tail");\n}\n'
                         'fn plain_carrier() {\n    panic!("#1642 plain non-test carrier");\n}\n'
+                        # #3143 fix-r2 (P0, DS boundary#1): a bare `{}`
+                        # template anchors nothing (zero static chunks).
+                        'fn bare_template() {\n    panic!("{}");\n}\n'
                         '/*\n'
                         '#[test]\n'
                         'fn ghost() {\n'
@@ -468,6 +471,14 @@ class Protocol(unittest.TestCase):
             sources=fixture) == ['row'],
             '#1642 fix-r5 the binding checker must refuse a placeholder-diverging '
             'assertion (the endswith(\'\') off-by-one used to accept it)')
+        # #3143 fix-r2 (P0, DS boundary#1): the red side of the zero-static-chunk
+        # rule -- a bare `"{}"` literal in the reachable body used to anchor
+        # any assertion, so a drifted assertion string read as anchored.
+        self.assertTrue(RUNNER.binding_failures(
+            bound('native_process::management_tests::target', 'unanchored bare prose'),
+            sources=fixture) == ['row'],
+            '#3143 fix-r2 the binding checker must refuse an assertion anchored '
+            'only on a zero-static-chunk template')
         self.assertTrue(RUNNER.binding_failures(
             bound('native_process::management_tests::target', '#1642 marker of another test'),
             sources=fixture) == ['row'],

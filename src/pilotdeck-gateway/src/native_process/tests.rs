@@ -1960,7 +1960,10 @@ async fn requests_registry_switch_gates_run_reads() {
         let capabilities = described["capabilities"]
             .as_array()
             .expect("#1369 registry switch capabilities");
-        for capability in ["run_get", "run_events", "run_reattach"] {
+        // #3143 fix-r2 (DS sibling#4): the run-read names have one owner
+        // (`methods/runs.rs`), the same single-source rule fix-r1 P2#6
+        // pinned in management_tests.rs.
+        for &capability in crate::native_process::methods::RUN_METHODS {
             negative_assert_eq!(
                 capabilities
                     .iter()
@@ -2011,7 +2014,9 @@ async fn requests_registry_switch_gates_run_reads() {
                 "#1369 run_events with a registry reports the run"
             );
         } else {
-            for method in ["run_get", "run_events", "run_reattach"] {
+            // #3143 fix-r2 (DS sibling#4): same single source as the loop
+            // above -- the three run reads are `runs::METHODS` verbatim.
+            for &method in crate::native_process::methods::RUN_METHODS {
                 let error = crate::test_negative_receipt::expect_err(
                     requests.request(method.into(), reference.clone()).await,
                     "#1369 run read without a registry is unavailable",

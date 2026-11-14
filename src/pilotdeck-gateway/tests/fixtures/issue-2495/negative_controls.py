@@ -74,7 +74,8 @@ from negative_process import (SourceBaselineError, mutating_sources,
                               run_owned, wait_for_slot, tree_lock,
                               write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
-                                refuse_unusable_target, registered, verdict_exit)
+                                refuse_unusable_target, registered,
+                                verdict_exit, withdraw_claim)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -484,12 +485,11 @@ def main():
             # fix-r3b (MM r3 boundary#1 P2a, utf16-residual-sort
             # startup_refusal precedent): the empty directory claim_dir
             # made is withdrawn so a "never started" refusal leaves no
-            # claimed-looking evidence directory — rmdir only removes
-            # the empty case; a run that already wrote logs keeps them.
-            try:
-                output.rmdir()
-            except OSError:
-                pass
+            # claimed-looking evidence directory — the shared atomic
+            # withdrawal (rename + rmtree in one helper, empty or not).
+            # #3143 fix-r2 (DS sibling#1): the same migration the four
+            # fix-r1 runners carry.
+            withdraw_claim(output)
             phase = ('source lock busy' if isinstance(error, TimeoutError)
                      else 'tree not pristine')
             refuse(f'#2495 {phase} (never started): '

@@ -168,9 +168,10 @@ def withdraw_claim(path):
     r4 shape unlinked a marker and only then rmdir'd the directory, so a
     concurrent run claiming the path in that window owned a directory the
     withdrawal's second call then deleted), and the rmtree cleans the
-    renamed directory, never the claimable path. #3143 fix-r1 (simplify#6):
-    one mechanism for the four runners -- this replaces three bare
-    ``out.rmdir()`` copies that only removed the empty case. An OSError
+    renamed directory, never the claimable path. #3143 fix-r1 (simplify#6)
+    + fix-r2 (DS sibling#1): one mechanism for the seven runners -- this
+    replaces the bare ``out.rmdir()`` copies that only removed the empty
+    case. An OSError
     here must not mask the caller's refusal, so it is swallowed on purpose;
     the caller is already on the rc 2 path.
     """

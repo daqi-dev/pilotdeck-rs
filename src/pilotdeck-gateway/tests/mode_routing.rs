@@ -59,13 +59,21 @@ fn scratch_root(tag: &str) -> (Cleanup, std::path::PathBuf) {
         "pdrs-1354-mode-routing-{tag}-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir(&root).expect("#1354 mode routing scratch directory must be new");
+    // #3143 fix-r2 (DS sibling#5, #2335): the guard exists before the first
+    // fallible disk op -- a panic below otherwise leaks the scratch root,
+    // because only a constructed `Cleanup` unwinds through `Drop`.
+    let mut cleanup = Cleanup(root);
+    std::fs::create_dir(&cleanup.0).expect("#1354 mode routing scratch directory must be new");
     // The native child canonicalizes its `--home`/`--project` (`Options::parse`
     // judges the canonical path); a symlinked temp root (macOS `/var` →
     // `/private/var`) would split the test's raw spelling from the child's,
     // so every path below starts from the canonical root.
-    let root = root.canonicalize().expect("#1354 canonical scratch root");
-    (Cleanup(root.clone()), root)
+    cleanup.0 = cleanup
+        .0
+        .canonicalize()
+        .expect("#1354 canonical scratch root");
+    let root = cleanup.0.clone();
+    (cleanup, root)
 }
 
 /// The native entry's explicit directories and files (the switch_e2e
