@@ -150,8 +150,11 @@ ROSTER_SIZE = {
 # publishes a file named roster-mismatch.json and nothing else. Matching
 # both quote styles keeps the register honest the way BASELINE_READ does
 # for the baseline guard (#2309 fix-r3 precedent). The scan covers every
-# ``negative_controls.py`` at any depth; same-shaped entries with other
-# file names follow the optimize-guards register's scoping precedent.
+# ``negative_controls*.py`` at any depth — numbered variants included,
+# registered under their own relative path (fix-r10, same shape as the
+# CHECK_MISUSE_REFUSAL scan's key rule); genuinely differently-named
+# entries (``negative.py`` / ``negative-controls.py``) stay outside per
+# the optimize-guards register's scoping precedent.
 ROSTER_MISMATCH_WRITE = re.compile(r'''['"]roster-mismatch\.json['"]''')
 
 
@@ -782,8 +785,9 @@ class RegisteredEntryRosterGuard(unittest.TestCase):
         # fix-r10（DS r9 sibling#1 P2）：扫描面从精确名扩到 negative_controls*.py，
         # 与 CHECK_MISUSE_REFUSAL 扫描（下方 negative_controls*.py）同形——编号
         # 变体（negative_controls_1947.py 等）一旦写入 roster-mismatch.json 也要
-        # 显式登记进 ROSTER_GUARDED，不能借精确名漏在扫描面外。今日树内编号
-        # 变体 0 命中 ROSTER_MISMATCH_WRITE，扩面对现有行为是空的。
+        # 显式登记进 ROSTER_GUARDED，不能借精确名漏在扫描面外。编号变体子集
+        # 的命中数不靠手数：found == set(ROSTER_GUARDED) 的双向断言钉住——
+        # 任何新命中（含编号变体）未登记即红（红侧见 fix-r10 selftest RED-A）。
         found = {str(path.relative_to(FIXTURES))
                  for path in FIXTURES.rglob('negative_controls*.py')
                  if ROSTER_MISMATCH_WRITE.search(path.read_text(encoding='utf-8'))}
