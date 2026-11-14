@@ -2009,7 +2009,11 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 全矩阵扩展（任务书硬判据，同处第四轮补轴）：fix-r10 矩阵（拼写×链形×gap
         # 长度×issues）之上加 **gap 内容轴**（纯 PAIR_SEP 间隙 / 散文间隔）与 **臂轴**
         # （前向 / 收集 / 后向 / 后向简写各形）——不变式「任何格子不得 rounds=[] ∧
-        # foreign=[]」全格成立；**非枚举型标题下**散文间隔格一律 foreign 拒收（归属
+        # foreign=[]」全格成立（fix-r16 P2#2 登记例外：**异侧×不相交**格——token 在
+        # 题头区内、后方链在全角「：」后且 ∩ issues=∅——自 r14 起即有意的双空（board
+        # 尾各归各单，不计不拒），见本文件 fix-r15 P2#1「board 尾异侧不相交」钉与
+        # fix-r14 P1 同侧守卫负控；该格不在本矩阵轴内——矩阵形均为单链同侧）；
+        # **非枚举型标题下**散文间隔格一律 foreign 拒收（归属
         # 存疑＝fail-closed；enum 相交半边自 fix-r13 起同判拒收——见 fix-r13 块，
         # 本矩阵形均为单链）；纯间隙格照 fix-r10 口径（计入族 ∩≠∅ 计入 / foreign 族
         # ∩=∅ 拒收）。
@@ -2359,6 +2363,60 @@ def _run(gate, rrr, out_base: Path) -> int:
         # P2#3：窄窗登记文字订正为实际判据（题头区内无前链简写 + 同侧后方链不相交 →
         # 拒收，与类型词/裸号无关）——行为面即上方 fix-r14 四条钉（不漂移，无新钉）；
         # docstring 侧由 check-naming/评审复核覆盖。
+
+        # —— #3074 fix-r16（DS r15 boundary#1 P0 + MM boundary#1 P1 双谱系双撞同根，
+        # 协调者实测仲裁 _tmp/20261114-3074-fixr15-ds/p0-p1-arbitration.md，探针
+        # p0-p1-probe.py r14/r15 两版对照；修法＝首行早退收窄为声明形，判据与两向
+        # 窄窗登记见 _first_line_declares docstring）——
+        # P0 双向负控钉·场景 A（首行＝全拼异单回显行 + Refs #1）→ 必须拒收：修前
+        # r15 首行命中即整体跳过＝吞掉 r14 的异单拒收（假 PASS）；与上方 nohead_neg
+        # （首行 badge 图、非回显行）成「首行即回显行 / 首行非回显」对照，两向都不漂移
+        sc_a = ("fix(scripts): #3074 fix-r3：修闸门\n\n"
+                + blk_t.format(h="") + "Refs #1\n")
+        sc_a_errs = gate.check(sc_a, "", "", "", "")
+        if not any("异单旁路" in e and "正文回显行" in e for e in sc_a_errs):
+            fails.append(f"fix-r16 P0 场景A：首行即回显行（引异单）须拒收——首行是唯一"
+                         f" foreign 出口，整体跳过＝吞掉 r14 拒收（修前 r15 假 PASS）：{sc_a_errs}")
+        # P1 场景 B（首行散文提及 + 后文异单回显行 + Refs #1）→ 修后仍拒收（r14 拒收
+        # 是 desirable：异单引用本应拒；r15 的「首行任意位置命中即跳过」把 fix-r4 在
+        # rounds 半边钉死的宽松首行（误拒，fail-closed）搬到 foreign 半边后方向反转）
+        sc_b = ("承接 fix-r3 未完事项：后续处理\n\nfix(scripts): #9999 fix-r7：x\n\n"
+                + blk_t.format(h="") + "Refs #1\n")
+        sc_b_errs = gate.check(sc_b, "", "", "", "")
+        if not any("异单旁路" in e and "正文回显行" in e and "r7" in e for e in sc_b_errs):
+            fails.append(f"fix-r16 P1 场景B：首行散文提及不得触发整体跳过，回显行引异单"
+                         f"须照 r14 拒收（fail-closed）：{sc_b_errs}")
+        # 判据直调钉（三分支 + 窄窗两向，钉住方向不漂移）：声明形跳过（r15 面保持——
+        # 上方 fix-r15 P1 的 p1_body 即「声明形 + 异单回显 → 仍跳过不拒」的 check() 级
+        # 钉）；提及形 / 回显行不跳过
+        if not gate._first_line_declares("修复fix-r5：停泊补 waker\n\nx\n"):
+            fails.append("fix-r16 判据：紧跟全角冒号＝声明形（跳过，r15 面保持）")
+        if not gate._first_line_declares("fix-r3: 修闸门\n\nx\n"):
+            fails.append("fix-r16 判据：紧跟半角冒号同判声明形（`r5: ` 简写锚点同族）")
+        if not gate._first_line_declares("承接 fix-r3，本轮修 fix-r5：停泊补 waker\n\nx\n"):
+            fails.append("fix-r16 判据：行内任一 token 紧跟冒号即声明形（首个命中是"
+                         "提及不否决后面的声明）")
+        if gate._first_line_declares("承接 fix-r3 未完事项：后续处理\n\nx\n"):
+            fails.append("fix-r16 判据：散文提及（token 后随空白）不跳过（场景 B 根）")
+        if gate._first_line_declares("fix(scripts): #3074 fix-r3：修闸门\n\nx\n"):
+            fails.append("fix-r16 判据：首行是 ECHO_HEAD 回显行不跳过（P0 场景 A 根——"
+                         "首行自身在 _echo_lines 内被扫）")
+        if gate._first_line_declares("修复fix-r5 停泊补 waker\n\nx\n"):
+            fails.append("fix-r16 判据窄窗：声明形不紧跟冒号按提及处理（照跑扫描＝"
+                         "fail-closed 向登记，见 _first_line_declares docstring）")
+        # P2#1 文档↔行为同源断言：fix_round_from_title docstring（判据陈述点⑨）须与
+        # 行为同源——异侧相交形返回轮号（fix-r15 P2#1 主修面）；r15 改「异侧相交照
+        # 计入」时漏改 3 处陈述点（收集臂内联 / SELF 支内联 / 本 docstring），照旧文
+        # 「链异侧不计」读回会重开 rounds=[]∧foreign=[] 假 PASS 面
+        if "异侧相交" not in (gate.fix_round_from_title.__doc__ or "") \
+                or gate.fix_round_from_title("fix(scripts) 修闸门 r5：#3056",
+                                             frozenset({"3056"})) != 5:
+            fails.append("fix-r16 P2#1：fix_round_from_title 陈述点⑨与行为须同源"
+                         "（docstring 须写明异侧相交照计入，且该形返回轮号 5）")
+        # P2#2 硬不变式例外登记：行为面＝上方 fix-r15 P2#1「board 尾异侧不相交」钉
+        # （([], [])＝登记的有意双空），模块 docstring / fix-r11 矩阵陈述已加例外行；
+        # 另登记不修（MM r15 boundary#2）的实测记录须人核，见
+        # _tmp/20261114-3074-fixr16/review-round-ref-probe.out。
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
