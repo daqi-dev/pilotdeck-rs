@@ -144,7 +144,11 @@
      foreign=[]」在简写后向臂格补齐（fix-r16 P2#2 登记例外：「异侧×不相交」格——
      token 在题头区内、后方链在全角「：」之后且与 issues 不相交——自 r14 起即是有意的
      双空（board 尾各归各单，不计不拒），本不变式对该格不成立，见 _scan_pairs 后向臂
-     同侧守卫注释与 test-review-roles.py fix-r15 P2#1「board 尾异侧不相交」钉）。
+     同侧守卫注释与 test-review-roles.py fix-r15 P2#1「board 尾异侧不相交」钉；fix-r17
+     补登记第二格（MM r16 sibling#2 / boundary#3）：「无链×简写」格——题头区内简写
+     token 且全题无 #N 链（`if not hashes:` 分支对 rshort_nolink 不计不拒）——自
+     r14 起即有意双空（无链简拼回到不计＝r14 窄窗登记），本不变式对该格同样不成立，
+     行为钉见 test-review-roles.py fix-r14 窄窗「无链简拼」钉）。
      fix-r14（#3074，DS r13 复审 P0+P1——r13 引入的两个回归，协调者仲裁实测
      _tmp/20261114-3074-fixr13-ds/coord-arbitration.md，当轮修）：㉔ **正文回显
      兜底的 foreign 拒收**——check() 对 ECHO_HEAD 行与提交标题同跑
@@ -158,7 +162,9 @@
      _tmp/20261114-3074-fixr15/p1-probe.txt，当轮修）：㉖ **正文回显 foreign 拒收
      受首行早退限制**——check() 对 ECHO_HEAD 行的 foreign 扫描与 fix_round_from_body
      的 echo_scan 同条件（首行命中即整体跳过，_first_line_round 单源；修前无条件跑＝
-     首行判 5 一边硬拒收「异单旁路」的假 FAIL）；㉗ **同侧守卫只压 foreign 半边**——
+     首行判 5 一边硬拒收「异单旁路」的假 FAIL）（**r15 口径，自 fix-r16 起作废**：
+     收窄为声明形〔㉚〕、自 fix-r17 起再限定标题路径存在〔㉝〕——本地形态照跑，
+     见 `_first_line_declares` docstring，勿按本句把跳过放宽回去）；㉗ **同侧守卫只压 foreign 半边**——
      链异侧且与 issues 不相交才不计不拒，异侧相交（SELF 同形真修复轮）照后向配对
      计入（旧假 PASS 面；board 尾链恰为本单也计入＝登记残余代价）；㉘ **全拼 SELF
      假 FAIL 拼写分裂登记**（注释订正 + A/B 证伪收口回退）——board 散文全拼
@@ -181,6 +187,27 @@
      「异侧×不相交」格例外（本条上文 r13 段）；另登记不修（MM boundary#2）：
      「异侧相交照计入」半边可能计到评审轮引用号且计入依赖「：」后最近链的词法顺序
      （见 _scan_pairs 后向臂 fix-r16 登记段，实测记录须人核）。
+     fix-r17（#3074，MM r16 boundary#1 P1 主修 + r16 双谱系 P2 随轮，P1 协调者实测
+     仲裁 _tmp/20261114-3074-fixr16-mm2-probe/ARBITRATION.md〔探针 p1-probe.py：本地
+     形态零拒收 vs 同一回显行作标题 CI 形态拒「异单旁路」实锤〕，当轮修）：㉝
+     **声明形跳过再限定标题路径存在**——㉚ 的前提「首行是主信号，正文回显不是信号」
+     仅在标题路径已给出主信号（titles 非 None）时成立；本地形态（--body-file 无
+     --base/--head/--repo，pr_commit_titles 返回 None）fix_round 来自正文首行兜底，
+     正文回显行是唯一 foreign 出口，声明形跳过＝吞掉唯一出口（与 ㉚ 场景 A「首行即
+     回显行是唯一出口」同构）＝本地过、CI 拒的漏检。修法＝check() 跳过条件加
+     `titles is not None` 半边：本地形态（titles=None）照跑正文回显 foreign 扫描
+     （fail-closed 向），CI 形态（titles 在，含全不命中的空集列表）声明形跳过照旧
+     （r15 修的假 FAIL 面保持）；r15 面钉翻转 + 本地/CI 双向钉 + 半角冒号判据改写
+     （MM r16 boundary#2，选项②：保留半角、理由句改写、补端到端两向钉）+ 窄窗第二向
+     与 _first_line 行取配对钉；ECHO_HEAD 行提取抽 `_echo_head_lines` 单源（MM
+     simplify#2 P3 随轮顺手：foreign 半边与 rounds 半边共用同一行提取）；硬不变式
+     例外补登记「无链×简写」格（㉓ 段，MM sibling#2）；两半边取号判据分叉（DS
+     boundary#1）登记不修（rounds 兜底宽松取首个命中 vs foreign 声明形判形状，
+     两半边 docstring 已各自声明）；ECHO_HEAD 相邻星号回溯形（DS concurrency#1）
+     实测计时登记不修（数值见本轮 RESULT）。形态窄窗（须人核）：本地形态「正文手工
+     异单回显 + 提交标题干净」会本地红 CI 绿（r15 修的假 FAIL 面对 CI 形态 PR 在
+     本地预演中复活）＝有意取舍（fail-closed 宁拒不漏；ECHO_HEAD 三重结构保证散文
+     不进入），登记见 `_first_line_declares` docstring。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -1274,7 +1301,12 @@ def _first_line_round(body: str) -> int | None:
     正文回显行的 foreign 拒收扫描自 fix-r16 起不再与它共用跳过判定——r15 的「首行
     命中即跳过」在首行即回显行（P0）/首行散文提及（P1）两个形状上把 r14 的
     desirable 拒收吞掉（仲裁 _tmp/20261114-3074-fixr15-ds/p0-p1-arbitration.md），
-    foreign 半边改 `_first_line_declares`（声明形才跳过）；rounds 半边保持宽松。"""
+    foreign 半边改 `_first_line_declares`（声明形才跳过）；rounds 半边保持宽松。
+    fix-r17 登记（DS r16 boundary#1，登记不修）：**取号也分叉**——本半边取
+    FIXROUND_RE **首个命中**（`承接 fix-r3，本轮修 fix-r5：…` 取 3，fix-r4 宽松
+    口径不变），foreign 半边只按「任一紧跟冒号」判**形状**（同串判声明形）——
+    rounds 是兜底宽松、foreign 是拒收出口，两半边口径分离是有意设计（各自 docstring
+    已声明），勿统一回去。"""
     first = _first_line(body)
     if not first:
         return None
@@ -1283,36 +1315,59 @@ def _first_line_round(body: str) -> int | None:
 
 
 def _first_line_declares(body: str) -> bool:
-    """check() 的正文回显 foreign 扫描是否被首行早退跳过（fix-r16 P0/P1 主修，DS r15
-    boundary#1 + MM r15 boundary#1 双谱系双撞同根，仲裁实测
+    """check() 的正文回显 foreign 扫描是否被首行早退跳过的**词法半边**（fix-r16
+    P0/P1 主修，DS r15 boundary#1 + MM r15 boundary#1 双谱系双撞同根，仲裁实测
     _tmp/20261114-3074-fixr15-ds/p0-p1-arbitration.md）：**跳过仅当**首行命中且首行
     不是 ECHO_HEAD 回显行且命中 token 紧跟全/半角冒号（声明形）；其余形状（含首行
-    无命中）照跑全扫描——首行自己在 check() 的 _echo_lines 内被扫。
+    无命中）照跑全扫描——首行自己在 check() 的 _echo_head_lines 内被扫。check() 的
+    **完整跳过条件是 `titles is not None and _first_line_declares(masked)`**（fix-r17
+    主修，MM r16 boundary#1，仲裁 _tmp/20261114-3074-fixr16-mm2-probe/ARBITRATION.md：
+    「首行是主信号」仅在标题路径存在时成立——本地形态 titles=None，fix_round 来自
+    正文首行兜底，回显行是唯一 foreign 出口，声明形跳过＝吞掉唯一出口＝漏检）。
 
     词法判据（fix-r16 自行设计，任务书授权）：**声明形＝首行存在 FIXROUND_RE 命中
-    token，其紧跟后字符（无空白）是全角「：」或半角「:」**——本仓轮号声明的惯例是
-    `修复fix-rN：…`（fix-r1 P0 的 CJK 连写首行）/ `fix-rN：…`（题头区界即首个全角
-    「：」，与 _scan_pairs 的 zone_end 同一结构信号：冒号是「题头→正文」的分界，声明
-    的轮号在分界前收口）；散文提及形 token 嵌在句中，后随空白/文字而非冒号
-    （`承接 fix-r3 未完事项`）。行内多个 token 时任一紧跟冒号即声明形（声明的那个
-    token 决定形状，取首个命中与否会把 `承接 fix-r3，本轮修 fix-r5：…` 误判提及）。
+    token，其紧跟后字符（无空白）是全角「：」或半角「:」**——全角「：」是「题头→
+    正文」的分界（与 _scan_pairs 的 zone_end 同一结构信号：冒号在分界前收口声明
+    的轮号）；**半角「:」不与 zone_end 同源**（zone_end 只按全角切），保留它是本
+    判据自设的宽面（`fix-r3: 修闸门` 半角形同判声明——fix-r17 起 MM r16 boundary#2
+    选项②登记为漏检向窄窗：CI 形态半角形跳过＝比 zone_end 同源口径宽一格；本地
+    形态半角形照拒＝fail-closed 向，两向端到端钉见 test-review-roles.py fix-r17
+    块）；散文提及形 token 嵌在句中，后随空白/文字而非冒号（`承接 fix-r3 未完事项`）。
+    行内多个 token 时任一紧跟冒号即声明形（声明的那个 token 决定**形状**，轮号仍由
+    rounds 半边取首个命中——两半边取号分叉是登记在案的有意设计，见 _first_line_round
+    docstring；取首个命中与否会把 `承接 fix-r3，本轮修 fix-r5：…` 误判提及）。
     三分支与方向的对应（跳过＝少拒，跑扫描＝照 r14 拒收）：
     - 首行是 ECHO_HEAD 回显行 → **不跳过**（P0：此时首行是唯一 foreign 出口，跳过
       ＝吞掉 r14 的异单拒收＝假 PASS；仲裁场景 A）；
     - 散文提及形 → **不跳过**（P1：r14 拒收是 desirable，fail-closed 照拒；仲裁
       场景 B）；
-    - 声明形 → **跳过**（r15 修的假 FAIL 面保持：首行是主信号，正文回显不是信号，
-      check() 级钉 test-review-roles.py fix-r15 块 p1_body）。
-    已知窄窗（登记，两向）：声明形不紧跟冒号（`修复fix-r5 停泊补 waker`）按提及处理
-    → 扫描照跑＝多一道误拒（fail-closed 向，与 fix-r4 钉死的 rounds 半边宽松首行窄
-    代价同向）；提及形恰好紧跟冒号（`承接 fix-r3：未完事项`）按声明处理 → 跳过扫描
-    ＝漏检向——词法上与声明不可分，修法是把提及移出首行（或改写不紧跟冒号）。两向
-    都以「结构信号（冒号）优先于词面」取舍；无冒号声明形的收紧须先过 A/B 静默回归 0。"""
+    - 声明形 → **跳过仅当标题路径存在**（CI 形态 titles 非 None：首行是主信号，
+      正文回显不是信号，r15 修的假 FAIL 面保持，check() 级钉 test-review-roles.py
+      fix-r17 P1(b)；本地形态 titles=None 照跑——fix-r17 主修，回显行是唯一
+      foreign 出口，check() 级钉 fix-r17 P1(a) 与翻转后的 fix-r15 面钉 p1_body）。
+    已知窄窗（登记，两向 + 一形态）：声明形不紧跟冒号（`修复fix-r5 停泊补 waker`）按
+    提及处理 → 扫描照跑＝多一道误拒（fail-closed 向，与 fix-r4 钉死的 rounds 半边宽松
+    首行窄代价同向）；提及形恰好紧跟冒号（`承接 fix-r3：未完事项`）按声明处理 → 跳过
+    扫描＝漏检向——词法上与声明不可分，修法是把提及移出首行（或改写不紧跟冒号）；
+    **形态窄窗（fix-r17 登记，须人核）**：本地形态（titles=None）下「正文手工异单
+    回显 + 提交标题干净」会**本地红 CI 绿**——r15 修的假 FAIL 面对 CI 形态 PR 在本地
+    预演中复活，有意取舍（fail-closed 宁拒不漏；ECHO_HEAD 三重结构〔scope 括号 +
+    #N + 配对〕保证散文不进入，误拒面窄），本地形态 fixtype/residual 义务照走
+    （fix_round 来自首行兜底）。两向窄窗都以「结构信号（冒号）优先于词面」取舍；
+    无冒号声明形的收紧须先过 A/B 静默回归 0。"""
     first = _first_line(body)
     if not first or ECHO_HEAD.match(first):
         return False
     return any(m.end() < len(first) and first[m.end()] in "：:"
                for m in FIXROUND_RE.finditer(first))
+
+
+def _echo_head_lines(body: str) -> list[str]:
+    """正文内全部 ECHO_HEAD 结构化回显行（strip 后；fix-r17 抽单源，MM r16 simplify#2
+    P3 随轮顺手）——check() 的 foreign 半边与 fix_round_from_body 的 rounds 半边共用
+    同一行提取（同一正则、同一 strip 口径），不再各写一份循环；日后给提取加过滤条件
+    只改这里，两半边不会分家。"""
+    return [s for s in (ln.strip() for ln in body.split("\n")) if ECHO_HEAD.match(s)]
 
 
 def fix_round_from_body(body: str, echo_scan: bool = True, issues: frozenset[str] = frozenset()):
@@ -1337,9 +1392,14 @@ def fix_round_from_body(body: str, echo_scan: bool = True, issues: frozenset[str
     foreign_fixround_pairs 承担（同一兜底口径，见 check() fix-r14 段）；本函数对触发形
     返回 None、由拒收兜住即验收通过（「非 None 或被拒」二选一）。
     fix-r15 P1（DS r14 增量评审，协调者实测仲裁 p1-probe.txt）：首行判定抽
-    `_first_line_round` 单源——check() 的正文回显 foreign 拒收与 echo_scan 早退共用
-    同一判定（首行命中时 check() 不再对回显行跑 foreign，见 check() fix-r15 段），
-    两处口径不得再分裂。fix-r16 P0/P1（DS+MM r15 双撞，仲裁
+    `_first_line_round` 单源——check() 的正文回显 foreign 拒收与 echo_scan 早退当时
+    共用同一判定（首行命中即整体跳过），**该口径自 fix-r16 起作废**：两半边有意
+    分叉——foreign 半边改 `_first_line_declares`（声明形才跳过），本函数的 rounds
+    半边保持宽松口径不变（fix-r4 钉死，fail-closed 向）；fix-r17 起 foreign 半边
+    跳过还须标题路径存在（titles is not None，本地形态照跑），见
+    `_first_line_declares` docstring 与 check() fix-r17 段——勿按旧句「两处口径
+    不得再分裂」把两半边统一回去（＝复活 r15 P0 假 PASS 面）。fix-r16 P0/P1
+    （DS+MM r15 双撞，仲裁
     _tmp/20261114-3074-fixr15-ds/p0-p1-arbitration.md）：共用判定收窄——check() 的
     跳过改 `_first_line_declares`（声明形才跳过：首行即回显行 / 散文提及都照跑
     foreign 扫描），本函数的首行早退（rounds 半边）保持宽松口径不变（fix-r4 钉死，
@@ -1348,8 +1408,9 @@ def fix_round_from_body(body: str, echo_scan: bool = True, issues: frozenset[str
     first = _first_line_round(body)
     if first is not None or not echo_scan:
         return first
-    rounds = [r for ln in body.split("\n") if ECHO_HEAD.match(ln.strip())
-              for r in _paired_rounds(ln.strip(), issues)]
+    # 行提取走 _echo_head_lines 单源（fix-r17，MM r16 simplify#2）——与 check() 的
+    # foreign 半边共用同一提取，两半边不会分家。
+    rounds = [r for ln in _echo_head_lines(body) for r in _paired_rounds(ln, issues)]
     return max(rounds) if rounds else None
 
 
@@ -1699,7 +1760,9 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
         # 命中（_first_line_round 单源，与 fix_round_from_body 同一判定），命中即整体
         # 跳过正文回显 foreign 扫描——与 echo_scan 同条件同口径；check() 级负控钉见
         # test-review-roles.py fix-r15 块（首行命中的修复轮义务照走：fixtype/residual
-        # 仍由下方 fix_round=5 触发）。
+        # 仍由下方 fix_round=5 触发）。（**本段「命中即整体跳过 / 同条件同口径」自
+        # fix-r16 起作废**：按下段收窄为声明形、再按 fix-r17 段限定标题路径存在，
+        # 勿照本段实现＝复活 r15 P0 假 PASS 面。）
         # **fix-r16 P0+P1（DS r15 boundary#1 + MM r15 boundary#1 双谱系双撞同根，
         # 协调者实测仲裁 _tmp/20261114-3074-fixr15-ds/p0-p1-arbitration.md，探针
         # p0-p1-probe.py r14/r15 对照）：首行早退收窄为声明形**——r15 的「首行命中即
@@ -1715,11 +1778,26 @@ def check(body: str, head: str = "", patch: str = "", base: str = "", repo: str 
         # 早退）保持宽松不收窄。check() 级双向负控钉见 test-review-roles.py fix-r16
         # 块（场景 A 修前 r15 假 PASS、修后红；场景 B 修后仍拒收；声明形 + 异单回显
         # 仍跳过不拒＝r15 面保持）。
-        if not _first_line_declares(masked):
-            _echo_lines = [s for s in (ln.strip() for ln in masked.split("\n"))
-                           if ECHO_HEAD.match(s)]
+        # **fix-r17 P1（MM r16 boundary#1，协调者实测仲裁
+        # _tmp/20261114-3074-fixr16-mm2-probe/ARBITRATION.md，探针 p1-probe.py）**：
+        # r16 的声明形跳过再限定**标题路径存在**——上段的前提「首行是主信号，正文
+        # 回显不是信号」仅在标题路径已给出主信号（titles 非 None）时成立；本兜底块
+        # 恰是主信号缺失的形态：本地 --body-file（无 --base/--head/--repo）时
+        # pr_commit_titles 返回 None，上方 foreign_fixround_pairs(titles or []) 是
+        # 空集 ⇒ 正文回显行是唯一异单出口，声明形跳过＝吞掉唯一出口（与场景 A
+        # 「首行即回显行是唯一出口」同构）＝本地过、CI 拒（同一回显行作提交标题即被
+        # 拒收，fail-open 实锤）。修法＝跳过条件加 `titles is not None` 半边：本地
+        # 形态（titles=None）照跑正文回显 foreign 扫描（fail-closed 向）；CI 形态
+        # （titles 在，含全不命中的空集列表）声明形跳过照旧（r15 修的假 FAIL 面
+        # 保持）。形态窄窗（登记，须人核）：本地形态「正文手工异单回显 + 提交标题
+        # 干净」会本地红 CI 绿——r15 修的假 FAIL 面在本地预演中复活＝有意取舍
+        # （宁拒不漏，ECHO_HEAD 三重结构保证散文不进入），见 _first_line_declares
+        # docstring。ECHO_HEAD 行提取抽 _echo_head_lines 单源（MM r16 simplify#2
+        # P3 随轮顺手）。check() 级钉见 test-review-roles.py fix-r17 块（P1(a)(b)
+        # 双向 + 翻转后的 fix-r15 面钉 + 半角判据两向端到端钉）。
+        if not (titles is not None and _first_line_declares(masked)):
             errs.extend(_foreign_reject_errs(
-                foreign_fixround_pairs(_echo_lines, issues), issues, "正文回显行"))
+                foreign_fixround_pairs(_echo_head_lines(masked), issues), issues, "正文回显行"))
         fix_round = fix_round_from_body(masked, echo_scan=True, issues=issues)
     w = WAIVER.search(masked)
     if blocks:

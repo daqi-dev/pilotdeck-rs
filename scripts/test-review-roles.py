@@ -2311,17 +2311,20 @@ def _run(gate, rrr, out_base: Path) -> int:
 
         # —— #3074 fix-r15（DS r14 增量评审 P1 + P2×3；P1 协调者实测仲裁
         # _tmp/20261114-3074-fixr15/p1-probe.txt，修前现场 probe-before.out）——
-        # P1：正文回显 foreign 拒收受首行早退限制（与 echo_scan 同条件同口径）——首行
-        # 非空行命中 fix-rN 时 check() 不再对 ECHO_HEAD 行跑 foreign（修前该形一边按
-        # 首行判 5、一边硬拒收「异单旁路」＝假 FAIL）；首行命中的修复轮义务照走
-        # （fixtype/residual 仍由首行轮号触发）。首行干净 + 回显行引异单的对照半边
-        # 由上方 fix-r14 P0 扩面钉（nohead_neg）钉住，两向都不漂移。
+        # P1 原口径「首行命中即跳过正文回显 foreign 扫描」自 fix-r16 起收窄为声明形、
+        # 自 fix-r17 起再限定标题路径存在（见 check() fix-r17 段）：本钉的 body 是
+        # **本地形态**（gate.check(…, "", "", "", "")，titles=None），fix-r17 起声明形
+        # 首行也不跳过——回显行是唯一异单出口，照 r14 拒收（原钉的是 fail-open 侧，
+        # r17 主修后翻转）；首行命中的修复轮义务照走（fixtype/residual 仍由首行轮号
+        # 触发）。首行干净 + 回显行引异单的对照半边由上方 fix-r14 P0 扩面钉
+        # （nohead_neg）钉住，两向都不漂移。
         p1_body = ("修复fix-r5：停泊补 waker\n\nfix(scripts): #3074 fix-r3：x\n\n"
                    + blk_t.format(h="") + "Refs #1\n")
         p1_errs = gate.check(p1_body, "", "", "", "")
-        if any("异单旁路" in e and "正文回显行" in e for e in p1_errs):
-            fails.append(f"fix-r15 P1：首行命中（fix-r5）时正文回显行不得 foreign 拒收"
-                         f"（echo_scan 早退同口径）：{[e for e in p1_errs if '旁路' in e]}")
+        if not any("异单旁路" in e and "正文回显行" in e for e in p1_errs):
+            fails.append(f"fix-r17 翻转（原 fix-r15 P1 钉）：本地形态（titles=None）声明形"
+                         f"首行不得跳过正文回显 foreign 扫描——回显行是唯一异单出口"
+                         f"（fix-r17 主修面）：{p1_errs}")
         if not any("fix-r5" in e and "fixtype" in e for e in p1_errs) \
                 or not any("pdrs-residual" in e for e in p1_errs):
             fails.append(f"fix-r15 P1：首行命中的修复轮义务照走（fixtype+residual 仍触发）：{p1_errs}")
@@ -2386,9 +2389,10 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not any("异单旁路" in e and "正文回显行" in e and "r7" in e for e in sc_b_errs):
             fails.append(f"fix-r16 P1 场景B：首行散文提及不得触发整体跳过，回显行引异单"
                          f"须照 r14 拒收（fail-closed）：{sc_b_errs}")
-        # 判据直调钉（三分支 + 窄窗两向，钉住方向不漂移）：声明形跳过（r15 面保持——
-        # 上方 fix-r15 P1 的 p1_body 即「声明形 + 异单回显 → 仍跳过不拒」的 check() 级
-        # 钉）；提及形 / 回显行不跳过
+        # 判据直调钉（三分支 + 窄窗两向，钉住方向不漂移）：声明形跳过（r15 面在 CI
+        # 形态保持——「声明形 + 异单回显 → CI 跳过不拒」的 check() 级钉在下方
+        # fix-r17 P1(b)；本地形态自 fix-r17 起照跑＝上方翻转后的 p1_body 钉）；提及
+        # 形 / 回显行不跳过；窄窗第二向（提及紧跟冒号＝漏检向）钉在下方 fix-r17 块补齐
         if not gate._first_line_declares("修复fix-r5：停泊补 waker\n\nx\n"):
             fails.append("fix-r16 判据：紧跟全角冒号＝声明形（跳过，r15 面保持）")
         if not gate._first_line_declares("fix-r3: 修闸门\n\nx\n"):
@@ -2417,6 +2421,92 @@ def _run(gate, rrr, out_base: Path) -> int:
         # （([], [])＝登记的有意双空），模块 docstring / fix-r11 矩阵陈述已加例外行；
         # 另登记不修（MM r15 boundary#2）的实测记录须人核，见
         # _tmp/20261114-3074-fixr16/review-round-ref-probe.out。
+        # 硬不变式例外第二格（fix-r17，MM r16 sibling#2 / boundary#3）：「无链×简写」
+        # 格（题头区内简写 token、全题无 #N 链）自 r14 起有意双空——既有 fix-r14
+        # 「无链简拼」窄窗钉即该格行为钉（([], [])），模块 docstring ㉓ 段已补例外行。
+        if gate._scan_pairs("chore(gateway) upload 清理 r6：仓库根 _tmp 清出 3.2 GB",
+                            frozenset()) != ([], []):
+            fails.append("fix-r17 不变式例外第二格：无链×简写＝登记双空（r14 窄窗，"
+                         "模块 docstring ㉓ 段例外行）")
+
+        # —— #3074 fix-r17（MM r16 boundary#1 P1 主修：本地形态 foreign 出口；
+        # 协调者实测仲裁 _tmp/20261114-3074-fixr16-mm2-probe/ARBITRATION.md，探针
+        # p1-probe.py 同目录）——
+        # P1 双向钉：(a) 本地形态（titles=None）声明形首行 + 异单回显行 → 拒收（仲裁
+        # 场景：首行 `fix-r5：修闸门早退谓词收窄为声明形` + 回显行引 #3099、本 PR
+        # 关联 #3056——r16 修前本地零拒收〔fail-open 实锤〕，r17 照跑扫描后红）；
+        # (b) CI 形态同 body 但 titles 干净 → 声明形跳过照旧不拒（r15 修的假 FAIL
+        # 面在 CI 形态保持；fix_round 由正文首行兜底，义务照走）。
+        r17_body = ("fix-r5：修闸门早退谓词收窄为声明形\n\n## 概述\n承接上轮评审意见。\n\n"
+                    "fix(scripts): #3099 fix-r3：修闸门\n\n"
+                    + blk_t.format(h="") + "Closes #3056\n")
+        r17_local_errs = gate.check(r17_body, "", "", "", "")
+        if not any("异单旁路" in e and "正文回显行" in e and "3099" in e for e in r17_local_errs):
+            fails.append(f"fix-r17 P1(a)：本地形态声明形首行 + 异单回显行须拒收——回显行是"
+                         f"唯一 foreign 出口（r16 修前零拒收＝仲裁实锤）：{r17_local_errs}")
+        if not any("fix-r5" in e and "fixtype" in e for e in r17_local_errs):
+            fails.append(f"fix-r17 义务对照：本地形态首行兜底的修复轮义务照走（fixtype）：{r17_local_errs}")
+        # (b) CI 形态：monkeypatch pr_commit_titles 返回干净标题集（不命中修复轮、
+        # 不引异单）——titles is not None ⇒ 声明形跳过照旧；fixtype 义务仍由首行
+        # 兜底触发（主修只动 foreign 半边的跳过，不动义务）。
+        _orig_pct = gate.pr_commit_titles
+        try:
+            gate.pr_commit_titles = lambda repo, base, head: (["chore(state) 00:13 交接段：普通状态提交"], "")
+            r17_ci_errs = gate.check(r17_body, "", "", "", "")
+        finally:
+            gate.pr_commit_titles = _orig_pct
+        if any("异单旁路" in e for e in r17_ci_errs):
+            fails.append(f"fix-r17 P1(b)：CI 形态（titles 干净）声明形首行照旧跳过——r15 修的"
+                         f"假 FAIL 面在 CI 形态保持，不得回退：{r17_ci_errs}")
+        if not any("fix-r5" in e and "fixtype" in e for e in r17_ci_errs):
+            fails.append(f"fix-r17 义务对照：CI 形态首行兜底的修复轮义务照走（fixtype）：{r17_ci_errs}")
+        # 半角冒号判据（MM r16 boundary#2，处置选项②：保留半角 + 理由句改写〔_first_line_
+        # declares docstring：半角不与 zone_end 同源，登记为漏检向窄窗〕+ 端到端两向钉）：
+        # 半角声明形首行 + 异单回显 → 本地拒（r17 后本地形态照跑＝fail-closed 向）/
+        # CI 跳过（登记窄窗行为钉住不漂移）。
+        hw_body = ("fix-r3: 修闸门\n\nfix(scripts): #3099 fix-r3：修闸门\n\n"
+                   + blk_t.format(h="") + "Closes #3056\n")
+        hw_local_errs = gate.check(hw_body, "", "", "", "")
+        if not any("异单旁路" in e and "正文回显行" in e for e in hw_local_errs):
+            fails.append(f"fix-r17 半角端到端·本地：半角声明形首行不豁免本地形态扫描"
+                         f"（fail-closed 向，MM r16 boundary#2 选项②登记面）：{hw_local_errs}")
+        try:
+            gate.pr_commit_titles = lambda repo, base, head: (["chore(state) 00:13 交接段：普通状态提交"], "")
+            hw_ci_errs = gate.check(hw_body, "", "", "", "")
+        finally:
+            gate.pr_commit_titles = _orig_pct
+        if any("异单旁路" in e and "正文回显行" in e for e in hw_ci_errs):
+            fails.append(f"fix-r17 半角端到端·CI：CI 形态半角声明形照旧跳过（漏检向登记"
+                         f"窄窗，行为钉住不漂移）：{hw_ci_errs}")
+        # 窄窗第二向钉（MM r16 sibling#3 ≡ DS r16 boundary#3）：提及形恰好紧跟冒号
+        # （`承接 fix-r3：未完事项`）按声明处理＝跳过扫描——漏检向登记，直调钉钉住
+        # 该取舍不被当成可接受而再放宽；RSHORT 简写（`DS r5：`）不是声明 token
+        # （FIXROUND_RE 单源，简写首行两半边都不算声明形）。
+        if not gate._first_line_declares("承接 fix-r3：未完事项\n\nx\n"):
+            fails.append("fix-r16 判据窄窗第二向：提及形恰好紧跟冒号按声明处理＝跳过扫描"
+                         "（漏检向登记，勿当成可接受取舍再放宽）")
+        if gate._first_line_declares("DS r5：评审意见\n\nx\n"):
+            fails.append("fix-r16 判据边界：RSHORT 简写不是声明 token（FIXROUND_RE 单源，"
+                         "简写首行两半边都不算声明形）")
+        # _first_line 行取单源配对钉（DS r16 sibling#2，P2 缺测试配对）：「首个非空行」
+        # 语义（跳过前导空行/空白行）此前无钉——变异为 split[0] 后 fix_round_from_body
+        # 由 5→None（义务整段跳过，fail-open 向）、_first_line_declares True→False，
+        # 既有钉全绿。负控：全空白正文＝空串首行 → 不声明（回显扫描照跑）。
+        if gate._first_line("\n\n   \n修复fix-r5：x\ny\n") != "修复fix-r5：x":
+            fails.append("fix-r17 行取单源：_first_line 取首个非空行（跳过前导空/白行）")
+        if gate.fix_round_from_body("\n \n修复fix-r5：x") != 5:
+            fails.append("fix-r17 行取单源：前导空行不吞首行兜底轮号（义务不整段跳过）")
+        if not gate._first_line_declares("\n\n修复fix-r5：x"):
+            fails.append("fix-r17 行取单源：前导空行不吞声明形判定")
+        if gate._first_line_declares("\n\n \n\t\n"):
+            fails.append("fix-r17 行取单源负控：全空白正文＝空串首行 → 不声明（回显扫描照跑）")
+        # 两半边取号分叉登记钉（DS r16 boundary#1，登记不修）：foreign 半边「任一紧跟
+        # 冒号 token＝声明」只判形状（同串判声明形的钉在上方 fix-r16 判据块），rounds
+        # 半边仍取 FIXROUND_RE 首个命中（fix-r4 宽松口径）——`承接 fix-r3，本轮修
+        # fix-r5：…` 形状＝声明、轮号＝3，分叉是登记在案的有意设计（docstring 已各自
+        # 声明，勿统一回去）。
+        if gate._first_line_round("承接 fix-r3，本轮修 fix-r5：停泊补 waker") != 3:
+            fails.append("fix-r17 分叉登记：rounds 半边取首个命中（fix-r4 宽松口径不变）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
