@@ -10,6 +10,7 @@ next to a valid name looked like a successful subset and, worse, dropped the
 baseline.
 """
 import io
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -18,8 +19,9 @@ from contextlib import redirect_stderr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from negative_selection import (baseline_passed, claim_dir, refuse, registered,
-                                select, verdict_exit)
+from negative_selection import (baseline_passed, claim_dir, refuse,
+                                registered, select, verdict_exit,
+                                withdraw_claim)
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -109,6 +111,51 @@ class ClaimDir(unittest.TestCase):
             with self.assertRaises(SystemExit) as caught:
                 claim_dir(directory)
             self.assertEqual(caught.exception.code, 2)
+
+
+class WithdrawClaim(unittest.TestCase):
+    """#3143 fix-r2 (DS sibling#2): the paired controls for the withdrawal.
+
+    The positive side pins why the helper exists: after an enter-phase
+    refusal withdrew the claim, a host re-running the same output path must
+    not be refused on a leftover directory. The negative sides pin the two
+    failure shapes: a claim that already wrote logs still loses the whole
+    tree (rename + rmtree, not a bare rmdir), and a rename that cannot
+    happen (a `.withdrawn-<pid>` sibling left by a SIGKILLed withdrawal) is
+    swallowed so the caller's rc 2 refusal is never masked.
+    """
+
+    def test_withdrawn_claim_lets_a_host_rerun_proceed(self):
+        with tempfile.TemporaryDirectory() as base:
+            directory = Path(base) / 'out'
+            self.assertEqual(claim_dir(directory), directory.resolve())
+            withdraw_claim(directory)
+            self.assertFalse(directory.exists())
+            # The rerun claims the same path without a refusal.
+            self.assertEqual(claim_dir(directory), directory.resolve())
+
+    def test_a_claim_that_already_wrote_logs_is_fully_removed(self):
+        with tempfile.TemporaryDirectory() as base:
+            directory = Path(base) / 'out'
+            claim_dir(directory)
+            (directory / 'run.log').write_text('partial run')
+            withdraw_claim(directory)
+            self.assertFalse(directory.exists())
+            self.assertEqual(claim_dir(directory), directory.resolve())
+
+    def test_rename_failure_is_swallowed_so_the_refusal_survives(self):
+        # A SIGKILL between the rename and the rmtree leaves a
+        # `.withdrawn-<pid>` sibling behind; a later withdrawal's rename
+        # collides with it and must not raise over the caller's rc 2 path.
+        with tempfile.TemporaryDirectory() as base:
+            directory = Path(base) / 'out'
+            claim_dir(directory)
+            (directory / 'run.log').write_text('partial run')
+            stale = directory.with_name(f'{directory.name}.withdrawn-{os.getpid()}')
+            stale.mkdir()
+            (stale / 'run.log').write_text('killed run')
+            withdraw_claim(directory)  # must not raise
+            self.assertTrue((directory / 'run.log').exists())
 
 
 class StaticRoster(unittest.TestCase):

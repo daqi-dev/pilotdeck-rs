@@ -24,6 +24,12 @@ pub(crate) use settings::METHODS;
 // routing seam's own dispatch body against the S1 stop face.
 #[cfg(test)]
 pub(crate) use cron::dispatch_under_management_gate;
+// #3143 fix-r1 (sibling#3): the run-read names have one owner (`runs`), the
+// same single-source rule `runtime::settings::METHODS` and
+// `runtime::cron::CRON_METHODS` already carry -- the management test
+// derives its filter from here instead of hand-copying the three names.
+#[cfg(test)]
+pub(crate) use runs::METHODS as RUN_METHODS;
 mod sop;
 mod steer;
 mod tools;

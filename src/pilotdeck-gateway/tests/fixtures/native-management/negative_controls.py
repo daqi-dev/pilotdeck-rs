@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
-from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, withdraw_claim
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 # Discovery anchor: fixtures/rust_binding_views.py (the shared binding-scan
 # views this table now reads; without the literal a change to the helper never
@@ -464,6 +464,15 @@ mutations.append(('runs-disabled-advertised', CAPABILITIES,
                   'fn runs(_requests: &Requests) -> bool {\n    true\n}',
                   'native_process::management_tests::absent_run_registry_drops_the_run_reads',
                   '#1642 the absent run registry drops the run reads'))
+# #3143 fix-r1 (sibling#2): the always-true side of the `always_on` gate.
+# memory / cron / runs each had one; `always_on` had only the constant-false
+# row below, so flipping the gate to `true` survived every bound test. The
+# HOST fixture leaves `always_on: None` (management_tests.rs), so the forced
+# gate advertises the always-on names the host test's exact set refuses --
+# the same kill face the memory/cron rows above use.
+mutations.append(('always-on-unconfigured-advertised', CAPABILITIES,
+                  'fn always_on(requests: &Requests) -> bool {\n    requests.always_on.is_some()\n}',
+                  'fn always_on(_requests: &Requests) -> bool {\n    true\n}', HOST, '#1231 exact wired capability set'))
 mutations.append(('memory-enabled-omitted', CAPABILITIES,
                   'fn memory(requests: &Requests) -> bool {\n    requests.memory.is_enabled()\n}',
                   'fn memory(_requests: &Requests) -> bool {\n    false\n}',
@@ -635,6 +644,7 @@ EXPECTED_NAMES = (
     'memory-disabled-advertised',
     'cron-unconfigured-advertised',
     'runs-disabled-advertised',
+    'always-on-unconfigured-advertised',
     'memory-enabled-omitted',
     'cron-configured-omitted',
     'always-on-staged-omitted',
@@ -822,9 +832,27 @@ def _template_covers(template, assertion):
     `remainder.endswith(chunk[:length])` used to include `length == 0`, and
     `str.endswith('')` is always True, so the fallback accepted any tail and
     the rule degenerated into "contains the first static chunk".
+    #3143 fix-r1 (boundary#2): the tail after the last matched chunk must be
+    empty or land inside a trailing `{placeholder}` -- the loop used to
+    `return True` as soon as every chunk had been found in order, so
+    `_template_covers('head {method} tail', 'head apply tail extra')` held
+    and an assertion the payload never carries read as anchored.
+    #3143 fix-r2 (P0, DS boundary#1): a template with no static text at all
+    (a bare `{}`, `re.split` gives two empty chunks) instantiates to any
+    string, so it anchors nothing -- both chunks hit `continue` and the old
+    `return trailing` was unconditionally True, making every assertion read
+    as anchored (the kept body's `parse_json("{}")` shape).
     """
+    chunks = re.split(r'\{[^{}]*\}', template)
+    if not any(chunks):
+        return False
+    # A trailing empty chunk is the region after the last placeholder: text
+    # there is a prefix of that placeholder's value, so the assertion may
+    # continue into it. Without it the instantiation ends with the last
+    # chunk, and so must the assertion.
+    trailing = chunks[-1] == ''
     position = 0
-    for index, chunk in enumerate(re.split(r'\{[^{}]*\}', template)):
+    for index, chunk in enumerate(chunks):
         if not chunk:
             continue
         found = assertion.find(chunk, position)
@@ -835,7 +863,7 @@ def _template_covers(template, assertion):
             return any(remainder.endswith(chunk[:length])
                        for length in range(1, len(chunk) + 1))
         position = found + len(chunk)
-    return True
+    return trailing or not assertion[position:]
 
 
 def binding_failures(cases, sources=None):
@@ -904,7 +932,7 @@ def check_binding_scope():
     fixture = {
         management: '#[test]\n'
                     'fn target() {\n    helper();\n    own_template();\n'
-                    '    tail_template();\n'
+                    '    tail_template();\n    bare_template();\n'
                     '    // panic!("#1642 comment carrier");\n'
                     '}\n'
                     '#[test]\n'
@@ -914,6 +942,10 @@ def check_binding_scope():
                     'fn own_template() {\n    panic!("#1642 covers {method}");\n}\n'
                     'fn tail_template() {\n    panic!("#1642 head {method} tail");\n}\n'
                     'fn plain_carrier() {\n    panic!("#1642 plain non-test carrier");\n}\n'
+                    # #3143 fix-r2 (P0, DS boundary#1): a literal that is a
+                    # bare `{}` template carries no static text, so it must
+                    # anchor nothing (the kept body's `parse_json("{}")` shape).
+                    'fn bare_template() {\n    panic!("{}");\n}\n'
                     '/*\n'
                     '#[test]\n'
                     'fn ghost() {\n'
@@ -943,6 +975,24 @@ def check_binding_scope():
                                  '#1642 head XXX'), sources=fixture):
         raise RuntimeError('#1642 binding checker accepted a placeholder-diverging '
                            'assertion as a template instantiation')
+    # #3143 fix-r1 (boundary#2): the red side of the tail rule -- every
+    # static chunk matched in order, but the assertion continues past the
+    # last chunk, and no instantiation of "#1642 head {method} tail" carries
+    # the trailing text. The loop used to accept it (`return True` after the
+    # last chunk hit), so a drifted assertion with an invented tail still
+    # read as anchored.
+    if not binding_failures(rows('native_process::management_tests::target',
+                                 '#1642 head apply tail extra'), sources=fixture):
+        raise RuntimeError('#1642 binding checker accepted a tail-extending '
+                           'assertion as a template instantiation')
+    # #3143 fix-r2 (P0, DS boundary#1): the red side of the zero-static-chunk
+    # rule -- a bare `{}` literal used to anchor any assertion (both chunks
+    # empty, `continue` twice, `return trailing` = True), so a drifted
+    # assertion string still read as anchored.
+    if not binding_failures(rows('native_process::management_tests::target',
+                                 'unanchored bare prose'), sources=fixture):
+        raise RuntimeError('#1642 binding checker accepted an assertion on a '
+                           'zero-static-chunk template')
     if not binding_failures(rows('native_process::management_tests::target',
                                  '#1642 marker of another test'), sources=fixture):
         raise RuntimeError('#1642 binding checker accepted a sibling-only assertion')
@@ -1010,7 +1060,11 @@ def main():
         print(f'#1231 {len(selected_rows)} mutation anchors and assertion bindings: OK')
         return 0
     if len(sys.argv) < 2:
-        raise SystemExit('usage: negative_controls.py NEW_OUTPUT [mutation ...]')
+        # #3143 fix-r1 (boundary#1): an empty argv is a never-started
+        # refusal (rc 2), the same exit-code four-way table entry the three
+        # siblings carry -- a bare `SystemExit(str)` exits 1 and reads as
+        # "it ran and was not green".
+        refuse('usage: negative_controls.py NEW_OUTPUT [mutation ...]')
     env = dict(os.environ)
     # #1642 fix-r3 (review b, MM concurrency#1 + sibling#2): the four-way
     # table's "never started" refusals all go through negative_selection now
@@ -1144,13 +1198,12 @@ def main():
         # lock, a KeyboardInterrupt from the startup window) is a startup
         # refusal, not a red run: rc 2, no summary, and the empty claim
         # `claim_dir` made is withdrawn so no evidence directory reads as
-        # claimed (utf16-residual-sort's startup_refusal precedent; rmdir only
-        # removes the empty case -- a run that already wrote logs keeps them).
+        # claimed (utf16-residual-sort's startup_refusal precedent).
         if phase == 'enter':
-            try:
-                out.rmdir()
-            except OSError:
-                pass
+            # #3143 fix-r1 (simplify#6): the shared atomic withdrawal, the
+            # same contract the other three runners carry (rename + rmtree
+            # in one helper, never a bare rmdir that races a later claimant).
+            withdraw_claim(out)
             refuse(f'guard refused to start: {error!r}')
         # #1642 fix-r2 (review boundary P2#2): the SKIPPED rows were recorded
         # before the guarded window opened — their bound tests skip themselves

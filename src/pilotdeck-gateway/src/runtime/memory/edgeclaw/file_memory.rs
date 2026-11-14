@@ -2662,9 +2662,18 @@ mod mutation_security_tests {
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {
+            // #2335 (via #3143 fix-r1 sibling#4): the guard must exist
+            // before the first fallible disk op, not only at the return --
+            // a panic anywhere below otherwise leaks the temp tree,
+            // because only a constructed `Scratch` unwinds through `Drop`.
+            // The canonical path is written back into the guard, never a
+            // second `Scratch(...)`, which would drop-and-delete the tree
+            // it points at (the same shape management_tests.rs pins).
             let p = std::env::temp_dir().join(format!("pdrs-597-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&p).unwrap();
-            Self(fs::canonicalize(p).unwrap())
+            let mut scratch = Self(p);
+            fs::create_dir_all(&scratch.0).unwrap();
+            scratch.0 = scratch.0.canonicalize().unwrap();
+            scratch
         }
     }
     impl Drop for Scratch {

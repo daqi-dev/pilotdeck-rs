@@ -404,8 +404,10 @@ def audit():
     readme = (Path(__file__).with_name('README.md')).read_text()
     declared = re.search(r'(\d+) 项变异绑定完整', readme)
     if declared is None or int(declared.group(1)) != len(cases):
-        raise SystemExit(f'#1210 README mutation count drift: README says '
-                         f'{declared and declared.group(1)}, table has {len(cases)}')
+        # #3143 fix-r2 (DS sibling#3): a count drift means the audit never
+        # started, so the refusal carries the four-way table's rc 2.
+        refuse(f'#1210 README mutation count drift: README says '
+               f'{declared and declared.group(1)}, table has {len(cases)}')
     rows = []
     for case in cases:
         name, changes, scope, test, assertion = row_parts(case)
@@ -474,19 +476,21 @@ USAGE = 'usage: negative_controls.py --audit | [--compile] OUT [mutation names]'
 mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
 if mode == '--audit':
     if arguments:
-        raise SystemExit(f'--audit takes no arguments: {arguments!r}\n{USAGE}')
+        # #3143 fix-r2 (DS sibling#3): usage shapes are never-started
+        # refusals (rc 2), the same entry the sibling runners carry.
+        refuse(f'--audit takes no arguments: {arguments!r}\n{USAGE}')
     raise SystemExit(audit())
 # Zero arguments and an unknown `-*` first argument are both usage errors;
 # `--compile` keeps its existing first-position contract: a prefix of the
 # main path, not a standalone mode.
 if mode is None:
-    raise SystemExit(USAGE)
+    refuse(USAGE)
 if mode != '--compile' and mode.startswith('-'):
-    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+    refuse(f'unknown mode: {mode}\n{USAGE}')
 compile_only = mode == '--compile'
 args = arguments if compile_only else [mode, *arguments]
 if not args:
-    raise SystemExit(USAGE)
+    refuse(USAGE)
 env = os.environ.copy()
 if missing_target() or not env.get('PDRS_BASELINE'):
     refuse('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')

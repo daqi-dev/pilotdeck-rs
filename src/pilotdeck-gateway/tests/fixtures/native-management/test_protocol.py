@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -353,23 +354,41 @@ class Protocol(unittest.TestCase):
         self.assertTrue(source.count(pattern) == 1,
                         '#1642 fix-r2 the roster drift probe must replace exactly one EXPECTED_NAMES entry')
         drifted = source.replace(pattern, "'runs-bound-omitted-renamed',\n)", 1)
-        # #1642 fix-r3 (P1-1): the drifted copy must sit beside the original
-        # negative_controls.py, not in a shallow TemporaryDirectory. The copy
-        # runs the module-level `ROOT = Path(__file__).resolve().parents[5]`
-        # at import time, and a CI /tmp path (3 levels) died with an
-        # IndexError before the roster refusal could even raise (job
-        # 131861169897); beside the original the depth shape is identical by
-        # construction. mkstemp keeps the name out of the tree's scans and
-        # the finally unlinks it; bytecode caching is off so the fixtures
-        # directory gains no __pycache__ from the copy.
-        descriptor, copy_name = tempfile.mkstemp(dir=Path(RUNNER.__file__).parent,
-                                                  prefix='drifted-1642-', suffix='.py')
-        copy = Path(copy_name)
+        # #3143 fix-r1 (P1#3, review concurrency#1): the copy can no longer
+        # sit beside the original -- ``mkstemp(dir=RUNNER.__file__.parent)``
+        # put it inside ``src/``, which the clean-tree preflight scans with
+        # ``git ls-files --others`` (ignored files count), so a copy alive
+        # while a concurrent guarded round preflights the tree read as an
+        # "untracked build input" and refused that real round (a false
+        # rc 2), and a SIGKILL inside the mkstemp-unlink window left the
+        # residue there permanently locking the worktree out. ``_tmp/`` is
+        # gitignored and outside every scanned area; the three padding
+        # levels keep the copy at the original's directory depth, so the
+        # module-level ``ROOT = Path(__file__).resolve().parents[5]`` still
+        # resolves the repo root (a shallow CI /tmp path died with an
+        # IndexError before the roster refusal could even raise, job
+        # 131861169897), and the real fixtures directory is already on
+        # sys.path -- this module's own import put it there -- so the
+        # copy's sibling imports resolve unchanged. Bytecode caching is
+        # off so the scratch tree gains no __pycache__ from the copy.
+        root = Path(RUNNER.__file__).resolve().parents[5]
+        (root / '_tmp').mkdir(exist_ok=True)
+        scratch = Path(tempfile.mkdtemp(dir=root / '_tmp', prefix='pdrs-3143-drift-'))
+        copy_dir = scratch / 'a' / 'b' / 'c'
+        copy = None
         sys.path.insert(0, str(FIXTURES))
         stderr = io.StringIO()
         previous = sys.dont_write_bytecode
         sys.dont_write_bytecode = True
         try:
+            # The fallible setup lives under the guard too: a mkdir or
+            # mkstemp failure must unwind through this block's cleanup
+            # instead of leaking the scratch tree (#3143 fix-r1 P1#3
+            # residue case).
+            copy_dir.mkdir(parents=True)
+            descriptor, copy_name = tempfile.mkstemp(dir=copy_dir,
+                                                      prefix='drifted-1642-', suffix='.py')
+            copy = Path(copy_name)
             with os.fdopen(descriptor, 'w') as handle:
                 handle.write(drifted)
             spec = importlib.util.spec_from_file_location('drifted_native_management_controls', copy)
@@ -383,7 +402,9 @@ class Protocol(unittest.TestCase):
         finally:
             sys.dont_write_bytecode = previous
             sys.path.remove(str(FIXTURES))
-            copy.unlink(missing_ok=True)
+            if copy is not None:
+                copy.unlink(missing_ok=True)
+            shutil.rmtree(scratch, ignore_errors=True)
         self.assertTrue(code == 2,
                         '#1642 fix-r2 roster drift is a refusal (rc 2, never started), '
                         'never a failed control (rc 1) or a silent pass')
@@ -404,7 +425,7 @@ class Protocol(unittest.TestCase):
         fixture = {
             management: '#[test]\n'
                         'fn target() {\n    helper();\n    own_template();\n'
-                        '    tail_template();\n'
+                        '    tail_template();\n    bare_template();\n'
                         '    // panic!("#1642 comment carrier");\n'
                         '}\n'
                         '#[test]\n'
@@ -413,6 +434,9 @@ class Protocol(unittest.TestCase):
                         'fn own_template() {\n    panic!("#1642 covers {method}");\n}\n'
                         'fn tail_template() {\n    panic!("#1642 head {method} tail");\n}\n'
                         'fn plain_carrier() {\n    panic!("#1642 plain non-test carrier");\n}\n'
+                        # #3143 fix-r2 (P0, DS boundary#1): a bare `{}`
+                        # template anchors nothing (zero static chunks).
+                        'fn bare_template() {\n    panic!("{}");\n}\n'
                         '/*\n'
                         '#[test]\n'
                         'fn ghost() {\n'
@@ -447,6 +471,14 @@ class Protocol(unittest.TestCase):
             sources=fixture) == ['row'],
             '#1642 fix-r5 the binding checker must refuse a placeholder-diverging '
             'assertion (the endswith(\'\') off-by-one used to accept it)')
+        # #3143 fix-r2 (P0, DS boundary#1): the red side of the zero-static-chunk
+        # rule -- a bare `"{}"` literal in the reachable body used to anchor
+        # any assertion, so a drifted assertion string read as anchored.
+        self.assertTrue(RUNNER.binding_failures(
+            bound('native_process::management_tests::target', 'unanchored bare prose'),
+            sources=fixture) == ['row'],
+            '#3143 fix-r2 the binding checker must refuse an assertion anchored '
+            'only on a zero-static-chunk template')
         self.assertTrue(RUNNER.binding_failures(
             bound('native_process::management_tests::target', '#1642 marker of another test'),
             sources=fixture) == ['row'],
