@@ -11,6 +11,13 @@ payloads). Executable mutations bind to the *label* of the classified
 `native_loop_stimulus.rs` assertion: the fixture records the first failing
 assertion in `assertionFailure`, that label panics, and a different failure
 only trips the generic oracle and stays INVALID.
+
+The execution table is verified against the static EXPECTED_NAMES roster with
+the shared `negative_selection.registered` in every mode (--check, the default
+full run, and an explicit subset) before anything runs, so a row dropped from
+`mutations` cannot silently shrink the denominator, and a drift is a
+never-started refusal (exit 2), not a shorter run that still reads green
+(#2856 fix-r3, the same fix shape as the #1370 sibling).
 """
 import argparse
 import hashlib
@@ -32,6 +39,7 @@ PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_panic import panic_evidence
+from negative_selection import refuse, registered, verdict_exit
 from negative_suite import invalidate_completed, passed
 
 EXECUTABLE = 'executable_native_loop_stimulus'
@@ -132,6 +140,41 @@ mutations = [
      EXECUTABLE, '#1371 executable inert title request'),
 ]
 
+# #2856 fix-r3 (MM sibling#1): `mutations` is both the registry and the
+# execution table, so a row dropped from the table silently shrank the
+# denominator -- `--check` printed a smaller count and still said OK, and the
+# run judged only the survivors while the summary reported N/N. The
+# denominator is this static roster instead, checked with the shared
+# `negative_selection.registered` before anything runs: a dropped, renamed,
+# duplicated or reordered row is a never-started refusal (exit 2), never a
+# shorter green run (#1666 family, same fix shape as the #1370 sibling).
+EXPECTED_TOTAL = 12
+EXPECTED_NAMES = (
+    'outcome-bound-unbounded',
+    'release-ignores-id',
+    'armed-empty-not-inert',
+    'unknown-release-treated-as-known',
+    'tool-prefix-omitted',
+    'completed-published-before-return',
+    'fence-complete-witness-removed',
+    'release-missing-id-wildcard',
+    'release-ignores-stage',
+    'bound-fraction-accepted',
+    'unknown-first-release-after-timer',
+    'title-suppressed-when-armed',
+)
+
+
+def check_roster():
+    """Every mode enters here first: roster drift is a refusal, never a run."""
+    try:
+        names = registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
+    if len(names) != EXPECTED_TOTAL:
+        refuse(f'#1371 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
+               f'found {len(names)}')
+
 
 @dataclass
 class Case:
@@ -228,6 +271,18 @@ def main():
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
     check_binding_scope()
+    check_roster()
+    # #2856 fix-r3 (MM sibling#1): the name refusals fire before the stale scan
+    # reads mutable sources -- a typo'd name must report itself (exit 2, never
+    # started), not a stale-anchor rc 1 that reads as "it ran and was not
+    # green" (same ordering the #1370 sibling carries).
+    repeated = sorted({name for name in args.selected
+                       if args.selected.count(name) > 1})
+    if repeated:
+        refuse('#1371 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1371 unknown mutation name: ' + ', '.join(unknown))
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
@@ -238,11 +293,11 @@ def main():
     if stale:
         raise SystemExit('#1371 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
-        print(f'#1371 {len(mutations)} unique anchors and assertion bindings: OK')
+        print(f'#1371 {EXPECTED_TOTAL} registered mutations present '
+              f'(EXPECTED_NAMES roster matched); {EXPECTED_TOTAL} unique anchors '
+              f'and assertion bindings: OK')
         return 0
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not selected or (args.selected and len(selected) != len(args.selected)):
-        raise SystemExit('#1371 unknown or repeated mutation')
     if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
         raise SystemExit('#1371 output and caller CARGO_TARGET_DIR required')
     output = Path(args.output).resolve()
@@ -381,12 +436,21 @@ def main():
               for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
-        {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256,
+        {'controls': results, 'counts': counts, 'rosterTotal': EXPECTED_TOTAL,
+         # #2856 fix-r3 (MM sibling#1): record what actually ran (manager-gateway
+         # #2309 fix-r3 precedent) -- a shrunken run is auditable from the
+         # summary alone.
+         'selected': [row[0] for row in selected],
+         'guardedSha256': guarded_sha256,
          'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
     success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(any(row['status'] != success for row in results))
+    # #2856 fix-r3 (MM sibling#1): the tail verdict is the shared
+    # `verdict_exit`, so an empty result list (a future branch that records
+    # nothing) is a failure, never `any()` over nothing reading green --
+    # invariant 2 of specs/negative-controls.
+    return verdict_exit(results, key='status', killed=success)
 
 
 if __name__ == '__main__':

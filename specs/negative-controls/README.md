@@ -143,7 +143,11 @@ utf16 `startup_refusal` 先例，证据目录既不发 summary 也不留认领�
 取得之后含还原窗口的失败作废已跑行、发布 summary 并退 1），
 名册不符只发 `roster-mismatch.json`（原子写）并退出 1、`--check` 带位置
 参数、空输出槽或 `--compile-only` 即拒跑；名册防线由
-`test_negative_roster_guards.py` 机检并进 CI）。
+`test_negative_roster_guards.py` 机检并进 CI），以及 #2856 fix-r3 起补齐启动四拒的
+`native-storage-stimulus`（#1370：`EXPECTED_NAMES` 静态名册 + 未知名/重复名/target 四档/
+目录已存在全走 `refuse()` / `missing_target()` / `refuse_unusable_target()` / `claim_dir()`
+拒跑 rc 2，`--check` 另核测试绑定并进 CI）与 `issue-1437-methods`（#1437：同形四拒；
+`--check` 除锚点外同核测试/断言绑定——锚点接受字面量与 `format!` 模板实例化两种形态——并进 CI）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
