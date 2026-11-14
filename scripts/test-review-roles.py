@@ -1775,7 +1775,9 @@ def _run(gate, rrr, out_base: Path) -> int:
         # 的切片长度不受 _BARE_WINDOW 约束、每 token 物化一次——协调者墙钟实测纯间隙对抗形
         # 17 KB 0.18 s / 134 KB 1.4 s / 0.87 MB 57.8 s（二次方外推 ~1.2 MB 越过本仓 r14
         # 先例 103.9 s），提交标题作者可控。修法＝_bare_member_connected 距链尾 ≤ 窗口上界
-        # 先行、再做 ≤ 窗口的 gap 切片。**成本钉**（防回归无人看守）：对抗形 146 KB /
+        # 先行、再做 ≤ 窗口的 gap 切片（fix-r10 起上界删除，改 _GapScan 单调指针精确
+        # 判定——该上界本身在 gap=65 造出边界翻转 P0，见 fix-r10 块；本成本钉保留）。
+        # **成本钉**（防回归无人看守）：对抗形 146 KB /
         # 1000 token 修后实测 ~10 ms（本机 2026-11-14，修前同形 3.6 s）；阈值取 1.0 s——
         # 修前该形必红（3.6 s > 1.0 s），修后留 ~100 倍余量（CI 慢机也够）
         _adv = '#1' + '+' * 134_000 + ''.join(f'+{i} fix-r{i % 9 + 1} ' for i in range(1000))
@@ -1784,7 +1786,7 @@ def _run(gate, rrr, out_base: Path) -> int:
         _dt = time.perf_counter() - _t0
         if _dt > 1.0:
             fails.append(f"fix-r9 P1-1 成本钉：纯间隙对抗形（146 KB/1000 token）{_dt:.2f} s > 1.0 s"
-                         "——第二道豁免的无界切片回潮（应先比窗口再切片，修前同形 3.6 s）")
+                         "——第二道豁免的逐 token 无界扫描回潮（应 _GapScan 摊还 O(1)，修前同形 3.6 s）")
         # P1-2（简写形链尾裸号仍整条丢弃）：`#3056+3074 r5：`（issues={3056}）修前
         # rounds=[] foreign=[] fix_round=None（义务整段跳过＝假 PASS），而全拼形
         # `#3056+3074 fix-r5` 计 5、`#3056+#3074 r5` 也计 5（B 带 # 时它自己就是最近
@@ -1837,6 +1839,89 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.fix_round_from_body("## 概述\n\nfix(scripts): #3074 fix-r3：x\n\nRefs #3074\n",
                                     echo_scan=False, issues=frozenset({"3074"})) is not None:
             fails.append("fix-r9 P2-1：显式 echo_scan=False 仍可关（首行语义单测的关闭阀）")
+
+        # —— #3074 fix-r10（DS r9 复审 P0 边界翻转，矩阵化修复——同处第三轮，规则强制矩阵；
+        # 协调者实测 _tmp/20261114-3074-fixr10/p0-repro-before.txt：'+'*64 计 5、'+'*65 全丢）——
+        # P0 根：fix-r9 给第二道豁免加的「距链尾 ≤ _BARE_WINDOW」上界在 gap=65 时把链尾裸号
+        # 成员误判为引用 → 豁免被否 → 整 token 丢弃（rounds=[] foreign=[]＝义务整段跳过＝
+        # 假 PASS），方向与 r9 docstring「fail-closed〔多拒不漏〕」相反（丢弃恰是 fail-open）。
+        # 修法（拍板方案①）：_GapScan 单调指针摊还 O(1) **精确判定**（无截断无放弃）+
+        # 豁免被否走正常配对/foreign（消灭「不计不拒」双空路径）+ 链构建/RSHORT 收集/
+        # 前向配对三臂同源判据。P0 形直钉：
+        if gate.fix_round_from_title("fix(scripts) #3056+" + "+" * 65 + "3074 fix-r5：修闸门",
+                                     frozenset({"3056"})) != 5:
+            fails.append("fix-r10 P0：gap=65 的链尾裸号成员（'+'*65）不再整 token 丢弃——"
+                         "精确判定无距离上界，照常计 5（修前 rounds=[] foreign=[]＝假 PASS）")
+        # 全矩阵负控（任务书硬判据）：拼写（fix-r5 / r5）× 链形（B 带 # / 裸号 + / 裸号 、）
+        # × gap 长度（跨边界两侧）× issues；**任何格子不得 rounds=[] ∧ foreign=[]**（双空＝
+        # 义务整段跳过＝假 PASS，全矩阵不变式——谁再引入「豁免被否 → 丢弃」即红）。
+        # 断言两族：计入族（链∩issues≠∅ → rounds 有 5）；foreign 族（外来单/链集不含 →
+        # foreign 拒收）。已知窄窗（登记）：裸号成员不并进配对集——`#3056+3074`+issues={3074}
+        # → foreign 拒收而 `#3056+#3074` 计 5，两格允许结果不同，但都不允许双空。
+        _gaps = (0, 1, 63, 64, 65, 66, 130, 131, 1000)
+        _forms = (("+", "#3074"), ("+", "3074"), ("、", "3074"))
+        _mat_bad: list[str] = []
+        _mat_rows = 0
+        for _sep, _second in _forms:
+            _hashed = _second.startswith("#")
+            _chain = frozenset({"3056", "3074"}) if _hashed else frozenset({"3056"})
+            for _g in _gaps:
+                _gap = _sep * _g if _g else " "
+                for _tok in ("fix-r5", "r5"):
+                    _title = f"fix(scripts) #3056{_gap}{_second} {_tok}：修闸门"
+                    for _iss in (frozenset({"3056"}), frozenset({"3074"}),
+                                 frozenset({"9999"})):
+                        _rs, _fo = gate._scan_pairs(_title, _iss)
+                        _mat_rows += 1
+                        if not _rs and not _fo:
+                            _mat_bad.append(f"双空：{_title!r} issues={sorted(_iss)}")
+                        if not _chain.isdisjoint(_iss):
+                            if 5 not in _rs:
+                                _mat_bad.append(f"计入族缺 5：{_title!r} issues={sorted(_iss)} → {_rs}")
+                        else:
+                            if _rs:
+                                _mat_bad.append(f"不应计入：{_title!r} issues={sorted(_iss)} → {_rs}")
+                            if not _fo:
+                                _mat_bad.append(f"foreign 族缺拒收：{_title!r} issues={sorted(_iss)}")
+        if _mat_bad:
+            fails.append(f"fix-r10 矩阵：{_mat_rows} 格中 {len(_mat_bad)} 失败（前 6）：{_mat_bad[:6]}")
+        # 计时钉（任务书：146 KB < 1.0 s 保留——精确判定摊还后不得回退）：全拼形对抗串
+        _adv10 = '#1' + '+' * 134_000 + ''.join(f'+{i} fix-r{i % 9 + 1} ' for i in range(1000))
+        _t10 = time.perf_counter()
+        gate.fix_round_from_title(_adv10)
+        _dt10 = time.perf_counter() - _t10
+        if _dt10 > 1.0:
+            fails.append(f"fix-r10 计时钉：纯间隙对抗形（146 KB/1000 token）{_dt10:.2f} s > 1.0 s"
+                         "——精确判定回潮为逐 token 无界扫（应 _GapScan 摊还 O(1)）")
+        # 计时钉（MM concurrency#3）：RSHORT 收集臂路径——fix-r9/r10 的对抗串全形如 fix-rN
+        # 时 RSHORT lookbehind（r 前邻是 '-'）全不匹配，收集臂豁免路径从未被计时看守；
+        # 含简写 token + 逐 token 裸号豁免调用的形（+i rN），与 :1504-1513 既有 2.0 s
+        # 计时钉口径一致
+        _t11 = time.perf_counter()
+        gate.fix_round_from_title("fix(x) #1" + "+" * 134_000
+                                  + "".join(f"+{i} r{i % 9 + 1} " for i in range(1000)))
+        _dt11 = time.perf_counter() - _t11
+        if _dt11 > 2.0:
+            fails.append(f"fix-r10 RSHORT 计时钉：含简写 token 的纯间隙对抗形 {_dt11:.2f} s > 2.0 s"
+                         "——收集臂裸号成员豁免的精确判定回潮为逐 token 无界扫（应摊还 O(1)）")
+        # 前向臂「豁免被否走 foreign」正控（fix-r5 P1 假 FAIL 防护保留 + 双空消灭）：
+        # 题头区内非链连接裸号（gap 含非链字符）+ 链 ∩ issues = ∅ → 照进 foreign 拒收
+        # （旧口径 rounds=[] foreign=[]＝假 PASS）；计入半边照旧被压（{2957} 时不计 2）
+        if gate._scan_pairs("fix(scripts) #2957 P1×3 + 2932 fix-r2 交付",
+                            frozenset({"9999"}))[1] != [(2, frozenset({"2957"}))]:
+            fails.append("fix-r10 前向臂：题头区内裸号引用 + 链∩issues=∅ 照进 foreign 拒收"
+                         "（「不计不拒」双空路径消灭——P0 洞根）")
+        if gate.fix_round_from_title("fix(scripts) #2957 P1×3 + 2932 fix-r2 交付",
+                                     frozenset({"2957"})) is not None:
+            fails.append("fix-r10 前向臂：裸号引用不计入（fix-r4 P0-A / fix-r5 P1 假 FAIL 防护不回退）")
+        # P2（DS sibling 补跑 P2-1）：_overflow_err b 后缀分流文案钉住——「#」族不含
+        # 「b 后缀」、「fix-r」族含「可带 b 后缀」（口径 scripts/README.md:99）
+        _e1 = gate._overflow_err("#" + "1" * 19, "t")
+        _e2 = gate._overflow_err("fix-r" + "1" * 19, "t")
+        if _e1 is None or "b 后缀" in _e1:
+            fails.append("fix-r10 P2-1：# 族的超长串报错不应提「b 后缀」（HASH_OVER 无 b 后缀）")
+        if _e2 is None or "可带 b 后缀" not in _e2:
+            fails.append("fix-r10 P2-1：fix-r 族的超长串报错应含「可带 b 后缀」")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
