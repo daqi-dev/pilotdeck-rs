@@ -1594,7 +1594,10 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.fix_round_from_title("chore(state) board 13:42 交接段：#2957 P1×3 + 2932 fix-r2 交付",
                                      frozenset({"2957"})) is not None:
             fails.append("fix-r5 P1 负控：前向配对（#2957∈issues 在前 + 裸号 2932 紧邻 token）不得计入")
-        # P1 负控（foreign 半边）：裸号引用 token 不进 foreign（board 引用不是本 PR 修复轮）
+        # P1 负控（foreign 半边）：裸号引用 token 不进 foreign——fix-r11 注记：该形自
+        # fix-r10 起在题头区内已进 foreign 拒收，本钉现在只是**空守**（token 落在全角
+        # 「：」后的题头区外＝board 尾合法形态），新语义的正控由 fix-r11 矩阵 gap 内容
+        # 轴接管；删掉题头区外的空守会漏掉 board 尾回归面，保留
         if gate._scan_pairs("chore(state) board 13:42 交接段：#2957 P1×3 + 2932 fix-r2 交付",
                             frozenset({"9999"}))[1]:
             fails.append("fix-r5 P1 负控：裸号引用 token 不进 foreign（board 尾引用形，整 token 视为引用）")
@@ -1756,7 +1759,9 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r8 concurrency P1：链尾裸号形配不上本 PR 单号时照进 foreign 拒收"
                          "（杜绝「既不计入也不拒收」的静默放行）")
         # 守卫另一半不回退：非链连接的裸号（中间隔了非链字符）仍是 board/交接段引用，
-        # 不计、不进 foreign（fix-r4 P0-A / fix-r5 P1 原语义）
+        # 不计、不进 foreign（fix-r4 P0-A / fix-r5 P1 原语义）——fix-r11 注记：该形
+        # 整条无 #N，「不计不拒」是登记在案的板尾裸号窄窗（无配对链可挂 foreign），
+        # 非前向臂；题头区内带链的散文间隔形由 fix-r11 矩阵 gap 内容轴接管
         if gate._scan_pairs("chore(state) 22:51 补落（2558 fix-r5 派 macmini）",
                             frozenset({"3056"})) != ([], []):
             fails.append("fix-r8 concurrency P1 pinning：非链连接的裸号（board 尾引用）仍不计不拒")
@@ -1922,6 +1927,102 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r10 P2-1：# 族的超长串报错不应提「b 后缀」（HASH_OVER 无 b 后缀）")
         if _e2 is None or "可带 b 后缀" not in _e2:
             fails.append("fix-r10 P2-1：fix-r 族的超长串报错应含「可带 b 后缀」")
+
+        # —— #3074 fix-r11（MM+DS r10 复审 P1×2 同根 + MM sibling#3 b 档升 P1：散文
+        # 间隔维度的双空残留——fix-r10 只封了「纯间隙 + 前向臂」；协调者实测 before
+        # _tmp/20261114-3074-p1-verify/probe.md 三形全 rounds=[] foreign=[]）——
+        # P1-1 前向臂相交半边：`#3056 P1×3 + 2932 fix-r2` + {3056}（before 双空；
+        # 纯 gap 形计 2——插一个词即义务整段跳过＝fail-open 拼写分裂）
+        if gate._scan_pairs("fix(scripts) #3056 P1×3 + 2932 fix-r2 交付",
+                            frozenset({"3056"})) != ([], [(2, frozenset({"3056"}))]):
+            fails.append("fix-r11 P1-1：散文间隔前向臂相交半边照进 foreign 拒收（修前双空＝假 PASS）")
+        if gate.fix_round_from_title("fix(scripts) #3056 P1×3 + 2932 fix-r2 交付",
+                                     frozenset({"3056"})) is not None:
+            fails.append("fix-r11 P1-1：裸号引用不计入半边保持（fix-r5 P1 假 FAIL 防护不回退）")
+        # P1-2 收集臂简写形：`#3056+3074 补 r5：` + {3056}（before 双空；全拼
+        # `补 fix-r5` 计 5——拼写分裂）
+        if gate._scan_pairs("fix(scripts) #3056+3074 补 r5：修闸门",
+                            frozenset({"3056"})) != ([], [(5, frozenset({"3056"}))]):
+            fails.append("fix-r11 P1-2：散文间隔简写形照进 foreign 拒收（修前整条丢弃＝双空）")
+        if gate.fix_round_from_title("fix(scripts) #3056+3074 补 fix-r5：修闸门",
+                                     frozenset({"3056"})) != 5:
+            fails.append("fix-r11 P1-2 对照：全拼散文间隔形照计 5（分裂只剩计入/拒收之差，无双空）")
+        # P1-3 后向臂镜像（MM sibling#3，b 档判据＝假 PASS 计 P1）：两半边
+        # （before：{9999} 与 {2957} 均 rounds=[] foreign=[]——后向臂从不 append foreign）
+        for _iv in (frozenset({"9999"}), frozenset({"2957"})):
+            _rs, _fo = gate._scan_pairs("fix(scripts) +2932 fix-r2 交付 + #2957 P1×3", _iv)
+            if _rs or _fo != [(2, frozenset({"2957"}))]:
+                fails.append(f"fix-r11 P1-3：后向臂两半边照进 foreign 拒收"
+                             f"（issues={sorted(_iv)}，修前双空）→ {_rs}/{_fo}")
+        if gate.fix_round_from_title("fix(scripts) fix-r2 交付 + #2957 P1×3",
+                                     frozenset({"2957"})) != 2:
+            fails.append("fix-r11 P1-3 正控：无裸号的后向配对照常计 2（DS boundary#5 语义不回退）")
+        # P1-1 e2e（check() 报错文案对齐的回归钉）：相交半边的 foreign 拒收文案不得再写
+        # 「引用不在本 PR 关联单」（链就在关联单里——假指引会叫人补已存在的 Refs），
+        # 改报「归属存疑」并给标题侧修法；异单/no-issue 两分支照旧（fix-r5 e2e 族已钉）
+        subprocess.run([*g2, "checkout", "-q", "-b", "fixr11-intersect-msg"], check=True)
+        h_i11 = titled2("fix(scripts) #3056 P1×3 + 2932 fix-r2 交付")
+        subprocess.run([*g2, "checkout", "-q", "-"], check=True)
+        _errs11 = gate2("## 概述\n\n相交半边文案回归钉。\n\n" + blk_t.format(h=h_i11)
+                        + "Closes #3056\n", h_i11, c_base)
+        _ei11 = [e for e in _errs11 if "归属存疑" in e and "r2" in e and "#3056" in e]
+        # 负条件只抓自相矛盾形（链 #3056 就在关联单 {3056} 里却被说「不在」）；范围里
+        # 其他提交的 #3074 异单旁路报错（链 ∩ issues = ∅）是既有分支的正当输出，不算
+        if not _ei11 or any("题头区引用 #3056 不在本 PR 关联单（#3056）" in e for e in _errs11):
+            fails.append(f"fix-r11 P1-1 e2e：相交半边 foreign 拒收应报「归属存疑」而非"
+                         f"「不在本 PR 关联单」（假指引）：{_errs11[:3]}")
+        # 全矩阵扩展（任务书硬判据，同处第四轮补轴）：fix-r10 矩阵（拼写×链形×gap
+        # 长度×issues）之上加 **gap 内容轴**（纯 PAIR_SEP 间隙 / 散文间隔）与 **臂轴**
+        # （前向 / 收集 / 后向各形）——不变式「任何格子不得 rounds=[] ∧ foreign=[]」
+        # 全格成立；散文间隔格一律 foreign 拒收（归属存疑＝fail-closed）；纯间隙格照
+        # fix-r10 口径（计入族 ∩≠∅ 计入 / foreign 族 ∩=∅ 拒收）。
+        _m11_bad: list[str] = []
+        _m11_rows = 0
+        _arm_forms = (
+            ("前向", lambda gc: f"fix(scripts) #3056{gc}2932 fix-r2 交付",
+             frozenset({"3056"}), 2),
+            ("收集", lambda gc: f"fix(scripts) #3056+3074{gc}r5：修闸门",
+             frozenset({"3056"}), 5),
+            ("后向", lambda gc: f"fix(scripts) 修{gc}2932 fix-r2 交付 + #2957 P1×3",
+             frozenset({"2957"}), 2),
+        )
+        for _arm, _mk, _chain, _num in _arm_forms:
+            for _gname, _gc in (("纯间隙", " + "), ("散文间隔", " P1×3 + ")):
+                _title = _mk(_gc)
+                # 后向臂形自带裸号引用（guard 必响：后向守卫无 chain_end 豁免），
+                # 纯间隙格也走 foreign；前向/收集的纯间隙格裸号是链尾成员（计入族）
+                _expect_fo = (_arm == "后向") or (_gname == "散文间隔")
+                for _iss in (_chain, frozenset({"9999"})):
+                    _rs, _fo = gate._scan_pairs(_title, _iss)
+                    _m11_rows += 1
+                    if not _rs and not _fo:
+                        _m11_bad.append(f"双空：{_arm}/{_gname}：{_title!r} issues={sorted(_iss)}")
+                    if _expect_fo:
+                        if _rs:
+                            _m11_bad.append(f"拒收格不应计入：{_arm}/{_gname}：{_title!r} issues={sorted(_iss)} → {_rs}")
+                        if not _fo or _fo[0][0] != _num:
+                            _m11_bad.append(f"拒收格缺({_num})：{_arm}/{_gname}：{_title!r} issues={sorted(_iss)} → {_fo}")
+                    elif not _chain.isdisjoint(_iss):
+                        if _rs != [_num]:
+                            _m11_bad.append(f"计入族缺 {_num}：{_arm}/{_gname}：{_title!r} issues={sorted(_iss)} → {_rs}")
+                    else:
+                        if _rs:
+                            _m11_bad.append(f"不应计入：{_arm}/{_gname}：{_title!r} issues={sorted(_iss)} → {_rs}")
+                        if not _fo or _fo[0][0] != _num:
+                            _m11_bad.append(f"foreign 族缺拒收({_num})：{_arm}/{_gname}：{_title!r} issues={sorted(_iss)} → {_fo}")
+        if _m11_bad:
+            fails.append(f"fix-r11 矩阵：{_m11_rows} 格中 {len(_m11_bad)} 失败（前 6）：{_m11_bad[:6]}")
+        # P2-4（MM concurrency#2 ≡ DS concurrency#1）：_GapScan 契约守卫——违约
+        # fail-loud raise（静默 fallback 会把摊还破坏吞成暗坑）+ 基本语义负控
+        if gate._GapScan("a b c").clear(0, 1):
+            fails.append("fix-r11 P2-4：_GapScan.clear 基本语义（区间含非 gap 字符 → False）")
+        _gs11 = gate._GapScan("+++")
+        _gs11.clear(0, 3)
+        try:
+            _gs11.clear(0, 1)
+            fails.append("fix-r11 P2-4：_GapScan.clear 契约违约应 raise（静默 fallback 回潮）")
+        except RuntimeError:
+            pass
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
