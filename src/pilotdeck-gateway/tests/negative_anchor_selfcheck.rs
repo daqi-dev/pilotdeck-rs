@@ -45,6 +45,13 @@ fn negative_fixture_anchors_and_checker_controls() {
                 "ParityGuardedPredicate",
                 "BaselineTracksRuler",
                 "ParityLockHolderReconciliation",
+                // #2513 fix-r11（DS r10 boundary#1 / concurrency#1，a 档当轮修）：
+                // DeadStreamDetach / DeadStreamPrint / RunTokenAndRefuseSummary
+                // 19 条测试此前不在任何 CI 入口（全仓 grep 只命中定义处）。
+                // 本机纯 python 冒烟 19 tests OK 0.5 s，无宿主依赖，无超时顾虑。
+                "DeadStreamDetach",
+                "DeadStreamPrint",
+                "RunTokenAndRefuseSummary",
             ][..],
         ),
         ("_negkit/test_compare_verdicts.py", &[][..]),
