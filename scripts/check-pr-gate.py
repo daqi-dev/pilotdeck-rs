@@ -70,8 +70,10 @@
      之后）不在题头区、不进 foreign——与板尾裸号同款已知代价；`fix(scope)：fix-rM 修 #N` 形态
      由 DS boundary#5 的「向后就近配对」计入（#N ∈ issues 时）。
      fix-r3（MM concurrency#1 P0 + MM/DS boundary#1 双撞 P1 + MM sibling#1 P1 + DS boundary#2
-     P2a）：① 标题侧兼容 `#N r<M>` 简写形（与 fix-r<M> 同一套配对判定；只认**题头区内 + 与前方
-     #N 链紧邻**——题头区外的 rN 是评审轮引用，`fix-r3：r2 评审` 不计，语料 423 条无一例外，
+     P2a）：① 标题侧兼容 `#N r<M>` 简写形（与 fix-r<M> 同一套配对判定；只认**题头区内 +
+     与前方 #N 链紧邻**——间隔恰为链尾裸号成员时视同紧邻（`_bare_member_connected`
+     单源，fix-r10 起精确判定无距离上界）；题头区外的 rN 是评审轮引用，`fix-r3：r2 评审`
+     不计，语料 423 条无一例外，
      _tmp/20261114-3074-fixr3/probe-corpus.txt §1b）；② 标题含 fix-r<M> 时不再强制类型词开头
      （`#3056 fix-r3：` 判得出；非类型词开头标题**只走配对分支**——无 #N 全计入与题头区 SELF
      两个免配对分支不给，`fix-r2 #2516 收尾` 仍不是修复轮）；③ CI 形态（titles 非空但全不命中）
@@ -92,6 +94,15 @@
      紧邻判据单遍单调指针（P1-E，O(T·n) 切片面封堵）；⑪ 枚举判定去重 + 全体公共元素短路 +
      链数上限 200（P0-B，`#1；`×N 的 O(C²) 挂起面封堵，fail-closed 方向）；⑫ OVER 词表同步
      b 后缀（`fix-r`+19 位+`b` 不再静默漏判）、超长串早退保留既有 errs（P2-1 / P2-3）。
+     fix-r10（DS r9 复审 P0 边界翻转，矩阵化修复——同处第三轮，规则强制矩阵）：⑬ 链尾
+     裸号成员豁免改**单调指针摊还 O(1) 精确判定**（`_GapScan`，无距离上界无切片——
+     fix-r9 的 `_BARE_WINDOW` 上界在 gap=65 时把成员误判为引用 → 豁免被否 → 整 token
+     丢弃＝rounds=[] foreign=[]＝义务整段跳过的假 PASS，丢弃方向是 fail-open）；⑭ 豁免
+     被否不再整 token 丢弃——前向配对臂的裸号引用只压计入半边，foreign 半边照走（消灭
+     「不计不拒」双空路径）；⑮ 链构建 / RSHORT 收集 / 前向配对三臂同源判据（DS ⑤：
+     `#3056 +、×65 + #3074 r5` 计 5 而裸号拼写被丢的口径分裂封堵），判据与
+     BARE_NUM_BEFORE 解耦——区间内恰一个纯数字 run 即链尾成员，**空格前置的裸号**
+     （`#3056 3074 r5`）照算，与链构建臂（空格是 gap 字符）同口径。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -196,6 +207,10 @@ RSHORT_OVER = re.compile(r"(?<![A-Za-z0-9_-])r\d{19,}b?(?![A-Za-z0-9_-])")
 # 计入＝宁高勿低；数字前是 CJK 词字符 + 空白的形（`段 1800 fix-r6`，\w 含 CJK）同豁免——
 # A/B 复算修复方向 0 实例。调用走 _bare_num_before 的 ≤64 字符有界窗口（P1-E）。
 BARE_NUM_BEFORE = re.compile(r"([^\w\s:#])[^\S\r\n]*(\d+)[^\S\r\n]*\Z")
+# fix-r10：链尾裸号成员判据（_bare_member_connected）的单字数字口径——与 \d 家族
+# （HASH_REF / RSHORT / BARE_NUM_BEFORE）同字符类，不用 str.isdigit()（其超集含
+# 上标等 No 类字符，会让 `#3056 ² r5` 的 ² 被当数字成员，与正则口径分家）。
+_BARE_DIGIT = re.compile(r"\d")
 # 修 2（fix-r5，boundary#2 P1）配对判定的机件：标题里 #N 与 fix-r<N> 就近配对——
 # 引用别的单的轮号按 issue 号归属各单，不再「每标题首个」（低估→跳过 N≥4 residual＝假 PASS）
 # /「行内 max」（高估→多要 residual＝假 FAIL）二选一。#N 串由链接符连成（#3056+#3057 一组）；
@@ -325,84 +340,156 @@ WAIVER_FIXTYPE = re.compile(r"fixtype=([" + re.escape("".join(FIXTYPE_VALUES)) +
 _BARE_WINDOW = 64
 
 
-def _bare_member_connected(text: str, bm, chain_end: int | None) -> bool:
-    """fix-r9 单源 helper（P1-2 抽出，两臂共用；P1-1 加距离上界）：裸号命中 bm
-    （BARE_NUM_BEFORE，digits 锚定在 token 起点前收尾）是否为 chain_end 处 #N 链的
-    **链尾裸号成员**（`#A+B` / `#A、B` 的 B）。判据三条：① 数字起点 > chain_end；
-    ② **距链尾 ≤ _BARE_WINDOW**（fix-r9 P1-1，MM concurrency#1+boundary#1 ≡ DS
-    concurrency#1 双撞 + 协调者墙钟实测：旧口径 `all(_is_issue_gap_char(c) for c in
-    text[chain_end:bm.start(2)])` 的切片长度不受窗口约束、每 token 物化一次 →
-    O(T·n) 挂起面——纯间隙对抗形实测 134 KB 1.4 s、0.87 MB 57.8 s（二次方外推
-    ~1.2 MB 越过本仓 r14 先例 103.9 s），提交标题作者可控；先比距离再切片，
-    切片长度 ≤ 窗口，O(1)/token 恢复＝fix-r4 P1-E 同款「有界窗口」口径。窗口外的
-    远距裸号按引用计、不算链成员——豁免收窄只影响「解除守卫」半边，链尾裸号成员
-    本来就紧邻链，方向 fail-closed〔多拒不漏〕）；③ 链尾到数字起点之间全为
-    _is_issue_gap_char（PAIR_SEP ∪ 非换行空白）。
-    两臂共用（fix-r9 P1-2，DS sibling#1）：前向配对臂（_bare_num_before 守卫的
-    第二道豁免）与 RSHORT 收集臂（_scan_pairs 的紧邻判据）同一口径——简写形
-    `#A+B r5：` 与全拼形 `#A+B fix-r5：` 不再行为分裂。"""
-    if chain_end is None or bm.start(2) <= chain_end:
+def _bare_match_before(text: str, start: int):
+    """token 前窗口内紧邻裸号**引用**的单源查找（fix-r10，MM simplify#1）：返回
+    BARE_NUM_BEFORE 命中或 None。fix-r9 在 _bare_num_before 之外于
+    _bare_member_before_token 抄了第二份同式
+    `BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)`，与
+    _bare_num_before docstring「四臂统一走本函数、单源」声明矛盾——现查找只此一份；
+    fix-r10 后半轮判据与 bm 解耦（链尾成员走 _bare_member_connected 的区间判据，
+    不再要 BARE_NUM_BEFORE 命中），本函数只剩 _bare_num_before（四臂裸号**引用**守卫）
+    一个调用方；将来改窗口/`\\Z` 口径只动这里（裸号窗口＝token 前 ≤ _BARE_WINDOW 字符、
+    digits 与 token 间只容非换行空白）。"""
+    return BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)
+
+
+class _GapScan:
+    """「区间全 gap」精确判定的单调指针（fix-r10 P0，DS r9 复审 concurrency#1；同处第三轮
+    修复，按规则矩阵化拍板方案①）：clear(lo, hi) 判 text[lo:hi) 是否全为 _is_issue_gap_char
+    ——**无长度上界、无切片物化**，指针单遍只前进、每字符至多看一次（与 _scan_pairs 既有
+    last_nongap 同形），token 侧摊还 O(1)。旧口径演进：fix-r8 第二道豁免的无界切片是
+    O(T·n) 挂起面（0.87 MB 57.8 s）→ fix-r9 加「距链尾 ≤ _BARE_WINDOW」上界 → **上界
+    又造出边界翻转**：gap=65 的链尾裸号成员被误判为引用 → 豁免被否 → 整 token 丢弃
+    （rounds=[] foreign=[]＝义务整段跳过＝假 PASS；'+'*64 计 5、'+'*65 全丢，协调者实测
+    _tmp/20261114-3074-fixr10/p0-repro-before.txt）——且方向与 fix-r9 docstring 所写
+    「fail-closed〔多拒不漏〕」相反，丢弃恰是 fail-open。故本轮精确判定，不截断不放弃。
+    单调契约：同一实例的 clear 调用 hi 须单调不减。_scan_pairs 的三个使用点各自独立实例
+    保证之——链构建（hash 起点升序）、RSHORT 收集与前向配对（fix-r10 起查询点为数字 run
+    起点 r0：token 按 start 升序时 r0 必不减——run 终点即该 token 的 last_nongap，其后到
+    token 起点全 gap；若 r0_{k+1} < r0_k，则 run_k 整体落在 [r0_{k+1}, start_{k+1}) 的
+    「run_{k+1} ∪ 尾部全 gap」里，数字不能进 gap 段 ⇒ run_k ⊆ run_{k+1}，两者皆极大 run
+    ⇒ 相同 ⇒ r0_k = r0_{k+1}，矛盾于严格递减）。契约外（hi < _scan）退化为本次调用的
+    直接精确判定（逐位 genexpr，无切片）——防御支，不承担摊还。"""
+
+    __slots__ = ("_text", "_scan", "_last")
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._scan = 0
+        self._last = -1  # text[0:_scan) 内最后一个非 gap 字符位置（-1 = 无）
+
+    def clear(self, lo: int, hi: int) -> bool:
+        text = self._text
+        if hi < self._scan:
+            return all(_is_issue_gap_char(text[p]) for p in range(lo, hi))
+        s, last = self._scan, self._last
+        while s < hi:
+            if not _is_issue_gap_char(text[s]):
+                last = s
+            s += 1
+        self._scan, self._last = s, last
+        return last < lo
+
+
+def _bare_member_connected(text: str, start: int, chain_end: int | None,
+                           gap_clear=None, last_nongap: int | None = None) -> bool:
+    """token 起点前 [chain_end, start) 区间是否**只隔一个链尾裸号成员**（`#A+B` /
+    `#A、B` 的 B，fix-r8 concurrency P1 引入、fix-r10 P0 矩阵化重写）。判据＝区间内
+    全部非 gap 内容**恰为一个纯数字 run**：① 区间最后一个非 gap 字符是数字（\\d 口径，
+    _BARE_DIGIT——散文/字母前邻即否）；② 该数字 run 向左延伸到 r0（逐位回走，O(run)，
+    各 token 的 run 位置互不重叠＝线性总量）；③ [chain_end, r0) 全为 _is_issue_gap_char
+    （PAIR_SEP ∪ 非换行空白）——**精确判定，无距离上界**（gap_clear 承载：_scan_pairs
+    传 _GapScan 单调指针摊还 O(1)，直调默认区间逐位 genexpr，无切片物化）；④ run 不
+    触链尾（r0 > chain_end，与旧 BARE_NUM_BEFORE 判据的 `bm.start(2) > chain_end`
+    等价——词法上 `#N` 贪婪 \\d+ 使 hash 结束位后不可能是数字，直调合成形钉在
+    test-review-roles.py fix-r6 sibling#1）。
+    fix-r10 演进（同处第三轮，规则强制矩阵）：fix-r8 第二道豁免的无界切片是 O(T·n)
+    挂起面（0.87 MB 57.8 s）→ fix-r9 加「距链尾 ≤ _BARE_WINDOW」上界 → **上界造出
+    边界翻转 P0**：gap=65 的成员被误判为引用 → 豁免被否 → 整 token 丢弃
+    （rounds=[] foreign=[]＝义务整段跳过＝假 PASS；'+'*64 计 5、'+'*65 全丢，协调者实测
+    _tmp/20261114-3074-fixr10/p0-repro-before.txt）——且方向与 fix-r9 docstring
+    「fail-closed〔多拒不漏〕」相反，丢弃恰是 fail-open。本轮判据与 BARE_NUM_BEFORE
+    解耦（不再要 bm）：**空格前置的裸号（`#3056 3074 r5`，无枚举分隔符）也是链尾
+    成员**——与链构建臂同判据（空格是 gap 字符，`#3056 #3074` 本就并链），矩阵
+    g=0 裸号格的双空消除；`#A+B` 与 rN 间隔 > 查找窗口的空白串时不再行为分裂
+    （fix-r9 登记的窄窗随判据解耦一并消除）。两臂共用（fix-r9 P1-2 引入）：前向
+    配对臂（_bare_num_before 的链成员豁免）与 RSHORT 收集臂（紧邻判据）同一口径。
+    **本判据的全部陈述点清单**（fix-r10，MM sibling#2：fix-r9 只同步 2/5 处，照旧文
+    改极易把上界/无界切片写回——改判据须五处同改）：① 模块 docstring fix-r10 段
+    （rN 简写收集句）；② _bare_num_before docstring；③ _bare_num_before 内联注释；
+    ④ _scan_pairs docstring（前向裸号守卫句 + RSHORT 收集判据句）；⑤ _scan_pairs
+    收集臂内联注释。"""
+    if chain_end is None or start <= chain_end:
         return False
-    if bm.start(2) - chain_end > _BARE_WINDOW:
-        return False  # 远距裸号按引用计（P1-1 上界先行，不做无界切片）
-    return all(_is_issue_gap_char(c) for c in text[chain_end:bm.start(2)])
+    if last_nongap is None:
+        last_nongap = -1
+        for p in range(chain_end, start):
+            if not _is_issue_gap_char(text[p]):
+                last_nongap = p
+    if last_nongap < chain_end or not _BARE_DIGIT.match(text[last_nongap]):
+        return False  # 区间全 gap（无裸号）或末位非 gap 字符不是数字（散文/字母前邻）
+    r0 = last_nongap
+    while r0 > chain_end and _BARE_DIGIT.match(text[r0 - 1]):
+        r0 -= 1
+    if r0 == chain_end:
+        return False  # run 触链尾（词法不可达，保直调合成形口径与旧判据等价）
+    if gap_clear is None:
+        return all(_is_issue_gap_char(text[p]) for p in range(chain_end, r0))
+    return gap_clear(chain_end, r0)
 
 
-def _bare_member_before_token(text: str, start: int, chain_end: int | None) -> bool:
-    """token 前紧邻一个属于 chain_end 处 #N 链的链尾裸号成员（fix-r9 P1-2，RSHORT
-    收集臂专用）：`#3056+3074 r5：修闸门` 的 r5 与链之间隔着的 `+3074` 是链自身成员，
-    不是断链字符——视同紧邻收集。判据＝_bare_member_connected（单源）作用于 token
-    前 _BARE_WINDOW 窗口内的 BARE_NUM_BEFORE 命中（digits 与 token 之间只容非换行
-    空白）。已知窄窗（登记）：豁免只覆盖「裸号紧邻 token（≤ 窗口）」的形——`#A+B`
-    与 rN 之间隔着 > 窗口的空白串时，全拼形（前向臂守卫在窗口内找不到 bm → 不拦 →
-    计入）与简写形（收集臂丢弃）行为分裂，方向 fail-closed（丢弃＝多拒），
-    A/B 复算真实语料 0 实例。"""
-    bm = BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)
-    return bm is not None and _bare_member_connected(text, bm, chain_end)
+def _bare_member_before_token(text: str, start: int, chain_end: int | None,
+                              gap_clear=None, last_nongap: int | None = None) -> bool:
+    """token 与 chain_end 处 #N 链之间只隔一个链尾裸号成员（fix-r9 P1-2，RSHORT
+    收集臂专用；fix-r10 重写为与 _bare_member_connected 同源的区间判据）：
+    `#3056+3074 r5：修闸门` 的 r5 与链之间的 `+3074`（或空格前置的 `3074`）是链
+    自身成员，不是断链字符——视同紧邻收集。last_nongap＝收集臂单调指针已算好的
+    「token 前最后一个非 gap 字符位置」，直调省缺时自算（O(gap)，短文本专用）。
+    已知窄窗（登记）：裸号与 rN 之间除链分隔符外还隔散文/字母内容（非纯数字 run）
+    时不收集——全拼形（前向臂 BARE_NUM_BEFORE 无命中 → 不拦 → 计入）与简写形
+    （收集臂丢弃）行为分裂，方向 fail-closed（丢弃＝多拒），A/B 复算真实语料 0 实例。"""
+    return _bare_member_connected(text, start, chain_end, gap_clear, last_nongap)
 
 
-def _bare_num_before(text: str, start: int, chain_end: int | None = None) -> bool:
-    """token 前紧邻裸号（fix-r4 P0-A 枚举分隔前邻口径，BARE_NUM_BEFORE）的 O(1)/token 判定：
-    有界窗口取代旧的 `BARE_NUM_BEFORE.search(text[:start])`——每 token 物化整段前缀切片 +
-    整段重扫是 O(T·n)（实测 n=8000 达 1.78 s、n=12000 达 4.04 s，协调者计时
-    _tmp/20261114-3074-fixr4/red-timing-before.txt），提交标题/正文行作者可控＝闸门挂起面。
-    chain_end（fix-r6 sibling#1，DS r5 评审）：前向配对臂的**链成员豁免**单源参数——命中
-    裸数字起点 < chain_end（最近前方 hash 的结束位）时视为 `#A+#B` 链自身成员而非引用，
-    返回 False（fix-r5 语义逐字等价）。fix-r7 simplify#1 按实测真相改写（替代 fix-r6 的
-    「保守死代码」措辞；原始输出见 _tmp/20261114-3074-fixr7/RESULT.md）：链首成员被前导
-    符类的 `#` 排除（`#3056 fix-r5` 实测 bm=None）；链尾成员带 `#` 时 `+` 后非数字、
-    bm=None（`#3056+#3074 fix-r5：x` 实测——计 5 与 foreign 正控由此达成，不经豁免分支）；
-    链尾成员不带 `#` 时 `+3074` 会命中（bm 非 None，实测），但数字起点＝最近前方 hash
-    结束位+1，不满足「起点 < chain_end」。fix-r8 concurrency P1（MM r7 评审）据此补第二道
-    豁免：起点 ≥ chain_end 的命中裸号若**与最近前方 hash 只隔链分隔符**（gap 全为
-    _is_issue_gap_char）也是链成员（`#A+B`/`#A、B` 的 B），返回 False——旧口径该形
-    「既不计入也不进 foreign」（rounds=[] foreign=[]）＝义务整段跳过的假 PASS。chain_end
-    两道豁免的保留/删除不由此背书（A/B：前向臂去掉该参全语料 0 判定差异）。四臂（无 #N
-    全计入 / SELF / 前向 / 后向配对）统一走本函数，不再另写 inline 窗口表达式——docstring
-    「单源」声明由此成立；将来改窗口/`\\Z` 口径只动这里。fix-r9：第二道豁免的判据抽
-    _bare_member_connected 单源 helper（距链尾 ≤ _BARE_WINDOW 上界先行、再做 ≤ 窗口的
-    gap 切片——无界切片是 O(T·n) 挂起面，见该 helper docstring），前向臂与 RSHORT
-    收集臂（_bare_member_before_token）共用同一口径。"""
-    bm = BARE_NUM_BEFORE.search(text, max(0, start - _BARE_WINDOW), start)
+def _bare_num_before(text: str, start: int, chain_end: int | None = None,
+                     gap_clear=None, last_nongap: int | None = None) -> bool:
+    """token 前紧邻裸号引用（fix-r4 P0-A 枚举分隔前邻口径，BARE_NUM_BEFORE）的
+    O(1)/token 判定：查找走 _bare_match_before 单源（fix-r4 P1-E 的有界窗口取代
+    旧的整前缀重扫——O(T·n) 实测 n=12000 达 4.04 s，
+    _tmp/20261114-3074-fixr4/red-timing-before.txt；fix-r10 MM simplify#1：fix-r9
+    曾在 _bare_member_before_token 抄出第二份窗口表达式，与本函数「四臂单源」声明
+    矛盾，现查找与判据各只一份）。
+    chain_end（fix-r6 sibling#1）：前向配对臂的**链成员豁免**单源参数——命中裸数字
+    起点 < chain_end（最近前方 hash 的结束位）时视为 `#A+#B` 链自身成员而非引用，
+    返回 False（fix-r5 语义逐字等价；fix-r7 simplify#1 实测事实核：链首成员被前导
+    `#` 排除、链尾成员带 `#` 时 bm=None，见 _tmp/20261114-3074-fixr7/RESULT.md）。
+    豁免判据自 fix-r10 起与 bm 解耦、走 _bare_member_connected 的区间判据（恰一个
+    纯数字 run + 前方全 gap，**精确无距离上界**，gap_clear＝_GapScan 摊还 O(1)）。
+    返回 True＝裸号引用（非链成员）：无 #N 全计入 / SELF / 后向配对三臂由此**不计入**
+    （fix-r4 P0-A / fix-r5 P1 的假 FAIL 防护，不变）；前向配对臂自 fix-r10 P0 起不再
+    由「返回 True」整 token 丢弃——只压计入半边，foreign 半边照走（旧「不计不拒」
+    在链 ∩ issues = ∅ 且题头区内时＝义务整段跳过的假 PASS，丢弃方向是 fail-open，
+    见 _scan_pairs 前向臂注释）。chain_end 两道豁免的保留/删除不由此背书（A/B：
+    前向臂去掉该参全语料 0 判定差异）。四臂（无 #N 全计入 / SELF / 前向 / 后向配对）
+    统一走本函数；将来改窗口/`\\Z` 口径只动 _bare_match_before。"""
+    bm = _bare_match_before(text, start)
     if bm is None:
         return False
     if chain_end is not None and bm.start(2) < chain_end:
         # fix-r5 链成员豁免（生产不可达，见 docstring 事实核）
         return False
     # fix-r8 concurrency P1（MM r7 评审，协调者实测复现）：裸号判据与链成员判据分家——
-    # `#A+B` / `#A、B` 的 B（链尾不带 # 的成员）**紧跟本链最后一个 hash 且中间只隔链
-    # 分隔符**（gap 全为 _is_issue_gap_char ⇒ PAIR_SEP ∪ 非换行空白）时是链自身成员，
-    # 不是 board/交接段枚举引用——`fix(scripts) #3056+3074 fix-r5：修闸门`（issues=
-    # {3056}）旧口径下 bm 命中 +3074 且起点 ≥ chain_end → 豁免不触发 → 前向臂整 token
-    # 丢弃（rounds=[]、foreign=[]）＝轮号既不计入也不拒收，fixtype/residual/多块一致
-    # 整段跳过（假 PASS）；对照 `#3056+#3074`（B 带 #）正常计 5。修复后链尾裸号成员
-    # 不再触发守卫，照常走配对判定（∩ issues ≠ ∅ 计入；全不相交进 foreign 拒收）。
+    # `#A+B` / `#A、B` 的 B（链尾不带 # 的成员）与最近前方 hash 之间只隔链分隔符时是
+    # 链自身成员，不是 board/交接段枚举引用——旧口径该形「既不计入也不进 foreign」
+    # （rounds=[] foreign=[]）＝义务整段跳过的假 PASS。链尾裸号成员照常走配对判定
+    # （∩ issues ≠ ∅ 计入；全不相交进 foreign 拒收）。
     # 已知窄窗（登记）：裸号成员**不并进配对集**——`#3056+3074 fix-r5` 的链集仍是
     # {3056}（HASH_REF 只收带 # 的号），issues={3074} 时该形进 foreign（5,{3056}）
     # 拒收而 `#3056+#3074` 计 5——裸号拼写更严（fail-closed 向），A/B 复算 0 实例。
-    # fix-r9：判据抽单源 helper _bare_member_connected（前向臂与 RSHORT 收集臂共用，
-    # P1-2）并加距链尾 ≤ _BARE_WINDOW 上界（P1-1，无界切片 O(T·n) 挂起面封堵）。
-    if _bare_member_connected(text, bm, chain_end):
+    # fix-r9 曾把判据抽 helper 并加距链尾 ≤ _BARE_WINDOW 上界；fix-r10 P0（DS r9
+    # 复审，'+'*64 计 5 / '+'*65 全丢）上界删除——精确判定走 gap_clear（_GapScan
+    # 单调指针摊还 O(1)），无截断无放弃。
+    if _bare_member_connected(text, start, chain_end, gap_clear, last_nongap):
         return False
     return True
 
@@ -470,8 +557,10 @@ def _enum_title(chains: list[frozenset[str]]) -> bool:
 def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
                 ) -> tuple[list[int], list[tuple[int, frozenset[str]]]]:
     """配对判定核心（fix-r5 修 2，boundary#2 P1；fix_round_from_title 与正文回显扫描共用）：
-    text（提交标题或回显行）内每个 fix-r<N> / 题头区内与 #N 链紧邻的 r<N>（fix-r3 P0① 简写形）
-    的计入判定。题头区 = 首个全角「：」之前（无则整条；ASCII 冒号不切——`chore(state) 01:45
+    text（提交标题或回显行）内每个 fix-r<N> / 题头区内与 #N 链紧邻（或间隔恰为链尾裸号
+    成员——_bare_member_connected 单源，fix-r10 起精确判定无距离上界，区间恰一个纯
+    数字 run 即成员）的 r<N>
+    （fix-r3 P0① 简写形）的计入判定。题头区 = 首个全角「：」之前（无则整条；ASCII 冒号不切——`chore(state) 01:45
     #1305 …` 的时间戳与前缀冒号 `fix(scripts):` 都不是题头分界；fix-r5 P0 起**枚举链的
     参与判据**另有独立的界，见下 foreign 半边与 `_enum_title` docstring）。返回 (rounds,
     foreign)：
@@ -496,9 +585,11 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
         枚举只看**题头区内**的链——题头区外的尾部 #N 注记（`（复用 #1321 机制）`）不构成
         枚举，异单失配照进 foreign，no-issue/异单旁路（fix-r2 P0）不复开；fix-r5 P1
         （DS r4 sibling#1）：该前向配对臂补裸号守卫——token 前紧邻裸号（裸号不是前方链
-        自身成员，由 `_bare_num_before` 的 chain_end 豁免判据保证，fix-r6 sibling#1 单源化）
-        时整 token 视为 board/交接段
-        引用，不计、不进 foreign，与另三个免配对/后向分支单源 `_bare_num_before`）；
+        自身成员，由 `_bare_num_before` 的 chain_end 豁免判据保证，fix-r6 sibling#1 单源化；
+        链成员豁免 fix-r10 起经 `_bare_member_connected` 精确判定无距离上界）时**不计入**
+        （假 FAIL 防护），但 fix-r10 P0 起不再整 token 丢弃——链 ∩ issues = ∅ 且题头区内
+        且非枚举时照进 foreign 拒收（旧「不计不拒」＝义务整段跳过的假 PASS，见前向臂
+        内联注释），与另三个免配对/后向分支单源 `_bare_num_before`）；
         fix-r5 P0（DS r4 boundary#1，仲裁 `_tmp/20261114-3074-fixr4-arb/arb-fixr4-out.txt`）：
         枚举链的参与判据在「题头区内」之上再收两道界——锚点后 ASCII 冒号、括号深度 ≥1
         （见 `_enum_title` docstring），无全角冒号标题的尾部 #N 注记不再关掉 foreign 封堵）；
@@ -513,7 +604,10 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
         旧照计 2 ＝假 FAIL，现在裸号 2932 紧邻 token 同样不计）。
     题头区外的无配对 token（板尾裸号）不计。issues 为空集时配对 token 全不计——该违规
     （正文没写关联 / no-issue）由规则 2 与 fix-r2 的 foreign 拒收兜住，配对判据不放大。
-    fix-r3 P0①：r<N> 简写 token 只在「题头区内 + 与前方 #N 链紧邻（gap 全为 _is_issue_gap_char）」
+    fix-r3 P0①：r<N> 简写 token 只在「题头区内 + 与前方 #N 链紧邻（gap 全为
+    _is_issue_gap_char；间隔恰为链尾裸号成员时视同紧邻——`_bare_member_connected`
+    单源，fix-r10 起精确判定无距离上界、与链构建臂同判据，区间恰一个纯数字 run 即
+    成员（空格前置的裸号 `#3056 3074 r5` 照算）」
     时收集——`fix(scripts) #3056 r14：` 计入、`fix-r3：r2 评审` 与决策卡注记（题头区外/
     不紧邻）不计。fix-r3 P0②：allow_unpaired=False 时免配对兜底（无 #N 全计入 / SELF）
     关闭——非 TITLE_HEAD 标题（`#3056 fix-r3：…`）只走配对分支，散文 `temp: fix-r2`
@@ -565,8 +659,13 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
     heads: list[int] = []          # heads[i] = hash i 所在链的链头下标
     members: list[list[str]] = []  # members[链头] = 该链全部 #N（O(1) 摊还追加）
     chain_first: list[int] = []    # chain_first[链头] = 该链首个 hash 起点（题头区限定的依据）
+    # fix-r10 两臂同源（DS ⑤）：链构建的「相邻 hash 间全 gap」判据从每对物化切片改为
+    # _GapScan 单调指针（hash 起点升序，摊还 O(1)，无切片物化），与 RSHORT 收集臂 /
+    # 前向配对臂的裸号成员豁免（_bare_member_connected）同一 helper 同一判据——
+    # `#3056 +、×65 + #3074 r5` 计 5 而裸号拼写被丢的口径分裂自此消除。
+    gchain = _GapScan(text)
     for i, h in enumerate(hashes):
-        if i and all(_is_issue_gap_char(c) for c in text[hashes[i - 1].end():h.start()]):
+        if i and gchain.clear(hashes[i - 1].end(), h.start()):
             heads.append(heads[i - 1])
             members[heads[i - 1]].append(h.group(1))
         else:
@@ -628,16 +727,18 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             continue
         entries.append((m.start(), m.group(1), i))
     entries.sort()
-    tokens: list[tuple[int, str]] = []
+    tokens: list[tuple[int, str, int]] = []
     scan = 0          # 单调指针：text 已扫描到的位置（token 间不回退）
     last_nongap = -1  # 最近一个非链字符（非 _is_issue_gap_char）的位置；hash 自身也是非链字符
+    gcol = _GapScan(text)  # 收集臂裸号成员豁免的精确判据（fix-r10；与 gchain/gpair 同判据独立实例）
     for start, num, ri in entries:
         while scan < start:
             if not _is_issue_gap_char(text[scan]):
                 last_nongap = scan
             scan += 1
         if ri >= 0 and last_nongap >= ends[ri] \
-                and not _bare_member_before_token(text, start, ends[ri]):
+                and not _bare_member_before_token(text, start, ends[ri], gcol.clear,
+                                                  last_nongap):
             # 与前方 #N 链之间有非链字符 → 不紧邻（旧口径：gap 切片 all() 不过）。
             # fix-r9 P1-2（DS sibling#1，协调者实测复现）：间隔恰为**链尾裸号成员**
             # （`#3056+3074 r5：修闸门` 的 +3074 是链自身成员，不是断链引用）时视同
@@ -645,36 +746,46 @@ def _scan_pairs(text: str, issues: frozenset[str], allow_unpaired: bool = True
             # 臂没同步 → 简写形 rounds=[] foreign=[] 整条丢弃（义务跳过＝假 PASS），
             # 而全拼形 `#3056+3074 fix-r5` 计 5、`#3056+#3074 r5` 也计 5（B 带 # 时
             # 它自己就是最近前方 hash，紧邻判据天然过）——同链三种拼写行为分裂。
-            # 豁免口径与窗口上界均单源自 _bare_member_connected。
+            # fix-r10：豁免判据单源自 _bare_member_connected（区间恰一个纯数字 run，
+            # 经 gap_clear=gcol 的 _GapScan 单调指针摊还 O(1)）**精确判定无距离上界**——
+            # fix-r9 的 _BARE_WINDOW 上界在 gap=65 时把成员误判为引用（'+'*64 计 5 /
+            # '+'*65 全丢，协调者实测）；且与 bm 解耦后**空格前置的裸号**
+            # （`#3056 3074 r5`，gap=0 无枚举分隔符、BARE_NUM_BEFORE 不命中）也是链
+            # 尾成员——与链构建臂同判据（空格是 gap 字符，`#3056 #3074` 本就并链），
+            # 矩阵 g=0 裸号格的双空消除。last_nongap 由本循环单调指针顺手带出，
+            # 供配对臂前向守卫同判据复用（勿再算第二遍）。
             continue
-        tokens.append((start, num))
+        tokens.append((start, num, last_nongap))
     rounds: list[int] = []
     foreign: list[tuple[int, frozenset[str]]] = []
-    for start, num in tokens:
+    gpair = _GapScan(text)  # 前向臂裸号成员豁免的精确判据（fix-r10；与 gchain/gcol 同判据独立实例）
+    for start, num, lng in tokens:
         if not hashes:
             if allow_unpaired and not _bare_num_before(text, start):
                 rounds.append(int(num))
             continue
         i = bisect_right(ends, start) - 1  # 前方最近 hash（原 prev[-1]）
         if i >= 0:
-            # fix-r5 P1（DS r4 sibling#1，仲裁同上 P0 目录）：前向配对臂补裸号守卫——同族
-            # 另三处（无 #N 全计入 / SELF / 后向配对）已加，此处漏。fix-r6（sibling#1 单源
-            # 化，DS r5 评审）：守卫统一改走 `_bare_num_before(text, start, ends[i])`，四臂
-            # 不再各写一份窗口表达式。chain_end＝fix-r5 链成员豁免语义的逐字等价承载
-            # （`#3056+#3074 fix-r5：x` 计 5 / :1416 foreign 正控依赖该形判 None）。
-            # 事实核（fix-r6 DS r5 boundary#4 实测 + fix-r7 simplify#1 复测，原始输出见
-            # _tmp/20261114-3074-fixr7/RESULT.md 与 probe-simplify1-out.txt）：带 `#` 的
-            # 链成员形（`#3056+#3074 fix-r5：x`）bm=None——本臂的计 5 与 foreign 正控由
-            # 此达成，不经豁免分支；不带 `#` 的链尾形（`…+3074 fix-r5`）`+`/`,` 前置会
-            # 命中（bm 非 None），但数字起点＝最近前方 hash 结束位+1，不满足豁免判据
-            # （起点 < chain_end），按裸号引用不计。链首成员被前导符类的 `#` 排除。
-            # 不以「死代码」结论背书 chain_end 的保留或删除（A/B 见 _bare_num_before
-            # docstring）。
-            if not _bare_num_before(text, start, ends[i]):
-                if not chain_sets[heads[i]].isdisjoint(issues):
-                    rounds.append(int(num))
-                elif start < zone_end and not enum_title:
-                    foreign.append((int(num), chain_sets[heads[i]]))
+            # fix-r5 P1（DS r4 sibling#1）：前向配对臂裸号守卫——假 FAIL 防护（board 尾
+            # `#2957 P1×3 + 2932 fix-r2 交付` 在 #2957∈issues 时旧照计 2）。fix-r6
+            # （sibling#1 单源化）：守卫统一走 `_bare_num_before(text, start, ends[i])`，
+            # 四臂不再各写一份窗口表达式；链成员豁免（chain_end）经 _bare_member_connected
+            # **精确判定无距离上界**（fix-r10，gap_clear=gpair 单调指针摊还 O(1)，lng＝
+            # 收集臂顺手带出的 token 前最后非 gap 字符位）。
+            # fix-r10 P0（DS r9 复审 concurrency#1，协调者实测 '+'*64 计 5 / '+'*65
+            # 全丢）：守卫语义收窄为**只压计入半边**——裸号引用（非链成员）不计入，
+            # 但不再「不计不拒」整 token 丢弃：链 ∩ issues = ∅ 且题头区内且非枚举时
+            # 照进 foreign 拒收。旧口径该形 rounds=[] foreign=[]＝fixtype/residual/
+            # 多块一致义务整段跳过的假 PASS——丢弃方向是 fail-open，旧注释「整 token
+            # 视为 board/交接段引用，不计、不进 foreign」的「不计不拒」半句与事实
+            # 相反，已按修后真实行为改写（负例登记：谁再引入「豁免被否 → 丢弃」即红，
+            # 见 test-review-roles.py fix-r10 矩阵不变式）。
+            if not _bare_num_before(text, start, ends[i], gpair.clear, lng) \
+                    and not chain_sets[heads[i]].isdisjoint(issues):
+                rounds.append(int(num))
+            elif chain_sets[heads[i]].isdisjoint(issues) \
+                    and start < zone_end and not enum_title:
+                foreign.append((int(num), chain_sets[heads[i]]))
         elif allow_unpaired and start < zone_end and not _bare_num_before(text, start):
             rounds.append(int(num))  # SELF
         else:
