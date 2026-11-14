@@ -62,7 +62,18 @@ impl Default for TailConfig {
             auto_generate_title: false,
             title_provider: None,
             suggestion_generator: None,
-            debug: Arc::new(|message| eprintln!("{}", String::from_utf16_lossy(message.units()))),
+            // #2558: a best-effort console line, like TS's `console.error` —
+            // an `eprintln!` here panics when the write fails (std behavior);
+            // this default is the production session tail's debug sink (the
+            // assembly builds `TailConfig { ..Default::default() }`), so the
+            // panic would kill the tail task that only owed a diagnostic
+            // (the maintenance default's #2558 fix, same shape).
+            debug: Arc::new(|message| {
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &String::from_utf16_lossy(message.units()),
+                )
+            }),
         }
     }
 }

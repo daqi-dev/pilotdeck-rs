@@ -970,8 +970,16 @@ impl GatewayCommandCatalogBundle {
             resolve_runtime,
             list_commands,
             warn: warn.unwrap_or_else(|| {
+                // #2558: the default warn sink — a best-effort console
+                // line, like TS's `console.warn`; an `eprintln!` panics
+                // when the write fails (std behavior) and would kill the
+                // catalog request that only owed a warning (the
+                // maintenance default's #2558 fix, same shape).
                 Arc::new(|msg, err| {
-                    eprintln!("{msg} {err}");
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!("{msg} {err}"),
+                    );
                 })
             }),
         }

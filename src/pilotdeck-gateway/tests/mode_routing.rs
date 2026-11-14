@@ -40,7 +40,7 @@ use native_entry::{
 
 // The product's own advertisement lines, exactly as it writes them: the A4
 // proxy on stdout (`println!` in src/main.rs) and the native entry on stderr
-// (`eprintln!("native listening {address}")` in src/native_process.rs).
+// (`console_log_line` in src/native_process.rs).
 const PROXY_HTTP_PREFIX: &str = "PilotDeck server listening: http://";
 const PROXY_WS_PREFIX: &str = "WebSocket: ws://";
 // A rejected child exits by itself right after printing the rejection, so

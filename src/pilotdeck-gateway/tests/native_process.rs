@@ -151,8 +151,9 @@ async fn explicit_entry_selects_parser() {
 }
 
 // The child's own stderr line once it is serving, exactly as the product
-// writes it (`eprintln!("native listening {address}")` in
-// src/native_process.rs). Observations anchor on the whole line (see
+// writes it (`console_log_line` on stderr in src/native_process.rs; the
+// #2558 fix changed only the panic behavior of the write, not the bytes).
+// Observations anchor on the whole line (see
 // `advertises`): a substring match would also fire on a diagnostic that merely
 // mentions the phrase.
 const NATIVE_LISTENING: &str = "native listening";

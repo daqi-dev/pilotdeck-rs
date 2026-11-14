@@ -288,10 +288,16 @@ impl ChannelStatePersistence {
                 inner.timers.remove(&key);
             }
             // The debounced path logs and swallows, like the TS `.catch`.
+            // #2558: the log line is best-effort too (std panics when a raw
+            // console write fails); a panic here would kill the debounce task
+            // after it already did the timer bookkeeping above.
             if let Err(error) = shared.ensure_write(&key).await {
-                eprintln!(
-                    "[channels] failed to persist {} state: {error}",
-                    String::from_utf16_lossy(key.units())
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &format!(
+                        "[channels] failed to persist {} state: {error}",
+                        String::from_utf16_lossy(key.units())
+                    ),
                 );
             }
         });

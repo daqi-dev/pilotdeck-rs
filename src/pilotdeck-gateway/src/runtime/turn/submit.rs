@@ -1264,8 +1264,17 @@ impl TurnSubmitter {
         .await
         {
             Ok(Ok(())) => {}
-            Ok(Err(_)) => eprintln!("context_budget status recording failed (best effort)"),
-            Err(_) => eprintln!("context_budget status recording timed out (best effort)"),
+            // #2558: both lines self-describe as best effort — the console
+            // write must be too (std panics when a raw write fails), so the
+            // recording failure cannot kill the cleanup task that owed it.
+            Ok(Err(_)) => crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                "context_budget status recording failed (best effort)",
+            ),
+            Err(_) => crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                "context_budget status recording timed out (best effort)",
+            ),
         }
     }
 }
