@@ -35,8 +35,12 @@
  * 事件（socketEventsFromServerSide 空）且 socketLocalStillOpen===true」；
  * 不满足时只报事实（bytes/firstByteMs/closeSettled + 服务端事件清单）、
  * 不作机制归因。fix-r7 boundary#1（矩阵 M11 自守）：「支持②」另须 scenario 行
- * headersTimeout=60000——读到但 ≠60000（如 stub hang 模式抬到 3_600_000 的
- * 判废演示形状）时该产物按矩阵 M11 判废，探针不得输出支持性结论、只报事实。
+ * headersTimeout=60000——读到但 ≠60000（如 stub 抬到 3_600_000 的判废演示形状）
+ * 时该产物按矩阵 M11 判废，探针不得输出支持性结论、只报事实。fix-r8
+ * boundary#1 + sibling#1（两家独立撞上同一缺口）：该自守从「支持②」分支短路
+ * 前置到一切 note 分支之前——≠60000 一律走 M11 判废事实分支，settle 分支与
+ * 有字节分支同样不得输出机制结论（分支序收敛进 p12NoteBranch 纯函数，
+ * scripts/a8-5/p12_note_branch.mjs；微测 p12_note_microtest.mjs 直调）。
  * settle 分支 note 携带 closeWaitedMs 与「是否 ≥60s 相位窗」
  * （fix-r6 boundary#1），且早 settle 判废面（矩阵 M2：closeWaitedMs<1000
  * 且无可归因证据——firstByteMs=null、无服务端事件、connectionEndedMs=null）
@@ -51,6 +55,7 @@ import {
   makeFakeGateway, makeHome, makeStaticDir, Recorder, sleep,
   makePaths, parseProbeArgs, tcpRefused, TOKEN,
 } from "./common.mjs";
+import { p12NoteBranch } from "./p12_note_branch.mjs";
 
 const DEFAULT_WINDOW_MS = 70_000;
 // 上限量级依据：判废口径只要求窗 > accept + 90 s + 过冲，保守取 120 s
@@ -73,8 +78,8 @@ if (rawWindowEnv === undefined || rawWindowEnv === "") {
   }
 }
 const WINDOW_S = WINDOW_MS / 1000;
-// ≥95 s 窗已覆盖最坏相位 408 落点（相位窗 (60, 90] s + 毫秒级 tick 抖动）
-const COVERS_WORST_PHASE = WINDOW_MS >= 95_000;
+// 「≥95 s 窗已覆盖最坏相位 408 落点」的窗长判据已收敛进 p12_note_branch.mjs
+// （WORST_PHASE_FLOOR_MS，note 分支用；fix-r8 前此处另有 COVERS_WORST_PHASE 局部量）。
 
 const DEFAULT_PORT = 39891;
 const rawPortArg = (() => {
@@ -160,10 +165,6 @@ async function main() {
   };
   const headersTimeoutRead = readSrvField("headersTimeout");
   const serverShape = headersTimeoutRead.level; // 判据载重字段（R1:124）的命中层级
-  // fix-r7 boundary#1（矩阵 M11 自守，与 COVERS_WORST_PHASE 同形）：note「支持②」
-  // 结论的前置谓词——headersTimeout 读到但 ≠60000 时该产物按矩阵 M11 判废
-  // （R1:124），探针不得写出支持性结论、只报事实（反证不该出现时不得输出「支持」）。
-  const HEADERS_TIMEOUT_NOMINAL = headersTimeoutRead.value === 60_000;
   log("scenario", {
     scenario: "p12-zero-byte-close",
     port,
@@ -220,12 +221,20 @@ async function main() {
   while (Date.now() - t0 < WINDOW_MS && !closeSettled) {
     await sleep(500);
   }
-  // fix-r5 boundary#2：结论谓词——「支持②（close 清 checker ⇒ 永不 settle）」
-  // 须同时核同一 observation 行：bytes=0、窗内无 end/close/error 服务端事件、
-  // socket 本地仍开；不满足时只报事实、不作机制归因（两分支措辞都在 note 模板）。
-  const supportsNeverSettle = bytes === 0
-    && socketEvents.length === 0
-    && !zeroByte.destroyed;
+  // fix-r5 boundary#2 结论谓词 + fix-r7 M11 自守（「支持②」另须 headersTimeout
+  // =60000）+ fix-r8 短路前置：分支序整体收敛进 p12NoteBranch 纯函数
+  // （scripts/a8-5/p12_note_branch.mjs，M11 → settle → bytes-exclude →
+  // support2 → fact → right-censored；微测 p12_note_microtest.mjs 直调两格——
+  // 60000+四条件 ⇒ support2、≠60000+四条件 ⇒ m11-invalidated）。
+  const noteBranch = p12NoteBranch({
+    closeSettled,
+    firstByteMs,
+    headersTimeout: headersTimeoutRead.value,
+    windowMs: WINDOW_MS,
+    bytes,
+    socketEventCount: socketEvents.length,
+    socketLocalStillOpen: !zeroByte.destroyed,
+  });
   // fix-r6 boundary#1（矩阵 M2）：早 settle 判废面——close 落定不可归因于该连接的
   // 任何可观测事件（无字节、无窗内服务端事件、连接未在窗内结束）且等待 <1s ⇒
   // 连接未被计入（close 见 0 连接立即 resolve 的形状），非零字节观测、判废。
@@ -241,6 +250,23 @@ async function main() {
     && socketCloseAt === null
     ? "early-settle-conn-not-counted（矩阵 M2：closeWaitedMs<1000 且无字节、无服务端事件、连接未在窗内结束——close 落定不可归因于该连接，连接未被计入，非零字节观测，判废）"
     : null;
+  // note 模板按 noteBranch 拼装（分支条件见 p12_note_branch.mjs；M11 分支只报
+  // 事实——settle/字节面原样、不带「相位窗内」「排除『close 清 checker』」等
+  // 机制结论——对按矩阵判废的产物输出机制结论与 p12-window-spec 相反）。
+  let note;
+  if (noteBranch === "m11-invalidated") {
+    note = `${WINDOW_S}s 窗内${closeSettled ? `close 已 settle（closeWaitedMs=${closeWaitedMs}ms）` : "close 不 settle"}、零字节 socket 字节面见本行（bytes=${bytes}、firstByteMs=${firstByteMs}、closeSettled=${closeSettled}、服务端事件清单见本行 socketEventsFromServerSide）——headersTimeout=${headersTimeoutRead.value}≠60000（判废面矩阵 M11，R1:124）：本产物按矩阵判废，只报事实不作机制归因，见 #2259`;
+  } else if (noteBranch === "settle") {
+    note = `close 在观测窗内 settle（时间见 elapsedMs/closeResolvedMs；closeWaitedMs=${closeWaitedMs}ms，${closeWaitedMs >= 60_000 ? "≥60s 相位窗内（与 408 驱动面一致）" : "<60s 相位窗（非 408 驱动）"}${invalidationHit ? `；${invalidationHit}` : ""}）`;
+  } else if (noteBranch === "bytes-exclude") {
+    note = `${WINDOW_S}s 窗内不 settle，但服务端字节已到达（firstByteMs/bytes/hex 见本行）——排除「close 清 checker ⇒ 408 不发」，settle 等待另有原因，见 #2259`;
+  } else if (noteBranch === "support2") {
+    note = `${WINDOW_S}s 窗内不 settle，且零字节 socket 未收到任何服务端字节（bytes=0、窗内无 end/close/error 服务端事件、socket 本地仍开——谓词字段见本行）——窗已覆盖最坏相位 408 落点（相位窗 (60, 90] s + 毫秒级 tick 抖动），支持「close 清 checker ⇒ 永不 settle」（SmsChannel 实例机制链 A8.3-CH-SMS-014-R2；GatewayServer 实例路径以本观测为准），见 #2259`;
+  } else if (noteBranch === "fact") {
+    note = `${WINDOW_S}s 窗内不 settle 且零字节 socket 未收到服务端字节，但结论谓词不成立（窗内服务端事件=${JSON.stringify(socketEvents.map((e) => e.event))}、socket 本地${zeroByte.destroyed ? "已关" : "仍开"}）——只报事实：bytes=${bytes}、firstByteMs=${firstByteMs}、closeSettled=${closeSettled}、服务端事件清单见本行 socketEventsFromServerSide，不作机制归因，见 #2259`;
+  } else {
+    note = `${WINDOW_S}s 窗内不 settle（右删失下界 ${WINDOW_S}s；窗未覆盖最坏相位 408 落点（落点随网格相位在 (60, 90] s 窗内、含毫秒级 tick 抖动），区分不了「408 才 settle」与「永不 settle」，见 #2259）`;
+  }
   log("observation", {
     windowMs: WINDOW_MS,
     windowEnvRaw: rawWindowEnv ?? null, // 原始 env 字符串（复算用；null = 未设置）
@@ -256,17 +282,7 @@ async function main() {
     firstByteMs,
     bytes,
     hex,
-    note: closeSettled
-      ? `close 在观测窗内 settle（时间见 elapsedMs/closeResolvedMs；closeWaitedMs=${closeWaitedMs}ms，${closeWaitedMs >= 60_000 ? "≥60s 相位窗内（与 408 驱动面一致）" : "<60s 相位窗（非 408 驱动）"}${invalidationHit ? `；${invalidationHit}` : ""}）`
-      : firstByteMs !== null
-        ? `${WINDOW_S}s 窗内不 settle，但服务端字节已到达（firstByteMs/bytes/hex 见本行）——排除「close 清 checker ⇒ 408 不发」，settle 等待另有原因，见 #2259`
-        : COVERS_WORST_PHASE && HEADERS_TIMEOUT_NOMINAL && supportsNeverSettle
-          ? `${WINDOW_S}s 窗内不 settle，且零字节 socket 未收到任何服务端字节（bytes=0、窗内无 end/close/error 服务端事件、socket 本地仍开——谓词字段见本行）——窗已覆盖最坏相位 408 落点（相位窗 (60, 90] s + 毫秒级 tick 抖动），支持「close 清 checker ⇒ 永不 settle」（SmsChannel 实例机制链 A8.3-CH-SMS-014-R2；GatewayServer 实例路径以本观测为准），见 #2259`
-          : COVERS_WORST_PHASE && HEADERS_TIMEOUT_NOMINAL
-            ? `${WINDOW_S}s 窗内不 settle 且零字节 socket 未收到服务端字节，但结论谓词不成立（窗内服务端事件=${JSON.stringify(socketEvents.map((e) => e.event))}、socket 本地${zeroByte.destroyed ? "已关" : "仍开"}）——只报事实：bytes=${bytes}、firstByteMs=${firstByteMs}、closeSettled=${closeSettled}、服务端事件清单见本行 socketEventsFromServerSide，不作机制归因，见 #2259`
-            : COVERS_WORST_PHASE
-              ? `${WINDOW_S}s 窗内不 settle、零字节 socket 字节面见本行（bytes=${bytes}、firstByteMs=${firstByteMs}、closeSettled=${closeSettled}、服务端事件清单见本行 socketEventsFromServerSide）——headersTimeout=${headersTimeoutRead.value}≠60000（判废面矩阵 M11，R1:124）：本产物按矩阵判废，只报事实不作机制归因，见 #2259`
-              : `${WINDOW_S}s 窗内不 settle（右删失下界 ${WINDOW_S}s；窗未覆盖最坏相位 408 落点（落点随网格相位在 (60, 90] s 窗内、含毫秒级 tick 抖动），区分不了「408 才 settle」与「永不 settle」，见 #2259）`,
+    note,
     // .slice() 快照：cleanup 的 destroy() 会再 push close 事件，而 Recorder 落的是
     // 对象引用——不快照会把窗后事件混进「窗内」清单（证据完整性，fix-r5 实测发现）
     socketEventsFromServerSide: socketEvents.slice(),
