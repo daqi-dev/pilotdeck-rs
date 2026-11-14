@@ -1714,7 +1714,8 @@ CHECK_MISUSE_EXEMPTIONS = {
     # #2572 follow-up lane, not this table.
     'issue-2495': '#2495 argparse contract differs, pinned by its own tests',
     # #2856 fix-r7 (DS sibling P1, census corrected by the coordinator's
-    # own grep -- the review named 7, the real count is 11): the second
+    # own grep -- the review named 7, the exact-name scan found 11; fix-r8's
+    # widened glob adds the _1947 numbered variant, 12): the second
     # spelling family "--check does not take output or names" is the same
     # refusal (extra CLI shape refused before any mutation, ValueError
     # caught by the entrypoint, rc 2) but a different argparse shape, so
@@ -1734,7 +1735,10 @@ CHECK_MISUSE_EXEMPTIONS = {
     # #2856 fix-r8 (DS r7 boundary#1): the scan pattern covers
     # negative_controls*.py, and this directory only has numbered
     # variant files -- _1947 carries the spelling-2 refusal.
-    'user-dialog-http-store': 'spelling-2 in negative_controls_1947.py (numbered variant)',
+    # fix-r9 (DS r8 boundary#1): numbered variants register by their own
+    # relative path, so a sibling numbered file growing the refusal text
+    # cannot ride this entry silently.
+    'user-dialog-http-store/negative_controls_1947.py': 'spelling-2 refusal (numbered variant)',
 }
 # #2856 fix-r5: the sibling-form refusal text the reverse scan keys on --
 # #1437 phrases it without "positional", both spellings count. fix-r6
@@ -1745,7 +1749,9 @@ CHECK_MISUSE_EXEMPTIONS = {
 # WRONG about the tree: the family boundary is exactly this, no more --
 # (a) the alternation covers the two argparse/ValueError wordings
 #     `--check takes no ...` (x6) and `--check does not take ...` (x12)
-#     across negative_controls*.py as of 2026-11-15;
+#     across negative_controls*.py -- counts pinned by the census
+#     assertion in test_every_check_refusal_fixture_is_in_the_table, not
+#     maintained by hand;
 # (b) sdk-cli-lifecycle refuses differently --
 #     `raise SystemExit('--check must be the only argument')` -- a
 #     direct-SystemExit shape, not the argparse/ValueError family, and
@@ -1882,16 +1888,17 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         # the fixture side only -- deleting a row (rollback, a merge conflict
         # dropping a line) left every guard green and re-opened the very
         # escape the fourth row had closed. Scan the tree the other way: any
-        # negative_controls.py carrying the sibling-form `--check` misuse
+        # negative_controls*.py carrying the sibling-form `--check` misuse
         # refusal must be a table member or carry a REGISTERED exemption
         # with a reason. ROSTER_GUARDED has the same two-way shape in
         # test_every_roster_guard_entry_is_registered.
         # #2856 fix-r6 (DS sibling P1): the key is the family prefix
         # `--check takes no `, not one spelling's tail -- the message says
         # the same. fix-r7 widens it to both census spellings.
-        matches = [path for path in FIXTURES.rglob('negative_controls*.py')
-                   if CHECK_MISUSE_REFUSAL.search(
-                       path.read_text(encoding='utf-8'))]
+        texts = {path: path.read_text(encoding='utf-8')
+                 for path in FIXTURES.rglob('negative_controls*.py')}
+        matches = [path for path, text in texts.items()
+                   if CHECK_MISUSE_REFUSAL.search(text)]
         # #2856 fix-r7 (DS sibling P2c): a refusal nested under a member
         # directory (native-settings/negative/ and session-factory/
         # append-delta/ prove nested negative_controls.py exist) used to be
@@ -1909,8 +1916,16 @@ class TripleFixtureRosterGuard(unittest.TestCase):
             f'#2572 nested refusal entries cannot be registered by the '
             f'top-level-directory tables; extend the key/exemption scheme '
             f'deliberately before adding one: {nested}')
-        found = {str(path.relative_to(FIXTURES)).split('/')[0]
-                 for path in matches}
+        # #2856 fix-r9 (DS r8 boundary#1): only the plain name folds to its
+        # directory key; a numbered variant registers by its own relative
+        # path, so a new numbered file under an already-exempted directory
+        # shows up as unregistered instead of riding the directory's
+        # exemption silently.
+        found = {
+            directory if name == 'negative_controls.py'
+            else f'{directory}/{name}'
+            for directory, name in
+            (path.relative_to(FIXTURES).parts for path in matches)}
         members = {row[0] for row in TRIPLE_ENTRIES}
         # #2856 fix-r7 (DS sibling P2c): a directory sitting in both the
         # table and the exemptions would let a later deletion from
@@ -1927,6 +1942,20 @@ class TripleFixtureRosterGuard(unittest.TestCase):
             f'carry a registered exemption '
             f'(unregistered={sorted(found - members - set(CHECK_MISUSE_EXEMPTIONS))} '
             f'stale={sorted((members | set(CHECK_MISUSE_EXEMPTIONS)) - found)})')
+        # #2856 fix-r9 (DS r8 sibling#1 + simplify#1): the census counts the
+        # CHECK_MISUSE_REFUSAL family comment quotes (x6 / x12) are
+        # recomputed here from the same scan, not maintained by hand --
+        # a fixture added or removed flips this pin, not just a comment.
+        takes_no = sum('--check takes no ' in text
+                       for text in texts.values())
+        does_not_take = sum('--check does not take ' in text
+                            for text in texts.values())
+        self.assertEqual(
+            (takes_no, does_not_take), (6, 12),
+            f'#2572 the family census pinned in the '
+            f'CHECK_MISUSE_REFUSAL comment drifted; update the comment '
+            f'from the scan, not from memory: '
+            f'takes-no={takes_no} does-not-take={does_not_take}')
         for exempt, reason in CHECK_MISUSE_EXEMPTIONS.items():
             with self.subTest(exempt=exempt):
                 self.assertTrue(bool(reason.strip()),
