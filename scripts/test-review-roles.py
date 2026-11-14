@@ -3253,9 +3253,12 @@ def _run(gate, rrr, out_base: Path) -> int:
         for _fam, _rx in (("pr-gate:", gate.MARKER), ("pr-gate:", gate.WAIVER),
                           ("pr-gate:", gate._WAIVER_PREFIX), ("no-issue", gate.NO_ISSUE),
                           ("pdrs-residual:", gate.RESIDUAL_MARKER)):
-            if _fam not in gate._MARKER_KEYWORDS or r"<!--\s*" + _fam not in _rx.pattern:
+            # fix-r25（DS r24 sibling#3 ≡ MM simplify#4）：期望式改经 `_marker_kw_re`
+            # 取**扫描片段**（r24 修 1 起生产侧一律走片段取件；字面直拼在条目升级为
+            # 拼法族时会先假红——钉与生产不同源即失钉）。
+            if _fam not in gate._MARKER_KEYWORDS or r"<!--\s*" + gate._marker_kw_re(_fam) not in _rx.pattern:
                 fails.append(f"fix-r23 修1：{_rx!r} 的族前缀 {_fam!r} 须来自单源词表"
-                             " _MARKER_KEYWORDS（`<!--\\s*`＋关键字 直拼，不在表里＝红）")
+                             " _MARKER_KEYWORDS（`<!--\\s*`＋扫描片段，不在表里＝红）")
         for _fam, _probe23 in (("pr-gate:", "pr-gate:v1 "), ("no-issue", "no-issue "),
                                ("pdrs-residual:", "pdrs-residual: "), ("pdrs-fixtype:", "pdrs-fixtype: "),
                                ("pdrs-scope:", "pdrs-scope: ")):
@@ -3277,10 +3280,10 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append("fix-r23 修1：_marker_kw 取件恒等返回（词表内成员原样取回）")
         _tb23 = gate._load_taskbook()
         if _tb23 is None or _tb23.FIXTYPE_RE.pattern != \
-                r"^[ \t]*<!--\s*" + gate._marker_kw("pdrs-fixtype:") + r"(.*?)-->[ \t]*$":
+                r"^[ \t]*<!--\s*" + gate._marker_kw_re("pdrs-fixtype:") + r"(.*?)-->[ \t]*$":
             fails.append("fix-r23 修1 跨文件：check-taskbook-segments.FIXTYPE_RE 须从"
-                         " 单源词表派生（_gate_module()._marker_kw；两份手抄＝改标记语法"
-                         " 时任务书闸门与 PR 闸门分裂）")
+                         " 单源词表派生（_gate_module()._marker_kw_re 扫描片段；两份手抄＝"
+                         " 改标记语法时任务书闸门与 PR 闸门分裂）")
         # (2) 修 2（P1，DS boundary#3）：`_WAIVER_PREFIX` 尾界——`<!--pr-gate:waiverX`
         # （非 marker）不得进未闭合/空白分支作废合法豁免（r22 规约与实现相反的假红）；
         # 真 marker 的未闭合形仍拒收（fix-r22 修 4 面不回退）。
@@ -3506,6 +3509,69 @@ def _run(gate, rrr, out_base: Path) -> int:
             if _mm24e:
                 fails.append(f"fix-r24 镜像负控：合法豁免＋顶层独立 pdrs marker（含容错拼写）"
                              f"并存须 rc0（顶层非借文）：{_mm24e}")
+
+        # —— #3074 fix-r25（DS/MM r24 双谱系增量评审：DS sibling#1 P1 实测坐实＋
+        # boundary#1 仲裁降级，MM boundary#1/#2、concurrency#1/#2、simplify#2/#3、
+        # sibling#2 同根并簇；仲裁 _tmp/20261114-3074-fixr25-review/arbitration.md）
+        # ——词表/边界族第 7 次复发单源化收口：修 1 pr-gate: 子形与尾界单源
+        # （`_V1_WORD/_V1_TAIL`/`_WAIVER_WORD/_WAIVER_TAIL` 四常量；MARKER/WAIVER/
+        # `_WAIVER_PREFIX`/`_NESTED_KW_TAIL`/rrr 产出侧全经此取——waiver 尾界与
+        # `_WAIVER_PREFIX` 同判，消「waiver-说明 续字符形一正则判 markerish 一正则
+        # 判非 marker」的分裂假红，arb-r25 A/B 实测）；修 2 `_MARKER_KW_RE` 表键
+        # fail-loud（错键＝import 期 raise，与 `_NESTED_KW_TAIL` 同款）；修 3
+        # `_gate_module()` 进程内 memo（tb 11 处取件一份快照 + rrr 收尾段可抛点消除）；
+        # 修 4 本真值表钉。en dash（U+2013）/U+2212/U+2015 登记边界：两侧同判非声明
+        # 非 marker（设计面，未扩）。
+        # (1) 修 1 两正则同判钉：waiver 续字符形（`-`/全角冒号/CJK 紧贴）两侧同判
+        # 非 marker；真 marker 后续形两侧同判 markerish——同串同结论，分裂即红。
+        for _s25, _w25 in (("<!--pr-gate:waiver-说明 -->", False),
+                           ("<!--pr-gate:waiver：说明 -->", False),
+                           ("<!--pr-gate:waiver中文 -->", False),
+                           ("<!--pr-gate:waiver 说明 -->", True),
+                           ("<!--pr-gate:waiver-->", True),
+                           ("<!--pr-gate:waiver", True),
+                           ("<!--pr-gate:waiverX ", False),
+                           ("<!--pr-gate:v1 ", True),
+                           ("<!--pr-gate:V1 ", False),
+                           ("<!--pr-gate:foo ", False)):
+            _a25 = bool(gate._WAIVER_PREFIX.match(_s25)) if "waiver" in _s25 else None
+            _n25 = bool(gate._NESTED_MARKER_PREFIX.match(_s25))
+            if _a25 is not None and _a25 is not _n25:
+                fails.append(f"fix-r25 修1：{_s25!r} 两正则分裂（_WAIVER_PREFIX={_a25}、"
+                            f"_NESTED_MARKER_PREFIX={_n25}）——同串同结论铁律被破")
+            if _n25 is not _w25:
+                fails.append(f"fix-r25 修1：{_s25!r} 嵌套前缀判定须为 {_w25}"
+                             "（waiver 尾界与 _WAIVER_PREFIX 同判；v1 分支不回退）")
+        # 端到端（arb-r25 A/B 形）：合法豁免理由引用 waiver-说明 续字符形须照常豁免
+        # （修前「豁免理由太短」假红）；引用真 no-issue marker 仍须作废（r22/r23 面不回退）。
+        _e25a = gate.check("<!--pr-gate:waiver 豁免理由足够长且具体引用 <!--pr-gate:waiver-说明 --> 形态作解释 -->\n"
+                           "Closes #3056\n", "", "", "", "")
+        if _e25a:
+            fails.append(f"fix-r25 修1 端到端：合法豁免引用 waiver 续字符形被作废（假红）：{_e25a}")
+        # (2) 修 1 源级钉：`_NESTED_KW_TAIL` 的 pr-gate: 尾界须由子形常量生成
+        # （v1→v2 只改 `_V1_WORD` 一处，尾界跟走——MM boundary#2 的漏改面闭合）。
+        _t25 = gate._NESTED_KW_TAIL["pr-gate:"]
+        _want25 = r"(?=" + gate._V1_WORD + gate._V1_TAIL + "|" + gate._WAIVER_WORD + gate._WAIVER_TAIL + r")"
+        if _t25 != _want25:
+            fails.append(f"fix-r25 修1 源级：pr-gate: 尾界须由子形常量生成（{_t25!r} != {_want25!r}）")
+        _rrr25src = (ROOT / "scripts" / "run-review-roles.py").read_text(encoding="utf-8")
+        if "_gate_module()._V1_WORD" not in _rrr25src:
+            fails.append("fix-r25 修1：rrr 结果块版本词须经 _gate_module()._V1_WORD 单源派生"
+                         "（手抄 v1 ＝ MARKER 改版本词后产出侧漏改，MM simplify#3）")
+        # (3) 修 2 表键 fail-loud 钉：`_MARKER_KW_RE` 键不在词表须 import 期 raise
+        # （枚举法只能钉「不炸即过」——炸的形态由 monkeypatch 子进程钉）。
+        _g25src = (ROOT / "scripts" / "check-pr-gate.py").read_text(encoding="utf-8")
+        if "for _k25 in _MARKER_KW_RE:" not in _g25src:
+            fails.append("fix-r25 修2：`_MARKER_KW_RE` 表键须有 fail-loud 校验循环"
+                         "（错键静默＝r24 P0 复发面，MM boundary#1）")
+        # (4) en dash 登记边界钉（DS boundary#1 仲裁收尾）：三连续形两侧同判非声明非
+        # marker——设计面未扩，扩面须协调者拍板（登记于 _MARKER_KW_RE 注释）。
+        _fam25 = gate._marker_kw_re("pdrs-scope:")
+        for _d25 in ("–", "−", "―"):
+            if gate._NESTED_MARKER_PREFIX.match(f"<!-- pdrs{_d25}scope: files=2 -->") or \
+                    re.fullmatch(_fam25, f"pdrs{_d25}scope"):
+                fails.append(f"fix-r25 边界：pdrs{_d25}scope（U+{ord(_d25):04X}）两侧须同判"
+                             " 非声明非 marker（登记边界，未扩面）")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
