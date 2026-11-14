@@ -8,9 +8,11 @@ mutate a product source or touch the real evidence directory.
 """
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
@@ -42,8 +44,17 @@ class RestoredPositiveFailure(unittest.TestCase):
             after_sha256={'prepare.rs': 'after'},
         )
         with tempfile.TemporaryDirectory(prefix='pdrs-774-negative-') as tmp:
-            negative.write_summary(Path(tmp), payload)
-            summary = json.loads((Path(tmp) / 'summary.json').read_text())
+            # #1087 fix-r8 (S2-b): the writer now names the run (token field
+            # plus a unique staging name); #1087 fix-r9 (P2-a #2): the verdict
+            # itself lands under the per-run name on this reused-mkdir
+            # directory, not a shared fixed one.
+            negative.write_summary(Path(tmp), payload, 'twin-token')
+            summaries = list(Path(tmp).glob('summary.*.json'))
+            self.assertEqual(len(summaries), 1,
+                             '#1087 the verdict must land under its per-run name')
+            summary = json.loads(summaries[0].read_text())
+            self.assertEqual(summary['runToken'], 'twin-token',
+                             '#1087 the summary must name the run it belongs to')
         self.assertFalse(summary['restoredPass'],
                          '#774 summary must record restoredPass=false')
         self.assertEqual(summary['restoredError'], restored_error,
@@ -63,8 +74,11 @@ class RestoredPositiveFailure(unittest.TestCase):
                       '#774 restore start failure reason must name the exception')
 
     def test_nonzero_exit_has_reason(self):
+        # #1087 fix-r8 (S2-b): run() now returns (code, transcript) — the
+        # verdict no longer reads the log back from disk — so the fake
+        # runner hands back the pair.
         def failed(name, test):
-            return 1
+            return 1, ''
 
         restored_ok, restored_error = negative.restore_positive(failed)
         self.assertFalse(restored_ok, '#774 nonzero restore must not pass')
@@ -214,6 +228,220 @@ class CombinedRejectionAnchor(unittest.TestCase):
             "#786 product error must contain the TS text reading 'startsWith': "
             '#774 wrong product error text')
         self.assertEqual(negative.classify_control(self.mutant, 101, raw)[0], 'INVALID')
+
+
+class InMemoryTranscriptVerdict(unittest.TestCase):
+    """#1087 fix-r8 (S2-b): the verdict reads the transcript run_owned built.
+
+    The OUT_DIR is a plain reused mkdir, and the old disk read-back could
+    pick up another overlapping run's bytes on the log file and judge them
+    (a false SURVIVED/KILLED). This twin poisons every on-disk ``.log``
+    while the in-memory transcript stays whole: every verdict must see
+    exactly the bytes its own ``run_owned`` call returned.
+    """
+
+    def test_poisoned_logs_never_reach_the_verdict(self):
+        fixtures_root = FIXTURE.parents[4]
+        guarded = {
+            str(fixtures_root / 'src/pilotdeck-gateway/src/runtime/context/prepare.rs'),
+            str(fixtures_root / 'src/pilotdeck-gateway/src/host/modules/manifest.rs'),
+            str(FIXTURE / 'oracle.json'),
+        }
+        real_open = Path.open
+        real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
+        real_write_text = Path.write_text
+        disk = {}
+        transcripts = []
+        recorded = []
+
+        def fake_mutating_sources(root, files, **kwargs):
+            originals = {path: real_read_bytes(path) for path in files}
+
+            class Guard:
+                def __enter__(self):
+                    return originals
+
+                def __exit__(self, *exc):
+                    return False
+
+            return Guard()
+
+        def fake_run_owned(command, **kwargs):
+            if command[-1:] == ['--exact']:
+                test = command[-3]
+                code, raw = 101, f'twin in-memory transcript for {test}\n'
+            else:
+                code, raw = 0, 'twin green positive run\n'
+            transcripts.append(raw)
+            return subprocess.CompletedProcess(command, code, raw, '')
+
+        def fake_slot(script, **kwargs):
+            return types.SimpleNamespace(stdout='', stderr='')
+
+        def spy_classify(mutant, code, raw):
+            recorded.append(raw)
+            return 'KILLED', 'twin verdict'
+
+        def poison_open(self, *args, **kwargs):
+            handle = real_open(self, *args, **kwargs)
+            if self.suffix != '.log':
+                return handle
+
+            class PoisonedLog:
+                def __init__(self, inner):
+                    self._inner = inner
+
+                def write(self, data):
+                    return self._inner.write('POISONED BY ANOTHER RUN\n')
+
+                def __getattr__(self, name):
+                    return getattr(self._inner, name)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return self._inner.__exit__(*exc)
+
+            return PoisonedLog(handle)
+
+        def model_read_text(self, *args, **kwargs):
+            if str(self) in disk:
+                return disk[str(self)]
+            return real_read_text(self, *args, **kwargs)
+
+        def model_read_bytes(self, *args, **kwargs):
+            if str(self) in disk:
+                return disk[str(self)].encode()
+            return real_read_bytes(self, *args, **kwargs)
+
+        def model_write_text(self, data, *args, **kwargs):
+            if str(self) in guarded:
+                disk[str(self)] = data
+                return None
+            return real_write_text(self, data, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory(prefix='pdrs-1087-poison-') as temp:
+            out = Path(temp) / 'run'
+            argv = [str(FIXTURE / 'negative.py'), str(out)]
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(temp)}), \
+                 patch.object(negative.sys, 'argv', argv), \
+                 patch.object(negative, 'mutating_sources', fake_mutating_sources), \
+                 patch.object(negative, 'run_owned', fake_run_owned), \
+                 patch.object(negative, 'wait_for_slot', fake_slot), \
+                 patch.object(negative, 'classify_control', spy_classify), \
+                 patch.object(Path, 'open', poison_open), \
+                 patch.object(Path, 'read_text', model_read_text), \
+                 patch.object(Path, 'read_bytes', model_read_bytes), \
+                 patch.object(Path, 'write_text', model_write_text):
+                negative.main()
+            judged = [raw for raw in recorded]
+            expected = [raw for raw in transcripts
+                        if raw != 'twin green positive run\n']
+        message = ('#1087 every verdict must read the in-memory transcript, '
+                   'never the disk log')
+        self.assertTrue(len(judged) > 0,
+                        message + ' (no verdict was recorded at all)')
+        self.assertEqual(judged, expected, message)
+
+
+class TwoRunsOneDirectory(unittest.TestCase):
+    """#1087 fix-r9 (P2-a #2): two runs on the reused OUT_DIR, two verdicts.
+
+    The OUT_DIR is a plain reused mkdir (not a claim_dir exclusive
+    directory), and before fix-r9 both runs published their verdict to the
+    same fixed ``summary.json`` — the second run atomically replaced the
+    first run's evidence. Both runs now land their own
+    ``summary.<run_token>.json``; neither byte of the other's verdict may
+    move. The mock手法 follows InMemoryTranscriptVerdict above: only the
+    process layer is faked, the runner itself is the delivered script.
+    """
+
+    def test_neither_run_overwrites_the_other(self):
+        fixtures_root = FIXTURE.parents[4]
+        guarded = {
+            str(fixtures_root / 'src/pilotdeck-gateway/src/runtime/context/prepare.rs'),
+            str(fixtures_root / 'src/pilotdeck-gateway/src/host/modules/manifest.rs'),
+            str(FIXTURE / 'oracle.json'),
+        }
+        real_open = Path.open
+        real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
+        real_write_text = Path.write_text
+        disk = {}
+
+        def fake_mutating_sources(root, files, **kwargs):
+            originals = {path: real_read_bytes(path) for path in files}
+
+            class Guard:
+                def __enter__(self):
+                    return originals
+
+                def __exit__(self, *exc):
+                    return False
+
+            return Guard()
+
+        def fake_run_owned(command, **kwargs):
+            if command[-1:] == ['--exact']:
+                code, raw = 101, 'twin in-memory transcript\n'
+            else:
+                code, raw = 0, 'twin green positive run\n'
+            return subprocess.CompletedProcess(command, code, raw, '')
+
+        def fake_slot(script, **kwargs):
+            return types.SimpleNamespace(stdout='', stderr='')
+
+        def model_read_text(self, *args, **kwargs):
+            if str(self) in disk:
+                return disk[str(self)]
+            return real_read_text(self, *args, **kwargs)
+
+        def model_read_bytes(self, *args, **kwargs):
+            if str(self) in disk:
+                return disk[str(self)].encode()
+            return real_read_bytes(self, *args, **kwargs)
+
+        def model_write_text(self, data, *args, **kwargs):
+            if str(self) in guarded:
+                disk[str(self)] = data
+                return None
+            return real_write_text(self, data, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory(prefix='pdrs-1087-tworuns-') as temp:
+            out = Path(temp) / 'run'
+            for run in range(2):
+                argv = [str(FIXTURE / 'negative.py'), str(out)]
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(temp)}), \
+                     patch.object(negative.sys, 'argv', argv), \
+                     patch.object(negative, 'mutating_sources', fake_mutating_sources), \
+                     patch.object(negative, 'run_owned', fake_run_owned), \
+                     patch.object(negative, 'wait_for_slot', fake_slot), \
+                     patch.object(negative, 'classify_control',
+                                  lambda mutant, code, raw: ('KILLED', 'twin verdict')), \
+                     patch.object(Path, 'open', real_open), \
+                     patch.object(Path, 'read_text', model_read_text), \
+                     patch.object(Path, 'read_bytes', model_read_bytes), \
+                     patch.object(Path, 'write_text', model_write_text):
+                    negative.main()
+            summaries = sorted(out.glob('summary.*.json'))
+            message = ('#1087 two runs on one directory must publish two '
+                       'distinct verdicts')
+            self.assertEqual(len(summaries), 2,
+                             message + f' (got {[p.name for p in summaries]})')
+            self.assertFalse((out / 'summary.json').exists(),
+                             message + ' (a fixed summary.json still exists)')
+            payloads = [json.loads(path.read_text()) for path in summaries]
+            tokens = {payload['runToken'] for payload in payloads}
+            self.assertEqual(len(tokens), 2,
+                             message + ' (both verdicts must name their own run)')
+            for payload in payloads:
+                self.assertEqual(payload['counts']['KILLED'],
+                                 len(payload['results']),
+                                 message + ' (each verdict must be a whole document)')
+            self.assertEqual(len(list(out.glob('*.tmp'))), 0,
+                             message + ' (a staging temp was left behind)')
 
 
 if __name__ == '__main__':

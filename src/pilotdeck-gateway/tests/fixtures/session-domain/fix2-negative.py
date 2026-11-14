@@ -16,8 +16,11 @@ DOMAIN_TEST = 'storage::session_domain::tests::real_ts_domain_logs_and_events_ma
 
 
 def test(name, target, env, diagnostic=None, cwd=SRC):
+    # #1087 fix-r2: the diagnostic branch judges via named_test_killed, so it
+    # needs the bound test's full name, not just the cargo selection.
     run(name, ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib', target,
-               '--', '--exact', '--nocapture', '--test-threads=4'], env, cwd, diagnostic)
+               '--', '--exact', '--nocapture', '--test-threads=4'], env, cwd,
+        diagnostic, test=target)
 
 
 with scratch('fix2') as root:

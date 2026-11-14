@@ -73,7 +73,12 @@ mutations = [
      '    try:\n'
      '        _publish_exclusive(temporary, path)\n'
      '    finally:\n'
-     '        temporary.unlink(missing_ok=True)',
+     '        # fix-r13 (review DS r12 sibling #1, same family as the r12 fixture\n'
+     '        # unlinks / write_source_atomic): the cleanup unlink is the only\n'
+     '        # swallowed error, so a failed publish always surfaces its own error\n'
+     '        # and a successful publish never reports itself as a failure.\n'
+     '        with suppress(OSError):\n'
+     '            temporary.unlink(missing_ok=True)',
      '    try:\n'
      "        with open(path, 'x', encoding='utf-8') as stream:\n"
      '            stream.write(data)\n'
@@ -83,10 +88,40 @@ mutations = [
      'control_g03_atomic_publish'),
     ('g03-group-rollback', root / 'scripts/parity/g03_compare.py',
      '        for path in published:\n'
-     '            path.unlink(missing_ok=True)',
+     '            with suppress(OSError):\n'
+     '                path.unlink(missing_ok=True)',
      '        for path in published:\n'
      '            pass',
      'control_g03_group_rollback'),
+    ('g03-cleanup-suppress-single', root / 'scripts/parity/g03_compare.py',
+     '    finally:\n'
+     '        # fix-r13 (review DS r12 sibling #1, same family as the r12 fixture\n'
+     '        # unlinks / write_source_atomic): the cleanup unlink is the only\n'
+     '        # swallowed error, so a failed publish always surfaces its own error\n'
+     '        # and a successful publish never reports itself as a failure.\n'
+     '        with suppress(OSError):\n'
+     '            temporary.unlink(missing_ok=True)',
+     '    finally:\n'
+     '        temporary.unlink(missing_ok=True)',
+     'control_g03_cleanup_suppress'),
+    ('g03-cleanup-suppress-group', root / 'scripts/parity/g03_compare.py',
+     '    except BaseException:\n'
+     '        for path in published:\n'
+     '            with suppress(OSError):\n'
+     '                path.unlink(missing_ok=True)\n'
+     '        raise\n'
+     '    finally:\n'
+     '        for _, temporary in temporaries:\n'
+     '            with suppress(OSError):\n'
+     '                temporary.unlink(missing_ok=True)',
+     '    except BaseException:\n'
+     '        for path in published:\n'
+     '            path.unlink(missing_ok=True)\n'
+     '        raise\n'
+     '    finally:\n'
+     '        for _, temporary in temporaries:\n'
+     '            temporary.unlink(missing_ok=True)',
+     'control_g03_cleanup_suppress'),
     ('cfd-git-env-strip', root / 'scripts/check-frozen-delivery.py',
      "env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}",
      'env = dict(os.environ)',
@@ -107,6 +142,7 @@ positives = [
     ('g03-exclusive-write-cycle', 'control_g03_exclusive_write'),
     ('g03-atomic-publish', 'control_g03_atomic_publish'),
     ('g03-group-rollback', 'control_g03_group_rollback'),
+    ('g03-cleanup-suppress', 'control_g03_cleanup_suppress'),
     ('check-ruler-exclusive-write', 'control_check_ruler_exclusive_write'),
     ('run-all-exclusive-write', 'control_run_all_exclusive_write'),
     ('self-compare-exclusive-write', 'control_self_compare_exclusive_write'),
@@ -126,6 +162,8 @@ EXPECTED_MUTATIONS = [
     'g03-exclusive-write',
     'g03-atomic-publish',
     'g03-group-rollback',
+    'g03-cleanup-suppress-single',
+    'g03-cleanup-suppress-group',
     'cfd-git-env-strip',
     'cfd-git-config-global',
 ]
@@ -139,6 +177,7 @@ EXPECTED_POSITIVES = [
     'g03-exclusive-write-cycle',
     'g03-atomic-publish',
     'g03-group-rollback',
+    'g03-cleanup-suppress',
     'check-ruler-exclusive-write',
     'run-all-exclusive-write',
     'self-compare-exclusive-write',
@@ -520,6 +559,90 @@ if json_target.read_text(encoding='utf-8') != 'fresh json\\n' or \\
 print('#2398 group rollback ok')
 '''
 
+CLEANUP_DRIVER_SOURCE = '''\
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+g03_path, base = Path(sys.argv[1]), Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location('g03_driver_load', g03_path)
+G = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(G)
+
+real_unlink = Path.unlink
+
+
+def failing_unlink(self, missing_ok=False):
+    # The temp siblings are dotfiles (.name.tmp.pid); refuse only their
+    # unlink, so the published targets and the group rollback keep working.
+    if self.name.startswith('.'):
+        raise OSError('#2398 simulated cleanup unlink failure')
+    return real_unlink(self, missing_ok=missing_ok)
+
+
+def drop_temp(*targets):
+    # A suppressed cleanup failure leaves the temp dotfile behind; a retry
+    # in this same process would hit open(..., 'x') FileExistsError.
+    for target in targets:
+        temp = target.with_name(f'.{target.name}.tmp.{os.getpid()}')
+        if temp.exists():
+            real_unlink(temp)
+
+
+Path.unlink = failing_unlink
+try:
+    # Single publish: a failing temp cleanup must not turn the success into
+    # a failure (the parity ruler must not report a published result as
+    # failed).
+    single = base / 'cleanup-single.json'
+    G.write_result_exclusive(single, '#2398 single ok\\n')
+    assert single.read_text(encoding='utf-8') == '#2398 single ok\\n', \\
+        '#2398 single published wrong bytes'
+
+    # Single refusal: the pre-existing target must surface its own
+    # SystemExit, not the cleanup error.
+    drop_temp(single)
+    stale = single.read_text(encoding='utf-8')
+    try:
+        G.write_result_exclusive(single, '#2398 must not overwrite\\n')
+    except SystemExit as error:
+        assert '#2398 result file already exists' in str(error), \\
+            f'#2398 single refusal lost its own error: {error}'
+    else:
+        raise AssertionError('#2398 single publish overwrote an existing target')
+    assert single.read_text(encoding='utf-8') == stale, \\
+        '#2398 single refusal changed the stale target'
+
+    # Group refusal: the second member's refusal must surface its own
+    # SystemExit, and the rollback of the first member must still run (its
+    # target is not a dotfile).
+    pair_json, pair_md = base / 'cleanup-pair.json', base / 'cleanup-pair.md'
+    pair_md.write_text('stale markdown from an earlier run\\n', encoding='utf-8')
+    try:
+        G.write_results_exclusive([(pair_json, 'fresh json\\n'), (pair_md, 'fresh md\\n')])
+    except SystemExit as error:
+        assert '#2398 result file already exists' in str(error), \\
+            f'#2398 group refusal lost its own error: {error}'
+    else:
+        raise AssertionError('#2398 group publish overwrote an existing target')
+    assert not pair_json.exists(), \\
+        '#2398 group refusal left a half-published pair behind'
+    assert pair_md.read_text(encoding='utf-8') == 'stale markdown from an earlier run\\n', \\
+        '#2398 group refusal overwrote the stale markdown target'
+
+    # Group success: the temp cleanup failure must not fail the group either.
+    drop_temp(pair_json, pair_md)
+    pair_md.unlink()
+    G.write_results_exclusive([(pair_json, 'fresh json\\n'), (pair_md, 'fresh md\\n')])
+    assert pair_json.read_text(encoding='utf-8') == 'fresh json\\n' and \\
+        pair_md.read_text(encoding='utf-8') == 'fresh md\\n', \\
+        '#2398 group published wrong bytes'
+finally:
+    Path.unlink = real_unlink
+print('#2398 cleanup suppress ok')
+'''
+
 
 def run_driver(scratch, label, source, *arguments):
     driver = scratch / f'{label}-driver.py'
@@ -555,6 +678,18 @@ def control_g03_group_rollback(scratch):
     log = result.stdout + result.stderr
     if result.returncode != 0 or '#2398 group rollback ok' not in log:
         raise AssertionError(f'#2398 group rollback driver failed (exit={result.returncode}): '
+                             f'{log.strip()}')
+
+
+def control_g03_cleanup_suppress(scratch):
+    """A cleanup unlink that fails (EACCES on the temp dotfile) must not mask
+    the outcome: a successful publish stays a success, and a refusal surfaces
+    its own error while the rollback still runs. Killed by the
+    g03-cleanup-suppress-single and g03-cleanup-suppress-group mutants."""
+    result = run_driver(scratch, 'cleanup', CLEANUP_DRIVER_SOURCE, scratch)
+    log = result.stdout + result.stderr
+    if result.returncode != 0 or '#2398 cleanup suppress ok' not in log:
+        raise AssertionError(f'#2398 cleanup driver failed (exit={result.returncode}): '
                              f'{log.strip()}')
 
 
@@ -618,6 +753,7 @@ RUNNERS = {
     'control_g03_exclusive_write': control_g03_exclusive_write,
     'control_g03_atomic_publish': control_g03_atomic_publish,
     'control_g03_group_rollback': control_g03_group_rollback,
+    'control_g03_cleanup_suppress': control_g03_cleanup_suppress,
     'control_score_exclusive_write': control_score_exclusive_write,
     'control_check_ruler_exclusive_write': control_check_ruler_exclusive_write,
     'control_run_all_exclusive_write': control_run_all_exclusive_write,

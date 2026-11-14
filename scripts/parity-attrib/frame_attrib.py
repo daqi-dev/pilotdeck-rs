@@ -737,8 +737,12 @@ def write_trace(path, recs):
         os.chmod(tmp, 0o644)  # mkstemp 默认 0600；证据要能被别的账号复核（r2 评审 P3）
         os.replace(tmp, path)
     except BaseException:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        # fix-r15（DS r14 sibling#1 P2a，与 check_frozen write_manifest r14 同族）：
+        # 清理 remove 是唯一吞掉的错——失败路径清理错不得顶掉原发布错。
+        from contextlib import suppress
+        with suppress(OSError):
+            if os.path.exists(tmp):
+                os.remove(tmp)
         raise
 
 

@@ -5,6 +5,15 @@ Run with python3 -I .../negative_controls.py --output <new directory>.
 Compile every Python mutant before its bound unittest; run all selected cases,
 then aggregate KILLED / SURVIVED / INVALID. A stale anchor is INVALID, never a
 survivor. No worktree snapshot or alternate baseline may bypass HEAD.
+
+#1061: ``record`` keeps every row in memory only; the one final summary.json is
+published atomically (tmp + rename) after ``mutating_sources`` restored and
+re-verified every mutated byte — never per row while the restore is still
+unverified. Any ``BaseException`` exit (a guard failure, a SIGINT
+cancellation, a ``SystemExit``) voids the already recorded rows and publishes
+an INVALID summary first; ``SystemExit`` is then normalized to exit code 2 so
+a raw code (256/-256 truncating to a zero POSIX status, or a string code
+exiting 1) never decides how a coordinator reads the run (#1059 fix-r2).
 """
 import argparse
 import importlib.util
@@ -16,8 +25,10 @@ import tempfile
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-166-negative-pyc-')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_process import committed_status_contract
+from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
 COMMON = ROOT / 'scripts/gateway-parity/common.py'
@@ -30,6 +41,10 @@ SESSION_NEGATIVE = NEGATIVE.parent.parent / 'session-domain-cleanup/negative_con
 DRIVER_TEST = ROOT / 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py'
 PROCESS = NEGATIVE.parent.parent / 'negative_process.py'
 PROCESS_TEST = NEGATIVE.parent.parent / 'test_negative_process.py'
+# #1061: the runner's own paired mutants are bound to the runner-invalida-
+# tion controls below; this delivered file is in the guarded set (RUNNER) so
+# mutating it is byte-verified like every product source.
+RUNNER_TEST = NEGATIVE.with_name('test_negative_controls.py')
 MUTATIONS = [
     ('empty-aggregate-pass', COMMON,
      '    if not known or any(child not in BATCH_STATUS_ORDER for child in known):',
@@ -340,7 +355,8 @@ MUTATIONS = [
      "                    compile(changed, str(source), 'exec')",
      '                    pass  # mutant skips compiler'),
     ('gateway-common-unguarded', NEGATIVE,
-     "[COMMON, " "*(row[1] for row in selected)]", "[row[1] for row in selected]"),
+     "[NEGATIVE, COMMON, " "*(row[1] for row in selected)]",
+     "[*(row[1] for row in selected)]"),
     ('session-common-unguarded', SESSION_NEGATIVE,
      "{COMMON_SOURCE, *(Path(row[1]) for row in MUTATIONS)}", "{Path(row[1]) for row in MUTATIONS}"),
     ('gateway-common-loaded-early', NEGATIVE,
@@ -416,6 +432,45 @@ MUTATIONS = [
      "            'cleanupPending': True}", "            'cleanupPending': False}"),
     ('mutation-invalid-as-pass', COMMON,
      "'INVALID': 'BLOCKED'", "'INVALID': 'PASS'"),
+    # -- #1061 runner paired mutants (this delivered file; RUNNER guard) ----
+    # The guard catches only Exception, so a cancellation (KeyboardInterrupt /
+    # SystemExit) during restore skips the INVALID publication and leaves no
+    # final summary; the bound control requires the void publish (#1061).
+    ('runner-baseexception-narrowed', NEGATIVE,
+     "    except BaseException as error:\n"
+     "        reason = f'source guard: {type(error).__name__}: {error}'",
+     "    except Exception as error:\n"
+     "        reason = f'source guard: {type(error).__name__}: {error}'"),
+    # The pre-fix #1061 order is put back: record() publishes summary.json
+    # while the guarded restore is still unverified, so a SIGINT in the later
+    # void publish leaves that all-KILLED file behind (#1061 P0).
+    ('runner-publish-before-verify', NEGATIVE,
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)",
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)\n"
+     "    write_summary(out, results)"),
+    # The original #1061 shape: record() writes summary.json directly per row
+    # (no temp file, no rename), so a cancel mid-suite leaves the last
+    # all-KILLED rows readable in place (#1061 P0).
+    ('runner-stale-summary-kept', NEGATIVE,
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)",
+     "    results.append({'mutation': name, 'status': status, 'reason': reason})\n"
+     "    print(f'{name}: {status}: {reason}', flush=True)\n"
+     "    (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\\n')"),
+    # #1087 fix-r1: the mutation application and the in-loop restore are both
+    # put back to truncating writes — the runner is in its own guarded set, so
+    # a write killed mid-flight leaves a 0-byte runner that exits 0 without
+    # running any row (#1903 rule).
+    ('runner-truncating-mutant-write', NEGATIVE,
+     "                    write_source_atomic(ROOT, source, mutant.encode(),\n"
+     "                                        mode=source.stat().st_mode & 0o7777)",
+     "                    source.write_text(mutant)"),
+    ('runner-truncating-restore-write', NEGATIVE,
+     "                    write_source_atomic(ROOT, source, originals[source],\n"
+     "                                        mode=source.stat().st_mode & 0o7777)",
+     "                    source.write_bytes(originals[source])"),
 ]
 CHECKS = {
     'empty-aggregate-pass': ('ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code', '#952 empty or all-None aggregation must be FAIL/1'),
@@ -562,6 +617,11 @@ CHECKS = {
     'release-entry-unmasked': ('Safety.test_release_guard_interrupt_publishes_pending_before_delivery', '#209 release entry interrupt must publish pending groups'),
     'acquisition-marker-missing': ('Safety.test_cleanup_record_write_failure_keeps_preexisting_marker', '#209 lock must be marked before spawning'),
     'mutation-invalid-as-pass': ('ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code', '#166 source control verdict mapping'),
+    'runner-baseexception-narrowed': ('RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary', '#1061 a cancellation must void the rows and publish INVALID'),
+    'runner-publish-before-verify': ('RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary', '#1061 no summary may be readable before restore verification'),
+    'runner-stale-summary-kept': ('RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary', '#1061 no summary may be readable before restore verification'),
+    'runner-truncating-mutant-write': ('RunnerInvalidationControls.test_mutation_writes_are_atomic', '#1087 every guarded-source write must be one atomic rename'),
+    'runner-truncating-restore-write': ('RunnerInvalidationControls.test_mutation_writes_are_atomic', '#1087 every guarded-source write must be one atomic rename'),
 }
 
 
@@ -584,15 +644,38 @@ LEASE_ACQUIRE_BUDGET_SECONDS = 64800
 
 def run(out, label, test):
     script = (DRIVER_TEST if test.startswith('AggregationAudit.') else
-              PROCESS_TEST if test.startswith('ParityMutationLock.') else SAFETY)
+              PROCESS_TEST if test.startswith('ParityMutationLock.') else
+              RUNNER_TEST if test.startswith('RunnerInvalidationControls.') else SAFETY)
     result = run_owned([sys.executable, '-I', '-B', str(script), test, '-v'], cwd=ROOT, timeout=120)
     (out / (label + '.log')).write_text(result.stdout + result.stderr)
     return result
 
+def write_summary(out, results):
+    """Publish the one final summary atomically (#1061).
+
+    This is called exactly once per normal run, after every guarded file was
+    restored and byte-verified, and once from the failure handler (INVALID).
+    The payload stays the bare list of rows this suite's readers expect; a
+    reader that checks "the file exists" must never observe a half-written
+    JSON document, so the payload goes to a sibling temp file and is renamed
+    over ``summary.json`` (#166 r8).
+    """
+    payload = json.dumps(results, indent=2) + '\n'
+    target = out / 'summary.json'
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(payload)
+    tmp.replace(target)
+
 def record(out, results, name, status, reason):
+    """Append a row in memory; the disk summary is published once, later.
+
+    The outcome of an earlier row must never be readable as the final result
+    while the guarded restore is still unverified (#1061): the old per-row
+    ``write_text`` here is what left an all-KILLED summary on disk when a
+    cancellation killed the run mid-suite.
+    """
     results.append({'mutation': name, 'status': status, 'reason': reason})
     print(f'{name}: {status}: {reason}', flush=True)
-    (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
 def load_pristine_common():
@@ -616,6 +699,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--only', action='append')
+    parser.add_argument('--baseline', default='HEAD',
+                        help='tree-ish the guarded sources must equal; HEAD for '
+                             'the delivered post-commit run (a dirty rehearsal may '
+                             'pass git stash create)')
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
@@ -623,12 +710,16 @@ def main():
         return common.aggregate_status('BLOCKED')[1]
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     out = args.output.resolve()
+    # #1061: admission never deletes or renames anything first; a directory
+    # that still exists is refused by mkdir itself, every byte untouched.
     out.mkdir(parents=True, exist_ok=False)
     results = []
 
     try:
-        with mutating_sources(ROOT, list(dict.fromkeys([COMMON, *(row[1] for row in selected)])),
-                              lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
+        with mutating_sources(ROOT, list(dict.fromkeys(
+                [NEGATIVE, COMMON, *(row[1] for row in selected)])),
+                baseline=args.baseline,
+                lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
             MUTATION_STATUS = common.MUTATION_STATUS
@@ -643,7 +734,13 @@ def main():
                     (out / (name + '-compile.log')).write_text('Python compile: PASS\n')
                     positive = run(out, name + '-positive', test)
                     require_positive(positive)
-                    source.write_text(mutant)
+                    # #1087 fix-r1: the runner itself is in the guarded set,
+                    # so a truncating ``write_text`` killed mid-write would
+                    # leave a 0-byte runner that exits 0 without running any
+                    # row (or a half file that cannot even preflight) — every
+                    # guarded-source write is one atomic rename (#1903 rule).
+                    write_source_atomic(ROOT, source, mutant.encode(),
+                                        mode=source.stat().st_mode & 0o7777)
                     negative = run(out, name + '-negative', test)
                     text = negative.stdout + negative.stderr
                     if negative.returncode == 0:
@@ -655,7 +752,10 @@ def main():
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
-                    source.write_bytes(originals[source])
+                    # Same #1087 fix-r1 window: the in-loop restore must also
+                    # be one rename, never a truncating write_bytes.
+                    write_source_atomic(ROOT, source, originals[source],
+                                        mode=source.stat().st_mode & 0o7777)
                 try:
                     restored = run(out, name + '-restored', test)
                     if restored.returncode != 0:
@@ -663,14 +763,32 @@ def main():
                 except Exception as error:
                     status, reason = 'INVALID', reason + f'; restoration test: {error}'
                 record(out, results, name, status, reason)
-    except Exception as error:
-        for row in results:
-            row.update(status='INVALID', reason=f'source guard: {error}')
+    except BaseException as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        # #979/#1037 + #1061: a guard/restoration failure or a cancellation
+        # voids every already-recorded row in memory, then publishes INVALID.
+        # The disk never held a final summary before this point (record() is
+        # memory only), so an interrupt inside this publish — even a second
+        # SIGINT — leaves the pre-existing bytes untouched instead of an
+        # all-KILLED file; a missing/unchanged summary plus a non-zero exit is
+        # the fail-closed signal.
+        invalidate_completed(results, reason)
         for name, *_ in selected[len(results):]:
-            record(out, results, name, 'INVALID', f'source guard: {error}')
-        (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
+            record(out, results, name, 'INVALID', reason)
+        write_summary(out, results)
+        # The INVALID summary is on disk, so a SystemExit is normalized instead
+        # of judged by its raw code: 256/-256 truncate to a zero process
+        # status on POSIX and a string code exits 1, none of which may decide
+        # how a coordinator reads this run (#1059 fix-r2).
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        if not isinstance(error, Exception):
+            raise
         common = committed_status_contract(ROOT)
         return common.aggregate_status('BLOCKED')[1]
+    # Reaching here means mutating_sources restored every guarded file and
+    # verified it against the baseline. Only now may a final summary exist.
+    write_summary(out, results)
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     print(json.dumps(counts), flush=True)

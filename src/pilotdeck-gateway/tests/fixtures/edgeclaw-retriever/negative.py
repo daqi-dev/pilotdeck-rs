@@ -34,7 +34,10 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import named_test_killed
+from negative_process import (dead_stream_print, detach_dead_streams,
+                              mutating_sources, new_run_token, run_owned,
+                              wait_for_slot, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
 
@@ -196,6 +199,28 @@ EXPECTED = {
     'gated-wait-bound': '#767 M10-8 same-key concurrent requests: gated transport timed out after 5s',
 }
 
+
+def classify(log, returncode, expected, test):
+    # #1087 fix-r2: the kill criterion is the shared strict #813 judge — the
+    # named test's own FAILED status line plus the bound assertion inside
+    # that test's own panic payload (negative_panic judges both). The old
+    # whole-log `expected in log` also matched a sibling test's panic,
+    # captured stdout and build output — the false-kill shapes the twin
+    # controls in test_negative.py pin. Defined before the argv dispatch so
+    # the twin controls can import the module and drive it directly.
+    if returncode is None:
+        return 'INVALID', 'no exit code'
+    if 'could not compile' in log:
+        return 'INVALID', 'compiler failure'
+    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
+        if named_test_killed(log, test, expected):
+            return 'KILLED', expected
+        return 'INVALID', f'failed without the bound assertion {expected}'
+    if returncode == 0 and 'test result: ok.' in log:
+        return 'SURVIVED', 'test stayed green'
+    return 'INVALID', 'unclassified output'
+
+
 names = [case[0] for case in cases]
 if len(names) != len(set(names)):
     refuse('duplicate control name')
@@ -204,12 +229,16 @@ all_cases = list(cases)
 # equality let extra arguments after a flag fall through to the main path,
 # which treated the flag as an output directory; an unknown `--flag` did the
 # same and ran the whole table green. Only a real OUT_DIR reaches the main
-# path now. The `--check-anchors` preflight below keeps its exact historical
-# shape on purpose: `anchor_selfcheck.py` recognizes the exiting preflight by
-# AST equality (SNAPSHOT_PREFLIGHT) and exempts its `originals` binding from
-# the one-declaration rule, so the branch body and its whole-argv test stay
-# verbatim. A `--check-anchors extra` call still cannot fall through: the mode
-# guard below rejects any `-*` first argument that reached it.
+# path now. The `--check-anchors` preflight below kept its exact historical
+# shape for a long time because `anchor_selfcheck.py` recognized the exiting
+# preflight by AST equality (SNAPSHOT_PREFLIGHT) and exempted its
+# `originals` binding from the one-declaration rule. #1087 fix-r3 (boundary
+# #1) moved the guarded window under a cancellation try, so the
+# `with mutating_sources(...)` capture is no longer a module-level statement
+# and that exemption no longer applies; the preflight now reads into
+# `current` (see its own comment) and the capture keeps the one `originals`
+# binding. A `--check-anchors extra` call still cannot fall through: the
+# mode guard below rejects any `-*` first argument that reached it.
 USAGE = 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list | --check-anchors'
 mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
 if mode == '--list':
@@ -218,18 +247,28 @@ if mode == '--list':
     print('\n'.join(names))
     raise SystemExit(0)
 if sys.argv[1:] == ['--check-anchors']:
-    originals = {path: path.read_text() for path in {case[1] for case in cases}}
+    # The preflight reads into `current`, not `originals` (#1087 fix-r3,
+    # boundary #1): the guarded window below now sits under a cancellation
+    # try, so the `with mutating_sources(...) as originals` capture is no
+    # longer a module-level statement and anchor_selfcheck can no longer
+    # exempt this preflight's `originals` binding from its one-declaration
+    # rule. Keeping the snapshot name unique to the capture keeps the
+    # preflight readable by the static checker instead of unsupported.
+    current = {path: path.read_text() for path in {case[1] for case in cases}}
     stale = []
     for name, path, before, _after, _test in all_cases:
-        count = originals[path].count(before)
+        count = current[path].count(before)
         if count != 1:
             stale.append((name, count, path.relative_to(root).as_posix()))
     if stale:
+        # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout must
+        # not turn this exit-2 refusal into a crash (rc=1, "ran and red"),
+        # an exec-time ``1>&-`` reroute, or a 120.
         for name, count, relative in stale:
-            print(f'STALE ANCHOR {name}: {count} matches in {relative}')
-        print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run')
+            dead_stream_print(f'STALE ANCHOR {name}: {count} matches in {relative}')
+        dead_stream_print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run')
         raise SystemExit(2)
-    print(f'{len(all_cases)} anchors: ok')
+    dead_stream_print(f'{len(all_cases)} anchors: ok')
     raise SystemExit(0)
 
 # Explicit exits, not asserts: `python3 -O` strips asserts and a bare
@@ -258,6 +297,12 @@ if missing_target():
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 refuse_unusable_target()
 out = claim_dir(mode)
+# #1087 fix-r8 (S1-b/S2-c): the evidence log names carry the shared per-run
+# token (pid.serial.time_ns). The claim above already makes two runs sharing
+# this directory impossible — this is the uniform shape every edgeclaw table
+# keeps, so a table whose claim style changes later cannot regrow a
+# truncating fixed-name log unnoticed.
+run_token = new_run_token()
 paths = sorted({case[1] for case in cases})
 
 env = dict(os.environ)
@@ -265,6 +310,68 @@ env['CARGO_TARGET_DIR'] = target
 base_command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                 '-p', 'pilotdeck-gateway']
 results = []
+# #1087 fix-r3 (boundary #1): bound before the guarded window so the
+# cancellation handler can always publish, even when the abort happened
+# before the baseline run recorded anything.
+baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
+
+
+def write_summary(current_baseline):
+    """Publish the one final summary atomically (#1087 fix-r3, boundary #1).
+
+    Called exactly once per run, after ``mutating_sources`` restored and
+    byte-verified every guarded source — or from the cancellation handler,
+    after the same guard unwound. The old per-row truncating ``write_text``
+    left a partial all-KILLED summary on disk when a cancellation killed the
+    run mid-suite, and an interrupt inside the write could leave an empty or
+    half-written JSON document.
+    """
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(json.dumps(
+        {'baseline': current_baseline, 'cases': results}, indent=2) + '\n')
+    tmp.replace(out / 'summary.json')
+
+
+def _void_pending(error):
+    """Void the recorded rows and publish one INVALID summary (boundary #1).
+
+    A cancellation or crash inside the guarded window is not a verdict: the
+    rows recorded so far are voided, the remaining selected cases are
+    recorded INVALID, and the single summary is published after the guard
+    restored the tree. The process then exits 3 — deliberately different
+    from 2 ("never started", the stale-anchor refusal below) so a reader can
+    tell a cancelled run from one that never ran.
+    """
+    reason = f'runner: {type(error).__name__}: {error}'
+    for row in results:
+        row['outcome'] = 'INVALID'
+        row['reason'] = (f"{row['reason']}; voided: {reason}"
+                         if row['reason'] else f"voided: {reason}")
+    for name, _path, before, after, test in run_rows[len(results):]:
+        results.append({'name': name, 'test': test,
+                        'target': 'lib' if name in LIB_TESTS else 'test',
+                        'outcome': 'INVALID', 'reason': reason,
+                        'returncode': None,
+                        'anchor': before, 'replacement': after})
+    write_summary(baseline)
+    # #1087 fix-r8 (S1-a): the shared guarded print — the summary is
+    # already published, "aborted = 3" is the only contract left
+    # to keep; a dead stderr must not replace the exit code.
+    dead_stream_print(f'voided {len(results)} row(s): {reason}', stream='stderr')
+    if isinstance(error, (OSError, ValueError)):
+        # #1087 fix-r5 (concurrency #2): a stream-failure abort detaches the
+        # dead fds first, so the interpreter-shutdown flush cannot rewrite
+        # the exit code below to 120 ("Exception ignored in:").
+        detach_dead_streams()
+    if isinstance(error, SystemExit):
+        # Normalize: 128+signum and any other raw code must not decide how a
+        # coordinator reads this run (a 256/-256 code truncates to a zero
+        # process status on POSIX).
+        raise SystemExit(3) from error
+    if not isinstance(error, Exception):
+        raise
+    raise SystemExit(3) from error
+
 
 
 def test_command(test, case_target):
@@ -273,104 +380,119 @@ def test_command(test, case_target):
     return base_command + ['--test', 'edgeclaw_retriever', test, '--', '--exact']
 
 
-def classify(log, returncode, expected):
-    if returncode is None:
-        return 'INVALID', 'no exit code'
-    if 'could not compile' in log:
-        return 'INVALID', 'compiler failure'
-    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
-        if expected in log:
-            return 'KILLED', expected
-        return 'INVALID', f'failed without the bound assertion {expected}'
-    if returncode == 0 and 'test result: ok.' in log:
-        return 'SURVIVED', 'test stayed green'
-    return 'INVALID', 'unclassified output'
-
-
-def write_summary(baseline):
-    (out / 'summary.json').write_text(json.dumps(
-        {'baseline': baseline, 'cases': results}, indent=2) + '\n')
-
-
-with mutating_sources(root, paths) as originals:
-    stale = []
-    for name, path, before, _after, _test in cases:
-        count = originals[path].decode().count(before)
-        if count != 1:
-            stale.append((name, path.relative_to(root).as_posix(), count))
-    if stale:
-        report = '\n'.join(
-            f'STALE ANCHOR {name}: {count} matches in {relative}'
-            for name, relative, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='', flush=True)
-        print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run',
-              flush=True)
-        raise SystemExit(2)
-    baseline_ok = False
-    baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
-    try:
+try:
+    with mutating_sources(root, paths) as originals:
+        stale = []
+        for name, path, before, _after, _test in cases:
+            count = originals[path].decode().count(before)
+            if count != 1:
+                stale.append((name, path.relative_to(root).as_posix(), count))
+        if stale:
+            report = '\n'.join(
+                f'STALE ANCHOR {name}: {count} matches in {relative}'
+                for name, relative, count in stale) + '\n'
+            (out / f'stale-anchors.{run_token}.log').write_text(report)
+            # #1087 fix-r6 (P1b): a dead stdout must not turn this exit-2
+            # refusal into an in-window abort (exit 3 with a voided INVALID
+            # summary) — the report is already on disk in the stale-anchors
+            # log, the code is the contract.
+            # #1087 fix-r8 (S1-a): the shared guarded print — a dead
+            # stdout must not turn this exit-2 refusal into an in-window
+            # abort (exit 3 with a voided INVALID summary), an exec-time
+            # ``1>&-`` reroute, or a 120.
+            dead_stream_print(report, end='')
+            dead_stream_print('STALE ANCHORS: negative.py is out of sync with its sources; refusing to run')
+            raise SystemExit(2)
+        baseline_ok = False
         try:
-            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            slots_text = slots.stdout + slots.stderr
-            run = run_owned(base_command + ['--test', 'edgeclaw_retriever', '--', '--test-threads=1'],
-                            cwd=root, env=env, timeout=600)
-            log = slots_text + run.stdout + run.stderr
-            returncode = run.returncode
-        except subprocess.TimeoutExpired as error:
-            log = (error.stdout or '') + (error.stderr or '')
-            returncode = None
-        (out / 'baseline.log').write_text(log)
-        passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
-        baseline_ok = returncode == 0 and passed is not None
-        baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
-                    'returncode': returncode}
-        print(f'baseline: {"PASS" if baseline_ok else "FAIL"} exit={returncode}', flush=True)
-        write_summary(baseline)
-        if not baseline_ok:
-            print('baseline failed; mutants not run', flush=True)
-            raise SystemExit(1)
-
-        for name, path, before, after, test in run_rows:
-            slots_text = ''
-            log = ''
-            returncode = None
-            case_target = 'lib' if name in LIB_TESTS else 'test'
-            command = test_command(test, case_target)
             try:
                 slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 slots_text = slots.stdout + slots.stderr
-                original = originals[path].decode()
-                path.write_bytes(original.replace(before, after).encode())
-                try:
-                    run = run_owned(command, cwd=root, env=env, timeout=600)
-                    log = run.stdout + run.stderr
-                    returncode = run.returncode
-                finally:
-                    path.write_bytes(originals[path])
+                run = run_owned(base_command + ['--test', 'edgeclaw_retriever', '--', '--test-threads=1'],
+                                cwd=root, env=env, timeout=600)
+                log = slots_text + run.stdout + run.stderr
+                returncode = run.returncode
             except subprocess.TimeoutExpired as error:
                 log = (error.stdout or '') + (error.stderr or '')
                 returncode = None
-            except Exception as error:  # noqa: BLE001 - report, never hide a cell
-                log = f'{type(error).__name__}: {error}\n'
+            (out / f'baseline.{run_token}.log').write_text(log)
+            passed = re.search(r'^test result: ok\. \d+ passed; 0 failed;', log, re.MULTILINE)
+            baseline_ok = returncode == 0 and passed is not None
+            baseline = {'name': 'baseline', 'outcome': 'PASS' if baseline_ok else 'FAIL',
+                        'returncode': returncode}
+            print(f'baseline: {"PASS" if baseline_ok else "FAIL"} exit={returncode}', flush=True)
+            if not baseline_ok:
+                print('baseline failed; mutants not run', flush=True)
+                raise SystemExit(1)
+
+            for name, path, before, after, test in run_rows:
+                slots_text = ''
+                log = ''
                 returncode = None
-            outcome, reason = classify(log, returncode, EXPECTED[name])
-            if outcome == 'KILLED' and not baseline_ok:
-                outcome, reason = 'INVALID', 'baseline was not green'
-            (out / f'{name}.log').write_text(
-                'COMMAND ' + ' '.join(command) + '\n' +
-                slots_text + log + f'\nexit={returncode}\nexpected={EXPECTED[name]}\n')
-            results.append({'name': name, 'test': test, 'target': case_target,
-                            'outcome': outcome, 'reason': reason,
-                            'returncode': returncode, 'anchor': before,
-                            'replacement': after})
-            write_summary(baseline)
-            print(f'{name}: {outcome} ({reason}) exit={returncode}', flush=True)
-    finally:
-        for path, data in originals.items():
-            path.write_bytes(data)
-            if path.read_bytes() != data:
-                raise RuntimeError('restoration failed: ' + str(path))
+                case_target = 'lib' if name in LIB_TESTS else 'test'
+                command = test_command(test, case_target)
+                try:
+                    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                    slots_text = slots.stdout + slots.stderr
+                    original = originals[path].decode()
+                    # #1087 fix-r2: every guarded-source write in the window is
+                    # one atomic rename (#1903 rule, shared with
+                    # ``mutating_sources``) — a truncating ``write_bytes`` killed
+                    # mid-write leaves an empty or half-written product source.
+                    write_source_atomic(root, path,
+                                         original.replace(before, after).encode(),
+                                         mode=path.stat().st_mode & 0o7777)
+                    try:
+                        run = run_owned(command, cwd=root, env=env, timeout=600)
+                        log = run.stdout + run.stderr
+                        returncode = run.returncode
+                    finally:
+                        # Same #1087 fix-r2 window: the in-loop restore is also
+                        # one rename, never a truncating write_bytes.
+                        write_source_atomic(root, path, originals[path],
+                                            mode=path.stat().st_mode & 0o7777)
+                except subprocess.TimeoutExpired as error:
+                    log = (error.stdout or '') + (error.stderr or '')
+                    returncode = None
+                except Exception as error:  # noqa: BLE001 - report, never hide a cell
+                    log = f'{type(error).__name__}: {error}\n'
+                    returncode = None
+                outcome, reason = classify(log, returncode, EXPECTED[name], test)
+                if outcome == 'KILLED' and not baseline_ok:
+                    outcome, reason = 'INVALID', 'baseline was not green'
+                (out / f'{name}.{run_token}.log').write_text(
+                    'COMMAND ' + ' '.join(command) + '\n' +
+                    slots_text + log + f'\nexit={returncode}\nexpected={EXPECTED[name]}\n')
+                results.append({'name': name, 'test': test, 'target': case_target,
+                                'outcome': outcome, 'reason': reason,
+                                'returncode': returncode, 'anchor': before,
+                                'replacement': after})
+                print(f'{name}: {outcome} ({reason}) exit={returncode}', flush=True)
+        finally:
+            for path, data in originals.items():
+                # Same #1087 fix-r2 window: the final restore is also one rename,
+                # never a truncating write_bytes.
+                write_source_atomic(root, path, data,
+                                    mode=path.stat().st_mode & 0o7777)
+                if path.read_bytes() != data:
+                    raise RuntimeError('restoration failed: ' + str(path))
+except SystemExit as error:
+    if error.code == 1:
+        # The deliberate baseline failure: the guard already restored and
+        # byte-verified the tree while unwinding the with-block; publish the
+        # baseline row and keep the "ran and failed" exit code.
+        write_summary(baseline)
+        raise
+    if error.code == 2:
+        # The deliberate stale-anchor refusal: nothing was measured, so
+        # nothing is published — "never started" leaves no summary behind.
+        raise
+    _void_pending(error)
+except BaseException as error:  # noqa: BLE001 - void, publish, then re-raise
+    _void_pending(error)
+# Reaching here means mutating_sources restored every guarded file and
+# verified it against the baseline bytes. Only now may a summary exist.
+write_summary(baseline)
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']
 survived = [row['name'] for row in results if row['outcome'] == 'SURVIVED']

@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed, panic_evidence
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
                                write_source_atomic)
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
@@ -133,16 +134,37 @@ tests = {
     'unicode-folding-regression': 'unicode_lookalike_keys_survive_the_secret_match',
 }
 # A killed mutant must fail through its bound assertion, not by failing to
-# compile; the message fragment proves the intended assertion fired.
+# compile. #1087 fix-r3: each fragment is the bound assertion's own message
+# (the three generic `left == right` payloads were replaced by dedicated
+# messages in tests/settings.rs), so the shared strict judge can hold the
+# marker inside the named test's own panic payload.
 failure_fragments = {
-    'redaction-disabled': 'assertion `left == right` failed',
+    'redaction-disabled': '#1087 the shared redaction must redact secret-shaped keys',
     'hint-always-included': 'an empty hint is dropped',
     'recoverable-truthiness': 'recoverable: false must be kept',
     'source-path-always-included': 'response differences',
-    'top-level-key-order-swapped': 'assertion `left == right` failed',
-    'version-mistranscribed': 'assertion `left == right` failed',
+    'top-level-key-order-swapped': '#1087 the top-level response key order must match the baseline',
+    'version-mistranscribed': '#1087 the version field must pass through the snapshot verbatim',
     'unicode-folding-regression': '(#864 fix-r1)',
 }
+
+
+def classify(returncode, log, name):
+    """The shared strict #813 verdict for one mutant row (#1087 fix-r3).
+
+    The named test's own FAILED status line plus the bound assertion's
+    message inside that test's own panic payload (``named_test_killed``
+    judges both); the old whole-log substring check matched a sibling test's
+    panic, captured stdout and build output. Returns ``(killed, failure)``.
+    """
+    test = tests[name]
+    fragment = failure_fragments[name]
+    killed = (returncode == 101 and named_test_killed(log, test, fragment))
+    failure = next((line.strip() for line in panic_evidence(log, test).splitlines()
+                    if fragment in line), '')
+    return killed, failure
+
+
 selected = sys.argv[2:]
 # #1666: both guards are ordinary raises, so `python3 -O` cannot strip them.
 # They run before the environment check so a typo is refused as "never started"
@@ -187,14 +209,12 @@ with mutating_sources(root, [source, shared]) as snapshots:
             test = tests[name]
             result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
                                '-p', 'pilotdeck-gateway', '--test', 'settings',
-                               '--locked', '--offline', test],
+                               '--locked', '--offline', test,
+                               '--', '--exact'],
                               cwd=root, env=env, timeout=900)
             log = result.stdout + result.stderr
             (out / f'{name}.log').write_text(log)
-            killed = (result.returncode == 101 and f'{test} ... FAILED' in log
-                      and failure_fragments[name] in log)
-            failure = next((line.strip() for line in log.splitlines()
-                            if failure_fragments[name] in line), '')
+            killed, failure = classify(result.returncode, log, name)
             summary.append(dict(name=name, killed=killed, test=test,
                                 returncode=result.returncode, failure=failure,
                                 sourceSha256=before))

@@ -326,7 +326,8 @@ fn response_and_element_key_orders_match_the_baseline() {
             "config",
             "sources",
             "diagnostics"
-        ]
+        ],
+        "#1087 the top-level response key order must match the baseline"
     );
     let sources = items(response.get("sources"));
     assert_eq!(
@@ -365,7 +366,11 @@ fn scalar_fields_pass_through_verbatim() {
         JsValue::Array(vec![]),
         Some(JsValue::Number(7.0)),
     ));
-    assert_eq!(response.get("version"), Some(&JsValue::Number(7.0)));
+    assert_eq!(
+        response.get("version"),
+        Some(&JsValue::Number(7.0)),
+        "#1087 the version field must pass through the snapshot verbatim"
+    );
     assert_eq!(
         response.get("schemaVersion"),
         Some(&text_value("1")),
@@ -396,7 +401,11 @@ fn config_is_projected_through_the_shared_redaction() {
         .and_then(|c| c.get("model"))
         .and_then(|m| m.as_object())
         .expect("projected config model");
-    assert_eq!(projected.get("apiKey"), Some(&text_value("<redacted>")));
+    assert_eq!(
+        projected.get("apiKey"),
+        Some(&text_value("<redacted>")),
+        "#1087 the shared redaction must redact secret-shaped keys"
+    );
     assert_eq!(
         projected.get("url"),
         Some(&text_value("http://127.0.0.1:1/v1"))

@@ -371,7 +371,11 @@ def write_manifest(root=ROOT, *, head=None):
     generated = generated_manifest(root, raw, head=head)
     if generated != raw:
         # Same-directory replace prevents readers observing a partial hash list.
+        # fix-r14（DS r13 sibling#1 P1，与 g03_compare r13 三处同族）：清理 unlink 是唯一
+        # 吞掉的错——成功路径清理失败不得把已发布的新清单报成失败（＝冻结装置假 FAIL），
+        # 失败路径清理错不得顶掉原发布错。
         import os
+        from contextlib import suppress
         with tempfile.NamedTemporaryFile(dir=manifest.parent, prefix='.FROZEN-', delete=False) as stream:
             temporary = Path(stream.name)
             try:
@@ -379,12 +383,14 @@ def write_manifest(root=ROOT, *, head=None):
                 stream.flush()
                 os.fchmod(stream.fileno(), manifest.stat().st_mode & 0o777)
             except BaseException:
-                temporary.unlink()
+                with suppress(OSError):
+                    temporary.unlink()
                 raise
         try:
             temporary.replace(manifest)
         finally:
-            temporary.unlink(missing_ok=True)
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def check_manifest(root):
