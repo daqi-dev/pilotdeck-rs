@@ -1,20 +1,20 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-15 04:24（交接轮；Data 卷余 7.2 GiB 盯防（仓内 67/200 合规，外部占用为主）；MM 通道 429 等重置（03:55 探测仍满额，:23 cron 在，下次 04:46），恢复即按排队清单补块）：主线 = 2513 fix-r11 四必修项（CI 红×2+DS P1×2，全部实测归因）→ 增量 DS → body → 入队 + 2856/2989 双 PR body 手术已过 gate（2989 checks 全绿、2856 在跑，均差 MM 第二谱系）+ 2960 kill 轮收货 + 3178 r2 接续已派（macmini-01 预热中）+ 队列 3163/3177/3074 出队收账
+updated: 2026-11-15 05:44（中轮 READY 同步：3178 r2 收货完成转评审、2513 四角色终判全处置、2959 已派；Data 卷机器级盘余 0 GiB FAIL 盯防（仓内 73.7/200 合规，外部占用为主，不开新树、2513 线禁 cargo 照旧）；MM 通道 429 等重置（04:46 探测仍满额，下次 05:46），恢复即按排队清单补块）：主线 = 2513 body 手术→gate→checks→MM 谱系→入队 + 3178 两谱系评审→开 PR + 2959 fix-merge 在跑（m01）+ 2960 fix-r6 在跑 + 队列 3163/3177/3074 出队收账
 
 - #3163 | gate | doing | 队列位 1（run 43604314078）→ MERGED → 核邮箱 + #1642 链收口终核（#3139 处置、#2572 并入、#3157 重判已评论）
 - #3177 | gate | doing | 队列位 2 → MERGED 后核邮箱 → 决策卡 5/6 增补小 PR（停靠分支 claude/state-board-1700=0b28fdb8d，均 AI 代批待人复核）
 - #3074 | gate | doing | 队列位 3（重入队后）→ MERGED → 核邮箱 → #3056 收口（收尾自查 + #3154 逐条销账）
-- #3178 | impl | doing | 1087-p2-batch 六条（#3001 条2/3 + #3094 + #3109 + #3110 + 条6 verdict_exit 迁移）；r1 于 03:11 超时 exit=124（半成品 1818 行已收割应用回树）→ **r2 接续已派 04:22**（macmini-01，RW_TIMEOUT=10800，任务书含盘点先行头，TASKBOOK-VERSION 6ce0a954b892；等待器 buzlpqqgs，证据落轮次目录 r2/）
-- #2513 | impl | doing | 重锚真合并完成（8c8f13659 8 冲突逐块语义合并 + 三套 --write 重钉只读复跑全 PASS + b965f4f69 已推 PUSH-VERIFIED）；DS 两段出 P1×3/P2×14 + CI 双红（a51 名册缺 6 条 + negctl 锚点×2 失配，四项全部实测归因）→ fix-r11 agent 在跑（任务书 _tmp/20261115-2513-fixr11/task.md：名册补 6/锚点串更新/模型常量同步/孪生 git() 加固对齐 + P2×14 三分）→ 交付收货→推送→增量 DS→body→gate；weixin stop() detach P1 判已并入 #3061 条目 3
+- #3178 | impl | doing | 1087-p2-batch 六条；r1 超时→r2 05:09 交付收货完成（remote exit=0，六条全完+电池全绿；DONE 三件 sha256 对上、final.patch 应用 reverse-check 等价、独立抽查 frozen-manifest twin OK+MigrationWindowSweep 34/34 过；r1 半成品 stash 保底后 drop）→ **提交 778cac162 已推、ls-remote 断言过**（gitleaks 过）→ 下一步：两谱系评审 → 开 PR → 队列
+- #2513 | impl | doing | fix-r11（f22b2ece4）P1×3 实测坐实 → fix-r12（a9304eceb）修完推送（三域 docstring 统一/cfd 三键净环境/g03 /usr/bin/git 对齐+锚随形，两 kind rc=0、cfd rc=0）→ **四角色增量 DS 终判 P1=0、P2×8 全处置**（#3198 正文追加承接 concurrency#1；#3199 #3200 #3201 新开；boundary#2 判定不修=树内实测 KILLED=1 /tmp/2513-b2-probe2.log；sibling#2 并入 #3192；终判评论 issuecomment-6884589570、PR 收判评论 issuecomment-6884562257）→ 剩 body 手术（覆盖 head a9304eceb、Refs #2513 #2939）→ gate → checks → MM 谱系 → 入队
 - #3152 | impl | doing | PR #3185 body 已手术（fix-r1 收判节+fixtype，pr-gate 绿）+ DS 增量块齐（p1=0，_tmp/20261115-3152-fixr1-ds/）；blocked on MM 全量第二谱系（重置后补块→入队）
 - #2989 | impl | doing | fix-r8 结构性收口已推（287caea24：p12NoteBranch 纯函数化+短路前置+T1–T11 微测，红侧分支序变异+微测四格红实测）；DS r8 增量四 PASS p1=0 + P2×7 判读闭环（5 同族已覆盖、2 新面登记 #3184 第三评论）；body 手术过 gate、checks 全绿（run 43634330854 pr-gate pass）→ **blocked on MM 增量块（base 7c85f6812）**→入队
 - #3159 | impl | doing | （#3043）收判闭环（#3188+#3165 等承接）；body 手术 gate 绿；negative-controls check 等待器（b8iv0x3sr）在跑 → 全绿核 READY 入队；MM 增量块排队（重置后）
 - #2856 | impl | doing | （#2572）fix-r10（ROSTER_GUARDED 扫描面扩 negative_controls*.py，RED-A/RED-B 实证）→ r10 DS P1（注释矛盾，双撞）→ fix-r11 428fe1875 当轮修 → r11 DS 四 PASS p0=0 p1=0；**修轮止于 r11**（sibling#1 复撞=#3189 条目3 坐实、boundary#1=条目4）；metadata 全量 Ran 117 OK；body 手术过 gate（Refs 多单并写+residual 显式列举）；checks 等待器在跑（pr-gate 已 pass）→ blocked on MM 增量块（base a30d83282→428fe1875）→ 入队；macmini 宿主全量负控第三投在跑（b3yk09709，前两投树内 cargo 缓存陈旧 fail-closed 已 --refresh-cap 恢复）K/I/S 待追补
 - #2960 | impl | doing | fix-r5 主件/副件已修已验（提交 d69d1e9dfa 未推；steer admission 走 router_key_of、permission owner 同走+逐桶断言、sibling#3 登记不修、条1 两态红绿+SHA-MATCH、各家 --check 11 家全绿、fmt+clippy 干净）；kill 轮 16 行在跑（kill-blankkey-r5 目录活度正常）→ 完成后 1437 单行复验+条4 净树复跑+result.md → 收货链（gitleaks→补推+ls-remote→DS 增量 base b17bb24049+MM 谱系→body→gate）
 - #2800 | impl | doing | body 手术 gate PASS、新 pr-gate run 等待器在跑 → 全绿核 READY 入队；P2 六条三组 → #3187；MM 全量块排队（重置后）
-- #2959 | impl | blocked | 2499 收口合并轮：任务书已备（_tmp/20261114-2959-merge/，树 wt-2499），等 macmini-01 P1 槽（与 #3178 竞争）
+- #2959 | impl | doing | 2499 收口合并轮：**fix-merge 已派 05:43**（macmini-01 pid 79350，任务书树内 `_build/wt-2499/_tmp/20261115-2959-fixmerge/`，TASKBOOK ba96420881d1，segments 过；rw prep eedf56006 双端一致、prewarm rc=0；等待器 detached 写 glm.exit）→ 完成收货（冲突逐块解法+sms 255+anchors 套件）→ 补推 → PR #2959 解锁
 - mirror-confluence | impl | doing | B 批：2902 下一组（树 wt-1438）；codex 四张（2725/2578/2576/2549）需新树——Data 卷 7.2 GiB 告急暂缓；冻结件冲突单派前须冻结核
 - premise-lanes-8 | impl | blocked | 八张已重开：#2447 #2448 #2459 #2464 #2474 #2475 #2555 #2605；#2448/#2459 修法已拍板（decisions-20261113 两张卡）；前置 = mirror-confluence A2/B 批次
 - legacy-batches | coord | blocked | 红灯 3 老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
@@ -37,7 +37,7 @@ updated: 2026-11-15 04:24（交接轮；Data 卷余 7.2 GiB 盯防（仓内 67/2
 
 | # | 义务 | 持有人 | 复查点 |
 |---|---|---|---|
-| 1 | 2513 fix-r11 交付 → 收货（CI 四项复验：a51 名册 6 条+锚点 expected=1 actual=1+test-check-frozen-delivery rc=0+三套只读 PASS）→ gitleaks → 推送+ls-remote → 增量 DS（两段合并后按单头重开）→ P2×14 三分落账 → body 手术（多单并写 Refs #2513、#2939）→ gate → checks → MM 排队 | coord2/e7 | agent 完成通知 |
+| 1 | 2513 fix-r12 收货+四角色终判完成（P1=0、P2×8 全处置落 #2519 跟踪单评论 issuecomment-6884589570）→ 剩：body 手术（覆盖 head a9304eceb、Refs #2513 #2939、P2 处置表已落 PR 评论 issuecomment-6884562257）→ gate → checks 全绿 → MM 第二谱系（429 恢复后）→ 入队 | coord2/e7 | 本段后即做 |
 | 2 | MM 重置 → 依次补：2989 增量（base 7c85f6812）→ 入队；2856 增量（base a30d83282）→ 入队；2513 r9 concurrency；3152 全量；2800 全量；3159 增量 | cron c49b1a07 + coord2/e7 | 每小时 :23 |
 | 3 | 2856 checks 终态（等待器 bossvdguu，pr-gate 已 pass）→ 全绿后仅差 MM | coord2/e7 | 等待器触发 |
 | 4 | #2572 宿主全量负控（m01 PID 77292）终态 → K/I/S 贴 PR 2856 评论 + body 段更新 | coord2/e7 | 等待器 b3yk09709 |
@@ -45,9 +45,9 @@ updated: 2026-11-15 04:24（交接轮；Data 卷余 7.2 GiB 盯防（仓内 67/2
 | 6 | 2800 新 pr-gate run 等待器 → 全绿核 READY 入队（#3187 前置） | coord2/e7 | 等待器触发 |
 | 7 | 3159 negative-controls check 等待器（b8iv0x3sr）→ 全绿核 READY 入队；MM 增量块排队 | coord2/e7 | check 完成 |
 | 8 | 队列 3163/3177/3074 出队收账（等待器在挂）+ 收账邮箱核验 | coord2/e7 | merge_group 终态 |
-| 9 | #3178 r2 接续已派（04:22，m01 pid 66660，等待器 detached 写 glm.exit）→ 完成收货（r2-inventory 盘点+六条状态+红侧）；下一 macmini P1 槽归 #2959（任务书已备 _tmp/20261114-2959-merge/） | coord2/e7 | 槽位变化即派 / glm.exit |
-| 10 | Data 卷 7.2 GiB 盯防（4 GiB/h 级跌速未止）：不开新树、不跑无谓 cargo；ENOSPC 再发走 Monitor 通道 | coord2/e7 | 每轮 |
-| 11 | #3184/#3187/#3188/#3189 四跟进单为 #2259/#1444/#3043/#2572 收口前置，到点逐条处置 | coord2/e7 | 各收口节点 |
+| 9 | 3178 r2 收货完成（778cac162 已推）→ 两谱系评审（fixtype 枚举式/结构性判读）→ 开 PR → 队列；#2959 fix-merge 在跑（05:43 派，m01 pid 79350，glm.exit）→ 收货链（冲突逐块+sms 255+anchors+fmt/clippy）→ 补推 → PR 解锁；macmini P1 槽再空时按 READY 派下一条 | coord2/e7 | agent 完成通知 / glm.exit |
+| 10 | Data 卷 05:44 实测 3.7 GiB（100%）→ **清 wt-2513/wt-3178 cargo-target 共 6.9 GiB（lsof 核无进程在用；wt-2692 2960 agent 在用不动）→ 回 11 GiB**；继续不开新树、不跑无谓 cargo、2513 线禁 cargo；ENOSPC 再发走 Monitor 通道 | coord2/e7 | 每轮 |
+| 11 | #3184/#3187/#3188/#3189 四跟进单为 #2259/#1444/#3043/#2572 收口前置，到点逐条处置；#3198/#3199/#3200/#3201 四跟进单为 #2513 关单前置（r12 终判开出），到点逐条处置 | coord2/e7 | 各收口节点 |
 
 **下一步**：①接三路交付（2513 fix-r11、2960 kill 轮、2856 checks/宿主负控）；②MM 重置即按排队清单补块入队；③~06:2x 下一次两小时交接；④本段后继续派单不空等。
 
