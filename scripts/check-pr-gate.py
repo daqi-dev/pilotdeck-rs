@@ -315,6 +315,31 @@
      `_marker_match_at`（消内联复制）＋借文判定抽 `_has_borrowed_text` 共用件＋
      NO_ISSUE 差分钉打到生产入口＋`_comment_opens_closes` 内存上界登记订正
      （`>` 密集 ≈36×，MM boundary#5）。护栏＝test-review-roles.py fix-r23 块。
+     fix-r24（#3074，DS/MM r23 双谱系评审 P0 双撞+P1 三撞，协调者实测仲裁
+     _tmp/20261114-3074-fixr24/arb-r24*.py）：㊵ **scope 容错拼写族入单源词表**——
+     词表/边界族 r19–r24 第 6 次同根复发（r23 的 `_MARKER_KEYWORDS` 只收字面
+     `pdrs-scope:`，任务书侧 SCOPEISH/SCOPE_BODY 自始认 pdrs_scope / pdrs scope /
+     PDRS-SCOPE / 无冒号 / 全角冒号 ⇒ 借文判定对容错拼法不命中，空白 waiver 借
+     容错拼写文本当豁免理由＝rc0 假通过，四形实测）：条目升级为「字面（canonical，
+     产出侧引用）＋扫描片段（`_MARKER_KW_RE`/`_marker_kw_re`）」两层，pdrs-scope 的
+     扫描片段＝拼法族 `(?i:pdrs[\\s_\\-－—‐‑]*scope)`（DASHES 类与任务书侧逐字同源）；
+     check-taskbook-segments.py 的 SCOPEISH/SCOPE_BODY/FIXTYPE_RE 改经
+     `_gate_module()._marker_kw_re()` 派生（消 taskbook 侧手写字面量，DS sibling#2
+     前半——SCOPE_BODY 语言逐字等价，合法声明面零收窄，差分四方向证据
+     _tmp/20261114-3074-fixr24/diff-r24.out）；**修 2（P1）** `_NESTED_MARKER_PREFIX`
+     分支尾界（r23 修 2 `_WAIVER_PREFIX` 同款根因）：no-issue 分支
+     `(?=\\s|-->|\\Z)`、pr-gate: 分支 `(?=(?:v1|waiver)(?![A-Za-z0-9_]))`——
+     `<!--no-issueX`/`<!--pr-gate:foo`（续字符，非 marker）不再进借文判定作废
+     合法豁免（arb-r24b 第一形：修前「豁免理由太短」假红、修后 rc0）；修 3（P2a）
+     产出侧 marker 字面量收进单源——check-taskbook-segments.py SKELETON 与
+     run-review-roles.py 结果块的 `<!-- pr-gate:v1 ` 行改经 `_marker_kw()` 派生，
+     配「合法豁免＋独立顶层 pdrs marker 并存照放行」镜像负控钉（DS sibling#4，
+     修复轮 N≥4 纯文档 PR 常态形态）。登记不动（P2 跟进候选）：单源钉只比对取件
+     相等、区分不了族正则内手抄漂移（DS sibling#3）；`_marker_kw_re` fail-loud 只在
+     任务书侧一个 import 入口生效，本文件侧 `_load_taskbook()`/check() 加载失败路径
+     未同款接住（MM concurrency P2(a)）；DS boundary P2#2 `no-issuance` 例不成立
+     （`no-issu` 第 7 字符 a≠e，本就不是 `no-issue` 前缀，修前修后同判 rc0）。
+     护栏＝test-review-roles.py fix-r23 块更新＋fix-r24 块。
   5. `fixtype=不适用` 的合法性按 diff 级路径检查（#3056 义务 4）：以 `scripts/ci_scope.py` 的
      docs_only 分类为唯一口径，用 --base/--head/--repo 复算 `git diff` 路径集，只碰白名单路径才放行；
      缺 --base/--head/--repo、git 失败、diff 为空、分类器加载失败一律 fail-closed 拒收（宁拒不漏）。
@@ -352,14 +377,37 @@ REQUIRED_ROLES = ("sibling", "concurrency", "boundary", "simplify")
 # 判定两侧（`_invalid_waiver_marker`/`_valid_marker_search`）共用同一份
 # `_NESTED_MARKER_PREFIX`（r22 铁律），本表又是它的唯一源 ⇒ 两侧自动同步；单源钉与
 # 词表完整性钉在 test-review-roles.py fix-r23 块。
+# fix-r24 修 1（#3074，P0——DS boundary#1 ≡ MM boundary#1/sibling#1 双撞，词表族
+# 第 6 次同根复发）：条目从「字面＝扫描片段」升级为「字面＋扫描片段」两层——本 tuple
+# 仍是 canonical 字面（产出侧 SKELETON/结果块经 `_marker_kw()` 引用），扫描片段经
+# `_marker_kw_re()` 取（`_MARKER_KW_RE`）。r23 残差＝pdrs-scope 条目只收字面
+# `pdrs-scope:`，而任务书侧 SCOPEISH/SCOPE_BODY 自始认容错拼写（pdrs_scope /
+# pdrs scope / PDRS-SCOPE / 无冒号 / 全角冒号）⇒ 借文判定对容错拼法不命中 ⇒ 空白
+# waiver 借容错拼写文本当豁免理由＝rc0 假通过（六形实测，arb-r24.py）。
+# 已知边界登记（fix-r24，DS sibling#3 / MM concurrency P2(a)，本轮不修＝P2 跟进候选）：
+# ① 单源钉只比对「取件结果相等」，区分不了「条目内族正则本身手抄漂移」的失败模式
+#   （族正则只此一份＋源级出现次数钉在 test-review-roles.py fix-r24 块，语义级钉
+#   仍缺——需要族正则的独立重实现对照器，超出本轮）；② `_marker_kw_re` 的 fail-loud
+#   只在任务书侧一个 import 入口生效（check-taskbook-segments.py 的 _gate_module），
+#   本文件侧 `_load_taskbook()`/check() 的模块加载失败路径未同款接住（ValueError 会
+#   以 traceback 冒充 FAIL 而非干净 rc 1/2——与 *_OVER 的 fail-closed 文案不同口径）。
 _MARKER_KEYWORDS = ("pr-gate:", "no-issue", "pdrs-residual:", "pdrs-fixtype:", "pdrs-scope:")
+# 扫描片段表（fix-r24 修 1）：键＝`_MARKER_KEYWORDS` 成员（经 `_marker_kw` 校验），
+# 缺省＝字面本身；升级为拼法族的条目在这里给族正则。pdrs-scope 族＝任务书侧 SCOPEISH
+# 的 DASHES 类逐字同源（`[\s_\-－—‐‑]`：空白/下划线/半角与全角连字符族），大小写
+# 容忍走 scoped `(?i:...)`——只放宽本族，pr-gate:/no-issue/pdrs-residual:/pdrs-fixtype:
+# 四族的大小写敏感口径不动（`<!--PR-GATE:`/`<!--NO-ISSUE` 仍非 markerish，差分登记面）。
+_MARKER_KW_RE = {
+    "pdrs-scope:": r"(?i:pdrs[\s_\-－—‐‑]*scope)",
+}
 
 
 def _marker_kw(word: str) -> str:
     """单源词表 `_MARKER_KEYWORDS` 的取件（fix-r23 修 1）：word 不在表里直接 raise
     （fail-loud——手抄漂移在 import 时即炸，r12 ISSUE_LINK/ISSUE_NUM、r22
     `_NESTED_MARKER_PREFIX` 手抄漏 pdrs 族都是静默漂移）。marker 正则的族前缀全部
-    经本函数取，仓内不再出现第二份扫描用 marker 关键字字面量。"""
+    经本函数取，仓内不再出现第二份扫描用 marker 关键字字面量。fix-r24 修 1 起本函数
+    的返回＝canonical 字面（产出侧引用）；扫描片段一律经 `_marker_kw_re()` 取。"""
     if word not in _MARKER_KEYWORDS:
         raise ValueError(f"marker 关键字 {word!r} 不在单源词表 _MARKER_KEYWORDS"
                          f"（{_MARKER_KEYWORDS}）里——词表/边界族 r19–r23 五次复发，"
@@ -367,11 +415,23 @@ def _marker_kw(word: str) -> str:
     return word
 
 
+def _marker_kw_re(word: str) -> str:
+    """单源词表条目的**扫描片段**（fix-r24 修 1）：未升级的条目＝字面本身；升级为
+    拼法族的条目（当前只有 pdrs-scope:）＝`_MARKER_KW_RE` 里的族正则。取件 fail-loud
+    同 `_marker_kw`（word 不在词表直接抛，import 即炸）——本文件 MARKER/WAIVER/
+    `_WAIVER_PREFIX`/NO_ISSUE/RESIDUAL_MARKER/`_NESTED_MARKER_PREFIX` 与任务书侧
+    SCOPEISH/SCOPE_BODY/FIXTYPE_RE 的片段一律经本函数取，条目再升级时两侧自动同步
+    （r24 的教训：r23 只钉了「字面在表里」，没钉「扫描片段跟族走」，pdrs-scope 的
+    容错拼写族就漏了第 6 次复发）。"""
+    _marker_kw(word)  # fail-loud 校验（复用 r23 取件判据，不复制第二份）
+    return _MARKER_KW_RE.get(word, word)
+
+
 # 边界一律用 ASCII 环视而不是 \b（#3056 fix-r2 修 3①，MM2 sibling#1）：Python 的 \w 含 CJK，
 # 「已Fixes #1」「Refs #3056的说明」「结果块pr-gate:v1…」这类中文紧贴会让 \b 两侧都是 \w
 # → 正则不匹配 → 合规 PR 被判「缺 issue 关联 / 缺结果块」（假 FAIL）。与 FIXROUND_RE 同款口径
 # （check-taskbook-segments.py:96 的先例注释）。
-MARKER = re.compile(r"<!--\s*" + _marker_kw("pr-gate:") + "v1(?![A-Za-z0-9_])([^>]*)-->")
+MARKER = re.compile(r"<!--\s*" + _marker_kw_re("pr-gate:") + "v1(?![A-Za-z0-9_])([^>]*)-->")
 # fix-r19（#3074，DS/MM r17+r18 增量双谱系双撞 P0）：旧形 `<!--\s*pr-gate:waiver\s+(.+?)\s*-->`
 # （re.S）三个组件（`\s+` / `(.+?)`(re.S 含空白) / 尾部 `\s*`）都能吃同一段空白＝Θ(N³)
 # 回溯（协调者实测失败形 N=2000→4.1 s / 4000→28.9 s / 8000→171 s，三次方特征；本机复测
@@ -385,7 +445,7 @@ MARKER = re.compile(r"<!--\s*" + _marker_kw("pr-gate:") + "v1(?![A-Za-z0-9_])([^
 # 不收窄：`\s+` 贪心吃满前导空白（含换行）后组首必是非空白，多行理由照常整段捕获
 # （字母表枚举 + 形状差分证据 _tmp/20261114-3074-fixr19/，等价差分钉在 test-review-roles.py
 # fix-r19 块）。
-WAIVER = re.compile(r"<!--\s*" + _marker_kw("pr-gate:") + r"waiver\s+(\S.*?)-->", re.S)
+WAIVER = re.compile(r"<!--\s*" + _marker_kw_re("pr-gate:") + r"waiver\s+(\S.*?)-->", re.S)
 # fix-r21（#3074 簇③，MM r20 boundary#1，P0——r20 实测 `<!--pr-gate:waiver
 #   <!--no-issue 纯文档说明 -->` 经 WAIVER 跨界命中以「下一条 marker 的文本」当豁免
 # 理由放行＝rc0 假通过）：r20 的 WAIVER_BLANK（`<!--\s*pr-gate:waiver\s*-->`）只收
@@ -404,7 +464,7 @@ WAIVER = re.compile(r"<!--\s*" + _marker_kw("pr-gate:") + r"waiver\s+(\S.*?)-->"
 # 其余续字符一律不算 marker 候选。词形（`<!--\s*`＋`pr-gate:`＋`waiver`）与 WAIVER
 # 单源同源（fix-r23 修 1 `_marker_kw` 取件）；r22 的整条 startswith 一致性钉随
 # 尾界不再成立，升级为共用词形钉（test-review-roles.py fix-r23 块）。
-_WAIVER_PREFIX = re.compile(r"<!--\s*" + _marker_kw("pr-gate:") + r"waiver(?=\s|-->|\Z)")
+_WAIVER_PREFIX = re.compile(r"<!--\s*" + _marker_kw_re("pr-gate:") + r"waiver(?=\s|-->|\Z)")
 # fix-r22（#3074 修 1，MM sibling#1 P0——NO_ISSUE 借文与簇③同根）：「理由区借下一条
 # marker 文本」的机器可判特征＝理由区内嵌**已知 marker 关键字开头的 `<!--` 前缀**。
 # **fix-r23 修 1（P0，DS sibling#1 ≡ MM sibling#1/boundary#1 双撞，词表/边界族第 5 次
@@ -416,8 +476,35 @@ _WAIVER_PREFIX = re.compile(r"<!--\s*" + _marker_kw("pr-gate:") + r"waiver(?=\s|
 # WAIVER 侧（簇③）与 NO_ISSUE 侧共用这一份判定（铁律：不复制两份），消费点＝
 # `_invalid_waiver_marker` / `_valid_marker_search`（fix-r23 修 4 起借文半句抽
 # `_has_borrowed_text` 共用件）。
+# **fix-r24 修 1（P0，DS boundary#1 ≡ MM boundary#1/sibling#1 双撞，词表族第 6 次
+# 复发）**：交替分支改经 `_marker_kw_re()` 取片段——pdrs-scope 条目升级为拼法族
+# `(?i:pdrs[\s_\-－—‐‑]*scope)`（任务书侧 SCOPEISH 的 DASHES 类逐字同源 + 大小写
+# 容忍；r23 只收字面 `pdrs-scope:` ⇒ `<!-- pdrs_scope: …` 等容错拼写不进本判定 ⇒
+# 空白 waiver 借容错拼写文本当理由＝rc0 假通过，六形实测见 arb-r24.py）。族正则只
+# 此一份（`_MARKER_KW_RE`），任务书侧 SCOPEISH/SCOPE_BODY 同经 `_marker_kw_re`
+# 派生（消 taskbook 侧两份手写字面量，DS sibling#2 前半）。
+# **fix-r24 修 2（P1，DS sibling#1 + MM sibling#3/boundary#2 同根三撞——r23 修 2 给
+# `_WAIVER_PREFIX` 加尾界的同款根因在嵌套前缀侧）**：分支尾界 `_NESTED_KW_TAIL`——
+# `<!--no-issueX`（续字符，非 marker）旧形命中本判定 ⇒ 合法豁免理由里引用它即经
+# ②借文分支作废**全部**豁免＝假红（arb-r24b 第一形实测：修前「豁免理由太短」、
+# 修后 rc0 豁免成立）。分支按 marker 的真实后续形收尾（与 r23 修 2 同款「真 marker
+# 的后续只可能是这几种」论证）：
+#   no-issue → `(?=\s|-->|\Z)`：空白（NO_ISSUE 的 `\s+`）/ `-->`（零长闭合）/ 串尾
+#     （未闭合，fix-r22 修 4 ①收）三口，其余续字符（`no-issueX`/`no-issues`）不算；
+#   pr-gate: → `(?=(?:v1|waiver)(?![A-Za-z0-9_]))`：同闸门自认的 pr-gate: 系 marker
+#     只有 v1 结果块与 waiver 豁免两种，`<!--pr-gate:foo`/`<!--pr-gate:V1` 非 marker
+#     不作废豁免（大小写仍敏感，与 MARKER/WAIVER 同口径）。
+# pdrs 三族不设尾界（值区自由文本、scope 冒号已可选，无统一后续形；多收形是
+# fail-closed 向＝宁拒不漏，登记面不回退）。已知边界登记（DS sibling#3）：分支＝
+# 词表展开＋尾界表按键挂靠，尾界表键经 `_marker_kw()` 取（typo 即 import 炸），但
+# 「某族该不该有尾界」本身无语义钉——新增族忘配尾界不会红，按 P2 跟进候选登记。
+_NESTED_KW_TAIL = {
+    _marker_kw("no-issue"): r"(?=\s|-->|\Z)",
+    _marker_kw("pr-gate:"): r"(?=(?:v1|waiver)(?![A-Za-z0-9_]))",
+}
 _NESTED_MARKER_PREFIX = re.compile(
-    r"<!--\s*(?:" + "|".join(_marker_kw(k) for k in _MARKER_KEYWORDS) + ")")
+    r"<!--\s*(?:" + "|".join(_marker_kw_re(k) + _NESTED_KW_TAIL.get(k, "")
+                             for k in _MARKER_KEYWORDS) + ")")
 # fix-r13（DS r12 simplify#1 P2）：删除 ISSUE_LINK——规则 2 原用它判「有没有 issue 关联」，
 # 但它与 ISSUE_NUM 是「关键词 + #N」的同前缀正则，check() 里 issues = pr_issues(masked)
 # 已算过同一信息；两份词表/边界正是 r9-r12 反复漂移的形态（ISSUE_LINK 比 ISSUE_NUM 松时
@@ -430,7 +517,7 @@ _ISSUE_KEYWORDS = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)"
 # bool 用（组内多吞的尾随空白不影响命中性），`\S.*?` 给回扫 `-->` 与尾部 `\s*` 的重叠
 # 消除后失败路径线性（实测 N=65514 → 0.0004 s，改前 4.2 s＝Θ(N²)）。前导 `\s+` 与
 # 组首 `\S` 本就互斥。纯空白理由形两版都不命中（旧形组首已钉 `\S`）＝零收窄。
-NO_ISSUE = re.compile(r"<!--\s*" + _marker_kw("no-issue") + r"\s+(\S.*?)-->", re.S)
+NO_ISSUE = re.compile(r"<!--\s*" + _marker_kw_re("no-issue") + r"\s+(\S.*?)-->", re.S)
 # 补丁指纹的 diff 参数全部写死：不受本机 / CI 的 diff.renames、diff.algorithm、前缀、颜色、外部 diff 配置影响
 FINGERPRINT_DIFF = ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=3",
                     "--diff-algorithm=myers", "--src-prefix=a/", "--dst-prefix=b/"]
@@ -632,7 +719,7 @@ ECHO_HEAD = re.compile(r"^" + _TYPE_WORDS +
 # 判修复轮只多一道 fixtype/residual 要求（假 FAIL 向窄代价）。
 TITLE_HEAD = re.compile(r"^" + _TYPE_WORDS +
                         r"(\([^)\n]{0,80}\))?!?(?:[:：]|\s)")
-RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*" + _marker_kw("pdrs-residual:")
+RESIDUAL_MARKER = re.compile(r"^[ \t]*<!--\s*" + _marker_kw_re("pdrs-residual:")
                              + r"(.*?)-->[ \t]*$", re.M)
 # 值域 = 字面三值的字符集：紧贴的中文标点/后续文字不并进值（DS boundary#3）——
 # 「fixtype=结构性，纯文档」里值停在 结构性，「，纯文档」由 check() 的值后终止检查拒收（判缺/非法）。

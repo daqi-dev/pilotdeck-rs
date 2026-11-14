@@ -2825,9 +2825,14 @@ def _run(gate, rrr, out_base: Path) -> int:
         if gate.NO_ISSUE.pattern != r"<!--\s*no-issue\s+(\S.*?)-->":
             fails.append(f"fix-r19 形态钉：NO_ISSUE 形态被改（现值 {gate.NO_ISSUE.pattern!r}"
                          "——写回尾部 `\\s*` 形态重开 Θ(N²) 回溯面）")
-        if tb.SCOPE_BODY.pattern != rf"^\s*pdrs{tb.DASHES}*scope\s*(?:[:：]\s*)?(?P<rest>(?:[^\s\n][^\n]*)?)$":
+        # fix-r24 修 1：拼法族前缀改单源派生（tb 的 DASHES 常量删除，族＝gate
+        # `_MARKER_KW_RE` 经 `_marker_kw_re` 取）；冒号槽 W* C? W* 与 rest 首字符钉
+        # 的形态面原样保留（差分钉 (2) 仍对拍 r19 修前字面形＝语言等价不因派生漂移）。
+        if tb.SCOPE_BODY.pattern != (r"^\s*" + gate._marker_kw_re("pdrs-scope:")
+                                     + r"\s*(?:[:：]\s*)?(?P<rest>(?:[^\s\n][^\n]*)?)$"):
             fails.append(f"fix-r19 形态钉：SCOPE_BODY 形态被改（现值 {tb.SCOPE_BODY.pattern!r}"
-                         "——冒号槽写回相邻星号形或去掉 rest 首字符钉（\\s*×.* 残余二次方）必红）")
+                         "——冒号槽写回相邻星号形或去掉 rest 首字符钉（\\s*×.* 残余二次方）必红；"
+                         "fix-r24 起拼法族经 gate._marker_kw_re 单源派生，DASHES 常量已删）")
         if tb.PERSON_DAY.pattern != (
                 r"(?:约|大约|估计|预计约|预计|预期|估算|估|工作量|共计|合计|总计|共)"
                 r"(?:需(?:要|投入)?)?\s*(?:[:：,，]\s*)?"
@@ -3237,8 +3242,11 @@ def _run(gate, rrr, out_base: Path) -> int:
                          f"（r22 实测豁免理由＝借来的 pdrs 文本）：{_p0_waiver}")
         # 修 1 单源派生钉：`_NESTED_MARKER_PREFIX` 整条由词表展开；五个扫描正则的
         # 族前缀全部经 `_marker_kw` 从词表取；`_marker_kw` fail-loud；词表五族完整。
+        # fix-r24 修 1+修 2：片段取件升级为 `_marker_kw_re`（pdrs-scope: 拼法族），
+        # 分支尾界表 `_NESTED_KW_TAIL`（no-issue / pr-gate: 两族有，pdrs 三族无）。
         if gate._NESTED_MARKER_PREFIX.pattern != \
-                r"<!--\s*(?:" + "|".join(gate._MARKER_KEYWORDS) + ")":
+                r"<!--\s*(?:" + "|".join(gate._marker_kw_re(_k) + gate._NESTED_KW_TAIL.get(_k, "")
+                                         for _k in gate._MARKER_KEYWORDS) + ")":
             fails.append("fix-r23 修1：_NESTED_MARKER_PREFIX 必须整条由 _MARKER_KEYWORDS"
                          " 派生（交替分支＝单源词表展开，手抄漂移＝借文判定面与 marker"
                          " 提取面分裂——r22 漏 pdrs 族正是手抄漂移）")
@@ -3248,13 +3256,16 @@ def _run(gate, rrr, out_base: Path) -> int:
             if _fam not in gate._MARKER_KEYWORDS or r"<!--\s*" + _fam not in _rx.pattern:
                 fails.append(f"fix-r23 修1：{_rx!r} 的族前缀 {_fam!r} 须来自单源词表"
                              " _MARKER_KEYWORDS（`<!--\\s*`＋关键字 直拼，不在表里＝红）")
-        for _fam in ("pr-gate:", "no-issue", "pdrs-residual:", "pdrs-fixtype:", "pdrs-scope:"):
+        for _fam, _probe23 in (("pr-gate:", "pr-gate:v1 "), ("no-issue", "no-issue "),
+                               ("pdrs-residual:", "pdrs-residual: "), ("pdrs-fixtype:", "pdrs-fixtype: "),
+                               ("pdrs-scope:", "pdrs-scope: ")):
             if _fam not in gate._MARKER_KEYWORDS:
                 fails.append(f"fix-r23 修1：单源词表漏 {_fam!r} 族（marker 关键字全仓"
                              " 只此一份：新增只改 _MARKER_KEYWORDS，两侧借文判定自动同步）")
-            elif not gate._NESTED_MARKER_PREFIX.match("<!--  " + _fam + " 后文"):
+            elif not gate._NESTED_MARKER_PREFIX.match("<!--  " + _probe23 + "后文"):
                 fails.append(f"fix-r23 修1：{_fam!r} 须命中嵌套 marker 前缀判定"
-                             "（`<!--\\s*` 后随关键字即 markerish）")
+                             "（`<!--\\s*` 后随关键字即 markerish；fix-r24 修 2 起 pr-gate:/"
+                             "no-issue 分支带尾界——探针续文须给真实后续形 v1/空白）")
         try:
             gate._marker_kw("pr-gate:waiver")
         except ValueError:
@@ -3336,7 +3347,11 @@ def _run(gate, rrr, out_base: Path) -> int:
                      "<!-- pdrs-residual: 残差判读文字 ", "<!-- pdrs-fixtype: 结构性论证文字 ",
                      "<!-- pdrs-scope: files=2 ", "\n", "x", "理由", "说明",
                      "<!-- pr-gate:v1 roles=x -->", "Closes #3056\n", "waiver ", "no-issue ",
-                     "<!--pr-gate:waiver  -->", "<!--no-issue  -->", ">-->", "普通 <!-- 注释 -->"]
+                     "<!--pr-gate:waiver  -->", "<!--no-issue  -->", ">-->", "普通 <!-- 注释 -->",
+                     # fix-r24 面（借文判定对容错拼写族／尾界对非 marker 续字符的差分覆盖）：
+                     "<!-- pdrs_scope: files=2 ", "<!-- pdrs scope: files=2 ",
+                     "<!-- PDRS-SCOPE: files=2 ", "<!-- pdrs-scope files=2 ",
+                     "<!--no-issueX ", "<!--pr-gate:waiverX ", "<!--pr-gate:foo "]
         _d23u = _d23t = _d23b = 0
         for _ in range(4000):
             _body = "".join(_rng23.choice(_pieces23) for _ in range(_rng23.randrange(0, 10)))
@@ -3360,6 +3375,137 @@ def _run(gate, rrr, out_base: Path) -> int:
         if not (_d23t or _d23b):
             fails.append("fix-r23 修4 差分生成器失效：4000 随机位形未覆盖到收紧/借文跳过形"
                          "（位形须补足再钉）")
+
+        # —— #3074 fix-r24（DS/MM r23 双谱系评审 P0 双撞＋P1 三撞，协调者实测仲裁
+        # _tmp/20261114-3074-fixr24/）——词表/边界族第 6 次复发收口：修 1 pdrs-scope
+        # 容错拼写族入单源词表（`_MARKER_KW_RE`＋`_marker_kw_re`；任务书侧 SCOPEISH/
+        # SCOPE_BODY/FIXTYPE_RE 同经派生，消两份手写字面）；修 2 嵌套前缀 no-issue/
+        # pr-gate: 分支尾界（no-issueX 假红回正）；修 3 产出侧字面量派生（SKELETON
+        # 三处 marker＋rrr 结果块 marker 经 `_marker_kw`）＋镜像负控。铁律：只收紧借文
+        # 面，合法声明面（任务书）/合法引用面（PR）零收窄——两向都钉。
+        # (1) 修 1（P0，DS boundary#1 ≡ MM boundary#1/sibling#1 双撞）：容错拼写借文
+        # 两向钉——四容忍拼法修前 rc0 假通过（arb-r24.py 实测：豁免理由＝借文整段）、
+        # 修后必拒；精确拼写不回退（r23 已收面）。
+        for _sp24 in ("pdrs_scope:", "pdrs scope:", "PDRS-SCOPE:", "pdrs-scope files=2"):
+            _w24 = gate.check(f"<!--pr-gate:waiver   <!-- {_sp24} 某段说明文字 -->\nCloses #3056\n",
+                              "", "", "", "")
+            if not any("豁免理由太短" in e for e in _w24):
+                fails.append(f"fix-r24 修1（P0）：空白 waiver 借容错拼写 {_sp24!r} 文本当豁免"
+                             f"理由必须拒收（修前 rc0 假通过＝借文判定不认容错拼写）：{_w24}")
+            _n24 = gate.check(f"<!--no-issue   <!-- {_sp24} 某段说明文字 -->\n", "", "", "", "")
+            if not any("缺 issue 关联" in e for e in _n24):
+                fails.append(f"fix-r24 修1（P0）：no-issue 借容错拼写 {_sp24!r} 文本当理由"
+                             f"必须报「缺 issue 关联」（借文判定须认容错拼写，两侧同词表）：{_n24}")
+        _w24e = gate.check("<!--pr-gate:waiver   <!-- pdrs-scope: 某段说明文字 -->\nCloses #3056\n",
+                           "", "", "", "")
+        if not any("豁免理由太短" in e for e in _w24e):
+            fails.append(f"fix-r24 修1：精确拼写 pdrs-scope: 借文拒收面不回退（r23 面保持）：{_w24e}")
+        # 容错拼写 markerish 命中钉（族分支＝`_marker_kw_re` 展开）＋四族大小写口径不放宽：
+        for _sp24 in ("pdrs_scope: 某段", "pdrs scope: 某段", "PDRS-SCOPE: 某段",
+                      "pdrs-scope files=2", "pdrs—scope:", "pdrsscope", "pdrs scope  ： files=2"):
+            if not gate._NESTED_MARKER_PREFIX.match("<!--  " + _sp24):
+                fails.append(f"fix-r24 修1：容错拼写 {_sp24!r} 须命中嵌套 marker 前缀判定"
+                             "（拼法族经 _marker_kw_re 单源派生）")
+        for _cs24 in ("<!--  PR-GATE:v1 x", "<!--  NO-ISSUE x", "<!--  PDRS-RESIDUAL: x",
+                      "<!--  PDRS-FIXTYPE: x"):
+            if gate._NESTED_MARKER_PREFIX.match(_cs24):
+                fails.append(f"fix-r24 修1：大小写敏感四族不得经 scoped (?i:) 放宽（{_cs24!r}"
+                             " 非 markerish——差分登记面，只放宽 pdrs-scope 族）")
+        # (2) 修 2（P1，DS sibling#1＋MM sibling#3/boundary#2 同根）：no-issueX 引用形假红
+        # 回正＋真 marker 引用作废面不回退＋尾界真值表（r23 修 2 `_WAIVER_PREFIX` 同款口径）。
+        _b24 = gate.check("<!--pr-gate:waiver 合法豁免理由足够长，引用 <!--no-issueX 的写法 -->\n"
+                          "Closes #3056\n", "", "", "", "")
+        if _b24:
+            fails.append(f"fix-r24 修2（P1）：合法豁免理由里引用 <!--no-issueX（续字符，非 marker）"
+                         f"不得作废豁免（修前「豁免理由太短」假红）：{_b24}")
+        _b24r = gate.check("<!--pr-gate:waiver 合法豁免理由足够长，引用 <!--no-issue 真标记 -->\n"
+                           "Closes #3056\n", "", "", "", "")
+        if not any("豁免理由太短" in e for e in _b24r):
+            fails.append(f"fix-r24 修2：引用真 no-issue marker 仍须作废豁免（r22/r23 面不回退）：{_b24r}")
+        _b24n = gate.check("<!--no-issueX 某段说明文字 -->\n", "", "", "", "")
+        if not any("缺角色审计结果块" in e for e in _b24n):
+            fails.append(f"fix-r24 修2：`<!--no-issueX` 作 NO_ISSUE 候选的形态不变"
+                         f"（照走缺结果块拒收——尾界只影响嵌套前缀判定）：{_b24n}")
+        for _np24, _want24 in (("<!--no-issue ", True), ("<!--no-issue-->", True),
+                               ("<!--no-issue", True), ("<!--no-issueX ", False),
+                               ("<!--no-issues", False), ("<!--pr-gate:v1 ", True),
+                               ("<!--pr-gate:waiver ", True), ("<!--pr-gate:V1 ", False),
+                               ("<!--pr-gate:waiverX ", False), ("<!--pr-gate:foo ", False)):
+            if bool(gate._NESTED_MARKER_PREFIX.match(_np24)) is not _want24:
+                fails.append(f"fix-r24 修2：{_np24!r} 的尾界判定须为 {_want24}"
+                             "（no-issue 后只认空白/`-->`/串尾；pr-gate: 后只认 v1/waiver 词形）")
+        # (3) 任务书侧合法声明面零收窄（铁律另半边）：容错拼写照常认声明（rest 组值）；
+        # SCOPEISH/SCOPE_BODY 整条单源派生（族正则只此一份，tb 手抄回潮即红）。
+        for _s24, _r24 in (("pdrs-scope: files=2", "files=2"), ("pdrs_scope: files=2", "files=2"),
+                           ("pdrs scope  ：  files=2", "files=2"), ("PDRS-SCOPE: files=2", "files=2"),
+                           ("pdrs-scope files=2", "files=2"), ("  pdrs_scope：  files=2 ", "files=2 ")):
+            _m24 = tb.SCOPE_BODY.match(_s24)
+            if (_m24.group("rest") if _m24 else None) != _r24:
+                fails.append(f"fix-r24 修1：任务书合法声明面收窄——{_s24!r} rest 须 {_r24!r}"
+                             "（SCOPE_BODY 派生后语言须等价：借文面收紧、声明面零收窄）")
+        if tb.SCOPEISH.pattern != gate._marker_kw_re("pdrs-scope:"):
+            fails.append("fix-r24 修1 跨文件：SCOPEISH 须整条＝gate._marker_kw_re（族正则"
+                         " 只此一份；tb 手抄第二份＝两侧拼法口径分裂——第 6 次复发的根因）")
+        if tb.parse_scopes("<!-- pdrs_scope: files=2 -->") != ([{"files": 2}], []):
+            fails.append("fix-r24 修1：任务书侧容错拼写声明须照常解析"
+                         f"（parse_scopes 实得 {tb.parse_scopes('<!-- pdrs_scope: files=2 -->')!r}）")
+        # (4) 修 3：产出侧单源——SKELETON 三处 marker 字面与 rrr 结果块 marker 经
+        # `_marker_kw` 派生；族字面量 gate 源内只此一份、tb/rrr 源内零手抄（AST 常量
+        # 钉：只数代码常量，注释/文档串不误伤）。
+        for _ml24 in (f"<!-- {gate._marker_kw('pdrs-scope:')} files=",
+                      f"`<!-- {gate._marker_kw('pdrs-fixtype:')} <枚举式",
+                      f"`<!-- {gate._marker_kw('pdrs-residual:')} <上轮残差判读"):
+            if _ml24 not in tb.SKELETON:
+                fails.append(f"fix-r24 修3：SKELETON 须含派生字面 {_ml24!r}"
+                             "（产出侧经 _marker_kw 单源——改关键字时骨架自动同步）")
+        _rrr24src = (ROOT / "scripts" / "run-review-roles.py").read_text(encoding="utf-8")
+        if "_gate_module()._marker_kw('pr-gate:')" not in _rrr24src:
+            fails.append("fix-r24 修3：run-review-roles.py 结果块 marker 须经 _marker_kw 单源"
+                         " 派生（手抄 `pr-gate:v1` ＝闸门改后结果块教人写旧关键字，DS sibling#4）")
+        _fam24 = gate._marker_kw_re("pdrs-scope:")
+        _gate24src = (ROOT / "scripts" / "check-pr-gate.py").read_text(encoding="utf-8")
+        if sum(1 for _n24c in ast.walk(ast.parse(_gate24src))
+               if isinstance(_n24c, ast.Constant) and _n24c.value == _fam24) != 1:
+            fails.append("fix-r24 修1：scope 拼法族字面量在 gate 源内须只出现一次"
+                         "（_MARKER_KW_RE 的值——第二份字面＝单源破口，DS sibling#3 登记面的"
+                         " 源级补钉）")
+        _tb24src = (ROOT / "scripts" / "check-taskbook-segments.py").read_text(encoding="utf-8")
+        for _src24, _name24 in ((_tb24src, "check-taskbook-segments.py"),
+                                (_rrr24src, "run-review-roles.py")):
+            if any(isinstance(_n24c, ast.Constant) and _n24c.value == _fam24
+                   for _n24c in ast.walk(ast.parse(_src24))):
+                fails.append(f"fix-r24 修1 跨文件：{_name24} 源内不得出现第二份拼法族字面量"
+                             "（须经 _marker_kw_re 派生取件——族正则全仓只此一份）")
+        # (5) 修 1 结构钉：无族条目片段＝字面（四族大小写口径不动）；pdrs-scope: 必升级；
+        # `_marker_kw_re` 对词表外手抄拼法 fail-loud（同 `_marker_kw` r23 口径）。
+        for _k24 in ("pr-gate:", "no-issue", "pdrs-residual:", "pdrs-fixtype:"):
+            if gate._marker_kw_re(_k24) != _k24:
+                fails.append(f"fix-r24 修1：{_k24!r} 无族升级，扫描片段须＝字面本身"
+                             "（大小写敏感口径不动＝差分登记面）")
+        if gate._marker_kw_re("pdrs-scope:") == "pdrs-scope:":
+            fails.append("fix-r24 修1：pdrs-scope: 条目须升级为拼法族（_MARKER_KW_RE——任务书侧"
+                         " SCOPEISH 自始认容错拼写，字面取件＝借文判定不认容错拼写＝复发原状）")
+        try:
+            gate._marker_kw_re("pdrs_scope:")
+        except ValueError:
+            pass
+        else:
+            fails.append("fix-r24 修1：_marker_kw_re 须对词表外手抄容错拼写 fail-loud（raise）")
+        # (6) 镜像负控（fix-round N≥4 纯文档 PR 常态形）：合法豁免＋顶层独立 pdrs marker
+        # 并存必须照常通过——顶层 marker 不在豁免/no-issue span 内，借文判定不得越界作废；
+        # 修 1 族收紧只作用于理由 span 内部。
+        for _mm24 in (
+                "<!--pr-gate:waiver 纯文档变更，无需角色审计结果块 -->\n"
+                "<!-- pdrs-scope: files=2 est_min=300 -->\nCloses #3056\n",
+                "<!-- pdrs-fixtype: 结构性 修法论证文字 -->\n"
+                "<!--pr-gate:waiver 纯文档变更，无需角色审计结果块 -->\n"
+                "<!-- pdrs-residual: 无上一轮 -->\nCloses #3056\n",
+                "<!--pr-gate:waiver 纯文档变更，无需角色审计结果块 -->\n"
+                "<!-- pdrs_scope: files=2 -->\n<!-- PDRS-SCOPE: files=2 -->\nCloses #3056\n"):
+            _mm24e = gate.check(_mm24, "", "", "", "")
+            if _mm24e:
+                fails.append(f"fix-r24 镜像负控：合法豁免＋顶层独立 pdrs marker（含容错拼写）"
+                             f"并存须 rc0（顶层非借文）：{_mm24e}")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"
