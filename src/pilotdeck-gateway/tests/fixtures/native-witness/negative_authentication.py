@@ -481,7 +481,7 @@ def memory_run(name):
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 66600
+LEASE_ACQUIRE_BUDGET_SECONDS = 68400
 
 
 def classify(result, test, marker):

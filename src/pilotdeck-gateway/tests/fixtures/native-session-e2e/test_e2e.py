@@ -1576,7 +1576,7 @@ class NegativeRunnerTests(unittest.TestCase):
                              .parameters['lock_timeout'].default == 900,
                              marker + ': the default pin must be discriminating')
         runner = self.load_runner()
-        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 63900, marker)
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
         code, _summary = self._drive(runner)
         self.assertTrue(code == 0 and len(self.lease_budgets) == 2, marker)
         # #2929 fix-r4: a dropped-kwarg mutant records None, and comparing
@@ -1606,7 +1606,7 @@ class NegativeRunnerTests(unittest.TestCase):
         # work, outside the lease) is the discriminator: the second case's
         # acquire budget must come out whole, not 3 s short.
         runner = self.load_runner()
-        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 63900, marker)
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
         code, _summary = self._drive(runner, gap=3.0)
         self.assertTrue(code == 0 and len(self.lease_budgets) == 2, marker)
         first, second = self.lease_budgets
@@ -1638,7 +1638,7 @@ class NegativeRunnerTests(unittest.TestCase):
         # a nullcontext, so this test injects a tree lock that really
         # consumes seconds and pins the first budget whole.
         runner = self.load_runner()
-        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 63900, marker)
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
 
         @contextlib.contextmanager
         def slow_tree_lock(*_arguments, **_keywords):
@@ -1667,7 +1667,7 @@ class NegativeRunnerTests(unittest.TestCase):
         # seconds of its own work, then fails at the no-run build; the
         # second case's acquire budget must come out whole anyway.
         runner = self.load_runner()
-        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 63900, marker)
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
         failed = []
 
         def fail_first_cargo(stage):
@@ -1702,7 +1702,7 @@ class NegativeRunnerTests(unittest.TestCase):
         # case's enter burns two seconds waiting and then times out; the
         # second case's budget must come out shorter by that failed wait.
         runner = self.load_runner()
-        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 63900, marker)
+        self.assertTrue(runner.LEASE_ACQUIRE_SECONDS == 66600, marker)
         code, summary = self._drive(runner, first_enter_fails=2.0)
         self.assertTrue(code == 1 and len(self.lease_budgets) == 2, marker)
         self.assertEqual([row['status'] for row in summary['controls']],

@@ -233,7 +233,7 @@ def require_single_anchor(original, old, name):
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 63000
+LEASE_ACQUIRE_BUDGET_SECONDS = 65700
 
 
 def run(out, label, test):
