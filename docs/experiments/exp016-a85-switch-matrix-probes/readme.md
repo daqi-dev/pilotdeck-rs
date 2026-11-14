@@ -27,10 +27,25 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   ICU 78.2。
 - **落位**：`scripts/a8-5/`（common.mjs + 各探针；`--base`/`--out` 参数化，默认基线取
   `PILOTDECK_BASE` 或标准 runner 路径）。`node scripts/a8-5/<probe>.mjs --out <证据目录>`。
-  p12 合规复跑（≥95 s 观测窗，#2259）：`P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`
+  <a id="p12-window-spec"></a>p12 合规复跑（≥95 s 观测窗，#2259；fix-r5 起本段为 p12 装置规约正本——
+  矩阵侧只留指针）：`P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`
   （窗长须为 (0, 300000] 内安全整数毫秒，未设置或空串回退默认 70_000，非法值 exit 2 且不落盘；
-  端口默认 39891、可 `--port`/`P12_PORT` 改，占用预检失败受控快速失败 exit 3；证据名带窗长+时间戳+pid，
-  不覆写既有证据）。
+  端口默认 39891、可 `--port`/`P12_PORT` 改（非法值同 exit 2）；占用预检失败与 bind 失败
+  （EADDRINUSE——预检→加载→bind 间竞态败者，fix-r5）均受控快速失败 exit 3、不落观测记录；
+  证据名带窗长+时间戳+pid，不覆写既有证据）。**判据与判废条件（fix-r5，判废条件照
+  `specs/gateway-parity/diffs/A8.3-CH-SMS-012-R1.md:121-134` 逐字段对齐）**：产物须含首条
+  `scenario` 记录——`headersTimeout`（server 对象实读的实测值，**须 =60000**；读不到记 null）
+  /`requestTimeout`/`connectionsCheckingInterval` 与 `port`/`windowMs`/`windowEnvRaw`；
+  observation 行判别字段 `firstByteMs`/`bytes`/`hex`/`closeSettled`，时间字段 `closeCalledMs`/
+  `elapsedMs`（= R1 `stopWaitedMs` 对应面）恒有限数值、`closeResolvedMs`/`connectionEndedMs`
+  事件发生才为有限数值（「窗内不 settle」正是观察对象，与 R1「必须有限」的差异点如实登记；
+  `connectionEndedMs` 终值在 cleanup 行恒有限）；note 谓词（fix-r5）：判「支持『close 清
+  checker ⇒ 永不 settle』」须同 observation 行核「bytes=0 且窗内无 end/close/error 服务端事件
+  且 socket 本地仍开」，不满足只报事实不作机制归因。判废（任一命中即作废重跑）：无
+  `scenario` 行；`headersTimeout` ≠60000（含 null）；`closeCalledMs`/`elapsedMs` 非有限数值；
+  `connectionEndedMs`（非 null 时）< `closeCalledMs`（连接在 close() 前已没了）；`closeSettled=false`
+  而 `elapsedMs` < `windowMs`（窗口短于登记窗——早退/被截断）；窗 <95 s 而结论含「支持」（探针以
+  `COVERS_WORST_PHASE` 谓词自守）。有效性只看上述条件、不看退出码。
 - **必跑（fix-r4 接线登记）**：P16 守门/note 纯函数的入仓负控微测
   `node scripts/a8-5/p16_gate_microtest.mjs`（无参数、无落盘副作用、不依赖 TS 基线 dist，
   端口 39994；退出码 0 = 全过 T1–T16，任一断言失败 exit 1、总时限 watchdog 60s 超时
@@ -64,7 +79,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p9_background_descendants | #2251 条目 3 | 同组 TERM 免疫后代零残留（组 SIGKILL 覆盖）；setsid 跨组后代逃逸存活（ppid→1、自有 pgid；任务 pid 锚定的 ppid 链漏检） |
 | p10_background_hangs | #2251 条目 4 | start 永不 settle ⇒ dispose 卡 whenStartsDrained（3s 窗右删失）；快照写挂起 ⇒ TERM 已杀、dispose 卡 `await done`（settleEntry 停 store.write） |
 | p11_child/p11_driver | §4.5 S1–S3 接纳 + 连接两态 | closing 窗口内 E5 新任务被接纳（running）；断开 ⇒ dispose 杀（码 0 零残留）；保持 ⇒ close 永不 settle，SIGKILL 后 detached 任务成孤儿 |
-| p12_zero_byte_close | A4 零字节，70 s 窗（右删失下界；#2259，见结论 6） | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（窗未覆盖最坏相位 408 落点，见结论 6）、服务端不主动断该连接（fix-r4 限定：旧 70 s run 无字节观测面——探针只挂 close/error，只证窗内无 close/error 事件；字节面（408 是否发）由 p12 fix-r3 判别面判别，≥95 s 观测待复跑。fix-r3 登记：≥95 s 合规复跑 `P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`，判别面 = observation 行 `firstByteMs`/`bytes`/`hex` 与 `closeSettled`；端口默认 39891、可 `--port`/`P12_PORT` 改（非法值 exit 2、占用预检失败 exit 3）；`P12_WINDOW_MS` 取值域 (0, 300000] 安全整数毫秒（未设置/空串回退 70_000、非法值 exit 2 不落盘）；证据名带窗长+时间戳+pid，run 唯一不覆写） |
+| p12_zero_byte_close | A4 零字节，70 s 窗（右删失下界；#2259，见结论 6） | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（窗未覆盖最坏相位 408 落点，见结论 6）、服务端不主动断该连接（fix-r4 限定：旧 70 s run 无字节观测面——探针只挂 close/error，只证窗内无 close/error 事件；字节面（408 是否发）由 p12 判别面判别，≥95 s 观测待复跑。复跑用法/参数/退出码与判据判废条件见「做法」p12 段（锚点 `p12-window-spec`，fix-r5 起为装置规约正本）；判据字段名：`firstByteMs`/`bytes`/`hex`/`closeSettled` + 首条 `scenario` 行（`headersTimeout` 须 =60000，判废条件照 R1:121-134）） |
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
@@ -84,7 +99,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
    （无二次超时）；是否加界归 #1353 决策卡。
 5. **E5 在 S1–S3 照常接纳 + 孤儿路径**（p11）：接纳面只看运行时自身状态；提交连接保持打开 ⇒
    S4 不可达 ⇒ SIGKILL 旧进程后 detached 任务成孤儿。
-6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s——408 落点为相位窗 (60, 90] s 内的相位值（含毫秒级 tick 执行抖动），随网格相位变化（见 `A7.4-HTTPSTORE-KEEPALIVE-001-R5` / `A8.4-NATIVE-HTTP-002-R2`），70 s 窗未覆盖最坏相位落点、不得作对拍判 PASS 依据（#2259）。两说须分列判别：①SmsChannel 实例 close → `httpServerPreClose` 清 connections checker（`A8.3-CH-SMS-014-R2` 机制链，SmsChannel 实例级在档）；②GatewayServer 实例 close 路径是否同样清 checker **未实测**——p12 fix-r3 起零字节 socket 挂 data/end 监听（`firstByteMs`/`bytes`/`hex` 落产物），≥95 s 窗内「不 settle 且无服务端字节」支持②同①（408 不发）、「不 settle 且有字节」则排除①型机制（settle 等待另有原因）。**该 ≥95 s 观测待复跑**（当前未跑，不伪造观测）：`P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`，判据 = 产物 observation 行的 `firstByteMs`/`bytes`/`hex` 与 `closeSettled`。
+6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s——408 落点为相位窗 (60, 90] s 内的相位值（含毫秒级 tick 执行抖动），随网格相位变化（见 `A7.4-HTTPSTORE-KEEPALIVE-001-R5` / `A8.4-NATIVE-HTTP-002-R2`），70 s 窗未覆盖最坏相位落点、不得作对拍判 PASS 依据（#2259）。两说须分列判别：①SmsChannel 实例 close → `httpServerPreClose` 清 connections checker（`A8.3-CH-SMS-014-R2` 机制链，SmsChannel 实例级在档）；②GatewayServer 实例 close 路径是否同样清 checker **未实测**——p12 起零字节 socket 挂 data/end 监听（`firstByteMs`/`bytes`/`hex` 落产物），≥95 s 窗内「不 settle 且无服务端字节、无 end/close/error 服务端事件且 socket 本地仍开」（fix-r5 谓词）支持②同①（408 不发）、「不 settle 且有字节」则排除①型机制（settle 等待另有原因）、谓词不满足时只报事实不作机制归因。**该 ≥95 s 观测待复跑**（当前未跑，不伪造观测）：复跑命令、判据与判废条件见「做法」p12 段（锚点 `p12-window-spec`）；判据字段名 = `firstByteMs`/`bytes`/`hex`/`closeSettled` + 首条 `scenario` 行（`headersTimeout` 须 =60000，判废条件照 R1:121-134）。
 7. **空集合不挂起**（p13）：零任务/零 channel/零连接下全部停机面 0–4ms 落定——「空集合快速干净退出」
    断言有基线支撑（A13 同构）。
 8. **半停无重试**（p14）：部分组件停成后失败——已停不回滚、失败组件永不再被停（二次 stop no-op）、
