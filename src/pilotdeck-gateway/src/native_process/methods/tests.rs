@@ -1636,6 +1636,18 @@ fn steer_turn_fifo_unstrand_drop_leaves_no_path_and_no_writer() {
 /// parked past the drop cannot be collected (no writer will ever pair
 /// it); like the guard's registered residual cells it stays parked for
 /// the process lifetime, bounded by the Timeout attempt count.
+///
+/// fix-r12 (review MM boundary#1, P1; DS boundary#2; MM sibling#2): the
+/// inconclusive exit is itself shape-dependent — a mutant whose reader
+/// never pairs can reach it through pure lost races and would read as
+/// survived, so the green exit is machine-marked and fail-closed. The
+/// pure lost-race form (timeouts == 0) prints the
+/// `#1444 START-RACE-UNRESOLVED` anchor with both shape counts, and
+/// the negative fixture reruns such a run once before recording a
+/// verdict; any Timeout evidence on the record when the lost-race cap
+/// hits turns red instead — one or two Timeout observations followed
+/// by lost races is evidence in hand, and a green exit there is
+/// exactly the mutant survival the device exists to catch.
 #[test]
 fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer() {
     use std::io::Read as _;
@@ -1801,14 +1813,33 @@ fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writ
                 if disconnections < INCONCLUSIVE_AFTER_DISCONNECTED {
                     continue;
                 }
+                // fix-r12 (review MM boundary#1, P1): the lost-race cap may
+                // only exit green with a clean Timeout record — one or two
+                // Timeout observations filled up by lost races is defect
+                // evidence in hand (a real stranded reader parks again on
+                // the fresh FIFO the next attempt gives it), so the early
+                // exit fails closed instead of swallowing it.
+                if timeouts > 0 {
+                    negative_assert!(
+                        false,
+                        "#1444 the unstrand rescue cell hit the lost-race cap with \
+                         Timeout evidence on the record ({timeouts} Timeout-shaped, \
+                         {disconnections} Disconnected-shaped): a green inconclusive \
+                         exit would swallow it — fail closed"
+                    );
+                }
+                // fix-r12: the pure lost-race exit prints the anchor the
+                // negative fixture's judging layer looks for — a run that
+                // ends here is rerun once instead of being read as a
+                // survived mutant (the shape itself never judges one).
                 crate::native_process::channels::console_log_line(
                     &mut std::io::stderr(),
                     &format!(
-                        "#1444 unstrand rescue cell: {INCONCLUSIVE_AFTER_DISCONNECTED} \
-                         lost start races without one Timeout observation — this run \
-                         is INCONCLUSIVE for the rescue shape (the Disconnected \
-                         spelling never judges a defect; registered in \
-                         A7.2-STEER-ATTACH-001-R2 fix-r11)"
+                        "#1444 START-RACE-UNRESOLVED: the unstrand rescue cell exits \
+                         INCONCLUSIVE for the rescue shape — {timeouts} Timeout-shaped \
+                         / {disconnections} Disconnected-shaped observations (the pure \
+                         lost-race spelling never judges a defect; registered in \
+                         A7.2-STEER-ATTACH-001-R2 fix-r11, anchor fix-r12)"
                     ),
                 );
                 return;
@@ -1898,8 +1929,12 @@ async fn steer_turn_profile_gate_does_not_block_the_serial_host_executor() {
     // `FifoUnstrand` guard, so a deadline-triggered exit leaves a late
     // reader parked on the writerless FIFO only in the guard's residual
     // cells (see the guard's doc); parked there, the outer 30s bound
-    // below only prints the panic text — the runtime teardown still
-    // waits for the parked blocking task and the binary hangs instead
+    // below only guarantees the panic happens first — its text rides
+    // libtest's capture, which a test thread that never returns never
+    // flushes (the fix-r11 wording above; this claim narrowed by
+    // fix-r12, reviews DS sibling#1 + DS boundary#1 + MM sibling#1),
+    // so the hang can land traceless, and the runtime teardown still
+    // waits for the parked blocking task, hanging the binary instead
     // (the ledger's residual 7).
     let (parked, parked_rx) = tokio::sync::oneshot::channel::<()>();
     let (probe_done, probe_done_rx) = std::sync::mpsc::channel::<()>();
@@ -2001,8 +2036,12 @@ async fn steer_turn_profile_gate_does_not_block_the_serial_host_executor() {
         // assertion is the pair of the guard: it turns "the reader was
         // left parked" (which would hang the runtime teardown with no
         // verdict at all) into a red of its own; the guard's residual
-        // cells park instead, and the same outer bound gives even those
-        // only the printed panic text — the parked blocking task still
+        // cells park instead, and the same outer bound only guarantees
+        // those the panic happens first — its text rides libtest's
+        // capture, which a test thread that never returns never flushes
+        // (the fix-r11 wording above; this claim narrowed by fix-r12,
+        // reviews DS sibling#1 + DS boundary#1 + MM sibling#1), so the
+        // hang can land traceless, and the parked blocking task still
         // hangs the runtime teardown rather than turning red (the
         // ledger's residual 7).
         negative_assert!(

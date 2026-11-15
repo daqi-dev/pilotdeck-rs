@@ -3,13 +3,13 @@
 
 The #1444 tests live in methods/tests.rs; this runner mutates only files
 that are already on HEAD — production sources for the first six mutants,
-and methods/tests.rs itself for the two fix-r11 guard-duty mutants (the
+and methods/tests.rs itself for the three guard-duty mutants (the
 FifoUnstrand drop this fixture anchors lives in the test file). Until the
 #1444 tests themselves are committed, the shared source guard refuses to
 run (the whole src tree must equal HEAD), so the coordinator runs this
 after the commit lands.
 
-Eight mutants (taskbook hard requirement; ledger
+Nine mutants (taskbook hard requirement; ledger
 A7.2-STEER-ATTACH-001-R2 machine criteria):
   - attachments-rejection-restored: the pre-#1444 explicit rejection
     (STEER_ATTACHMENTS_UNSUPPORTED) is reinstated for non-empty attachments —
@@ -39,28 +39,166 @@ A7.2-STEER-ATTACH-001-R2 machine criteria):
     before the release write.
   - rescue-open-rerouted (fix-r11, review DS sibling #3): the guard's
     rescue open is rerouted to /dev/null — the parked reader never pairs,
-    the no-other-writer cell collects its Timeout observations on fresh
-    FIFOs and judges the guard red (the rescue open's write-side duty).
+    and the no-other-writer cell judges the guard red: the all-Timeout
+    interleaving reds at the third observation, and a mixed one (Timeout
+    evidence filled up by lost races) fails closed at the lost-race cap —
+    both anchors are kill alternatives (fix-r12, review MM boundary#1).
   - rescue-handle-leaked (fix-r11, review DS sibling #3): the rescue
     handle is forgotten instead of closed — the parked reader pairs but
     never reads EOF, and the cell's EOF assertion turns red (the rescue
-    handle's close duty).
+    handle's close duty); the same fail-closed alternative covers a mixed
+    interleaving that never reaches a pairing (fix-r12).
+  - timeout-retry-erased (fix-r12, reviews MM concurrency#4 + MM
+    simplify#3): the fix-r11 retry semantics — one Timeout observation
+    must retry on a fresh FIFO before any red verdict — are erased, and
+    the observation is forced to the Timeout shape (the match scrutinee
+    becomes a constant Err), so the first observation judges red with its
+    own anchor instead of a healthy run never exercising the arm.
+
+A run that ends in the cell's inconclusive exit prints the
+`#1444 START-RACE-UNRESOLVED` anchor (fix-r12, review MM boundary#1):
+that green exit is a pure lost-race shape, not a survived mutant, so a
+SURVIVED row whose negative log carries the anchor is rerun once — only
+a rerun that is again unresolvable passes, recorded as INVALID-SHAPE.
+`negative_suite.py` itself stays untouched (M6 shared); the judging
+layer here reuses its published `publish_summary`/`counts` helpers.
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
 """
+import json
 import os
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_suite import Case, run_cases
+import pending_reanchor
+from negative_suite import Case, publish_summary, run_cases
 
 STEER = root / 'src/pilotdeck-gateway/src/native_process/methods/steer.rs'
 ASSEMBLY = root / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 TESTS = root / 'src/pilotdeck-gateway/src/native_process/methods/tests.rs'
 
 TEST = 'native_process::methods::tests::'
+
+# fix-r12 (reviews MM concurrency#4 + MM simplify#3): the timeout-retry-erased
+# span — the observation match from its scrutinee through the Timeout arm's
+# retry block, transcribed raw (the Rust string continuations must survive
+# byte-for-byte). Only two lines change in the replacement: the scrutinee
+# becomes a constant Err (a healthy run parks the reader and never reaches
+# the Timeout arm, so the mutation could not kill deterministically without
+# forcing the shape), and the retry block becomes the immediate red.
+TIMEOUT_RETRY_OLD = r'''        match progress_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok("opened") => {
+                negative_assert!(
+                    !fifo.exists(),
+                    "#1444 the real unstrand drop unlinks the FIFO path"
+                );
+                negative_assert!(
+                    matches!(
+                        progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
+                        Ok("eof")
+                    ),
+                    "#1444 the parked reader reads EOF once the rescue handle closes"
+                );
+                reader.join().expect("#1444 unstrand rescue reader join");
+                if attempt > 1 {
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!(
+                            "#1444 unstrand rescue cell: parked on attempt {attempt} \
+                             after {timeouts} Timeout-shaped and {disconnections} \
+                             Disconnected-shaped lost races"
+                        ),
+                    );
+                }
+                return;
+            }
+            // Any other signal here (a duplicate "starting", an early
+            // "eof") breaks the channel's own ordering — a fixture
+            // anomaly, not a lost race: red now, no retry.
+            Ok(other) => {
+                negative_assert!(
+                    false,
+                    "#1444 the unstrand rescue reader reported {other:?} while its open was still pending"
+                );
+            }
+            // "opened" never arrived: the only shape that can witness a
+            // real defect (the guard leaves the reader parked) — judged
+            // red only after RED_AFTER_TIMEOUTS repetitions on fresh
+            // FIFOs; see the doc above for the shape split. The parked
+            // reader of a lost attempt cannot be collected (no writer
+            // will ever pair it); it stays parked for the process
+            // lifetime, like the guard's registered residual cells,
+            // bounded by the attempts.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                timeouts += 1;
+                if timeouts < RED_AFTER_TIMEOUTS {
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!(
+                            "#1444 unstrand rescue cell: attempt {attempt} never saw \
+                             the parked reader's open complete ({timeouts}/\
+                             {RED_AFTER_TIMEOUTS} Timeout observations); a real defect \
+                             repeats on every fresh FIFO — retrying on a new one"
+                        ),
+                    );
+                    continue;
+                }'''
+
+TIMEOUT_RETRY_NEW = r'''        match Err::<&'static str, std::sync::mpsc::RecvTimeoutError>(
+            std::sync::mpsc::RecvTimeoutError::Timeout,
+        ) {
+            Ok("opened") => {
+                negative_assert!(
+                    !fifo.exists(),
+                    "#1444 the real unstrand drop unlinks the FIFO path"
+                );
+                negative_assert!(
+                    matches!(
+                        progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
+                        Ok("eof")
+                    ),
+                    "#1444 the parked reader reads EOF once the rescue handle closes"
+                );
+                reader.join().expect("#1444 unstrand rescue reader join");
+                if attempt > 1 {
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!(
+                            "#1444 unstrand rescue cell: parked on attempt {attempt} \
+                             after {timeouts} Timeout-shaped and {disconnections} \
+                             Disconnected-shaped lost races"
+                        ),
+                    );
+                }
+                return;
+            }
+            // Any other signal here (a duplicate "starting", an early
+            // "eof") breaks the channel's own ordering — a fixture
+            // anomaly, not a lost race: red now, no retry.
+            Ok(other) => {
+                negative_assert!(
+                    false,
+                    "#1444 the unstrand rescue reader reported {other:?} while its open was still pending"
+                );
+            }
+            // "opened" never arrived: the only shape that can witness a
+            // real defect (the guard leaves the reader parked) — judged
+            // red only after RED_AFTER_TIMEOUTS repetitions on fresh
+            // FIFOs; see the doc above for the shape split. The parked
+            // reader of a lost attempt cannot be collected (no writer
+            // will ever pair it); it stays parked for the process
+            // lifetime, like the guard's registered residual cells,
+            // bounded by the attempts.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                timeouts += 1;
+                negative_assert!(
+                    false,
+                    "#1444 a Timeout observation must retry on a fresh FIFO before \
+                     any red verdict — the retry logic was erased (first observation \
+                     at attempt {attempt}, {timeouts} on the record)"
+                );'''
 
 mutations = [
     # The merge itself: reinstating the old explicit rejection breaks the
@@ -142,21 +280,44 @@ mutations = [
     # fix-r11 (review DS sibling #3): the retry criterion's guard-duty
     # binding — rerouting the rescue open to /dev/null leaves the parked
     # reader unpaired on every fresh FIFO, so the no-other-writer cell
-    # collects its Timeout observations and judges the guard red.
+    # collects its Timeout observations and judges the guard red. fix-r12
+    # (review MM boundary#1): the pure lost-race interleaving reaches the
+    # inconclusive exit instead, so the fail-closed anchor (Timeout
+    # evidence on the record when the lost-race cap hits) is a kill
+    # alternative alongside the third-timeout red.
     ('rescue-open-rerouted', TESTS,
      '            .open(self.0);',
      '            .open("/dev/null");',
      TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
-     "#1444 the parked reader never pairs with the guard's rescue open"),
+     ["#1444 the parked reader never pairs with the guard's rescue open",
+      "#1444 the unstrand rescue cell hit the lost-race cap with Timeout evidence on the record"]),
     # fix-r11 (review DS sibling #3): the rescue handle's close is the EOF
     # the parked reader drains — forgetting the handle instead of closing
     # it leaves the write side open, so the reader pairs but never sees
-    # EOF and the cell's EOF assertion turns red.
+    # EOF and the cell's EOF assertion turns red. fix-r12: the fail-closed
+    # alternative covers a mixed interleaving that never reaches a
+    # pairing (Timeout evidence filled up by lost races).
     ('rescue-handle-leaked', TESTS,
      '        drop(rescue);',
      '        std::mem::forget(rescue);',
      TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
-     '#1444 the parked reader reads EOF once the rescue handle closes'),
+     ['#1444 the parked reader reads EOF once the rescue handle closes',
+      "#1444 the unstrand rescue cell hit the lost-race cap with Timeout evidence on the record"]),
+    # fix-r12 (reviews MM concurrency#4 + MM simplify#3): the fix-r11
+    # retry semantics only had the one-off mutation-retry-erased probe —
+    # a future change that judges the first Timeout observation red (or
+    # drops the counter) had no switch-table coverage. The observation is
+    # forced to the Timeout shape (constant-Err scrutinee: a healthy run
+    # parks the reader and never exercises the arm, so the mutation could
+    # not kill deterministically otherwise), the retry block is replaced
+    # by the immediate red, and the first observation panics with its own
+    # anchor. The Ok arms stay verbatim so the mutation is exactly the
+    # two surgical changes.
+    ('timeout-retry-erased', TESTS,
+     TIMEOUT_RETRY_OLD,
+     TIMEOUT_RETRY_NEW,
+     TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
+     '#1444 a Timeout observation must retry on a fresh FIFO before any red verdict'),
 ]
 
 
@@ -194,7 +355,81 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only')
-    return run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)
+    rc = run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)
+    if rc == 0:
+        return 0
+    if rc != 1:
+        return rc  # 2: an unverified restore or cancellation — nothing here may soften it
+    return _resolve_unresolved_shapes(root, selected, out, env)
+
+
+# fix-r12 (review MM boundary#1, P1): the rescue cell's inconclusive exit
+# is a green exit, so a mutant whose reader reaches it through pure lost
+# races would read as SURVIVED — a shape-dependent kill, not a guard
+# hole. The cell prints the anchor below on that exit (tests.rs); a
+# SURVIVED row whose negative log carries it is rerun once, and only a
+# rerun that is again unresolvable passes (recorded as INVALID-SHAPE).
+# Everything else keeps the suite's own verdict — `negative_suite.py`
+# is M6-shared and stays untouched; only its published helpers are used.
+UNRESOLVED_ANCHOR = '#1444 START-RACE-UNRESOLVED'
+RERUN_STATES = ('KILLED', 'SURVIVED', 'INVALID', 'INVALID-SHAPE')
+
+
+def _load_controls(out):
+    try:
+        return json.loads((out / 'summary.json').read_text())['controls']
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _has_unresolved_anchor(out, mutation):
+    try:
+        return UNRESOLVED_ANCHOR in (out / f'{mutation}-negative.log').read_text()
+    except OSError:
+        return False
+
+
+def _resolve_unresolved_shapes(root, selected, out, env):
+    rows = _load_controls(out)
+    if rows is None:
+        return 1
+    by_mutation = {case.mutation: case for case in selected}
+    changed = False
+    for row in rows:
+        if (row['status'] != 'SURVIVED'
+                or row['mutation'] not in by_mutation
+                or not _has_unresolved_anchor(out, row['mutation'])):
+            continue
+        case = by_mutation[row['mutation']]
+        rerun = out / f'{case.mutation}-shape-rerun'
+        rerun.mkdir(parents=False, exist_ok=False)
+        rerun_rc = run_cases(root, [case], rerun, env, mutate, timeout=900,
+                             script=__file__)
+        if rerun_rc == 2:
+            return 2
+        rerun_row = next((item for item in (_load_controls(rerun) or [])
+                          if item['mutation'] == case.mutation), None)
+        if rerun_rc == 0:
+            row.update(status='KILLED',
+                       reason=row['reason'] + '; unresolvable shape rerun killed it')
+        elif rerun_row is not None and rerun_row['status'] == 'SURVIVED' \
+                and _has_unresolved_anchor(rerun, case.mutation):
+            row.update(status='INVALID-SHAPE',
+                       reason=row['reason'] + '; rerun also ended unresolvable')
+        elif rerun_row is not None:
+            row.update(status=rerun_row['status'],
+                       reason=row['reason'] + '; shape rerun: ' + rerun_row['reason'])
+        # A rerun whose evidence cannot be read leaves the row SURVIVED —
+        # fail closed on unreadable rerun output.
+        changed = True
+    if not changed:
+        return 1
+    publish_summary(out, rows, states=RERUN_STATES)
+    print('summary: ' + ', '.join(
+        f'{state}={count}'
+        for state, count in pending_reanchor.counts(rows, RERUN_STATES).items()),
+        flush=True)
+    return int(any(row['status'] not in ('KILLED', 'INVALID-SHAPE') for row in rows))
 
 
 if __name__ == '__main__':
