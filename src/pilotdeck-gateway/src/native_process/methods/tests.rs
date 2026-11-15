@@ -1306,14 +1306,21 @@ async fn steer_turn_attachments_reuse_the_profile_capability_gate() {
 /// the only thing that saved the pre-fix red verdict was this test's
 /// `Scratch` cleanup dropping the FIFO during the unwind, a sub-millisecond
 /// race ahead of the reader). Dropping the guard unstrands the FIFO in an
-/// order that leaves no parkable reader: the `O_RDWR` rescue open never
-/// blocks on a FIFO (it is its own writer; fix-r6 adds `O_NONBLOCK` so a
-/// platform where an O_RDWR open would block cannot turn the guard itself
-/// into the hang it prevents, and an open failure is recorded rather than
-/// silent), so a reader already parked in the read-side open pairs with it
-/// and reads EOF once it closes, and the unlink makes every reader that
-/// has not arrived yet fail fast with ENOENT instead of waiting for a
-/// writer that no longer exists.
+/// order that rescues the readers it can reach: the `O_RDWR` rescue open
+/// never blocks on a FIFO (it is its own writer; fix-r6 adds `O_NONBLOCK`
+/// so a platform where an O_RDWR open would block cannot turn the guard
+/// itself into the hang it prevents, and an open failure is recorded
+/// rather than silent), so a reader already parked in the read-side open
+/// pairs with it and reads EOF once it closes (fifo_probe_r6 (2)), and a
+/// reader that only arrives after the drop completes fails fast with
+/// ENOENT instead of waiting for a writer that no longer exists
+/// (fifo_probe_r7 (1)). What the guard does not close is the window
+/// between a reader's completed path lookup and its registration inside
+/// the FIFO open — a reader preempted there can still park on the
+/// unlinked inode, because the unlink cannot reach an in-flight lookup —
+/// and a failed rescue open does not guarantee unparking an already
+/// parked reader either; both are registered as residuals (fix-r7,
+/// review DS concurrency #1 + boundary #2) instead of claimed closed here.
 struct FifoUnstrand<'a>(&'a std::path::Path);
 impl Drop for FifoUnstrand<'_> {
     fn drop(&mut self) {
@@ -1333,12 +1340,36 @@ impl Drop for FifoUnstrand<'_> {
             .custom_flags(libc::O_NONBLOCK)
             .open(self.0);
         if let Err(error) = &rescue {
-            eprintln!(
-                "#1444 FifoUnstrand rescue open failed for {}: {error}",
-                self.0.display()
+            // fix-r7 (review DS concurrency #2): `eprintln!` panics when
+            // its stderr write fails, and this drop can already be running
+            // inside an unwind — a second panic there aborts the process
+            // and loses every verdict, inverting the guard's purpose. The
+            // crate's non-panicking console writer keeps the same record
+            // (path + error) without that failure mode.
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "#1444 FifoUnstrand rescue open failed for {}: {error}",
+                    self.0.display()
+                ),
             );
         }
-        let _ = std::fs::remove_file(self.0);
+        // fix-r7 (review DS concurrency #3): an unlink failure is recorded
+        // like the open branch instead of being discarded — a path that
+        // survives without a writer would park a late reader forever, with
+        // no trace. ENOENT means the unstrand already happened, so only
+        // other failures are recorded.
+        if let Err(error) = std::fs::remove_file(self.0)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            crate::native_process::channels::console_log_line(
+                &mut std::io::stderr(),
+                &format!(
+                    "#1444 FifoUnstrand unlink failed for {}: {error}",
+                    self.0.display()
+                ),
+            );
+        }
         drop(rescue);
     }
 }
