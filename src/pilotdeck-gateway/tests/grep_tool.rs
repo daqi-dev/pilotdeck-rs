@@ -9,6 +9,15 @@
 //! feeds it through that override. Without either the replay fails; only an
 //! explicit `PDRS_ALLOW_NO_RG=1` turns it into a loud skip (CI never sets it).
 //! See `tests/fixtures/grep-tool/README.md`.
+// fix-r4 review P2 (DS sibling#1, same class as the dead_stderr mounts):
+// `common/oracle_replay.rs` unconditionally uses `std::os::unix::fs`
+// (`PermissionsExt`, `symlink`), and its glob-imported helpers spread
+// through this whole target — so the target carries the root unix gate
+// the tree's other unix-only test targets use (`bash_tool.rs`,
+// `background_output.rs`, `snapshot_unit.rs`, `scratch_publication.rs`).
+// The `is_executable` not-unix fallback below predates this and never
+// had a non-unix build to serve (the replay needs unix `symlink`).
+#![cfg(unix)]
 #[path = "common/oracle_replay.rs"]
 mod oracle_replay;
 use oracle_replay::*;
