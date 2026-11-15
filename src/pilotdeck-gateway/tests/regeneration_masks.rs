@@ -230,22 +230,70 @@ fn stalled_probe_deadline_secs() -> u64 {
     millis / 1000
 }
 
+/// #2959 fix-r1 (item 3): the head-stall probe budget twin of
+/// [`stalled_probe_deadline_secs`]. `generate.mts` burns
+/// `HEAD_STALL_PROBE_BUDGET_MS` per head-stall step (`headStall` waits out
+/// the step's delay plus the budget — the budget starts at the step's own
+/// start, so the first-byte cell's 1.5 s delay sits inside it). Same
+/// fail-closed parse as #1970: a missing or reshaped declaration panics
+/// rather than silently falling back to a stale number.
+fn head_stall_probe_budget_secs() -> u64 {
+    const DECL: &str = "const HEAD_STALL_PROBE_BUDGET_MS";
+    let line = CHANNEL_SMS_GENERATOR_SOURCE
+        .lines()
+        .find(|line| {
+            line.trim_start()
+                .strip_prefix(DECL)
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+        })
+        .unwrap_or_else(|| panic!("#2959 generate.mts no longer declares `{DECL}`"));
+    let literal = line
+        .split_once('=')
+        .map(|(_, value)| value.trim())
+        .and_then(|value| value.strip_suffix(';'))
+        .unwrap_or_else(|| {
+            panic!(
+                "#2959 cannot parse `{}` as `{DECL} = <milliseconds>;`",
+                line.trim()
+            )
+        });
+    let millis: u64 = literal
+        .replace('_', "")
+        .parse()
+        .unwrap_or_else(|_| panic!("#2959 `{literal}` is not an integer millisecond budget"));
+    assert!(
+        millis > 0 && millis.is_multiple_of(1000),
+        "#2959 `{DECL} = {millis}` must be a positive whole number of seconds"
+    );
+    millis / 1000
+}
+
 /// #1901 pins the floor of the `channel-sms` regeneration budget against the
-/// fixture's own probe deadline. `generate.mts` waits up to
+/// fixture's own probe costs. `generate.mts` waits up to
 /// `STALLED_PROBE_DEADLINE_MS` for a stalled body read and replays every case
 /// twice, so one cell can cost `2 * STALLED_PROBE_DEADLINE_MS`; a budget under
 /// that would kill the generator mid-cell and surface as a spurious timeout
-/// instead of the oracle drift the run is for. The deadline is parsed from the
-/// fixture source (#1970), so raising it there moves this floor with it.
-/// Only the floor is pinned: raising the budget for a slower host stays fine.
+/// instead of the oracle drift the run is for. #2959 fix-r1 (item 3) extends
+/// the account: the generator also burns `HEAD_STALL_PROBE_BUDGET_MS` per
+/// head-stall step (both head-stall cells' probes carry the budget), so the
+/// conservative worst-case single-case mix — one stalled body read plus the
+/// two head-stall probe budgets — costs `stalled + 2 * head_stall` seconds,
+/// and the replay doubles it: `2 * (480 + 2 * 150) = 1560 s`, past the old
+/// 1500 s floor (the spurious "golden drift" FAIL face). Both constants are
+/// parsed from the fixture source (#1970's shape), so raising either there
+/// moves this floor with it. Only the floor is pinned: raising the budget for
+/// a slower host stays fine.
 #[test]
 fn channel_sms_regeneration_budget_covers_two_probe_deadlines() {
     let stalled_probe_deadline_secs = stalled_probe_deadline_secs();
+    let head_stall_probe_budget_secs = head_stall_probe_budget_secs();
     let sms = baseline::default_regen_timeout_secs("channel-sms");
     assert!(
-        sms >= 2 * stalled_probe_deadline_secs,
+        sms >= 2 * (stalled_probe_deadline_secs + 2 * head_stall_probe_budget_secs),
         "#1901 channel-sms budget {sms}s cannot cover two \
-         {stalled_probe_deadline_secs}s stalled-probe waits from generate.mts"
+         {stalled_probe_deadline_secs}s stalled-probe waits plus the \
+         {head_stall_probe_budget_secs}s head-stall probe budgets from \
+         generate.mts (#2959)"
     );
     let shared = baseline::default_regen_timeout_secs("run-registry");
     assert_eq!(

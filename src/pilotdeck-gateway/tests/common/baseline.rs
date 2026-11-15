@@ -466,11 +466,16 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 /// shared 600 s: its `body-read-timeout` cell waits out Node's 300 s
 /// `requestTimeout` (worst case just under 330 s on the 30 s
 /// connections-checker grid) and the generator replays every case twice, so
-/// that cell alone is ~660 s before the other 55 cases run (#1901).
+/// that cell alone is ~660 s before the other 55 cases run (#1901). #2959
+/// fix-r1 raised it 1500 s → 1800 s: the generator also burns
+/// `HEAD_STALL_PROBE_BUDGET_MS` (150 s) per head-stall step, and the
+/// conservative worst-case replayed mix — one stalled body read (480 s) plus
+/// the two head-stall probe budgets — is `2 * (480 + 2 * 150) = 1560 s`,
+/// past the old floor's face as a spurious "golden drift" FAIL.
 /// `tests/regeneration_masks.rs` pins this value and the headroom.
 pub(crate) fn default_regen_timeout_secs(fixture: &str) -> u64 {
     match fixture {
-        "channel-sms" => 1_500,
+        "channel-sms" => 1_800,
         _ => 600,
     }
 }
