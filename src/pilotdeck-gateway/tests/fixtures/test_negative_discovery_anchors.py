@@ -76,12 +76,12 @@ join, a display string that only looks like a path, a package initialiser whose
 own imports must be keyed, and new blind, import-only or unresolvable tables
 appearing outside both registers.
 
-Scope: the four tables named by #2133 are the ones that carried anchors at
-birth; #3043 fix-r3 promoted ``close-order-reader-failclosed`` out of
+Scope: the four tables named by #2133 are the ones that carried anchors first;
+``parity-env-isolation`` (#2513 fix-r1) joined them with its two import
+keys, and #3043 fix-r3 promoted ``close-order-reader-failclosed`` out of
 ``KNOWN_BLIND`` the same way (its fix-r2 roster guard had added a second
-import key, which is what the register's re-measure is for), so five carry
-them today;
-adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
+import key, which is what the register's re-measure is for), so six carry
+them today. Adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
 ``DISCOVERY_ANCHORS`` match its own keys. Everything else that already builds
 repository paths from bare file names, or imports a shared helper without
 spelling its key, is listed in ``KNOWN_BLIND`` with a measured reason (the register's own
@@ -128,6 +128,11 @@ TABLES = (
     'memory-gateway/negative_controls.py',
     'snapshot-projection/negative_controls.py',
     'metadata-process-cwd/negative_controls.py',
+    # #2513 fix-r1 (review P1-1): the parity-env-isolation table arrived with
+    # its own kill row and a #1066-registered entry point, so it joined TABLES
+    # instead of KNOWN_BLIND — a change to negative_process/negative_selection
+    # schedules it instead of passing silently.
+    'parity-env-isolation/negative_controls.py',
     # #3043 fix-r3：fix-r2 的名册守卫给该表带来第 2 条 import 键
     # （negative_selection），KNOWN_BLIND 的 '1 key' 随之过期（三家独立
     # 撞同一条）；按「register 是修表清单，不是豁免」彻底修——补
@@ -149,7 +154,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 282 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 78 in both; 1547 keys: 417 bare-filename joins and 1130 shared-helper import keys.
+# 282 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 203 blind only, 2 with unresolvable shapes only, 77 in both; 1547 keys: 417 bare-filename joins and 1130 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -323,7 +328,10 @@ KNOWN_BLIND = {
     'operation-ledger/negative.py': '6 keys',
     'output-schema/negative.py': '5 keys',
     'p01-preflight/negative_controls.py': '6 keys + 1 unresolvable',
-    'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
+    # #2513 fix-r2: the lock-family predicate now resolves (the fix-r1
+    # (ROOT / path).resolve().is_relative_to spelling was the one unresolvable
+    # shape; the shared parity_guarded call keyes the helpers normally).
+    'parity-lock-release/negative_controls.py': '6 keys',
     # #2398 parity-subprocess-hardening 与 #1891 sidecar-liveness：随 #2136
     # fix-r41 合并 main（c3100a2b7）到达的两张新表，无 DISCOVERY_ANCHORS，
     # 按 #2141 规则以实测键数登记为 blind；补锚点归 #2141 修表清单。
@@ -4923,7 +4931,10 @@ class DiscoveryAnchorTests(unittest.TestCase):
             # fix-bump (#1087 reanchor review, DS sibling#3): the "#2133 名字
             # 后的 4 张"是同段唯一没被任何 pattern 绑定的数字副本——某张 #2133
             # 表被换掉而总数不变时它会静默过期，按同段同法绑定。
-            'registered #2133 table count': (len(TABLES) - 1,),
+            # 真合并轮（#2513 重锚收货）：TABLES 现有 #2513 fix-r1 与 #3043
+            # fix-r3 两张后补表，#2133 出生表数 = 总数减 2；再补一张时同步
+            # 改这个减数并同段更新 README 的「点名的 N 张」。
+            'registered #2133 table count': (len(TABLES) - 2,),
             'head-timeout split': (
                 len(blind['channel-sms-head-timeout/negative_controls.py']),
                 sum(1 for rows in blind['channel-sms-head-timeout/'
@@ -4960,8 +4971,14 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
             'registered table keys': r'，共 (\d+) 条键）',
-            'registered table count': r'本闸门当前登记 (\d+) 张表（#2133 点名的',
-            'registered #2133 table count': r'(\d+) 张，加 #3043',
+            # fix-r1 (#2513): the fifth registered table is not #2133-named,
+            # so the paragraph now names both provenances and the count lives
+            # on the whole register (the rewording rewrote this parse, which
+            # is the binding the docstring above promises).
+            'registered table count': r'本闸门当前登记 \*\*(\d+) 张表\*\*',
+            # 真合并轮（#2513 重锚收货）：#3043 的表经同款加注并入后，#2133
+            # 名册数按「点名的 N 张——」钉，与上面总数各自绑定。
+            'registered #2133 table count': r'点名的 (\d+) 张——',
             'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
                                    r'(\d+) 条 import）'),
             'host-grep-unreachable tables': (

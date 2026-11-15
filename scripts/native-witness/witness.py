@@ -58,12 +58,35 @@ def identity(path, argv):
     return {'path': str(path), 'argv': argv, 'sha256': sha(path)}
 
 
+def _head_source(relative):
+    # #2513 fix-r10 (DS sibling#2): the committed object only, read like the
+    # collector's _head_source (cli-parity fix-r3 shape) — no worktree file,
+    # no config-steered git, absolute executable, fresh minimal environment
+    # (a steered GIT_DIR answers a decoy repository's HEAD; measured).
+    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),
+                             'show', f'HEAD:{relative}'],
+                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                 'GIT_CONFIG_GLOBAL': '/dev/null'},
+                            capture_output=True, timeout=30)
+    if result.returncode:
+        raise Incomplete('cannot read HEAD source ' + relative + ': '
+                          + result.stderr.decode(errors='replace').strip())
+    return result.stdout
+
+
 def frozen_auditor():
     path = ROOT / 'scripts/gateway-parity/session_domain.py'
     spec = importlib.util.spec_from_file_location('native_witness_frozen_session', path)
     module = importlib.util.module_from_spec(spec)
     # Source loader rather than a potentially stale cache; frozen guard remains active.
     source = path.read_bytes()
+    # #2513 fix-r10 (DS sibling#2): this audit-only load never joins the
+    # collector's APPARATUS_FILES manifest (the native_run entry never
+    # executes it), so a mutation-window load here had no HEAD comparison
+    # anywhere — the bytes about to be exec'd must equal the committed HEAD
+    # object, refused at the load point instead of audited afterwards.
+    if source != _head_source('scripts/gateway-parity/session_domain.py'):
+        raise Incomplete('#2513 frozen auditor source differs from HEAD: ' + str(path))
     exec(compile(source, str(path), 'exec'), module.__dict__)
     module._apparatus_source = source
     sys.modules[spec.name] = module

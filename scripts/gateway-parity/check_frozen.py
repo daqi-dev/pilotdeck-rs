@@ -166,10 +166,14 @@ def git(root, *args):
     never read a global gitconfig, and always time out (#2372 fix-r1 review).
     fix-r1: safe.directory=* keeps cross-uid checkouts usable — pinning
     GIT_CONFIG_GLOBAL drops the caller's safe.directory, and without it a
-    dubious-ownership repo would turn this freeze gate into a false FAIL."""
-    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
-    env['GIT_CONFIG_GLOBAL'] = os.devnull
-    return subprocess.check_output(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+    dubious-ownership repo would turn this freeze gate into a false FAIL.
+    #2513 fix-r10 (DS sibling#1): align with the hardened cli-parity/gateway
+    form — absolute /usr/bin/git (a PATH-steered decoy binary is not a read
+    of this checkout) and a fresh three-key env instead of an inherited one
+    stripped of GIT_* (system gitconfig is now refused too)."""
+    env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_CONFIG_GLOBAL': os.devnull}
+    return subprocess.check_output(['/usr/bin/git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
                                     '-c', 'core.hooksPath=/dev/null', '-c', 'safe.directory=*',
                                     '-C', str(root), *args],
                                    stderr=subprocess.PIPE, env=env, timeout=30)

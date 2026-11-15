@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -57,7 +58,19 @@ def report(main_dir, side_dir, old_dir):
     totals = re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored', tests)
     test_counts = dict(zip(('passed', 'failed', 'ignored'), [sum(int(t[i]) for t in totals) for i in range(3)]))
     ledger = json.loads((validation / 'ledger.log').read_text())
-    return {'baselineCommit': main['baselineCommit'], 'worktreeCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+    # #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3): the worktree commit read
+    # takes the r15 run_resource_scaling.py:174-180 hardened form (absolute
+    # git + safe.directory + the scrubbed three-key environment + a bounded
+    # timeout), so a steered environment cannot pin a decoy HEAD into the
+    # bound report.
+    return {'baselineCommit': main['baselineCommit'],
+            'worktreeCommit': subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*',
+                                              'rev-parse', 'HEAD'], cwd=ROOT,
+                                             env={'PATH': '/usr/bin:/bin',
+                                                  'GIT_CONFIG_NOSYSTEM': '1',
+                                                  'GIT_CONFIG_GLOBAL': os.devnull},
+                                             capture_output=True, text=True,
+                                             timeout=10, check=True).stdout.strip(),
             'node': main['node'], 'scope': 'TS-only controlled observations; NOT full E1; no approved differences',
             'preregistration': {'files': [reference(ROOT / 'scripts/a5-19/preregistration-b.mjs'), reference(ROOT / 'scripts/a5-19/preregistration-b-extra.mjs'), reference(ROOT / 'scripts/a5-19/rules-b.mjs')],
                                 'commitStatus': main['preregistrationCommit']},

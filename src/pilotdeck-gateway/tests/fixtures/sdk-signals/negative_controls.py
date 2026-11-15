@@ -9,18 +9,23 @@ positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
 coordinator; this script never creates a second checkout or bypasses HEAD.
 """
+from contextlib import contextmanager
 import difflib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import negative_process
 from negative_process import (
     SourceBaselineError,
+    TreeLock,
     _head_bytes,
     exclusive_write,
     mutating_sources,
@@ -52,6 +57,19 @@ abort_state = root / "src/pilotdeck-cli/tests/fixtures/sdk-signal-abort-state"
 # #1885: the only file under the fixture trees a control rewrites. Everything
 # else there is a golden read by resident tests and by the replay children.
 MUTABLE_FIXTURE_FILES = frozenset({wrapper_source})
+
+# #2513 fix-r8 (concurrency P1 + boundary#3/#4): the host-identity halves of
+# the pre-hold gate — the marker the host publishes inside the lock directory
+# while it holds the lease, the token this run receives through the
+# environment, and the window-exit lapse marker (same shape as the
+# sdk-signal-read-lease twin; changed together).
+HOST_TOKEN_ENV = "PDRS_PARITY_HOST_TOKEN"
+HOST_HOLD_MARKER = "host-hold.json"
+HOST_LAPSE_MARKER = "#2513 宿主预持在窗口内消失必须复验失败"
+# #2513 fix-r9 (P2-a): the marker read is bounded — a FIFO planted at the
+# marker path must refuse, not block forever (same shape as the
+# sdk-signal-read-lease twin; changed together).
+HOST_MARKER_READ_LIMIT = 65536
 
 
 def guarded_paths():
@@ -549,6 +567,262 @@ def raw_text(value):
     return value or ""
 
 
+def _host_hold_token(lock):
+    """Read the host's marker inside the lock directory, or None.
+
+    The host publishes it atomically (tmp + replace), so a reader either
+    sees the whole marker or nothing — never a torn token.
+
+    #2513 fix-r9 (P2-a): the marker path is adversarial input for this
+    gate — legal JSON that is not an object (``null`` / ``[]`` / ``123``)
+    used to crash it with an AttributeError, and a FIFO planted at the
+    path used to block ``read_text`` forever. The read is bounded and
+    non-object JSON is a one-line refusal (None), so both degrade to the
+    fail-closed fallback instead of taking the gate down (same shape as
+    the sdk-signal-read-lease twin; changed together).
+    """
+    try:
+        descriptor = os.open(lock / HOST_HOLD_MARKER,
+                             os.O_RDONLY | os.O_NONBLOCK)
+    except (OSError, ValueError):
+        return None
+    try:
+        chunk = os.read(descriptor, HOST_MARKER_READ_LIMIT)
+    except (BlockingIOError, OSError):
+        return None
+    finally:
+        os.close(descriptor)
+    try:
+        payload = json.loads(chunk.decode("utf-8", errors="replace"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    token = payload.get("token")
+    return token if isinstance(token, str) else None
+
+
+def _require_host_lease(common, lock=None):
+    """#2513 fix-r8 (concurrency P1): the host pre-hold, machine-checked.
+
+    fix-r6's shape refused the whole run (SystemExit 2) whenever the shared
+    lease had no live external owner. fix-r8 turns the gate into an identity
+    check with a fail-closed fallback — the sdk-signal-read-lease twin's
+    same shape, changed together: the pre-hold is *verified* when
+    owner.json names a live pid that is not this process AND the host's own
+    marker inside the lock directory (``host-hold.json``, published
+    atomically while the host holds the lease, so its lifecycle is the
+    lease's) carries the token this run received through the environment
+    (``PDRS_PARITY_HOST_TOKEN``). When the hold cannot be verified — no
+    owner, dead pid, this process, no exported token, no marker, token
+    mismatch — the caller falls back to the shared lease instead of
+    opening the redirected window (fail-closed queueing), and this
+    function returns the one-line reason so the fallback can report it.
+
+    The owner, marker and liveness reads all come from the verified
+    `common` module, so the gate cannot drift from the lease protocol it
+    polices.
+    """
+    lock = common.LOCK if lock is None else lock
+    previous = common.owner(lock)
+    if previous is None:
+        return "no owner: the shared lease is not held"
+    pid = previous["pid"]
+    if not common.alive(pid):
+        return f"owner pid {pid} is not alive"
+    if pid == os.getpid():
+        return "owner pid is this fixture itself"
+    expected = os.environ.get(HOST_TOKEN_ENV)
+    if not expected:
+        return f"the host did not export {HOST_TOKEN_ENV}"
+    marker = _host_hold_token(lock)
+    if marker is None:
+        return f"the shared hold publishes no {HOST_HOLD_MARKER}"
+    if marker != expected:
+        return f"{HOST_HOLD_MARKER} token mismatch"
+    return None
+
+
+def _self_check():
+    """#2513 fix-r8: the host-identity gate's own rows, no window, no lease.
+
+    The fix-r6 refusal rows (a missing owner.json, a dead owner pid, our own
+    pid) plus the identity rows fix-r8 added: a live external pid without
+    the exported token, with the token but without the marker, with a
+    mismatched marker token, and — the one verified row — marker and token
+    matching. Every refusal must return a one-line reason; the verified
+    row must return None. The scenarios use throwaway lock directories,
+    never the real /tmp/pdrs-parity.lock.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "negative_selfcheck_parity_sdk_signals",
+        root / "scripts/gateway-parity/common.py")
+    common = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(common)
+
+    def publish_owner(lock, pid):
+        lock.mkdir(parents=True, exist_ok=True)
+        (lock / "owner.json").write_text(json.dumps({
+            "pid": pid, "timestamp": 1000000.0,
+            "token": "self-check", "cleanupPending": True}))
+
+    def publish_marker(lock, token):
+        (lock / HOST_HOLD_MARKER).write_text(
+            json.dumps({"token": token}), encoding="utf-8")
+
+    def refused(lock, label):
+        reason = _require_host_lease(common, lock)
+        if not (isinstance(reason, str) and reason):
+            raise RuntimeError(
+                f"#2513 self-check {label}: "
+                + ("proceeded where a reason was required" if reason is None
+                   else f"not a one-line reason: {reason!r}"))
+
+    def verified(lock, label):
+        reason = _require_host_lease(common, lock)
+        if reason is not None:
+            raise RuntimeError(
+                f"#2513 self-check {label}: refused a verified hold ({reason})")
+
+    previous_token = os.environ.get(HOST_TOKEN_ENV)
+    os.environ[HOST_TOKEN_ENV] = "self-check-token"
+    try:
+        with tempfile.TemporaryDirectory() as held:
+            base = Path(held)
+            # (a) the lock directory exists but no owner was ever published.
+            empty = base / "a-pdrs-parity.lock"
+            empty.mkdir()
+            refused(empty, "(a) missing owner.json")
+            # (b) the owner is a dead process (a reaped child's pid).
+            dead = subprocess.Popen(["/bin/sleep", "0"])
+            dead.wait()
+            dead_lock = base / "b-pdrs-parity.lock"
+            publish_owner(dead_lock, dead.pid)
+            refused(dead_lock, "(b) dead owner pid")
+            # (c) the "owner" is this fixture process itself.
+            own_lock = base / "c-pdrs-parity.lock"
+            publish_owner(own_lock, os.getpid())
+            refused(own_lock, "(c) own pid")
+            # (d) a live external pid: still refused until the identity
+            # halves match — no exported token is row (d1), a missing
+            # marker is (d2), a mismatched marker token is (d3); only the
+            # matching marker is verified (d4).
+            live = subprocess.Popen(["/bin/sleep", "30"])
+            try:
+                live_lock = base / "d-pdrs-parity.lock"
+                publish_owner(live_lock, live.pid)
+                os.environ.pop(HOST_TOKEN_ENV, None)
+                refused(live_lock, "(d1) live external pid without the token")
+                os.environ[HOST_TOKEN_ENV] = "self-check-token"
+                refused(live_lock, "(d2) live external pid without the marker")
+                publish_marker(live_lock, "some-other-token")
+                refused(live_lock, "(d3) marker token mismatch")
+                publish_marker(live_lock, "self-check-token")
+                verified(live_lock, "(d4) marker and token match")
+            finally:
+                live.terminate()
+                live.wait()
+    finally:
+        if previous_token is None:
+            os.environ.pop(HOST_TOKEN_ENV, None)
+        else:
+            os.environ[HOST_TOKEN_ENV] = previous_token
+    print("#2513 host pre-hold gate self-check: PASS (7 rows)")
+    return 0
+
+
+def _redirect_window_parity_lock(out):
+    """#2513 fix-r4 (review 条2): redirect this family's window lease.
+
+    This family's contract is a host-pre-held /tmp/pdrs-parity.lock: the host
+    serializes every 28999 lane user and runs this fixture under that hold (see
+    the sdk-signals README). Since fix-r3 the mutation window itself would take
+    that same shared lease — against the host holding it for us — and fail after
+    60 s with zero evidence (实测 pre-fix: `TimeoutError: parity lock wait
+    exceeded 60s`, every row INVALID). The Python twin of the Rust families'
+    PDRS_SDK_TEST_PARITY_LOCK redirect: the window's `common.parity_lock` call
+    point is redirected to `out/parity-redirect.lock`, an unshared lease in
+    this run's evidence directory, same owner/guard/stale-takeover protocol.
+    Mutual exclusion against live rounds is not weakened — the host pre-hold
+    provides it for the whole run, which is exactly the README contract.
+
+    #2513 fix-r6: that contract is now machine-checked, not assumed —
+    `_require_host_lease` runs before the redirected lease is taken.
+    #2513 fix-r8 (concurrency P1 + boundary#3/#4): the gate is an identity
+    check with a fail-closed fallback instead of a refusal — a verified hold
+    (owner + marker + token) opens the redirected window as before; an
+    unverified one prints the reason and falls back to the shared lease
+    (queueing under it, never an unguarded window). When the window closes,
+    the hold is re-verified: a verified entry whose hold lapsed mid-window
+    has lost the serialization the redirect relies on, and the window exit
+    fails with the dedicated marker instead of reporting the window as if
+    it had stayed guarded (MM boundary#4).
+
+    Returns the restore callable; the caller must invoke it in a `finally`.
+    The pristine ruler module is still executed from verified snapshot bytes
+    (never mutated disk code) and `common.py` still joins the guarded set, so
+    the snapshot entry requirement is the original's, not a copy drifting
+    behind negative_process.
+    """
+    original = negative_process._parity_mutation_lock
+
+    @contextmanager
+    def redirected(root, snapshot, timeout):
+        path = root / "scripts/gateway-parity/common.py"
+        if path not in snapshot:
+            raise RuntimeError(
+                "#166 parity lock requires common.py in guarded sources")
+        # Stage the verified snapshot bytes, then load them through the same
+        # importlib shape the other checked fixtures use — a bare exec would
+        # re-open the anchor_selfcheck dynamic-write hole this family closed.
+        staged = out / "pristine-common.py"
+        staged.write_bytes(snapshot[path])
+        spec = importlib.util.spec_from_file_location(
+            "negative_pristine_parity_sdk_signals", staged)
+        common = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(common)
+        common.guard = lambda lock: TreeLock(
+            lock.with_name(lock.name + ".guard"), timeout=timeout)
+        # #2513 fix-r8: the redirected window opens only under the host's
+        # *verified* pre-held shared lease — checked here, before anything
+        # is mutated. An unverified hold falls back to the shared lease:
+        # the window then queues behind whatever holds it.
+        reason = _require_host_lease(common)
+        if reason is None:
+            lease = out / "parity-redirect.lock"
+        else:
+            print(f"#2513 host pre-hold unverified ({reason}); "
+                  "the window falls back to the shared parity lease",
+                  file=sys.stderr)
+            lease = common.LOCK
+        restored = [False]
+        with common.parity_lock(timeout=timeout, lock=lease):
+            try:
+                yield restored
+            finally:
+                if not restored[0]:
+                    # Same fail-closed marker as the unredirected original: an
+                    # unverified restoration must not leave a reusable lease.
+                    common.LIVE_GROUPS.add("source-restore-unverified")
+                # The window must still be under a verified host hold when
+                # it closes; a hold that lapsed mid-window means the
+                # serialization the redirect relies on was gone while the
+                # window was open. Only when nothing else is already
+                # unwinding — the in-flight failure must not be masked.
+                if lease != common.LOCK:
+                    lapse = _require_host_lease(common)
+                    if lapse is not None and sys.exc_info()[0] is None:
+                        raise RuntimeError(
+                            HOST_LAPSE_MARKER + "：宿主预持在窗口内消失（" + lapse + "）")
+
+    negative_process._parity_mutation_lock = redirected
+
+    def restore():
+        negative_process._parity_mutation_lock = original
+
+    return restore
+
+
 def main():
     # #1885 r8: the pre-lock catalog check proves the close-order ledger too
     # (`registered_unordered_close_ids`), so a drift here is the same guard
@@ -572,9 +846,16 @@ def main():
     if args in (["--check"], ["--check-anchors"]):
         print(f"#1145 {EXPECTED_TOTAL} product anchors: PASS")
         return 0
+    # #2513 fix-r6: --self-check is its own documented branch — the host
+    # pre-hold gate's four rows (missing owner.json / dead pid / own pid /
+    # live external pid). It opens no mutation window and needs no lease:
+    # the scenarios run against throwaway lock directories.
+    if args == ["--self-check"]:
+        return _self_check()
     if not args:
         raise SystemExit(
-            "usage: negative_controls.py --check-anchors (alias: --check) | NEW_OUTPUT_DIR [mutation ...]"
+            "usage: negative_controls.py --check-anchors (alias: --check) | --self-check | "
+            "NEW_OUTPUT_DIR [mutation ...]"
         )
 
     selected_names = args[1:]
@@ -705,6 +986,10 @@ def main():
         )
         print(f"{name}: {status}: {reason}", flush=True)
 
+    # #2513 fix-r4 (review 条2): the window's own lease must not be the one
+    # the host is pre-holding for this run — see
+    # `_redirect_window_parity_lock` above for the contract argument.
+    restore_window_parity_lock = _redirect_window_parity_lock(out)
     try:
         with mutating_sources(root, guarded) as originals:
             phase = "body"
@@ -825,6 +1110,8 @@ def main():
         invalidate_completed(results, reason)
         for name, _path, _old, _new, test, assertion in selected[len(results):]:
             record(name, test, assertion, "INVALID", reason, False)
+    finally:
+        restore_window_parity_lock()
 
     if len(results) != len(selected):
         raise RuntimeError("#1145 fixed selected result denominator")

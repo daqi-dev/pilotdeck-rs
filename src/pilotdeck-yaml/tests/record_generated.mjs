@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 const baseline = resolve(process.argv[2]);
 const output = resolve(process.argv[3]);
 if (Number(process.versions.node.split('.')[0]) !== 22) throw Error('Use Node v22');
@@ -178,7 +179,11 @@ function cstRead(cst) {
   });
 }
 mkdirSync(output,{recursive:true});
-const manifest = {baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),seed,node:process.version,yaml:'2.9.0',generated:cases.length,legacy:legacy.length,round4:round4.length,shards:[]};
+// #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3): the baseline commit read takes
+// the r15 run_resource_scaling.py:174-180 hardened form (absolute git +
+// safe.directory + the scrubbed three-key environment + a bounded timeout),
+// so a steered environment cannot pin a decoy HEAD into the recorded manifest.
+const manifest = {baselineCommit:execFileSync('/usr/bin/git',['-c','safe.directory=*','-C',baseline,'rev-parse','HEAD'],{encoding:'utf8',env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devnull},timeout:10000}).trim(),seed,node:process.version,yaml:'2.9.0',generated:cases.length,legacy:legacy.length,round4:round4.length,shards:[]};
 for (const [prefix, inputs] of [['legacy-stages',legacy],['generated',cases],['round4',round4]]) {
   let shard=[], bytes=0, part=0;
   function flush() {

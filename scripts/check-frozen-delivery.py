@@ -164,14 +164,17 @@ GIT_ERROR = 125  # git()/git_bytes() return this when the call itself failed
 # checkouts usable: pinning GIT_CONFIG_GLOBAL drops the caller's
 # safe.directory, and without it a dubious-ownership repo would turn this
 # delivery precheck into a wrong READY/FAIL.
-GIT_ISOLATION = ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+# #2513 fix-r12: aligned to the r10/r11 hardened checker form — an absolute
+# /usr/bin/git (a PATH-steered decoy binary is not a read of this checkout)
+# and a fresh three-key env instead of an inherited one stripped of GIT_*
+# (system gitconfig is now refused too).
+GIT_ISOLATION = ['/usr/bin/git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
                  '-c', 'core.hooksPath=/dev/null', '-c', 'safe.directory=*']
 
 
 def isolated_git_env():
-    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
-    env['GIT_CONFIG_GLOBAL'] = os.devnull
-    return env
+    return {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+            'GIT_CONFIG_GLOBAL': os.devnull}
 
 
 def git(root, *args):
@@ -1142,12 +1145,16 @@ _UI_BOOTSTRAP = (
     'import hashlib as _boot_hashlib',
     'import subprocess as _boot_subprocess',
     '_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))',
+    "_boot_git_env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',",
+    "                 'GIT_CONFIG_GLOBAL': _boot_os.devnull}",
+    'def _boot_git(*args):',
+    '    return _boot_subprocess.check_output(',
+    "        ['/usr/bin/git', '-c', 'safe.directory=*', '-C', _boot_root, *args],",
+    '        env=_boot_git_env, stderr=_boot_subprocess.PIPE, timeout=30)',
     "_boot_write = __name__ == '__main__' and '--write' in _boot_sys.argv[1:]",
     'if _boot_write:',
-    '    _boot_head = _boot_subprocess.check_output(',
-    "        ['git', '-C', _boot_root, 'rev-parse', '--verify', 'HEAD']).decode().strip()",
-    '    _boot_checker = _boot_subprocess.check_output(',
-    "        ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/check_frozen.py'])",
+    "    _boot_head = _boot_git('rev-parse', '--verify', 'HEAD').decode().strip()",
+    "    _boot_checker = _boot_git('show', f'{_boot_head}:scripts/ui-server-parity/check_frozen.py')",
     '    if _boot_sys._getframe().f_code != compile(',
     "            _boot_checker, __file__, 'exec', dont_inherit=True, optimize=_boot_sys.flags.optimize):",
     "        raise SystemExit('#1089 --write executing checker differs from HEAD')",
@@ -1156,8 +1163,7 @@ _UI_BOOTSTRAP = (
     '    _boot_bytes = _boot_file.read()',
     'try:',
     '    if _boot_write:',
-    '        _boot_trusted = _boot_subprocess.check_output(',
-    "            ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/apparatus.py'])",
+    "        _boot_trusted = _boot_git('show', f'{_boot_head}:scripts/ui-server-parity/apparatus.py')",
     '        if _boot_bytes != _boot_trusted:',
     "            raise ValueError('--write apparatus source differs from HEAD')",
     '    elif _boot_os.path.isfile(_boot_manifest):',
@@ -1167,8 +1173,7 @@ _UI_BOOTSTRAP = (
     '        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:',
     "            raise ValueError('apparatus bootstrap hash mismatch')",
     '    else:',
-    '        _boot_trusted = _boot_subprocess.check_output(',
-    "            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])",
+    "        _boot_trusted = _boot_git('show', 'HEAD:scripts/ui-server-parity/apparatus.py')",
     '        if _boot_bytes != _boot_trusted:',
     "            raise ValueError('apparatus bootstrap differs from HEAD without manifest')",
     'except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:',

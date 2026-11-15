@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 
 const baseline = resolve(process.argv[2]);
 const output = resolve(process.argv[3]);
@@ -125,6 +126,12 @@ const results = cases.map(test => {
     return {...test, phase: 'parseDocument.throw', error: diagnostic(e)};
   }
 });
-const baselineCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+// #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3): the baseline commit read takes
+// the r15 run_resource_scaling.py:174-180 hardened form (absolute git +
+// safe.directory + the scrubbed three-key environment + a bounded timeout),
+// so a steered environment cannot pin a decoy HEAD into the recorded manifest.
+const baselineCommit = execFileSync('/usr/bin/git',
+  ['-c', 'safe.directory=*', '-C', baseline, 'rev-parse', 'HEAD'],
+  {encoding: 'utf8', env: {PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devnull}, timeout: 10000}).trim();
 await writeFile(output, JSON.stringify({baselineCommit, node: process.version, icu: process.versions.icu, yaml: pkg.version, cases: results}, null, 2) + '\n');
 console.log(JSON.stringify({node: process.version, yaml: pkg.version, cases: results.length, output}));

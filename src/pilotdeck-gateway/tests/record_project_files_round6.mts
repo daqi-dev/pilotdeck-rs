@@ -7,6 +7,7 @@ import {resolve, join, dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import os from 'node:os';
 const baseline=resolve(process.argv[2]), output=resolve(process.argv[3]), scratch=resolve(process.argv[4]);
 if(process.version!=='v22.22.0'||process.getuid?.()===0)throw Error('non-root Node 22.22.0 required');
 for(const k of ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR'])if(!process.env[k]?.startsWith(scratch+'/'))throw Error(`Unisolated ${k}`);
@@ -94,5 +95,6 @@ for(const [method,boundary,operation,relative] of boundaries)for(const code of [
  const row={method,boundary,operation:operation==='readdir'?'scandir':operation==='readFile'?'open':operation,target,cwd:dir,home,root,files,observed,request,response:response!};
  cases.push(JSON.parse(JSON.stringify(row).split(dir).join('/fixture')));
 }
-fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),node:process.version,icu:process.versions.icu,platform:process.platform,uid:process.getuid?.(),sourceSha256:{read:createHash('sha256').update(body).digest('hex'),list:createHash('sha256').update(fs.readFileSync(source('gateway/dialog/projectFiles.ts'))).digest('hex')},isolation:Object.fromEntries(['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR'].map(k=>[k,process.env[k]])),cases},null,2)+'\n');
+// #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3, sweep): the baseline commit read takes the r15 run_resource_scaling.py:174-180 hardened form (absolute git + safe.directory + the scrubbed three-key environment + a bounded timeout), so a steered environment cannot pin a decoy HEAD into the recorded manifest.
+fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('/usr/bin/git',['-c','safe.directory=*','-C',baseline,'rev-parse','HEAD'],{encoding:'utf8',env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devnull},timeout:10000}).trim(),node:process.version,icu:process.versions.icu,platform:process.platform,uid:process.getuid?.(),sourceSha256:{read:createHash('sha256').update(body).digest('hex'),list:createHash('sha256').update(fs.readFileSync(source('gateway/dialog/projectFiles.ts'))).digest('hex')},isolation:Object.fromEntries(['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR'].map(k=>[k,process.env[k]])),cases},null,2)+'\n');
 console.log(JSON.stringify({cases:cases.length,output}));

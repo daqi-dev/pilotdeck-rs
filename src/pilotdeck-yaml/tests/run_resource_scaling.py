@@ -165,7 +165,19 @@ def main():
     result = {'method': __doc__, 'node': subprocess.check_output([args.node, '--version'], text=True).strip(),
               'baseline': str(Path(args.baseline).resolve()), 'sizes': sizes,
               'repeats': args.repeats, 'host': platform.platform(),
-              'baseline_commit': subprocess.check_output(['git', '-C', args.baseline, 'rev-parse', 'HEAD'], text=True).strip(),
+              # #2513 fix-r15 (r14 review task 8): answer from the baseline
+              # directory only. The bare ``git -C`` read inherited the
+              # environment, so a steered GIT_DIR would pin the decoy
+              # repository's HEAD into the evidence row; absolute executable,
+              # scrubbed three-key environment, output and timeout bounded —
+              # the same hardened form as the parity scripts' git reads.
+              'baseline_commit': subprocess.run(
+                  ['/usr/bin/git', '-c', 'safe.directory=*', '-C', args.baseline,
+                   'rev-parse', 'HEAD'],
+                  env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                       'GIT_CONFIG_GLOBAL': os.devnull},
+                  capture_output=True, text=True, timeout=10,
+                  check=True).stdout.strip(),
               'rust_binary': binary,
               'rust_sha256': hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
               'rows': [], 'failures': []}

@@ -3,7 +3,8 @@
 
 Guards under test (issue #2398, from the #2372 fix-r1 dual-lineage review and
 the #2758 r1 dual-lineage review):
-  - scripts/parity/check_frozen.py git(), scripts/parity/g03_compare.py
+  - scripts/parity/check_frozen.py git(), scripts/gateway-parity/check_frozen.py
+    git() (fix-r12, P2#4), scripts/parity/g03_compare.py
     baseline_path() and scripts/check-frozen-delivery.py git()/git_bytes()
     must never inherit GIT_* from the caller, never read a global gitconfig,
     and always time out.
@@ -44,21 +45,46 @@ from negative_selection import claim_dir, refuse, registered
 
 root = Path(__file__).resolve().parents[5]
 mutations = [
+    # #2513 fix-r11: scripts/parity/check_frozen.py git() was aligned to the
+    # ui-server r10 hardened shape — absolute /usr/bin/git plus a fresh
+    # three-key env. The anchors below follow that literal; each mutant keeps
+    # its kill vector (inherit the caller's hostile GIT_* / honor the caller's
+    # GIT_CONFIG_GLOBAL instead of pinning os.devnull).
     ('parity-git-env-strip', root / 'scripts/parity/check_frozen.py',
-     "env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}",
+     "env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "           'GIT_CONFIG_GLOBAL': os.devnull}",
      'env = dict(os.environ)',
      'control_check_frozen_hostile_env'),
     ('parity-git-config-global', root / 'scripts/parity/check_frozen.py',
-     "env['GIT_CONFIG_GLOBAL'] = os.devnull",
-     "env['GIT_CONFIG_GLOBAL'] = os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull",
+     "'GIT_CONFIG_GLOBAL': os.devnull}",
+     "'GIT_CONFIG_GLOBAL': os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull}",
      'control_check_frozen_hostile_config'),
+    # #2513 fix-r12 (DS r11 boundary#1 / sibling#4): the gateway twin git()
+    # had no kill vector of its own. A CLI run of a mutated checker is
+    # #166-masked at the preflight before main() can run, so these controls
+    # load the live module in-process (same shape as the g03 publish
+    # drivers) and compare its git() output clean vs hostile.
+    ('gateway-git-env-strip', root / 'scripts/gateway-parity/check_frozen.py',
+     "env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "           'GIT_CONFIG_GLOBAL': os.devnull}",
+     'env = dict(os.environ)',
+     'control_gateway_check_frozen_hostile_env'),
+    ('gateway-git-config-global', root / 'scripts/gateway-parity/check_frozen.py',
+     "'GIT_CONFIG_GLOBAL': os.devnull}",
+     "'GIT_CONFIG_GLOBAL': os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull}",
+     'control_gateway_check_frozen_hostile_config'),
+    # #2513 fix-r12: g03_compare.py baseline discovery was aligned to the
+    # hardened three-key env form; the two anchors follow that literal and
+    # keep their kill vectors (inherit the caller's hostile GIT_* / honor the
+    # caller's GIT_CONFIG_GLOBAL instead of pinning os.devnull).
     ('g03-git-env-strip', root / 'scripts/parity/g03_compare.py',
-     'env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}',
+     'env = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1",\n'
+     '           "GIT_CONFIG_GLOBAL": os.devnull}',
      'env = dict(os.environ)',
      'control_g03_hostile_env'),
     ('g03-git-config-global', root / 'scripts/parity/g03_compare.py',
-     'env["GIT_CONFIG_GLOBAL"] = os.devnull',
-     'env["GIT_CONFIG_GLOBAL"] = os.environ.get("GIT_CONFIG_GLOBAL", os.devnull)',
+     '"GIT_CONFIG_GLOBAL": os.devnull}',
+     '"GIT_CONFIG_GLOBAL": os.environ.get("GIT_CONFIG_GLOBAL") or os.devnull}',
      'control_g03_hostile_config'),
     ('g03-git-timeout', root / 'scripts/parity/g03_compare.py',
      'env=env, timeout=GIT_TIMEOUT_SECONDS)',
@@ -122,19 +148,26 @@ mutations = [
      '        for _, temporary in temporaries:\n'
      '            temporary.unlink(missing_ok=True)',
      'control_g03_cleanup_suppress'),
+    # #2513 fix-r12: check-frozen-delivery.py git helpers were aligned to the
+    # hardened three-key env form; the two anchors follow that literal and
+    # keep their kill vectors (inherit the caller's hostile GIT_* / honor the
+    # caller's GIT_CONFIG_GLOBAL instead of pinning os.devnull).
     ('cfd-git-env-strip', root / 'scripts/check-frozen-delivery.py',
-     "env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}",
-     'env = dict(os.environ)',
+     "return {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "            'GIT_CONFIG_GLOBAL': os.devnull}",
+     'return dict(os.environ)',
      'control_cfd_hostile_env'),
     ('cfd-git-config-global', root / 'scripts/check-frozen-delivery.py',
-     "env['GIT_CONFIG_GLOBAL'] = os.devnull",
-     "env['GIT_CONFIG_GLOBAL'] = os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull",
+     "'GIT_CONFIG_GLOBAL': os.devnull}",
+     "'GIT_CONFIG_GLOBAL': os.environ.get('GIT_CONFIG_GLOBAL') or os.devnull}",
      'control_cfd_hostile_config'),
 ]
 
 positives = [
     ('check-frozen-hostile-env', 'control_check_frozen_hostile_env'),
     ('check-frozen-hostile-config', 'control_check_frozen_hostile_config'),
+    ('gateway-git-hostile-env', 'control_gateway_check_frozen_hostile_env'),
+    ('gateway-git-hostile-config', 'control_gateway_check_frozen_hostile_config'),
     ('g03-hostile-env', 'control_g03_hostile_env'),
     ('g03-hostile-config', 'control_g03_hostile_config'),
     ('g03-git-timeout-bound', 'control_g03_git_timeout'),
@@ -156,6 +189,8 @@ positives = [
 EXPECTED_MUTATIONS = [
     'parity-git-env-strip',
     'parity-git-config-global',
+    'gateway-git-env-strip',
+    'gateway-git-config-global',
     'g03-git-env-strip',
     'g03-git-config-global',
     'g03-git-timeout',
@@ -170,6 +205,8 @@ EXPECTED_MUTATIONS = [
 EXPECTED_POSITIVES = [
     'check-frozen-hostile-env',
     'check-frozen-hostile-config',
+    'gateway-git-hostile-env',
+    'gateway-git-hostile-config',
     'g03-hostile-env',
     'g03-hostile-config',
     'g03-git-timeout-bound',
@@ -245,6 +282,60 @@ def control_check_frozen_hostile_config(scratch):
     compare_check_frozen(scratch, {'GIT_CONFIG_GLOBAL': str(bad)})
 
 
+# The gateway checker refuses any mutated copy of itself at the #166 preflight
+# before main() can run, so a CLI clean-vs-hostile comparison can never
+# observe the entry file's own git() isolation (measured: mutated run BLOCKs
+# identically in both environments). Like the g03 publish drivers below, this
+# driver loads the live checker module in-process — not as __main__, so the
+# preflight never fires — and exercises its git() directly.
+GATEWAY_GIT_DRIVER_SOURCE = '''\
+import importlib.util
+import sys
+from pathlib import Path
+
+checker = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('gateway_git_driver_load', checker)
+G = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(G)
+
+try:
+    print(G.git(G.ROOT, 'rev-parse', '--verify', 'HEAD').decode().strip())
+except Exception as error:
+    print(f'git call failed: {type(error).__name__}: {error}')
+    raise SystemExit(3)
+'''
+
+
+def compare_gateway_git_isolation(scratch, extra):
+    driver = scratch / 'gateway-git-driver.py'
+    driver.write_text(GATEWAY_GIT_DRIVER_SOURCE, encoding='utf-8')
+    command = [str(driver), str(root / 'scripts/gateway-parity/check_frozen.py')]
+    clean = run_cli(scratch, 'clean', command)
+    hostile = run_cli(scratch, 'hostile', command, env=child_env(extra))
+    if clean.returncode != 0 or 'git call failed' in clean.stdout:
+        raise AssertionError('#2398 the clean gateway git driver could not reach git; '
+                             'the hostile comparison would be vacuous')
+    if (clean.returncode, clean.stdout, clean.stderr) != (hostile.returncode, hostile.stdout,
+                                                          hostile.stderr):
+        raise AssertionError('#2398 hostile git environment changed the gateway checker\'s '
+                             f'git() output (clean exit={clean.returncode}, '
+                             f'hostile exit={hostile.returncode}); GIT_* isolation or '
+                             'GIT_CONFIG_GLOBAL pinning is not in force')
+
+
+def control_gateway_check_frozen_hostile_env(scratch):
+    fake_repo = scratch / 'fake-repo'  # deliberately not a repository
+    compare_gateway_git_isolation(scratch, {'GIT_DIR': str(fake_repo),
+                                            'GIT_WORK_TREE': str(scratch),
+                                            'GIT_INDEX_FILE': str(scratch / 'fake-index')})
+
+
+def control_gateway_check_frozen_hostile_config(scratch):
+    bad = scratch / 'bad-gitconfig'
+    bad.write_text(BAD_GITCONFIG, encoding='utf-8')
+    compare_gateway_git_isolation(scratch, {'GIT_CONFIG_GLOBAL': str(bad)})
+
+
 def run_g03(scratch, label, left, right, out, *, env=None, timeout=180):
     return run_cli(scratch, label,
                    ['scripts/parity/g03_compare.py', str(left), str(right), '--json', str(out)],
@@ -291,20 +382,54 @@ def control_g03_hostile_config(scratch):
                              'hostile GIT_CONFIG_GLOBAL')
 
 
+# fix-r12 (DS r11 P1#3 fallout): g03's baseline discovery hardened to an
+# absolute /usr/bin/git with a fresh three-key env, so the old control's
+# PATH-steered decoy `git` was bypassed and the real rev-parse resolved the
+# main checkout's baseline instead (measured: full verdict JSON, exit 1, no
+# "PilotDeck baseline not found"). The bound is exercised the honest way
+# instead: this driver intercepts only the baseline-discovery invocation and
+# hands the REAL subprocess.run a sleeping decoy with whatever timeout the
+# module under test asked for — clean g03 passes GIT_TIMEOUT_SECONDS and
+# skips the candidate on expiry; a mutant with timeout=None outlives the
+# control bound below.
+G03_TIMEOUT_DRIVER_SOURCE = '''\
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+real_run = subprocess.run
+
+
+def bounded_run(command, *args, **kwargs):
+    if command and command[0] == '/usr/bin/git' and '--git-common-dir' in command:
+        timeout = kwargs.pop('timeout', None)
+        return real_run(['sleep', '600'], capture_output=True, text=True,
+                        timeout=timeout)
+    return real_run(command, *args, **kwargs)
+
+
+subprocess.run = bounded_run
+checker = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('g03_timeout_driver_load', checker)
+G = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(G)
+except FileNotFoundError as error:
+    print(f'baseline refused: {error}')
+    raise SystemExit(1)
+print('baseline resolved without the git candidate')
+'''
+
+
 def control_g03_git_timeout(scratch):
     g03_rev_parse_is_decisive()
-    fake_bin = scratch / 'bin'
-    fake_bin.mkdir()
-    git = fake_bin / 'git'
-    git.write_text('#!/bin/sh\nexec sleep 600\n')
-    git.chmod(0o755)
-    env = child_env({})
-    env['PATH'] = str(fake_bin) + os.pathsep + env['PATH']
-    left, right = g03_pair_dirs(scratch, 'left', 'right')
-    out = scratch / 'g03.json'
+    driver = scratch / 'g03-timeout-driver.py'
+    driver.write_text(G03_TIMEOUT_DRIVER_SOURCE, encoding='utf-8')
+    command = [str(driver), str(root / 'scripts/parity/g03_compare.py')]
     started = time.monotonic()
     try:
-        result = run_g03(scratch, 'sleeping-git', left, right, out, env=env, timeout=90)
+        result = run_cli(scratch, 'sleeping-git', command, timeout=90)
     except subprocess.TimeoutExpired:
         raise AssertionError('#2398 the g03 git subprocess outlived the control bound; '
                              'the GIT_TIMEOUT_SECONDS timeout is not in force')
@@ -747,6 +872,8 @@ def control_cfd_hostile_config(scratch):
 RUNNERS = {
     'control_check_frozen_hostile_env': control_check_frozen_hostile_env,
     'control_check_frozen_hostile_config': control_check_frozen_hostile_config,
+    'control_gateway_check_frozen_hostile_env': control_gateway_check_frozen_hostile_env,
+    'control_gateway_check_frozen_hostile_config': control_gateway_check_frozen_hostile_config,
     'control_g03_hostile_env': control_g03_hostile_env,
     'control_g03_hostile_config': control_g03_hostile_config,
     'control_g03_git_timeout': control_g03_git_timeout,
@@ -767,6 +894,22 @@ def scratch_dir(out, name):
     directory = out / name
     directory.mkdir(parents=True)
     return directory
+
+
+# The runtime auto-adds scripts/gateway-parity/common.py to every parity-
+# guarded window (negative_process.mutating_sources loads the lease protocol
+# from its verified bytes), so the worst per-row window guards the row's own
+# path plus this file; the lease-family roster reads the guarded count from
+# this binding instead of restating the path.
+COMMON = root / 'scripts/gateway-parity/common.py'
+
+# #2929/#2513 fix-r16: the acquire budget of the mutation windows -- the
+# parity family's largest live hold plus this runner's own restore tail and
+# one stage of handoff margin, rounded up to the 900 s family unit.  One
+# derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.
+LEASE_ACQUIRE_BUDGET_SECONDS = 68400
 
 
 def main():
@@ -793,7 +936,8 @@ def main():
             control = RUNNERS[control_name]
             status, reason, compiled = 'INVALID', 'not run', False
             try:
-                with mutating_sources(root, [path]) as originals:
+                with mutating_sources(root, [path],
+                                      lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
                     text = originals[path].decode()
                     if text.count(before) != 1:
                         raise RuntimeError(f'#2398 stale anchor {name}: expected 1, found {text.count(before)}')

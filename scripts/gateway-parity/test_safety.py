@@ -764,6 +764,27 @@ class ImportIsolation(unittest.TestCase):
         self.assertEqual(outcomes, ['REJECTED'], message)
         self.assertFalse(self.lock.exists(), message + ': own lease released')
 
+    def test_popped_mutant_is_still_rejected(self):
+        # #2513 fix-r16 (DS sib#1): the verified set is the loader's
+        # registry, so a module that popped itself out of sys.modules keeps
+        # its executed-bytes record.  The registry loop must compare that
+        # stamp (not the restored disk bytes): this is the one shape the
+        # surviving-stamps cross-check cannot see.
+        message = '#166 popped mutant must still be rejected'
+        self.path.write_bytes(b"VALUE = 'mutant'\n")
+        imported = _load('import_isolation_probe', self.path)
+        self.assertEqual(imported.VALUE, 'mutant', message + ': import hook')
+        sys.modules.pop('import_isolation_probe', None)
+        self.assertNotIn('import_isolation_probe', sys.modules, message + ': popped')
+        self.path.write_bytes(self.clean)
+        with self.environment():
+            try:
+                common.verify_loaded_apparatus(self.head)
+            except ValueError as error:
+                self.assertIn('#166 loaded apparatus differs from HEAD', str(error), message)
+            else:
+                self.fail(message + ': the loader registry must pin the popped record')
+
     def test_loader_records_executed_bytes_not_later_disk(self):
         source = ("from pathlib import Path\nPath(__file__).write_bytes(" + repr(self.clean) + ")\nVALUE = 'mutant'\n").encode()
         self.path.write_bytes(source)
@@ -786,7 +807,7 @@ class ImportIsolation(unittest.TestCase):
         mutant._apparatus_source = source
 
         def git_read(command, **kwargs):
-            if command[3] == 'rev-parse':
+            if 'rev-parse' in command:
                 return (self.head + '\n').encode()
             return sources[command[-1].split(':', 1)[1]]
 
@@ -815,10 +836,20 @@ class ImportIsolation(unittest.TestCase):
         read = Path.read_bytes
 
         def git_read(command, **kwargs):
-            return ((self.head + '\n').encode() if command[3] == 'rev-parse'
+            return ((self.head + '\n').encode() if 'rev-parse' in command
                     else sources[command[-1].split(':', 1)[1]])
 
-        with patch.object(subprocess, 'check_output', side_effect=git_read):
+        # #2513 fix-r16 (DS sib#1): the mutant arm below loads deliberate
+        # mutant bytes through the real loader, so the process-shared
+        # registry keeps a row whose executed source differs from HEAD.
+        # Scope that row to this test: the registry attribute points at a
+        # copy for the duration, the poison dies with the with-block, and
+        # later in-process verifications (this suite's real-entry cells) see
+        # only pristine rows. Production subprocesses load no mutants, so
+        # their registry keeps exactly the rows their own entry created.
+        with patch.object(subprocess, 'check_output', side_effect=git_read), \
+                patch.object(sys, '_gateway_parity_loaded_apparatus',
+                             list(sys._gateway_parity_loaded_apparatus)):
             entry._verify_cli_imports()  # The independent CLI's initial check passes.
             for source in (original, mutant):
                 sys.modules.pop(alias, None)
@@ -857,7 +888,7 @@ class ImportIsolation(unittest.TestCase):
                 output = io.StringIO()
                 reached = False
                 def git_read(command, **kwargs):
-                    return (self.head + '\n').encode() if command[3] == 'rev-parse' else head_verifier
+                    return (self.head + '\n').encode() if 'rev-parse' in command else head_verifier
                 with patch.dict(sys.modules, {'__main__': module}), \
                         patch.object(subprocess, 'check_output', side_effect=git_read), \
                         patch.object(common, 'verify_loaded_apparatus', return_value=None), \
@@ -1130,7 +1161,7 @@ class ImportIsolation(unittest.TestCase):
         sources = {p.relative_to(common.ROOT).as_posix(): p.read_bytes()
                    for p in common.SCRIPT.rglob('*.py') if 'node_modules' not in p.parts}
         def git_read(command, **kwargs):
-            return ((self.head + '\n').encode() if command[3] == 'rev-parse'
+            return ((self.head + '\n').encode() if 'rev-parse' in command
                     else sources[command[-1].split(':', 1)[1]])
         class WorkReached(Exception):
             pass
@@ -1147,6 +1178,14 @@ class ImportIsolation(unittest.TestCase):
             for mutant in (False, True):
                 with self.subTest(entry=name, mutant=mutant), ExitStack() as stack:
                     stack.enter_context(patch.dict(sys.modules))
+                    # #2513 fix-r16 (DS sib#1): each mutant arm loads
+                    # deliberate mutant bytes through the real loader;
+                    # scope the registry rows to the arm (a copy of the
+                    # registry) so one entry's mutant arm cannot make the
+                    # next entry's pristine arm refuse on the stale row.
+                    stack.enter_context(patch.object(
+                        sys, '_gateway_parity_loaded_apparatus',
+                        list(sys._gateway_parity_loaded_apparatus)))
                     sys.modules.pop(alias, None)
                     executed = []
                     held = False
@@ -4330,6 +4369,65 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(ungated['gated'], [])
             self.assertIn('/feishu/webhook', ungated['unhit'])
             self.assertEqual(ungated['status'], 'BLOCKED')
+
+    def test_baseline_revision_reads_the_baseline_not_the_environment(self):
+        # #2513 fix-r15 (r14 review task 8): a real-git regression for the
+        # hardened baseline revision read.  Two real temporary repositories —
+        # repo A (the baseline under test, one commit) and repo D (a decoy
+        # with a different HEAD).  With GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_GLOBAL
+        # steered at repo D in the environment: ① the pre-fix bare ``git -C``
+        # form is demonstrably steered onto the decoy HEAD (the decoy is
+        # effective, so the refusal below is the hardening, not a broken
+        # decoy); ② the hardened read refuses on the real revision — the
+        # registered constant is untouched, so the mismatch must name HEAD_A,
+        # never the decoy's; ③ positive control — with the constant pinned to
+        # the real HEAD the same poisoned environment still passes.
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-baserev-') as tmp:
+            root = Path(tmp)
+
+            def repo(name):
+                folder = root / name
+                folder.mkdir()
+                (folder / 'marker.txt').write_text(name)
+                # #2513 fix-r16 (a.6 / DS bnd#5): the fixture builds its two
+                # repositories with a scrubbed three-key environment, so a
+                # poisoned host (GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE from an
+                # outer harness) cannot steer the setup onto an external
+                # repository — only the measured bare arm below keeps the
+                # inherited environment it exists to demonstrate.
+                scrubbed = {'PATH': '/usr/bin:/bin',
+                            'GIT_CONFIG_NOSYSTEM': '1',
+                            'GIT_CONFIG_GLOBAL': os.devnull}
+                for args in (['init', '-q'], ['add', '-A'],
+                             ['-c', 'user.email=t@t', '-c', 'user.name=t',
+                              'commit', '-q', '-m', name]):
+                    subprocess.run(['/usr/bin/git', *args], cwd=folder, check=True,
+                                   capture_output=True, env=scrubbed, timeout=10)
+                return folder, subprocess.run(['/usr/bin/git', 'rev-parse', 'HEAD'],
+                                              cwd=folder, check=True, capture_output=True,
+                                              text=True, env=scrubbed,
+                                              timeout=10).stdout.strip()
+
+            baseline, head_a = repo('baseline')
+            decoy, head_d = repo('decoy')
+            self.assertNotEqual(head_a, head_d)
+            decoys = {'GIT_DIR': str(decoy / '.git'),
+                      'GIT_WORK_TREE': str(decoy),
+                      'GIT_CONFIG_GLOBAL': str(decoy / '.git' / 'config')}
+            steered = subprocess.run(['git', '-C', str(baseline), 'rev-parse', 'HEAD'],
+                                     env=dict(os.environ, **decoys), capture_output=True,
+                                     text=True, timeout=10)
+            self.assertEqual(steered.stdout.strip(), head_d,
+                             f'the decoy environment did not steer the bare form: {steered.stdout!r}')
+            with patch.dict(os.environ, decoys):
+                with self.assertRaises(self.session.EvidenceError) as refusal:
+                    self.session._retirement_baseline_revision(baseline)
+            self.assertEqual(refusal.exception.rule, 'BASELINE_REVISION')
+            self.assertIn(head_a, str(refusal.exception))
+            self.assertNotIn(head_d, str(refusal.exception))
+            with patch.dict(os.environ, decoys), \
+                    patch.object(self.session, 'RETIREMENT_BASELINE_REVISION', head_a):
+                self.assertEqual(self.session._retirement_baseline_revision(baseline), head_a)
 
 
 if __name__ == '__main__':

@@ -361,6 +361,42 @@ MUTATIONS = [
      'sys.version_info < (3, 11) or False',
      'EntryGuardTests.test_parity_controls_multimodal_py_unloaded_os',
      '#1066 scripts/parity/controls/multimodal.py: unloaded-os must stop before os import'),
+    # #2513 fix-r1 (review P2#1): the host-env isolation control's startup
+    # preamble joins the judged roster (its ENTRIES registration added the
+    # four automatic tests; these three rows keep them kill-bound).
+    ('parity_controls_host_env_isolation_py_reinsert', ROOT / 'scripts/parity/controls/host_env_isolation.py',
+     'if any(\n        os.path.isdir(entry or os.curdir)',
+     'if False and any(\n        os.path.isdir(entry or os.curdir)',
+     'EntryGuardTests.test_parity_controls_host_env_isolation_py_reinsert',
+     '#1066 scripts/parity/controls/host_env_isolation.py: reinsertion must stop before stdlib'),
+    ('parity_controls_host_env_isolation_py_old_python', ROOT / 'scripts/parity/controls/host_env_isolation.py',
+     "sys.version_info < (3, 11) or 'os' not in sys.modules",
+     "False or 'os' not in sys.modules",
+     'EntryGuardTests.test_parity_controls_host_env_isolation_py_old_python',
+     '#1066 scripts/parity/controls/host_env_isolation.py: old-python must stop before os import'),
+    ('parity_controls_host_env_isolation_py_unloaded_os', ROOT / 'scripts/parity/controls/host_env_isolation.py',
+     "sys.version_info < (3, 11) or 'os' not in sys.modules",
+     'sys.version_info < (3, 11) or False',
+     'EntryGuardTests.test_parity_controls_host_env_isolation_py_unloaded_os',
+     '#1066 scripts/parity/controls/host_env_isolation.py: unloaded-os must stop before os import'),
+    # #2513 fix-r7 (sibling P2#1): the round-head guard control's startup
+    # preamble joins the judged roster the same way (its ENTRIES registration
+    # added the four automatic tests; these three rows keep them kill-bound).
+    ('parity_controls_round_head_guard_py_reinsert', ROOT / 'scripts/parity/controls/round_head_guard.py',
+     'if any(\n        os.path.isdir(entry or os.curdir)',
+     'if False and any(\n        os.path.isdir(entry or os.curdir)',
+     'EntryGuardTests.test_parity_controls_round_head_guard_py_reinsert',
+     '#1066 scripts/parity/controls/round_head_guard.py: reinsertion must stop before stdlib'),
+    ('parity_controls_round_head_guard_py_old_python', ROOT / 'scripts/parity/controls/round_head_guard.py',
+     "sys.version_info < (3, 11) or 'os' not in sys.modules",
+     "False or 'os' not in sys.modules",
+     'EntryGuardTests.test_parity_controls_round_head_guard_py_old_python',
+     '#1066 scripts/parity/controls/round_head_guard.py: old-python must stop before os import'),
+    ('parity_controls_round_head_guard_py_unloaded_os', ROOT / 'scripts/parity/controls/round_head_guard.py',
+     "sys.version_info < (3, 11) or 'os' not in sys.modules",
+     'sys.version_info < (3, 11) or False',
+     'EntryGuardTests.test_parity_controls_round_head_guard_py_unloaded_os',
+     '#1066 scripts/parity/controls/round_head_guard.py: unloaded-os must stop before os import'),
     ('parity_controls_review_r1_py_reinsert', ROOT / 'scripts/parity/controls/review_r1.py',
      'if any(\n        os.path.isdir(entry or os.curdir)',
      'if False and any(\n        os.path.isdir(entry or os.curdir)',
@@ -488,6 +524,16 @@ EXPECTED_NAMES = (
     'parity_controls_multimodal_py_reinsert',
     'parity_controls_multimodal_py_old_python',
     'parity_controls_multimodal_py_unloaded_os',
+    # #2513 fix-r11: the merge 8c8f13659 carried main's #1642 fix-r5
+    # EXPECTED_NAMES past this lane's #1066 mutation rows for
+    # scripts/parity/controls/{host_env_isolation,round_head_guard}.py
+    # (rows above, table order kept); the roster missed these six.
+    'parity_controls_host_env_isolation_py_reinsert',
+    'parity_controls_host_env_isolation_py_old_python',
+    'parity_controls_host_env_isolation_py_unloaded_os',
+    'parity_controls_round_head_guard_py_reinsert',
+    'parity_controls_round_head_guard_py_old_python',
+    'parity_controls_round_head_guard_py_unloaded_os',
     'parity_controls_review_r1_py_reinsert',
     'parity_controls_review_r1_py_old_python',
     'parity_controls_review_r1_py_unloaded_os',
@@ -560,7 +606,7 @@ def run(out, label, test):
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).  This replaces the explicit 60 s wait, which was
 # fifteen times below even the old shared default 900 (#1528).
-LEASE_ACQUIRE_BUDGET_SECONDS = 69300
+LEASE_ACQUIRE_BUDGET_SECONDS = 72000
 
 
 def main():

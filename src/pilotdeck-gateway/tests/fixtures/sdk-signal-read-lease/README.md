@@ -198,6 +198,106 @@ SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体�
 用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。
 主错误与停止错误**都**写进 INVALID 的 reason（`主错误; stop failed: …`），互不遮盖。
 
+## 窗口重定向与宿主预持（#2513 fix-r7 / fix-r8）
+
+本 fixture 与 `sdk_signal_exit` 矩阵同车道：宿主按
+`src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md` 的对照表先取
+`/tmp/pdrs-parity.lock` 再跑整批。而 `src/pilotdeck-cli/tests/` 自 #2513 起是
+parity guarded 前缀，`writer()` / `red()` / `--stop-check` 的变异窗口覆盖的
+`capture.py` 命中该前缀 → `mutating_sources` 走 `_parity_mutation_lock`，在宿主
+持有的共享锁上排队 60 s 超时：GREEN、RED、SIGTERM 收尾全部假 INVALID
+（fix-r6 给 8 个 sdk fixture 加 `PDRS_SDK_TEST_PARITY_LOCK` 重定向时漏掉了本
+fixture，fix-r7 补齐）。
+
+修复是 sdk-signals fix-r4 的 Python 同型：`_redirect_window_parity_lock` 把
+`negative_process._parity_mutation_lock` 换成重定向版——窗口租约取在证据目录的
+`out/parity-redirect.lock` 上，对宿主预持的共享租约不互斥；干净版 `common.py`
+仍从 HEAD 证明的字节 staged 执行（绝不变异盘上代码）。writer 的重定向安装在最外层
+`try` 之前、恢复放在最外层 `finally` 的**第一项**（它补的是模块全局，留下会误导
+本进程后续窗口）。
+
+### 宿主身份闸（fix-r8，concurrency P1）
+
+fix-r7 的前置闸只证明「有活的外部进程持锁」，活的 parity round 也满足——它在整轮
+持锁期间 owner.json 同样是活的非本进程 pid，闸放行后重定向窗口反而绕开了共享租约
+的互斥。fix-r8 把闸改成**身份校验 + fail-closed 回退**（`_require_host_lease`，
+返回 None=已验证 / 一行原因=未验证）：
+
+- **已验证**：owner.json 在场且是活的非本进程 pid，**且**锁目录内的
+  `host-hold.json` marker（宿主持锁期间原子发布，tmp+replace，生命周期与持锁相同）
+  的 token 与 env `PDRS_PARITY_HOST_TOKEN` 一致 → 窗口开在
+  `out/parity-redirect.lock`（宿主车道内，互斥不受损）。
+- **未验证**（无 owner / 死 pid / 本进程 / 未导出 token / 无 marker / token 不符）：
+  原因打到 stderr，窗口**回退**在共享租约 `common.LOCK` 上排队——「取不到就排队」，
+  既不是 fix-r7 的退出 2，也绝无无守卫的变异窗口（MM boundary#3 由回退收编，
+  `SystemExit(2)` 形态整体移除）。
+- **窗口退出复验**（MM boundary#4）：重定向窗口在 `finally` 里复验宿主持锁，预持在
+  窗口内消失（有界 hold 到期等）→ 以专属 marker
+  `#2513 宿主预持在窗口内消失必须复验失败` 抛错，不把窗口当成一直受守卫地上报；
+  仅当没有正在展开的异常时才抛（不遮蔽在途失败）。
+
+marker 文件而非 owner.json 加 host 字段：`parity_lock` 的释放判定按 owner == 自己
+的字节比对，往 owner.json 塞宿主字段会与协议释放冲突；评审原文也把 marker 列为
+备选（本条为登记的偏差，理由见 RESULT）。
+
+**宿主布线契约**（fix-r9 起仓内宿主入口自带布线，common.`_host_hold`）：宿主整轮入口
+（`run_round.py` / `check_ruler.py`，经 `verified_parity_lock`）在装置核验通过、持有共享
+租约后**原子发布** `/tmp/pdrs-parity.lock/host-hold.json`（`{"token": ...}`，tmp+replace），
+把同一 token 经 `PDRS_PARITY_HOST_TOKEN` 导出给被跑的每个 fixture（含子进程），放锁前
+先撤 marker；fixture 自起的短持锁（`--shared-hold` stand-in）不走 `verified_parity_lock`，
+不会误发布。仓外宿主不接这套布线时，窗口**不重定向**：在共享租约上排队
+`min(lock_timeout, 60)` 秒后超时、整行 INVALID——不是「安全但串行」，是审计行报废
+（MM concurrency#1，fix-r9 改口如实）；仍不会出现无守卫的变异窗口。
+
+`sdk_signal_exit.rs` 本身**不取** parity 租约（只有 `.negative-source.lock` 读
+租约），Rust 侧无需重定向。
+
+### 停止共享持有者不毒化车道（fix-r8 升档 P0）
+
+`common.parity_lock` 取锁即写 `cleanupPending: true` 的 owner.json，SIGKILL 一个
+**正持锁**的持有者会留下没人敢自动接管的死锁（车道挂起）。fix-r8 起
+`_stop_shared_hold` / `_stage_external_hold` 的每条等待路径都**不用 SIGKILL**：
+terminate 后等优雅预算，仍活着就等有界 hold 自然到期，只有「超出有界 hold 仍存活」
+这种无法解释的幸存者才报错（明写租约释放未确认），绝不强杀；staging 的 deadline
+分支停止持有者之前先复验 owner.pid 已是它（消除最后一刻拿到锁被杀的竞态）。
+
+### 自检模式（不跑 cargo，不占名额）
+
+```sh
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py \
+  --self-check
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py \
+  --window-lock-check NEW_OUTPUT_DIR
+python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py \
+  --kill-window-lock NEW_OUTPUT_DIR
+```
+
+- **`--self-check`**：身份闸自己的 7 行（丢弃目录，不碰真锁）：无 owner.json /
+  死 pid / 本进程 pid / 活外部 pid 未导出 token / 有 token 无 marker /
+  marker token 不符 → 都必须返回一行原因；marker 与 token 一致 → 返回 None。
+- **`--window-lock-check`**：四场景（全 Python、全有界）——
+  1. **已验证重定向**：宿主预持可验证（有 marker 的宿主或本检查自起的
+     identity stand-in）时，guarded 入口必须在 `WINDOW_LOCK_PROBE_SECONDS`（5 s）
+     界内于重定向路径取到窗口锁（owner.json 落在 `out/parity-redirect.lock`），
+     窗口退出后重定向租约按协议释放；
+  2. **未验证回退**：活的外部持有者但**无**身份 marker 时不得打开重定向窗口——
+     探针在共享租约上排队超时，且重定向租约从未创建；
+  3. **持锁消失复验**：已验证持有者的有界 hold 在窗口内到期 → 窗口退出必须带
+     专属 marker 复验失败（复验被删除则此行红）；
+  4. **无 SIGKILL 停止**：已验证但忽略 SIGTERM 的持有者，停止它绝不升级为
+     SIGKILL，由有界 hold 自然结束；随后「毒化探针」——共享租约必须还能取
+     （被杀的持有者会留下 cleanupPending 死 pid，车道挂起）。
+  场景 2–4 自起持有者，须**独占**运行：共享租约上有真持有时它们按 INVALID 拒跑
+  （fail-closed，不与真宿主争锁）。
+- **`--kill-window-lock`**：四条自变异 kill 行，锚点分别钉：重定向被改回共享租约
+  （`lock=common.LOCK`）、身份闸被删（`reason = None` 直通）、窗口退出复验被删、
+  停止路径的「不升级」被改回 SIGKILL。变异体经 `--window-lock-check` 子进程判定：
+  KILLED 要求失败日志带该行专属 marker（排他：同入口的无关红仍是 INVALID，绝不记
+  KILLED）；正跑、变异跑、恢复跑各有产物；任一行非 KILLED 退出非 0。窗口期装
+  SIGTERM/SIGHUP 的 disarm-then-raise 处理器（`writer()` 的先例，#2309 fix-r3 同形）：
+  先解除武装再抛，还原在 `finally` 里先完成，第二个信号打不断还原。与
+  `--stop-check` 同理须整批提交后跑（`mutating_sources` 拒绝脏树）。
+
 ## 运行（提交后；mutating_sources 拒绝脏树）
 
 ```sh

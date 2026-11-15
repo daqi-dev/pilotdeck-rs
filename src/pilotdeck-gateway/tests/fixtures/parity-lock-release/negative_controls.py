@@ -48,7 +48,8 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (mutating_sources, new_output_directory, parity_guarded,
+                              run_owned)
 from negative_suite import invalidate_completed
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -370,7 +371,7 @@ def _publish(path, value):
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 65700
+LEASE_ACQUIRE_BUDGET_SECONDS = 68400
 
 
 @contextmanager
@@ -520,18 +521,31 @@ def main():
         # /tmp/pdrs-parity.lock the real runs use, loaded from baseline bytes.
         # RUNNER is guarded too because the runner rows mutate this delivered
         # runner to prove the cancellation regression bites (#1059).
-        # A scripts/gateway-parity source makes mutating_sources take that same
-        # lease itself, from verified bytes. The lease is not reentrant: holding
-        # it here as well blocks on /tmp/pdrs-parity.lock.guard against our own
-        # process until the acquire budget's bound, voiding every row (#1398).
+        # Any parity-guarded source (the shared parity_guarded predicate, one
+        # spelling for the six lock families — #2513 fix-r2, widened in fix-r3)
+        # makes
+        # mutating_sources take that same lease itself, from verified bytes;
+        # the fix-r1 local copy only knew scripts/gateway-parity, so a
+        # round-only subset (--only a1-release-ungated mutates only
+        # scripts/parity/round.py) computed shared=False, took the outer lease
+        # and then deadlocked mutating_sources' second flock on
+        # /tmp/pdrs-parity.lock.guard until the 60s bound, voiding every row
+        # (DS r2 sibling#1). The lease is not reentrant: when mutating_sources
+        # holds it, we must not hold it too (#1398).
         # The non-shared branch's own parity_lease() does NOT wait the host-wide
         # lease out: it polls only the .guard flock (a lease-holding peer
         # leaves that guard free), and the first lease-directory check after
         # it fails immediately (#2929 fix-r3: fail-fast -- a queued --only
         # run INVALIDs in seconds instead of waiting; the family budget
         # bounds only the millisecond-scale guard contention).
-        shared = any((ROOT / path).resolve().is_relative_to(GATEWAY.parent)
-                     for path in paths)
+        def _parity_relative(path):
+            try:
+                return path.resolve().relative_to(ROOT).as_posix()
+            except ValueError:
+                return None  # outside this checkout: not a lock-family source
+
+        shared = any(rel is not None and parity_guarded(rel)
+                     for rel in map(_parity_relative, paths))
         lease = nullcontext() if shared else parity_lease()
         with lease, mutating_sources(ROOT, paths, baseline=args.baseline,
                                     lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:

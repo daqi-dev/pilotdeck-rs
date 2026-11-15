@@ -33,6 +33,20 @@ if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
 import hashlib as _boot_hashlib
 import subprocess as _boot_subprocess
 _boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+# #2513 fix-r13 (DS sibling#1): the admission read below must answer from
+# this checkout only — bare ``git -C`` inherits a steered GIT_DIR/GIT_WORK_TREE
+# (measured) and would admit a decoy repository's HEAD. Same hardened form as
+# check_frozen.py, the git() helper and the cli-parity/gateway _head_source twins.
+_boot_git_env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                 'GIT_CONFIG_GLOBAL': _boot_os.devnull}
+
+
+def _boot_git(*args):
+    return _boot_subprocess.check_output(
+        ['/usr/bin/git', '-c', 'safe.directory=*', '-C', _boot_root, *args],
+        env=_boot_git_env, stderr=_boot_subprocess.PIPE, timeout=30)
+
+
 _boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
     _boot_bytes = _boot_file.read()
@@ -44,8 +58,7 @@ try:
         if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
             raise ValueError('apparatus bootstrap hash mismatch')
     else:
-        _boot_trusted = _boot_subprocess.check_output(
-            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        _boot_trusted = _boot_git('show', 'HEAD:scripts/ui-server-parity/apparatus.py')
         if _boot_bytes != _boot_trusted:
             raise ValueError('apparatus bootstrap differs from HEAD without manifest')
 except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:

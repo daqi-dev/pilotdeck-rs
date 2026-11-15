@@ -25,6 +25,14 @@ READ_METHODS = ['native_archive_manifest', 'native_archive_entries', 'native_arc
                 'session_model_get', 'supported_agents', 'list_projects', 'describe_project']
 LOCK = Path('/tmp/pdrs-parity.lock')
 MAX_AGE = 2400
+# #2513 fix-r9 (concurrency P1): the host-identity half of the whole-round
+# lease. The whole-round entries publish HOST_HOLD_MARKER inside the lock
+# directory for exactly as long as they hold it and export the same token to
+# the fixtures they run through HOST_TOKEN_ENV; the sdk-signals/read-lease
+# fixtures verify both halves before redirecting a mutation window off the
+# shared lease (their _require_host_lease).
+HOST_HOLD_MARKER = 'host-hold.json'
+HOST_TOKEN_ENV = 'PDRS_PARITY_HOST_TOKEN'
 # A2 groups remain registered until their bounded cleanup proves absence.
 # A failed cleanup keeps the shared lock, even when the caller is interrupted.
 LIVE_GROUPS = set()
@@ -550,9 +558,17 @@ def cargo_config_problems(root=None, environ=None):
     for name in configs:
         path = root / name
         if path.exists() or path.is_symlink():
+            # #2513 fix-r9 (sibling P1): bare ``git -C`` inherits the
+            # caller's environment, so a steered GIT_DIR answers the tracked
+            # probe from a decoy repository's index (measured pre-fix,
+            # gitdir-lsfiles-probe.log) and the untracked config false-passes.
+            # Same hardened shape as _head_source above (fix-r8).
             tracked = subprocess.run(
-                ['git', '-C', str(root), 'ls-files', '--error-unmatch', '--', name],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+                ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),
+                 'ls-files', '--error-unmatch', '--', name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+                env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                     'GIT_CONFIG_GLOBAL': '/dev/null'})
             if tracked.returncode:
                 problems[path] = 'untracked worktree config (cargo would read it)'
     anchors = ('.cargo/config.toml', '.cargo/config')
@@ -721,8 +737,21 @@ def parity_lock(timeout=600, takeovers=None, lock=LOCK):
 def _has_git_checkout(root):
     """Missing checkout metadata permits static use; broken metadata does not."""
     import os
+    import subprocess
     if 'GIT_DIR' in os.environ:
-        return True
+        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable
+        # that points at a real repository only steers the hardened reads
+        # (root's own metadata decides, exactly like the walk below); a
+        # broken one is unreadable metadata and must fail closed through
+        # the caller's HEAD read.
+        try:
+            subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',
+                                     '--git-dir', os.environ['GIT_DIR'],
+                                     'rev-parse', '--git-dir'],
+                                    env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)
+        except subprocess.CalledProcessError:
+            return True
     for directory in (root, *root.parents):
         try:
             (directory / '.git').lstat()
@@ -733,14 +762,24 @@ def _has_git_checkout(root):
 
 
 def _apparatus_head():
-    return subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD'],
-                                   timeout=30).decode().strip()
+    # #2513 fix-r8: bare `git -C` inherits the caller's environment; a
+    # steered GIT_DIR reads the decoy repository's HEAD and the verification
+    # false-passes. Same isolation as round.py's hardened _head_source
+    # (fix-r7); the check_output call shape stays because test_safety pins
+    # its HEAD-read probe to that patch point.
+    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),
+                                    'rev-parse', '--verify', 'HEAD'],
+                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30).decode().strip()
 
 
 def _head_source(head, path):
     relative = Path(path).resolve().relative_to(ROOT).as_posix()
-    return subprocess.check_output(['git', '-C', str(ROOT), 'show', f'{head}:{relative}'],
-                                   timeout=30)
+    # #2513 fix-r8: same hardened shape as _apparatus_head above.
+    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),
+                                    'show', f'{head}:{relative}'],
+                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)
 
 
 
@@ -765,38 +804,126 @@ def _compiled_fingerprint(code):
     return marshal.dumps(normalize(code), 2)
 
 
+def _refuse(path):
+    raise ValueError(f'#166 loaded apparatus differs from HEAD: {path}')
+
+
 def verify_loaded_apparatus(head=None):
     """Compare executed source/code, never restored disk bytes, to one pinned HEAD.
 
-    All apparatus imports use the bootstrap's byte-recording loader. Standalone
+    All apparatus imports use the guard's byte-recording loader. Standalone
     controls use this fail-closed check without reacquiring their parent's lock.
     Library controls called by a real round already run under its verified lock.
+
+    #2513 fix-r16 (DS sib#1): the verified set is the loader's caller-held
+    registry (``sys._gateway_parity_loaded_apparatus``, written by
+    ``_guard.load``), not a sys.modules derivation — a module that popped
+    itself out of sys.modules kept its stamp and silently left the comparison.
+    A recorded module is therefore byte-verified whether or not it is still
+    bound in sys.modules (controls and tests legitimately load entries under
+    working aliases and pop them afterwards); the surviving sys.modules stamps
+    are cross-checked against the registry fail-closed below, so a rebind under
+    a loader never executed is still red there.
     """
     if head is None and not _has_git_checkout(ROOT):
         return None  # Library controls also support static exports.
     head = head or _apparatus_head()
-    for module in tuple(sys.modules.values()):
+    loaded = list(getattr(sys, '_gateway_parity_loaded_apparatus', ()))
+    if not loaded:
+        raise ValueError('#166 no apparatus module was loaded through _guard.load')
+    for name, module in loaded:
         path = getattr(module, '__file__', None)
+        if not path or not Path(path).resolve().is_relative_to(SCRIPT):
+            # Outside this apparatus tree: not this check's module (the old
+            # scan scoped itself to SCRIPT the same way).
+            continue
+        # Self-pop no longer escapes: the loader's own record keeps the
+        # executed bytes pinned against HEAD for every module it loaded.
         source = getattr(module, '_apparatus_source', None)
-        if path and Path(path).resolve().is_relative_to(SCRIPT):
-            expected = _head_source(head, path)
-            if getattr(module, '__name__', None) == '__main__':
-                # __main__ is compiled by CPython, outside _load. Compare its
-                # actual executing code object (including nested functions) to
-                # HEAD compiled with identical filename/optimization settings.
-                code = getattr(module, '_apparatus_code', None)
-                matches = False
-                if isinstance(code, CodeType):
-                    expected_code = compile(expected, code.co_filename, 'exec',
-                                            dont_inherit=True, optimize=sys.flags.optimize)
-                    # Version 2 has no reference-sharing records; execution can
-                    # change object sharing without changing compiled content.
-                    matches = _compiled_fingerprint(code) == _compiled_fingerprint(expected_code)
-            else:
-                matches = isinstance(source, bytes) and source == expected
+        if not isinstance(source, bytes) or source != _head_source(head, path):
+            _refuse(path)
+    # Fail-closed cross-check over the surviving stamps: every module still
+    # carrying provenance inside this apparatus tree must be loader-recorded
+    # (a registry row deleted while the module survives is caught by its
+    # stamp), and the two non-loader surfaces keep their own comparisons —
+    # __main__ by executing code object, _guard by its preamble-stamped bytes
+    # (the entry preamble stamps _guard directly, never through load).
+    recorded = {}
+    for name, module in loaded:
+        recorded.setdefault(name, []).append(id(module))
+    for name, module in list(sys.modules.items()):
+        path = getattr(module, '__file__', None)
+        if not path or not Path(path).resolve().is_relative_to(SCRIPT):
+            continue
+        if getattr(module, '__name__', None) == '__main__':
+            # __main__ is compiled by CPython, outside _load. Compare its
+            # actual executing code object (including nested functions) to
+            # HEAD compiled with identical filename/optimization settings.
+            code = getattr(module, '_apparatus_code', None)
+            matches = False
+            if isinstance(code, CodeType):
+                expected_code = compile(_head_source(head, path), code.co_filename, 'exec',
+                                        dont_inherit=True, optimize=sys.flags.optimize)
+                # Version 2 has no reference-sharing records; execution can
+                # change object sharing without changing compiled content.
+                matches = _compiled_fingerprint(code) == _compiled_fingerprint(expected_code)
             if not matches:
-                raise ValueError(f'#166 loaded apparatus differs from HEAD: {path}')
+                _refuse(path)
+            continue
+        source = getattr(module, '_apparatus_source', None)
+        if not isinstance(source, bytes) or source != _head_source(head, path):
+            _refuse(path)
+        # _guard is stamped by the entry preamble, not by load, so registry
+        # membership is not its evidence; every other apparatus-path module
+        # in sys.modules must be one load recorded.
+        if name != '_guard' and id(module) not in recorded.get(name, ()):
+            _refuse(path)
     return head
+
+
+@contextmanager
+def _host_hold(lock=LOCK):
+    """#2513 fix-r9 (concurrency P1): publish the whole-round host identity.
+
+    The fixtures a whole round runs redirect their mutation windows off the
+    shared lease only under a *verified* host pre-hold: a live external
+    owner.json plus a host-hold.json marker whose token matches the
+    PDRS_PARITY_HOST_TOKEN the fixture received (their _require_host_lease).
+    Before this landed, no in-repo host published the marker, so every
+    redirected window fell back to queueing on the shared lease the round
+    itself held — min(lock_timeout, 60) s of queueing per window, then a
+    TimeoutError and an all-INVALID run (the r8 review's concurrency P1).
+
+    Publishing here — inside verified_parity_lock, after the verification —
+    means only a whole-round entry that holds the lease *and* whose executing
+    apparatus matches HEAD publishes: the fixtures' own short holds go through
+    the staged parity_lock, never this function, so they cannot mistake
+    themselves for the host. The marker is written atomically (tmp + replace),
+    its lifecycle is strictly inside the lease (withdrawn in the finally
+    before parity_lock releases, takeover rmtree aside), and the token is
+    exported through os.environ so every child spawned under the round —
+    fixtures included — receives it. An unexported or mismatched marker only
+    falls the fixtures back to the shared lease (fail-closed queueing), never
+    to an unguarded window.
+    """
+    token = uuid.uuid4().hex
+    marker = lock / HOST_HOLD_MARKER
+    temporary = marker.with_name(HOST_HOLD_MARKER + '.tmp')
+    temporary.write_text(json.dumps({'token': token}), encoding='utf-8')
+    temporary.replace(marker)
+    previous = os.environ.get(HOST_TOKEN_ENV)
+    os.environ[HOST_TOKEN_ENV] = token
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(HOST_TOKEN_ENV, None)
+        else:
+            os.environ[HOST_TOKEN_ENV] = previous
+        # The marker's lifecycle is the lease's: removed before the release,
+        # so a later holder cannot inherit a token.
+        marker.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -817,7 +944,8 @@ def verified_parity_lock(timeout=600, takeovers=None, lock=LOCK):
     trusted.LIVE_GROUPS = LIVE_GROUPS
     with trusted.parity_lock(timeout, takeovers, lock):
         verify_loaded_apparatus(head)
-        yield
+        with _host_hold(lock):
+            yield
 
 
 def install_shutdown():

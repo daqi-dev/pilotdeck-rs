@@ -8,6 +8,7 @@ this worktree.
 import errno
 import io
 import json
+import re
 from contextlib import contextmanager, nullcontext
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import tokenize
 import unittest
 from types import ModuleType
 from unittest.mock import patch
@@ -1139,6 +1141,413 @@ class MutatingSources(unittest.TestCase):
                                 "#1166 r9 copy must restore its own mutation")
 
 
+class ParityGuardedPredicate(unittest.TestCase):
+    """#2513 fix-r2→fix-r3 (DS sibling#1 + MM boundary#1): one shared spelling.
+
+    ``parity_guarded`` decides whose mutation window holds
+    /tmp/pdrs-parity.lock. Six families take that lease through their own
+    copies of the protocol; the fix-r1 inline predicate covered only two,
+    fix-r2 widened it to four, and fix-r3 added native-witness (collect.py)
+    and the pilotdeck-cli Rust tests (the sdk ParityLock copies), whose
+    windows previously mutated real lease holders without holding the lease.
+    The consumers (mutating_sources' parity branch, parity-lock-release's
+    shared copy, cli-parity-mock-gateway's inner-lock stand-down and
+    cli-parity-lock-bounded's --check) all read this one definition, so the
+    family set is pinned here: a seventh family must be a deliberate change,
+    not a missed one — and ParityLockHolderReconciliation below reds on any
+    lock reference outside the family and the registered-mentions table.
+    """
+
+    def test_the_family_set_is_pinned(self):
+        self.assertEqual(
+            negative_process.PARITY_GUARDED_PREFIXES,
+            ("scripts/gateway-parity/", "scripts/parity/",
+             "scripts/cli-parity/", "scripts/ui-server-parity/",
+             "scripts/native-witness/",
+             "src/pilotdeck-cli/tests/"))
+
+    def test_all_six_lock_families_are_guarded(self):
+        for relative in ("scripts/gateway-parity/common.py",
+                         "scripts/gateway-parity/run_round.py",
+                         "scripts/parity/round.py",
+                         "scripts/parity/controls/lock_release.py",
+                         "scripts/cli-parity/common.py",
+                         "scripts/cli-parity/run_round.py",
+                         "scripts/ui-server-parity/calibrate.py",
+                         "scripts/ui-server-parity/calibrate.sh",
+                         "scripts/native-witness/collect.py",
+                         "src/pilotdeck-cli/tests/sdk_run_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_settings_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_sessions_list_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_resume_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_format_exit.rs",
+                         "src/pilotdeck-cli/tests/sdk_sessions_messages_exit.rs"):
+            self.assertTrue(negative_process.parity_guarded(relative),
+                            f'{relative} takes /tmp/pdrs-parity.lock '
+                            'and must be in the lease family')
+
+    def test_lookalikes_outside_the_family_are_not_guarded(self):
+        for relative in ("", "scripts/parity", "scripts/round.py",
+                         "scripts/gateway-parityx/common.py",
+                         "scripts/native-witnessx/collect.py",
+                         "src/pilotdeck-cli/src/sdk.rs",
+                         "src/pilotdeck-cli/test/x.rs",
+                         "src/pilotdeck-gateway/tests/fixtures/negative_process.py",
+                         "specs/parity/README.md"):
+            self.assertFalse(negative_process.parity_guarded(relative),
+                             f'{relative} must not take the shared lease')
+
+
+class BaselineTracksRuler(unittest.TestCase):
+    """#2513 fix-r4 (review 条3): ruler absence must be resolvable, not assumed.
+
+    ``_baseline_tracks_ruler`` used to fold every ``SourceBaselineError`` —
+    git timeout, sabotaged environment, unreadable blob — into "no lease
+    consumer" and silently drop the shared lease for windows mutating guarded
+    sources. Absence is now proved by a resolvable ``git ls-tree``; any git
+    failure re-raises (fail-closed); a ``--baseline`` predating the lease
+    protocol on a ruler-tracking checkout is refused without the explicit
+    ``allow_unleased`` opt-in.
+    """
+
+    RULER = "scripts/gateway-parity/common.py"
+    GUARDED = "scripts/cli-parity/probe.py"
+
+    @staticmethod
+    def repo(temp, ruler):
+        """Two commits: pre-lease A, then HEAD; the ruler only joins at HEAD."""
+        root = Path(temp).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=root, check=True)
+
+        git("init", "-q")
+        git("config", "user.email", "negative@example.invalid")
+        git("config", "user.name", "negative control")
+        probe = root / BaselineTracksRuler.GUARDED
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("# original\n")
+        git("add", ".")
+        git("commit", "-qm", "pre-lease baseline")
+        before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
+                                 check=True, capture_output=True,
+                                 text=True).stdout.strip()
+        if ruler:
+            ruler_path = root / BaselineTracksRuler.RULER
+            ruler_path.parent.mkdir(parents=True, exist_ok=True)
+            ruler_path.write_text("# ruler stub\n")
+            git("add", ".")
+            git("commit", "-qm", "ruler arrives")
+        return root, probe, before
+
+    def test_resolvable_absence_is_the_only_exemption(self):
+        # The synthetic-mirror case: a tree whose baseline genuinely has no
+        # ruler cannot host a live lease consumer, so no lease. The answer is
+        # a resolvable ls-tree away from HEAD, never an assumed one.
+        with tempfile.TemporaryDirectory(prefix="pdrs-2513-ruler-") as temp:
+            root, _probe, _before = self.repo(temp, ruler=False)
+            self.assertFalse(negative_process._baseline_tracks_ruler(root, "HEAD"),
+                             "#2513 a resolvable ruler absence is the only exemption")
+            self.assertFalse(negative_process._baseline_has_file(root, self.RULER, "HEAD"),
+                             "#2513 a resolvable absence reads as absence")
+            # A fresh subdirectory: re-running repo() in the same tree would
+            # leave nothing for the "ruler arrives" commit to record.
+            root, _probe, _before = self.repo(str(Path(temp) / "with-ruler"), ruler=True)
+            self.assertTrue(negative_process._baseline_tracks_ruler(root, "HEAD"),
+                             "#2513 a tracked ruler reads as tracked")
+
+    def test_pre_lease_baseline_requires_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-2513-ruler-") as temp:
+            root, _probe, before = self.repo(temp, ruler=True)
+            with self.assertRaises(SourceBaselineError,
+                                   msg="#2513 a pre-lease baseline must not silently drop the lease") as caught:
+                negative_process._baseline_tracks_ruler(root, before)
+            self.assertIn("allow-unleased", str(caught.exception),
+                          "#2513 the refusal names the opt-in switch")
+            self.assertFalse(negative_process._baseline_tracks_ruler(root, before, allow_unleased=True),
+                             "#2513 the explicit opt-in keeps the mirror exemption")
+
+    def test_git_failure_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-2513-ruler-") as temp:
+            root, _probe, _before = self.repo(temp, ruler=True)
+            # Fake GIT_DIR: git itself refuses to answer; the old code folded
+            # this into the exemption and mutated guarded sources unleased.
+            with patch.dict(os.environ, {"GIT_DIR": str(root / "nowhere.git")}):
+                with self.assertRaises(SourceBaselineError,
+                                       msg="#2513 a git failure must not read as ruler absence"):
+                    negative_process._baseline_tracks_ruler(root, "HEAD")
+            # PATH sabotage: git cannot even be launched — still a refusal,
+            # never an exemption.
+            with patch.dict(os.environ, {"PATH": ""}):
+                with self.assertRaises(OSError,
+                                       msg="#2513 a missing git must not read as ruler absence"):
+                    negative_process._baseline_tracks_ruler(root, "HEAD")
+
+    def test_tracked_but_unreadable_blob_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-2513-ruler-") as temp:
+            root, _probe, _before = self.repo(temp, ruler=True)
+            denial = SourceBaselineError(root, self.RULER,
+                                         "cannot read HEAD bytes: simulated")
+            with patch.object(negative_process, "_head_bytes", side_effect=denial), \
+                    patch.object(negative_process, "_git",
+                                 side_effect=lambda *_args: (self.RULER + "\n").encode()):
+                with self.assertRaises(SourceBaselineError,
+                                       msg="#2513 a tracked ruler that cannot be read must not read as absent") as caught:
+                    negative_process._baseline_tracks_ruler(root, "HEAD")
+                self.assertIs(caught.exception, denial,
+                              "#2513 the original read failure is re-raised, not reinterpreted")
+
+    def test_window_refuses_pre_lease_baseline_and_opt_in_runs_unleased(self):
+        with tempfile.TemporaryDirectory(prefix="pdrs-2513-ruler-") as temp:
+            root, probe, before = self.repo(temp, ruler=True)
+            original = probe.read_bytes()
+            with patch.object(negative_process, "_assert_product_pristine"):
+                with self.assertRaises(SourceBaselineError,
+                                       msg="#2513 guarded mutation on a pre-lease baseline must refuse to start"):
+                    with mutating_sources(root, [probe], baseline=before, lock_timeout=1):
+                        self.fail("#2513 a refused window must not yield")
+                self.assertEqual(probe.read_bytes(), original,
+                                 "#2513 the refused window writes nothing")
+                with mutating_sources(root, [probe], baseline=before, lock_timeout=1,
+                                      allow_unleased=True):
+                    self.assertEqual(probe.read_bytes(), original,
+                                     "#2513 the opted-in window starts from pristine bytes")
+                    probe.write_text("# mutant\n")
+                self.assertEqual(probe.read_bytes(), original,
+                                 "#2513 the opted-in window still restores bytes")
+
+
+class ParityLockHolderReconciliation(unittest.TestCase):
+    """#2513 fix-r3 (DS sibling#1 + MM boundary#1): machine-checked holder list.
+
+    The four-prefix predicate of fix-r2 still missed scripts/native-witness
+    (collect.py) and src/pilotdeck-cli/tests (the Rust ParityLock copies),
+    so their mutation windows never held /tmp/pdrs-parity.lock. Widening the
+    predicate alone would leave the next family one review away, so this
+    check re-derives the holder inventory from the tree itself: every code
+    file that names the lease path or calls parity_lock must live under a
+    guarded prefix or carry a registered reason here. A seventh family, or a
+    stray copy of the protocol, fails closed instead of shipping silently.
+    """
+
+    # The one lease path and the one protocol name every reference uses.
+    # #2513 fix-r4 (review boundary#3): matching the bare filename, not only
+    # the full path, catches the concatenated '/tmp/' + 'pdrs-parity.lock'
+    # spelling, and PEP 701 f-strings tokenize their literal parts as
+    # FSTRING_MIDDLE — a bare-STRING scan would skip an f-string spelling.
+    LOCK_PATH = '/tmp/pdrs-parity.lock'
+    LOCK_FILE = 'pdrs-parity.lock'
+    LOCK_NAME = re.compile(r'\bparity_lock\b')
+    # Code files only; .md/.txt are documentation, and the raw grep over the
+    # whole tree (RESULT, fix-r3) shows every non-code mention is a doc.
+    SUFFIXES = frozenset({'.py', '.rs', '.mjs', '.js', '.sh', '.bash'})
+    SKIP_DIRS = frozenset({'.git', '_build', '_tmp', '__pycache__',
+                           'node_modules', 'target', '.venv'})
+
+    # Out-of-family files that reference the lease, each with the reason it
+    # is safe: temp-lock redirects, protocol copies exercised on temporary
+    # paths, or the lease machinery and its own tests. Every entry must keep
+    # referencing the lease (test_registered_mentions_still_reference_the_lease)
+    # or the registration is stale and reds too.
+    REGISTERED_MENTIONS = {
+        'src/pilotdeck-gateway/tests/fixtures/negative_process.py':
+            'the predicate and the mutation-window lease machinery itself',
+        'src/pilotdeck-gateway/tests/fixtures/test_negative_process.py':
+            'this reconciliation check, the family pin and the '
+            'ParityMutationLock mechanism tests',
+        'src/pilotdeck-gateway/tests/fixtures/cli-parity-lock-bounded/'
+        'negative_controls.py':
+            'the docstring documents the shared lease; --check consumes the '
+            'one parity_guarded predicate',
+        'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/'
+        'negative_controls.py':
+            'the inner machine lock loads the guarded scripts/cli-parity/'
+            'common.py and stands down while its own window holds the lease',
+        'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/'
+        'test_negative_controls.py':
+            'machine-lock tests acquire temporary leases only',
+        'src/pilotdeck-gateway/tests/fixtures/native-session-e2e/test_e2e.py':
+            'cells redirect parity_lock to per-case temporary leases '
+            '(lock=...); one string is a documented payload',
+        'src/pilotdeck-gateway/tests/fixtures/native-topology/run.py':
+            'real consumer through gateway common; its mutation window '
+            '(negative_signals.py) only runs cells that redirect to a '
+            'temporary lease (test_signals.py), so no in-window real acquirer',
+        'src/pilotdeck-gateway/tests/fixtures/native-topology/test_signals.py':
+            'replays run.py with parity_lock patched to a temporary lease',
+        'src/pilotdeck-gateway/tests/fixtures/native-witness/'
+        'test_authentication.py':
+            'cells acquire temporary leases only (lock=...)',
+        'src/pilotdeck-gateway/tests/fixtures/sdk-signals/'
+        'negative_controls.py':
+            'the mutation window redirects its own common.parity_lock '
+            'call to a per-batch evidence-dir lease (fix-r4); the shared '
+            'lease stays host-pre-held per the lane contract',
+        # #2513 fix-r10 (DS boundary#2): the read-lease twin of the entry
+        # above — its windows redirect common.parity_lock to
+        # out/parity-redirect.lock behind the fail-closed _require_host_lease
+        # gate (fix-r7), the shared lease host-pre-held per the 28999 lane
+        # contract, and the dead/own/live lock-path checks exercise temporary
+        # a-/b-/c-/d-pdrs-parity.lock paths only.
+        'src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/'
+        'negative_controls.py':
+            'the mutation windows redirect common.parity_lock to '
+            'out/parity-redirect.lock behind the fail-closed host-pre-hold '
+            'gate (fix-r7); the shared lease stays host-pre-held per the '
+            '28999 lane contract',
+        'src/pilotdeck-gateway/tests/fixtures/native-witness/test_witness.py':
+            'cells patch parity_lock to temporary leases or nullcontext',
+        'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/'
+        'negative_controls.py':
+            'release-protocol copy exercised on temporary lock paths',
+        'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/'
+        'test_lock_release.py':
+            'release-protocol tests on temporary lock paths',
+        'src/pilotdeck-gateway/tests/fixtures/session-domain-lock-release/'
+        'test_lock_release.py':
+            'release-protocol tests on temporary lock paths',
+        'src/pilotdeck-gateway/tests/fixtures/session-lease/test_lease.py':
+            'lease-protocol tests on temporary paths',
+        # 真合并轮（#2513 重锚收货）：main 侧 #2929 fix-r2/r3 带来的两个元测试
+        # 只在内存里装载被守护的 runner、只在私有临时锁目录上探测协议，
+        # 从不取共享租约——按本登记的同类口径入表。
+        'src/pilotdeck-gateway/tests/fixtures/test_lease_acquire_budgets.py':
+            'budget meta-test: loads the guarded runners in memory only and '
+            'cross-checks their acquire constants; the lock-path strings '
+            'pin those literals (never acquires the shared lease)',
+        'src/pilotdeck-gateway/tests/fixtures/test_residual_lease_fast_fail.py':
+            'residual-lease probe: exercises common/round parity_lock only '
+            'on private temporary lock directories, never the shared lease',
+    }
+
+    @classmethod
+    def references(cls, path):
+        """The reference kinds one code file makes to the shared lease.
+
+        Python is scanned with tokenize so comments do not count and
+        docstrings do; the other code files get the equivalent raw match.
+        The path match is on the bare filename (#2513 fix-r4 boundary#3): a
+        concatenated ``'/tmp/' + 'pdrs-parity.lock'`` holds no single token
+        with the full path, and an f-string spelling lives in FSTRING_MIDDLE.
+        """
+        text = path.read_text(errors='replace')
+        found = set()
+        if path.suffix == '.py':
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE) \
+                        and cls.LOCK_FILE in token.string:
+                    found.add('path')
+                elif token.type == tokenize.NAME and cls.LOCK_NAME.fullmatch(token.string):
+                    found.add('name')
+        else:
+            if cls.LOCK_FILE in text:
+                found.add('path')
+            if cls.LOCK_NAME.search(text):
+                found.add('name')
+        return found
+
+    @classmethod
+    def unregistered(cls, root):
+        """(relative, kinds) for every lock reference outside family + table."""
+        violations = []
+        for path in sorted(root.rglob('*')):
+            if not path.is_file() or path.suffix not in cls.SUFFIXES:
+                continue
+            relative = path.relative_to(root)
+            if any(part in cls.SKIP_DIRS or part.startswith('.')
+                   for part in relative.parts[:-1]):
+                continue
+            found = cls.references(path)
+            if found and not (negative_process.parity_guarded(relative.as_posix())
+                              or relative.as_posix() in cls.REGISTERED_MENTIONS):
+                violations.append((relative.as_posix(), '+'.join(sorted(found))))
+        return violations
+
+    def test_every_lock_reference_is_guarded_or_registered(self):
+        violations = self.unregistered(Path(__file__).resolve().parents[4])
+        self.assertTrue(not violations,
+                        '#2513 out-of-family lock references: '
+                        + '; '.join(f'{rel} ({kinds})' for rel, kinds in violations))
+
+    def test_registered_mentions_still_reference_the_lease(self):
+        root = Path(__file__).resolve().parents[4]
+        stale = [relative for relative in self.REGISTERED_MENTIONS
+                 if not self.references(root / relative)]
+        self.assertTrue(not stale,
+                        '#2513 stale registered mentions (no reference left): '
+                        + ', '.join(sorted(stale)))
+
+    def test_a_new_out_of_family_holder_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            holder = root / 'src/pilotdeck-gateway/tests/fixtures/nowhere/oracle.py'
+            holder.parent.mkdir(parents=True)
+            holder.write_text('from somewhere import parity_lock\n')
+            family = root / 'scripts/native-witness/collect.py'
+            family.parent.mkdir(parents=True)
+            family.write_text('parity_lock = common.parity_lock\n')
+            self.assertEqual([row[0] for row in self.unregistered(root)],
+                             [holder.relative_to(root).as_posix()],
+                             '#2513 an unregistered out-of-family holder must '
+                             'red the reconciliation')
+
+    def test_a_family_member_alone_stays_green(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            family = root / 'src/pilotdeck-cli/tests/sdk_run_exit.rs'
+            family.parent.mkdir(parents=True)
+            family.write_text(
+                'Self::acquire_at(Path::new("/tmp/pdrs-parity.lock"), '
+                'Duration::from_secs(180))\n')
+            self.assertTrue(not self.unregistered(root),
+                            '#2513 a guarded-prefix holder needs no '
+                            'registration to stay green')
+
+    def test_concatenated_lock_spelling_is_still_caught(self):
+        # #2513 fix-r4 (review boundary#3): the path check must survive the
+        # '/tmp/' + 'pdrs-parity.lock' spelling — no single token carries the
+        # full path, so the pre-fix STRING-only, LOCK_PATH-only scan saw
+        # nothing and the holder shipped without a registration.
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            holder = root / 'src/pilotdeck-gateway/tests/fixtures/nowhere/oracle.py'
+            holder.parent.mkdir(parents=True)
+            holder.write_text("LOCK = '/tmp/' + 'pdrs-parity.lock'\n")
+            self.assertEqual([row[0] for row in self.unregistered(root)],
+                             [holder.relative_to(root).as_posix()],
+                             '#2513 a concatenated lease-path spelling must '
+                             'still count as a lock reference')
+
+    def test_fstring_lock_spelling_is_still_caught(self):
+        # PEP 701 tokenizes the literal part of an f-string as FSTRING_MIDDLE,
+        # not STRING: a bare-STRING scan would skip this spelling entirely.
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            holder = root / 'src/pilotdeck-gateway/tests/fixtures/nowhere/oracle.py'
+            holder.parent.mkdir(parents=True)
+            holder.write_text("base = '/tmp'\n"
+                              "LOCK = f'{base}/pdrs-parity.lock'\n")
+            self.assertEqual([row[0] for row in self.unregistered(root)],
+                             [holder.relative_to(root).as_posix()],
+                             '#2513 an f-string lease-path spelling must '
+                             'still count as a lock reference')
+
+    def test_raw_fragment_spelling_is_still_caught(self):
+        # Non-Python code files get the raw text match; its path predicate
+        # must accept the bare filename too, or a fragment spelling outside
+        # Python is the same hole one file suffix away.
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-reconcile-') as temp:
+            root = Path(temp).resolve()
+            holder = root / 'src/pilotdeck-gateway/tests/fixtures/nowhere/run.sh'
+            holder.parent.mkdir(parents=True)
+            holder.write_text('exec flock "${TMPDIR}pdrs-parity.lock" "$@"\n')
+            self.assertEqual([row[0] for row in self.unregistered(root)],
+                             [holder.relative_to(root).as_posix()],
+                             '#2513 a raw filename fragment must still count '
+                             'as a lock reference')
+
+
 class ParityMutationLock(unittest.TestCase):
     """#166 real ruler lock, isolated paths and deterministic source IO hooks."""
 
@@ -2218,11 +2627,26 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
         without the suppress a marker write on such a directory would escape
         the handler as a traceback and turn the exit-2 refusal into rc=1
         ("ran and was red"). The caller must get the failure text instead.
+
+        fix-r12 (review DS r11 boundary #2): the twin used to chmod(0o555)
+        the directory, but permission bits are uid/filesystem-dependent —
+        run as root or with TMPDIR on an overlay/SMB-style mount the write
+        succeeds and this test goes red on a healthy checker. Both the
+        marker write and the cleanup unlink now fail by injection (the
+        fixture's established twin form), so the escalation shape below is
+        host-independent.
         """
         with tempfile.TemporaryDirectory(prefix='pdrs-refuse-readonly-') as temp:
             out = Path(temp)
-            out.chmod(0o555)
-            try:
+
+            def failing_write(self, data, *args, **kwargs):
+                raise OSError(13, 'Permission denied')
+
+            def failing_unlink(self, *args, **kwargs):
+                raise PermissionError(13, 'Permission denied')
+
+            with patch.object(Path, 'write_text', failing_write), \
+                    patch.object(Path, 'unlink', failing_unlink):
                 try:
                     failure = negative_process.refuse_summary(
                         out, 'stale anchors', '42.1.777',
@@ -2230,10 +2654,6 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
                 except OSError as error:
                     self.fail('#1087 an unwritable directory must not raise past '
                               f'refuse_summary (got {error!r})')
-            finally:
-                # The directory must be writable again before the context
-                # manager tries to remove it.
-                out.chmod(0o755)
         self.assertTrue(failure is not None,
                         '#1087 the unwritable-directory marker write must '
                         'report itself as failure text')
@@ -2248,26 +2668,33 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
         raises ``PermissionError``; without the ``suppress`` that error
         escapes the ``except OSError`` clause and turns the exit-2 refusal
         into a traceback (rc=1, "ran and was red").
+
+        fix-r12 (review DS r11 boundary #2): the twin used to chmod(0o555)
+        the directory inside the refused rename — permission bits are
+        uid/filesystem-dependent (root, overlay/SMB-mounted TMPDIR), so the
+        cleanup failure is now injected the same way as the rename (the
+        build-owner twin below uses the identical shape).
         """
         with tempfile.TemporaryDirectory(prefix='pdrs-refuse-cleanup-') as temp:
             out = Path(temp)
 
             def unwritable_rename(self, destination, *args, **kwargs):
-                out.chmod(0o555)  # the directory loses write between the
-                # staging write and the rename.
+                # the directory loses write between the staging write and
+                # the rename.
                 raise OSError('twin: rename refused')
 
-            try:
-                with patch.object(Path, 'replace', unwritable_rename):
-                    try:
-                        failure = negative_process.refuse_summary(
-                            out, 'stale anchors', '42.1.777',
-                            summary_name='summary.42.1.777.json')
-                    except OSError as error:
-                        self.fail('#1087 the cleanup unlink must not escalate '
-                                  f'past the failure handler (got {error!r})')
-            finally:
-                out.chmod(0o755)
+            def failing_unlink(self, *args, **kwargs):
+                raise PermissionError(13, 'Permission denied')
+
+            with patch.object(Path, 'replace', unwritable_rename), \
+                    patch.object(Path, 'unlink', failing_unlink):
+                try:
+                    failure = negative_process.refuse_summary(
+                        out, 'stale anchors', '42.1.777',
+                        summary_name='summary.42.1.777.json')
+                except OSError as error:
+                    self.fail('#1087 the cleanup unlink must not escalate '
+                              f'past the failure handler (got {error!r})')
         self.assertTrue(failure is not None,
                         '#1087 a failing rename must report itself as '
                         'failure text, not raise')
@@ -2324,30 +2751,35 @@ class RunTokenAndRefuseSummary(unittest.TestCase):
             source.write_text('original')
             publish = root / '.negctl-publish'
             publish.mkdir()
-            publish.chmod(0o555)  # the staging write fails on its own here.
+
+            # fix-r12 (review DS r11 boundary #2): the staging write used
+            # to fail via a chmod(0o555) publish directory, but permission
+            # bits are uid/filesystem-dependent (root, overlay/SMB-mounted
+            # TMPDIR) — the refusal is now injected at the open, same twin
+            # form as the failing_unlink beside it.
+            def refused_open(self, *args, **kwargs):
+                raise PermissionError(13, 'Permission denied')
 
             def failing_unlink(self, *args, **kwargs):
                 raise OSError('twin: the cleanup unlink fails')
 
-            try:
-                with patch.object(Path, 'unlink', failing_unlink):
-                    try:
-                        negative_process.write_source_atomic(root, source,
-                                                             b'replacement')
-                    except OSError as error:
-                        self.assertTrue('cleanup unlink fails' not in str(error),
-                                        f'#1087 the cleanup error must not '
-                                        f'mask the publish error (got '
-                                        f'{error!r})')
-                        self.assertTrue('Permission denied' in str(error),
-                                        f'#1087 the original publish error '
-                                        f'must be the read-only staging '
-                                        f'directory (got {error!r})')
-                    else:
-                        self.fail('#1087 the publish must fail on the '
-                                  'read-only staging directory')
-            finally:
-                publish.chmod(0o755)
+            with patch.object(Path, 'open', refused_open), \
+                    patch.object(Path, 'unlink', failing_unlink):
+                try:
+                    negative_process.write_source_atomic(root, source,
+                                                         b'replacement')
+                except OSError as error:
+                    self.assertTrue('cleanup unlink fails' not in str(error),
+                                    f'#1087 the cleanup error must not '
+                                    f'mask the publish error (got '
+                                    f'{error!r})')
+                    self.assertTrue('Permission denied' in str(error),
+                                    f'#1087 the original publish error '
+                                    f'must be the refused staging write '
+                                    f'(got {error!r})')
+                else:
+                    self.fail('#1087 the publish must fail on the '
+                              'refused staging write')
             self.assertEqual(source.read_text(), 'original',
                              '#1087 the failed publish must not touch the '
                              'source bytes')

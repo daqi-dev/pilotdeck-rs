@@ -9,6 +9,7 @@ import {syncBuiltinESMExports} from 'node:module';
 import {resolve,join,dirname,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
+import os from 'node:os';
 const baseline=resolve(process.argv[2]),output=resolve(process.argv[3]),scratch=resolve(process.argv[4]);
 if(execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85')throw Error('fixed baseline cc7c4e6 required');
 if(fs.existsSync(output)||fs.existsSync(join(scratch,'cases')))throw Error('fresh output and scratch required');
@@ -99,5 +100,6 @@ for(const target of ['global']){
 }
 const sourceFiles=['src/gateway/dialog/modelCatalog.ts','src/pilot/config/loadPilotConfig.ts','src/gateway/server/GatewayWsConnection.ts'];
 const sourceHashes=Object.fromEntries(sourceFiles.map(p=>[p,createHash('sha256').update(real.read(join(baseline,p))).digest('hex')]));
-fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),node:process.version,icu:process.versions.icu,platform:process.platform,sourceHashes,callPath:['GatewayWsConnection.handleRequest','gateway.modelCatalogList','listModelCatalog','loadPilotConfig'],routerCalls,cases:results},null,2)+'\n');
+// #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3): the baseline commit read takes the r15 run_resource_scaling.py:174-180 hardened form (absolute git + safe.directory + the scrubbed three-key environment + a bounded timeout), so a steered environment cannot pin a decoy HEAD into the recorded manifest. The fixed-baseline check above this line already fails closed on a constant.
+fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('/usr/bin/git',['-c','safe.directory=*','-C',baseline,'rev-parse','HEAD'],{encoding:'utf8',env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devnull},timeout:10000}).trim(),node:process.version,icu:process.versions.icu,platform:process.platform,sourceHashes,callPath:['GatewayWsConnection.handleRequest','gateway.modelCatalogList','listModelCatalog','loadPilotConfig'],routerCalls,cases:results},null,2)+'\n');
 } finally {(process as any)._kill=nativeKill;}

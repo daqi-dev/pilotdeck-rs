@@ -58,7 +58,7 @@ if not _boot_sys.flags.isolated or any(
     raise SystemExit(f'#1023: unsafe import path; run with -I by file: python3 -I {__file__}')
 
 import argparse
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 import hashlib
 import importlib.util
 import json
@@ -86,7 +86,7 @@ class _BootFinder:
 
 _boot_finder = _BootFinder()
 sys.meta_path.insert(0, _boot_finder)
-from negative_process import mutating_sources, run_owned  # noqa: E402
+from negative_process import mutating_sources, parity_guarded, run_owned  # noqa: E402
 sys.meta_path.remove(_boot_finder)
 
 root = Path(__file__).resolve().parents[5]
@@ -94,10 +94,34 @@ policy = root / 'scripts/cli-parity/policy.py'
 common = root / 'scripts/cli-parity/common.py'
 compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
+bootstrap = root / 'scripts/cli-parity/_bootstrap.py'
+test_cli_parity = root / 'scripts/cli-parity/test_cli_parity.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
 fixture = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/negative_controls.py'
 fixture_test = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/test_negative_controls.py'
+
+# #2513 fix-r2: the guarded set is now in the parity lock family (all of it is
+# scripts/cli-parity/, one of the shared parity_guarded prefixes), so
+# mutating_sources itself takes the real /tmp/pdrs-parity.lock for the whole
+# window. The per-test machine_parity_lock below would then block on the same
+# non-reentrant lease until its 90s bound and void every row; the window is
+# already holding it, so the per-test inner lock must stand down.
+# fix-r3 (DS concurrency#3): one function feeds both the stand-down decision
+# and the mutating_sources call below — the two lists used to be hand-copied,
+# so a future edit could add a guarded source to one and miss the other. The
+# globals are read at call time, so entry-guard tests can patch individual
+# sources to copies under their own directories.
+def _machine_lease_sources():
+    # #2513 fix-r16 (DS r14 sib#5): _bootstrap.py joined the set with the
+    # registry-write row — the loader itself is now a mutated surface, so the
+    # window must snapshot and restore it like every other guarded source.
+    return [policy, common, compare, run_round, bootstrap, mock_gateway,
+            isolation_probe, fixture, test_cli_parity]
+
+
+_WINDOW_HOLDS_MACHINE_LEASE = any(parity_guarded(path.resolve().relative_to(root).as_posix())
+                                 for path in _machine_lease_sources())
 
 # The real cli-parity driver serialises a whole round on this same mkdir lease
 # (common.py: LOCK = /tmp/pdrs-parity.lock). Loading common.py by explicit path
@@ -339,6 +363,152 @@ mutations = [
      "            raise RuntimeError(\n"
      "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
      "        yield"),
+    # #2513 fix-r4 (review sibling#2 + boundary#2), re-anchored fix-r14 and
+    # fix-r15: the post-lease apparatus verification derives its surfaces from
+    # the loader's caller-held registry (every (name, module) pair
+    # _bootstrap.load executed) — filtering one name out of the registry loop
+    # (or disarming one check) lets a mutated module run under the lease
+    # while the bound ApparatusVerificationTests row goes red.
+    ('apparatus-common-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'common'):\n"),
+    ('apparatus-compare-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'compare'):\n"),
+    ('apparatus-policy-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'policy'):\n"),
+    # #2513 fix-r16 (MM r14 sib#4): the registry-loop family only covered
+    # three of the six loader-recorded modules. controls is the late-loaded
+    # module the second verification round re-checks (run_round.main) and
+    # host_negative_controls is its host-side twin — filtering either out
+    # of the loop left a mutated module running under the lease with no row
+    # red anywhere.
+    ('apparatus-controls-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'controls'):\n"),
+    ('apparatus-host-negative-controls-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'host_negative_controls'):\n"),
+    ('apparatus-provenance-unchecked',
+     run_round,
+     "    if not loaded:\n"
+     "        raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')",
+     "    if False:\n"
+     "        raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')"),
+    ('apparatus-head-failure-swallowed',
+     run_round,
+     "    expected_entry = _head_source('scripts/cli-parity/run_round.py')",
+     "    try:\n"
+     "        expected_entry = _head_source('scripts/cli-parity/run_round.py')\n"
+     "    except Blocked:\n"
+     "        return  # mutant: a HEAD read failure is swallowed"),
+    ('apparatus-entry-fingerprint-unchecked',
+     run_round,
+     "    if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):",
+     "    if False and _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):"),
+    ('apparatus-bootstrap-unverified',
+     run_round,
+     "    if _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):",
+     "    if False and _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):"),
+    ('apparatus-bootstrap-missing-accepted',
+     run_round,
+     "    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)\n"
+     "    if not isinstance(bootstrap_code, CodeType):\n"
+     "        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')",
+     "    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)\n"
+     "    if not isinstance(bootstrap_code, CodeType):\n"
+     "        bootstrap_code = compile(_head_source('scripts/cli-parity/_bootstrap.py'), str(_bootstrap_path), 'exec')"),
+    # #2513 fix-r16 (DS r14 sib#5): the registry write itself — the
+    # verified set's denominator.  With the append gone, no load is ever
+    # recorded, the post-lease verification falls to the all-empty refusal,
+    # and the whole ApparatusVerificationTests family passes without
+    # checking anything.  The bound cell asserts the registry content the
+    # loader's own process must carry.
+    ('apparatus-registry-not-recorded',
+     bootstrap,
+     "        sys._cli_parity_loaded_apparatus.append((name, module))\n",
+     "        pass  # mutant: no load is ever recorded\n"),
+    # #2513 fix-r6 (MM boundary#1): _head_source reads the worktree file
+    # instead of the committed object — the verification becomes always-true
+    # under a mutation window (worktree bytes == loaded bytes) while every
+    # other ApparatusVerificationTests row patches _head_source away and
+    # stays green. The bound cell is the one that does not patch it: the
+    # worktree read returns this mutant's own bytes, the independent git
+    # invocation still returns HEAD, and the equality fires its marker.
+    ('apparatus-head-source-worktree-read',
+     run_round,
+     "    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT), 'show', f'HEAD:{relative}'],\n"
+     "                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'},\n"
+     "                            capture_output=True, timeout=30)",
+     "    return (ROOT / relative).read_bytes()  # mutant: the worktree file, not the committed object"),
+    # #2513 fix-r6 (MM boundary#2): the call site itself — deleting
+    # ``_verify_loaded_apparatus()`` from main leaves every body-level kill
+    # row green (they mutate the function's body, which is then never
+    # invoked). The bound ContractTests row drives main onto the leased path
+    # on any platform (the macOS-only preflight twin cannot be the bound row
+    # on a Linux host) and pins that the gate runs exactly once before any
+    # work; with the call gone the markered call-count assertion fires. The
+    # native-witness 'bypass-apparatus-verify' row is the same-shape
+    # precedent.
+    ('apparatus-verify-call-site-deleted',
+     run_round,
+     "            _verify_loaded_apparatus()\n"
+     "            # Stop before other runners may consider the lease expired. The",
+     "            pass  # mutant: the post-lease apparatus gate is never called\n"
+     "            # Stop before other runners may consider the lease expired. The"),
+    # #2513 fix-r15 (DS r14 review): the registry is pinned against
+    # _bootstrap's own APPARATUS_MODULES inventory — disarming the
+    # unregistered branch lets a stamped rogue module run under the lease.
+    ('apparatus-unregistered-unchecked',
+     run_round,
+     "    if unregistered:\n"
+     "        raise ValueError('#2513 loaded apparatus modules missing from the '\n",
+     "    if False:\n"
+     "        raise ValueError('#2513 loaded apparatus modules missing from the '\n"),
+    # #2513 fix-r15 (MM conc-r2 ②): a module that popped itself out of
+    # sys.modules keeps its stamp — disarming the identity check lets it
+    # silently leave the comparison instead of being red.
+    ('apparatus-self-removal-unchecked',
+     run_round,
+     "    if sys.modules.get(name) is not module:\n",
+     "    if False and sys.modules.get(name) is not module:\n"),
+    # #2513 fix-r15 (MM conc-r2 ②): a single module's stamp going missing must
+    # be red per-module; this mutant turns "not bytes" into "is bytes and
+    # differs", letting a stampless module through the per-module check.
+    ('apparatus-single-stamp-unchecked',
+     run_round,
+     "    if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):\n",
+     "    if isinstance(source, bytes) and source != _head_source(f'scripts/cli-parity/{name}.py'):\n"),
+    # #2513 fix-r15 (MM conc-r2 ①): the sys.modules-derived set must stay a
+    # subset of the loader registry — disarming the cross-check lets a
+    # stamped module whose registry row was deleted run unverified.
+    ('apparatus-derived-set-unchecked',
+     run_round,
+     "            if id(module) not in recorded.get(name, ()):\n",
+     "            if False:\n"),
+    # #2513 fix-r15 (DS r14 b#6): controls.py loads after the post-lease gate
+    # — deleting the second verification round leaves that late load
+    # unverified.
+    ('apparatus-late-controls-unverified',
+     run_round,
+     "                    _verify_loaded_apparatus()\n"
+     "                    run_controls = controls_module.run_controls\n",
+     "                    pass  # mutant: the late controls load is never re-verified\n"
+     "                    run_controls = controls_module.run_controls\n"),
+    # #2513 fix-r15 (DS r14 review): the bound cells' controlled HEAD is
+    # heads() itself — dropping a row from it makes every verification cell
+    # silently stop covering that module. The bound row is the inventory
+    # coverage cell, whose own assertion names the missing entry.
+    ('heads-coverage-shrunk',
+     test_cli_parity,
+     "            'scripts/cli-parity/controls.py': sys.modules['controls']._apparatus_source,\n",
+     ""),
 ]
 
 # #1666: the denominator is this static roster, not `len(mutations)`. Deleting
@@ -369,6 +539,25 @@ EXPECTED_NAMES = (
     'script-parent-metadata-allowed',
     'baseline-parent-metadata-allowed',
     'lease-late-arrival-runs-bound-test',
+    'apparatus-common-unverified',
+    'apparatus-compare-unverified',
+    'apparatus-policy-unverified',
+    'apparatus-controls-unverified',
+    'apparatus-host-negative-controls-unverified',
+    'apparatus-provenance-unchecked',
+    'apparatus-head-failure-swallowed',
+    'apparatus-entry-fingerprint-unchecked',
+    'apparatus-bootstrap-unverified',
+    'apparatus-bootstrap-missing-accepted',
+    'apparatus-registry-not-recorded',
+    'apparatus-head-source-worktree-read',
+    'apparatus-verify-call-site-deleted',
+    'apparatus-unregistered-unchecked',
+    'apparatus-self-removal-unchecked',
+    'apparatus-single-stamp-unchecked',
+    'apparatus-derived-set-unchecked',
+    'apparatus-late-controls-unverified',
+    'heads-coverage-shrunk',
 )
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -394,6 +583,44 @@ tests = {
     'baseline-parent-metadata-allowed': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
     'lease-late-arrival-runs-bound-test':
         'MachineLeaseTests.test_bound_run_lease_late_arrival_does_not_start_bound_run',
+    'apparatus-common-unverified':
+        'ApparatusVerificationTests.test_mutated_common_is_refused',
+    'apparatus-compare-unverified':
+        'ApparatusVerificationTests.test_mutated_compare_is_refused',
+    'apparatus-policy-unverified':
+        'ApparatusVerificationTests.test_mutated_policy_is_refused',
+    'apparatus-controls-unverified':
+        'ApparatusVerificationTests.test_mutated_controls_is_refused',
+    'apparatus-host-negative-controls-unverified':
+        'ApparatusVerificationTests.test_mutated_host_negative_controls_is_refused',
+    'apparatus-provenance-unchecked':
+        'ApparatusVerificationTests.test_missing_provenance_fails_closed',
+    'apparatus-head-failure-swallowed':
+        'ApparatusVerificationTests.test_head_source_failure_is_blocked',
+    'apparatus-entry-fingerprint-unchecked':
+        'ApparatusVerificationTests.test_entry_fingerprint_mismatch_is_refused',
+    'apparatus-bootstrap-unverified':
+        'ApparatusVerificationTests.test_mutated_bootstrap_is_refused',
+    'apparatus-bootstrap-missing-accepted':
+        'ApparatusVerificationTests.test_missing_bootstrap_code_fails_closed',
+    'apparatus-registry-not-recorded':
+        'ApparatusVerificationTests.test_loader_records_the_modules_it_loads',
+    'apparatus-head-source-worktree-read':
+        'ApparatusVerificationTests.test_head_source_reads_the_committed_object',
+    'apparatus-verify-call-site-deleted':
+        'ContractTests.test_post_lease_apparatus_gate_is_called_by_main',
+    'apparatus-unregistered-unchecked':
+        'ApparatusVerificationTests.test_unregistered_stamped_module_is_refused',
+    'apparatus-self-removal-unchecked':
+        'ApparatusVerificationTests.test_self_removed_module_is_refused',
+    'apparatus-single-stamp-unchecked':
+        'ApparatusVerificationTests.test_single_module_stamp_missing_is_refused',
+    'apparatus-derived-set-unchecked':
+        'ApparatusVerificationTests.test_stamped_module_outside_registry_is_refused',
+    'apparatus-late-controls-unverified':
+        'ApparatusVerificationTests.test_late_controls_load_is_reverified',
+    'heads-coverage-shrunk':
+        'ApparatusVerificationTests.test_heads_cover_every_loader_recorded_module',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -438,6 +665,68 @@ failure_fragments = {
     'baseline-parent-metadata-allowed': '#933-2: the base RUST profile changed',
     'lease-late-arrival-runs-bound-test':
         '#1023-9: a lease released after the deadline must not start the bound run',
+    # Each apparatus row's marker is the bound test's own msg (the
+    # not-raised shape); the ValueError-shape fallback is the module the
+    # mutant stopped verifying — both name #2513 exclusively.
+    'apparatus-common-unverified':
+        ('#2513 a mutated common.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/common.py"),
+    'apparatus-compare-unverified':
+        ('#2513 a mutated compare.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/compare.py"),
+    'apparatus-policy-unverified':
+        ('#2513 a mutated policy.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/policy.py"),
+    'apparatus-controls-unverified':
+        ('#2513 a mutated controls.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/controls.py"),
+    'apparatus-host-negative-controls-unverified':
+        ('#2513 a mutated host_negative_controls.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: "
+         'scripts/cli-parity/host_negative_controls.py'),
+    'apparatus-provenance-unchecked':
+        ('#2513 missing provenance must fail closed',
+         '#2513 no apparatus module was loaded through _bootstrap.load'),
+    'apparatus-head-failure-swallowed':
+        '#2513 a HEAD read failure must refuse the round, not compare against nothing',
+    'apparatus-entry-fingerprint-unchecked':
+        ('#2513 a mutated executing entry must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/run_round.py"),
+    'apparatus-bootstrap-unverified':
+        ('#2513 a mutated _bootstrap.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py"),
+    'apparatus-bootstrap-missing-accepted':
+        ('#2513 a missing bootstrap code object must fail closed',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py"),
+    'apparatus-registry-not-recorded':
+        '#2513 _bootstrap.load must record every module it loads',
+    # fix-r6: both rows bind to the bound test's own markered msg (the
+    # call-count shape fires the message; the worktree-read row's equality
+    # carries it as its msg too).
+    'apparatus-head-source-worktree-read':
+        '#2513 _head_source reads the committed HEAD object, not the worktree or index',
+    'apparatus-verify-call-site-deleted':
+        '#2513 the post-lease apparatus gate runs before any work',
+    # fix-r15 rows: same convention — the bound test's own markered msg (the
+    # not-raised shape) and the refusal message whose absence the mutant
+    # causes, both naming #2513 exclusively.
+    'apparatus-unregistered-unchecked':
+        ('#2513 a stamped module missing from the _bootstrap manifest must be refused',
+         '#2513 loaded apparatus modules missing from the _bootstrap manifest: rogue'),
+    'apparatus-self-removal-unchecked':
+        ('#2513 a module that removed itself from sys.modules must be refused',
+         '#2513 loaded apparatus module is no longer in sys.modules: controls'),
+    'apparatus-single-stamp-unchecked':
+        ("#2513 a single module's missing stamp must fail closed per-module",
+         '#2513 loaded apparatus differs from HEAD: '
+         'scripts/cli-parity/host_negative_controls.py'),
+    'apparatus-derived-set-unchecked':
+        ('#2513 a stamped module outside the loader registry must be refused',
+         '#2513 stamped apparatus module is not recorded by _bootstrap.load: policy'),
+    'apparatus-late-controls-unverified':
+        '#2513 the late controls load must be followed by another verification round',
+    'heads-coverage-shrunk':
+        '#2513 heads() must cover every loader-recorded module',
 }
 
 SEPARATOR = '-' * 70
@@ -572,8 +861,11 @@ def run_test(out, label, test):
         else:
             # Hold the machine lease across the WHOLE child run, not only the
             # probe: the port probe alone can be overtaken before the child
-            # binds 28999.
-            with machine_parity_lock():
+            # binds 28999. #2513 fix-r2: when the mutation window itself
+            # already holds the shared lease (parity_guarded set), taking it
+            # again here would self-deadlock on the non-reentrant lease.
+            with (nullcontext() if _WINDOW_HOLDS_MACHINE_LEASE
+                  else machine_parity_lock()):
                 # A stale listener on the pinned port makes the bound test fail
                 # in setUp, which the judge would record as INVALID (not a
                 # product observation).
@@ -666,8 +958,7 @@ def main():
         raise SystemExit(2)
     summary = []
     try:
-        with mutating_sources(root, [policy, common, compare, run_round, mock_gateway,
-                                     isolation_probe, fixture],
+        with mutating_sources(root, _machine_lease_sources(),
                               baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:
                 status, reason, stage, before = 'INVALID', '', 'anchor', None

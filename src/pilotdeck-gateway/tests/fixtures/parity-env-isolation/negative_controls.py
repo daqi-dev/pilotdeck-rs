@@ -1,0 +1,576 @@
+#!/usr/bin/env python3
+"""#2513 Python-only source mutants; run only after the coordinator commit.
+
+Guard under test (issue #2513, from the #1354 deepseek r3 sibling#2 review):
+  - scripts/parity/round.py's host-environment cleanup tuple must strip
+    PILOTDECK_GATEWAY_MODE along with the other six PILOTDECK_* deployment
+    variables before the env reaches the run.py child.  The offline control
+    scripts/parity/controls/host_env_isolation.py captures the env round.py
+    passes to R.spawn and fails with the 「PILOTDECK_GATEWAY_MODE 泄漏」
+    assertion when the variable survives.
+
+Execution environment: this fixture is run by the coordinator on a host where
+the PilotDeck baseline is discoverable (PDRS_BASELINE exported or the
+rev-parse fallback; the offline control only needs g03_compare to import).
+mutating_sources requires every guarded source to equal HEAD, so a candidate
+branch must be committed before the run; the control subprocess is bounded
+(run_owned) and every cargo launch inside negative_process goes through the
+shared slot gate.  The mutation window over scripts/parity/round.py holds the
+shared parity lease a live round of the same tree also takes (#2513 fix-r1
+review P1-3), so the window and a lease-taking round cannot run concurrently;
+#2513 fix-r2 (MM r2 concurrency#1) closes the import-window residue: a round
+started *inside* the window is refused after it acquires the lease, because
+round.py verifies its executing code and g03_compare bytes against HEAD
+(gateway-parity #166 verified_parity_lock precedent) before doing any work.
+The offline controls redirect the lock to a temp path and never take the
+shared lease, so they do not participate in this exclusion.
+
+Guard under test (#2513 fix-r6, MM boundary#3): the fix-r2 guard call inside
+round.py's parity_lock (``_verify_loaded_apparatus()`` on the ``lock == LOCK``
+branch) had zero kill coverage — every test and control redirected the lock,
+and the branch is the guard's only home. The offline control
+scripts/parity/controls/round_head_guard.py stages a scratch repository whose
+HEAD pins the scratch bytes (round.py with only LOCK rewritten to a redirected
+lease path), replays the mutation-window interleaving — load from mutated
+bytes, restore the disk, then take the lease — and fails with its #2513
+refusal assertions when the guard's call site is deleted. The kill row's
+exactly-once anchor is that very call line, so --check and the run-time stale
+anchor check both refuse a renamed or removed guard call in round.py.
+
+Guard under test (#2513 fix-r7, boundary P1 + sibling P2#2): round.py's
+``_head_source`` reads the committed object the way the cli-parity and
+native-witness siblings do — /usr/bin/git, fixed PATH, no inherited ``GIT_*``
+(a bare ``git`` here let ``GIT_DIR`` steer the post-lease guard into a decoy
+repository's HEAD; measured pre-fix, evidence-a). The control's phases 4/5
+pin where the compared bytes come from (a mutated worktree, a GIT_DIR-steered
+decoy HEAD), and the two head-source kill rows below are judged by
+``control_round_head_guard_head_source`` against their dedicated phase
+markers, so an unrelated red in the same entry stays INVALID, never KILLED.
+
+Guard under test (#2513 fix-r8, sibling review P1): the gateway-parity entry
+had the same bare-``git`` shape in scripts/gateway-parity/common.py's
+``_apparatus_head``/``_head_source`` and _guard.py's ``verify_cli_imports``,
+plus a ``_has_git_checkout`` branch that treated a steered ``GIT_DIR``
+variable as checkout evidence.  Five kill rows below are judged by
+``control_round_head_guard_gateway`` against the control's phase-6..9
+markers, with the same INVALID-never-KILLED exclusivity.
+
+Guard under test (#2513 fix-r9, r8 incremental review sibling P1 + P2-b):
+``cargo_config_problems``' tracked probe had the same bare-``git`` shape the
+entry entries had before fix-r7 (measured pre-fix, gitdir-lsfiles-probe.log:
+a steered GIT_DIR answers ``ls-files`` from a decoy repository's index and the
+untracked ``.cargo/config.toml`` false-passes), and ``_has_git_checkout``'s
+unreadable-metadata branch (probe fails → ``return True``) had no pin at all.
+Two kill rows below are judged by ``control_round_head_guard_gateway``
+against the control's phase-10 and phase-12 markers, with the same
+INVALID-never-KILLED exclusivity.
+
+Guard under test (#2513 fix-r13, sibling#2): ``_guard.py``'s source ``show``
+read under the hardened rev-parse kept the scrubbed environment but no
+mutation row pinned it (the r8 rows covered the rev-parse above it). One
+kill row below is judged by ``control_round_head_guard_gateway`` against
+the control's phase-8 marker: an env-inheriting mutant reads the decoy
+HEAD's lobotomized common.py and false-passes the loaded-apparatus
+verification instead of refusing.
+
+Every mutated source equals HEAD before its window opens (mutating_sources);
+each mutant compiles before its control runs; stale anchors abort instead of
+being recorded as SURVIVED.  No shadow repository or HEAD exemption is used.
+The positive-only control (no mutation) is judged PASS/FAIL.  Both tables are
+pinned to the static rosters EXPECTED_MUTATIONS / EXPECTED_POSITIVES
+(registered()), so a dropped or renamed row is a startup refusal, not a
+smaller green run.  ``--check`` re-validates the anchors, the mutant
+compilations and the rosters without opening a window (CI runs it; the full
+kill round needs a committed tree and stays on the host chain).
+
+Startup refusals follow the shared contract (``specs/negative-controls``):
+the roster, the selection (unknown or repeated name) and the caller target
+are all refused (exit 2) *before* the evidence directory is claimed, so a
+refused run never leaves a directory a host would read as its verdict
+(#2513 fix-r1 review P2#2: claim_dir used to run before the selection
+refusals).
+"""
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+sys.dont_write_bytecode = True
+import json
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources, run_owned, tree_lock, write_source_atomic
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered)
+
+root = Path(__file__).resolve().parents[5]
+
+# Discovery anchors (#2133 register, test_negative_discovery_anchors.TABLES):
+# the literal keys neg-for-diff.sh derives for this table's dependencies.  The
+# two imported helpers are the whole key set — both mutation targets are
+# spelled as full inline paths, which the discovery grep finds in this file's
+# own text without an anchor.
+DISCOVERY_ANCHORS = ('fixtures/negative_process.py',
+                     'fixtures/negative_selection.py')
+
+mutations = [
+    # Removing the #2513 tuple entry makes the host-exported
+    # PILOTDECK_GATEWAY_MODE reach the run.py child environment; the offline
+    # host-env control must fail with its leak assertion.
+    ('parity-round-gateway-mode-strip', root / 'scripts/parity/round.py',
+     "'PILOTDECK_AGENT_LOOP_TCP_PORT',\n                'PILOTDECK_GATEWAY_MODE'):",
+     "'PILOTDECK_AGENT_LOOP_TCP_PORT'):",
+     'control_round_host_env_isolation'),
+    # Deleting the post-lease apparatus-verification call (#2513 fix-r6,
+    # MM boundary#3) disarms the fix-r2 guard: a round compiled inside a
+    # mutation window would run the window's mutant after the disk is
+    # restored. The anchor is the call line itself — exactly-once, so a
+    # renamed or removed guard in round.py is a startup refusal, never a
+    # silently smaller green run.
+    ('parity-round-apparatus-verify-deleted', root / 'scripts/parity/round.py',
+     "            _verify_loaded_apparatus()\n",
+     "            pass\n",
+     'control_round_head_guard'),
+    # #2513 fix-r7 (boundary P1 + sibling P2#2): _head_source reads the
+    # worktree file instead of the committed object — under a mutation
+    # window the read is always-equal (worktree bytes == loaded bytes) and
+    # the guard disarms. The bound control phase (round_head_guard phase 4)
+    # loads pristine-executing bytes, mutates the disk afterwards and steers
+    # GIT_DIR at a decoy HEAD pinning exactly those disk bytes: the mutant
+    # refuses where acceptance is required and its markered assertion goes
+    # red.
+    ('parity-round-head-source-worktree-read', root / 'scripts/parity/round.py',
+     "    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(_REPO_ROOT),\n"
+     "                             'show', f'HEAD:{relative}'],\n"
+     "                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                 'GIT_CONFIG_GLOBAL': '/dev/null'},\n"
+     "                            capture_output=True, timeout=30)",
+     "    return (_REPO_ROOT / relative).read_bytes()  # mutant: the worktree file, not the committed object",
+     'control_round_head_guard_head_source'),
+    # #2513 fix-r7 (boundary P1): the fixed environment is the whole fix —
+    # inheriting os.environ lets GIT_DIR steer `git -C <root> show HEAD:…`
+    # at a decoy repository's object (measured pre-fix, evidence-a). Both
+    # bound phases go red: the acceptance phase (decoy bytes ≠ executing
+    # bytes, round_head_guard phase 4) and the steering phase (decoy ==
+    # executing, the false-pass the pre-fix shape allowed, phase 5).
+    ('parity-round-head-source-env-inherited', root / 'scripts/parity/round.py',
+     "env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                 'GIT_CONFIG_GLOBAL': '/dev/null'},",
+     "env=dict(os.environ),",
+     'control_round_head_guard_head_source'),
+    # #2513 fix-r8 (sibling review P1): the gateway-parity entry had the same
+    # bare-``git`` shape round.py had before fix-r7, in three places —
+    # common.py's _apparatus_head/_head_source and _guard.py's
+    # verify_cli_imports — plus a _has_git_checkout branch that treated a
+    # steered GIT_DIR variable as checkout evidence. Five rows, judged by
+    # control_round_head_guard_gateway against the dedicated phase-6..9
+    # markers of the same control (an unrelated red in the same entry stays
+    # INVALID, never KILLED). The env rows inherit os.environ, so GIT_DIR
+    # steers the HEAD read at the decoy repository the phases pin; the
+    # gitdir-pass rows restore the pre-fix `return True` and phase 9's
+    # static-export assertions go red (the steered variable counted as
+    # checkout evidence over a static export).
+    ('gateway-common-apparatus-head-env-inherited', root / 'scripts/gateway-parity/common.py',
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30).decode().strip()",
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env=dict(os.environ), timeout=30).decode().strip()",
+     'control_round_head_guard_gateway'),
+    ('gateway-common-head-source-env-inherited', root / 'scripts/gateway-parity/common.py',
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'show', f'{head}:{relative}'],\n"
+     "                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)",
+     "    return subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                                    'show', f'{head}:{relative}'],\n"
+     "                                   env=dict(os.environ), timeout=30)",
+     'control_round_head_guard_gateway'),
+    ('gateway-common-has-git-checkout-gitdir-pass', root / 'scripts/gateway-parity/common.py',
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable\n"
+     "        # that points at a real repository only steers the hardened reads\n"
+     "        # (root's own metadata decides, exactly like the walk below); a\n"
+     "        # broken one is unreadable metadata and must fail closed through\n"
+     "        # the caller's HEAD read.\n"
+     "        try:\n"
+     "            subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',\n"
+     "                                     '--git-dir', os.environ['GIT_DIR'],\n"
+     "                                     'rev-parse', '--git-dir'],\n"
+     "                                    env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)\n"
+     "        except subprocess.CalledProcessError:\n"
+     "            return True\n",
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        return True\n",
+     'control_round_head_guard_gateway'),
+    ('gateway-guard-verify-cli-imports-env-inherited', root / 'scripts/gateway-parity/_guard.py',
+     "    head = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                        'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30).decode().strip()",
+     "    head = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                    'rev-parse', '--verify', 'HEAD'],\n"
+     "                                   env=dict(os.environ), timeout=30).decode().strip()",
+     'control_round_head_guard_gateway'),
+    # #2513 fix-r13 (sibling#2): _guard.py's source `show` read below the
+    # hardened rev-parse kept the scrubbed env but had no mutation row of its
+    # own. An env-inheriting mutant reads the decoy HEAD's common.py (phase 8
+    # pins a lobotomized verifier there), execs it and false-passes the
+    # loaded-apparatus verification instead of refusing.
+    ('gateway-guard-source-show-env-inherited', root / 'scripts/gateway-parity/_guard.py',
+     "    source = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                      'show', f'{head}:scripts/gateway-parity/common.py'],\n"
+     "                                     env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                          'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)",
+     "    source = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                      'show', f'{head}:scripts/gateway-parity/common.py'],\n"
+     "                                     env=dict(os.environ), timeout=30)",
+     'control_round_head_guard_gateway'),
+    ('gateway-guard-has-git-checkout-gitdir-pass', root / 'scripts/gateway-parity/_guard.py',
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable\n"
+     "        # that points at a real repository only steers the hardened reads\n"
+     "        # (root's own metadata decides, exactly like the walk below); a\n"
+     "        # broken one is unreadable metadata and must fail closed through\n"
+     "        # the caller's HEAD read.\n"
+     "        try:\n"
+     "            subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*',\n"
+     "                                     '--git-dir', os.environ['GIT_DIR'],\n"
+     "                                     'rev-parse', '--git-dir'],\n"
+     "                                    env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                         'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)\n"
+     "        except subprocess.CalledProcessError:\n"
+     "            return True\n",
+     "    if 'GIT_DIR' in os.environ:\n"
+     "        return True\n",
+     'control_round_head_guard_gateway'),
+    # #2513 fix-r9 (sibling P1): cargo_config_problems' tracked probe keeps
+    # the hardened environment — an env-inheriting mutant lets a steered
+    # GIT_DIR answer `ls-files` from a decoy repository's index (the measured
+    # pre-fix false pass), the untracked .cargo/config.toml reads tracked and
+    # the baseline check false-passes. Judged by round_head_guard phase 10
+    # (untracked worktree config + decoy index) through the shared gateway
+    # marker.
+    ('gateway-common-cargo-config-env-inherited', root / 'scripts/gateway-parity/common.py',
+     "            tracked = subprocess.run(\n"
+     "                ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                 'ls-files', '--error-unmatch', '--', name],\n"
+     "                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,\n"
+     "                env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                     'GIT_CONFIG_GLOBAL': '/dev/null'})",
+     "            tracked = subprocess.run(\n"
+     "                ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                 'ls-files', '--error-unmatch', '--', name],\n"
+     "                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,\n"
+     "                env=dict(os.environ))",
+     'control_round_head_guard_gateway'),
+    # #2513 fix-r9 (P2-b, fixed as P1): _has_git_checkout's unreadable-
+    # metadata branch fails closed (probe fails → return True → the caller's
+    # HEAD read refuses). A `return False` mutant answers "no checkout" and
+    # verify_loaded_apparatus silently returns None over a static export —
+    # the false pass the r8 review found unpinned. Judged by round_head_guard
+    # phase 12 (git-less scratch + broken GIT_DIR) through the shared gateway
+    # marker.
+    ('gateway-common-has-git-checkout-broken-fail-open', root / 'scripts/gateway-parity/common.py',
+     "        except subprocess.CalledProcessError:\n"
+     "            return True\n",
+     "        except subprocess.CalledProcessError:\n"
+     "            return False\n",
+     'control_round_head_guard_gateway'),
+]
+
+positives = [
+    ('parity-round-host-env-isolation', 'control_round_host_env_isolation'),
+    ('parity-round-head-guard', 'control_round_head_guard'),
+    ('parity-round-head-source-guard', 'control_round_head_guard_head_source'),
+    ('gateway-round-head-guard', 'control_round_head_guard_gateway'),
+]
+
+# Static rosters: the denominators of this run are literals in the source, not
+# len(table) — a dropped or renamed row is a startup refusal, never a smaller
+# green run (#1666; negative_selection.registered).
+EXPECTED_MUTATIONS = [
+    'parity-round-gateway-mode-strip',
+    'parity-round-apparatus-verify-deleted',
+    'parity-round-head-source-worktree-read',
+    'parity-round-head-source-env-inherited',
+    'gateway-common-apparatus-head-env-inherited',
+    'gateway-common-head-source-env-inherited',
+    'gateway-common-has-git-checkout-gitdir-pass',
+    'gateway-guard-verify-cli-imports-env-inherited',
+    'gateway-guard-source-show-env-inherited',
+    'gateway-guard-has-git-checkout-gitdir-pass',
+    'gateway-common-cargo-config-env-inherited',
+    'gateway-common-has-git-checkout-broken-fail-open',
+]
+EXPECTED_POSITIVES = [
+    'parity-round-host-env-isolation',
+    'parity-round-head-guard',
+    'parity-round-head-source-guard',
+    'gateway-round-head-guard',
+]
+
+# The KILLED judge below greps the control entry's own leak marker, and the
+# entry must carry the #2513 tag; --check binds both so a rename there cannot
+# silently downgrade every kill to INVALID.
+CONTROL_ENTRY = root / 'scripts/parity/controls/host_env_isolation.py'
+CONTROL_MARKERS = ('PILOTDECK_GATEWAY_MODE 泄漏', '#2513')
+
+# Same binding for the fix-r6 round-head guard control: its refusal
+# assertions carry the #2513 tag, and the entry must name the guarded
+# apparatus; --check binds both so a rename there cannot silently
+# downgrade the kill to INVALID.
+ROUND_GUARD_ENTRY = root / 'scripts/parity/controls/round_head_guard.py'
+ROUND_GUARD_MARKERS = ('#2513', 'scripts/parity/round.py')
+
+# Same binding for the fix-r8 gateway phases of that control: the phase-6..9
+# assertions carry the dedicated 「#2513 gateway-parity」 prefix the judge
+# below greps, and the entry must name the guarded gateway apparatus;
+# --check binds both so a rename there cannot silently downgrade every
+# kill to INVALID.
+ROUND_GUARD_GATEWAY_MARKERS = ('#2513 gateway-parity', 'scripts/gateway-parity/common.py')
+
+# The runtime auto-adds scripts/gateway-parity/common.py to every parity-
+# guarded window (negative_process.mutating_sources loads the lease protocol
+# from its verified bytes), so the worst per-row window guards the row's own
+# path plus this file; the lease-family roster reads the guarded count from
+# this binding instead of restating the path.
+COMMON = root / 'scripts/gateway-parity/common.py'
+
+# #2929/#2513 fix-r16: the acquire budget of the mutation windows -- the
+# parity family's largest live hold plus this runner's own restore tail and
+# one stage of handoff margin, rounded up to the 900 s family unit.  One
+# derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.
+LEASE_ACQUIRE_BUDGET_SECONDS = 68400
+
+
+def run_control(scratch, label, entry):
+    command = [sys.executable, '-I', str(entry)]
+    result = run_owned(command, cwd=str(root), timeout=600)
+    for suffix, value in (('stdout', result.stdout), ('stderr', result.stderr),
+                          ('exit', f'{result.returncode}\n')):
+        (scratch / f'{label}.{suffix}').write_text(value, encoding='utf-8')
+    return result
+
+
+def control_round_host_env_isolation(scratch):
+    """The offline host-env control must pass on the guarded source."""
+    result = run_control(scratch, 'host-env', CONTROL_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if 'PILOTDECK_GATEWAY_MODE 泄漏' not in log:
+            raise RuntimeError('host_env_isolation failed without the leak marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 PILOTDECK_GATEWAY_MODE 泄漏进 run.py 子进程环境：'
+                             f'round.py 清理元组的变异体被当场抓住 (exit={result.returncode})')
+
+
+def control_round_head_guard(scratch):
+    """The offline round-head guard control must pass on the guarded source."""
+    result = run_control(scratch, 'round-head', ROUND_GUARD_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if '#2513' not in log:
+            raise RuntimeError('round_head_guard failed without the #2513 marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 round.py 取锁后装置核验守卫被删除：变异窗口内'
+                             f'编译的轮次在取锁后未被拒绝 (exit={result.returncode})')
+
+
+def control_round_head_guard_head_source(scratch):
+    """#2513 fix-r7: the _head_source phases of the same control must pass.
+
+    Exclusivity: the kill is credited only when the failing phase carries the
+    ``#2513 _head_source`` marker (the dedicated phase-4/phase-5 assertions);
+    an unrelated red in the same control entry stays a RuntimeError (INVALID),
+    never a KILLED.
+    """
+    result = run_control(scratch, 'round-head-head-source', ROUND_GUARD_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if '#2513' not in log:
+            raise RuntimeError('round_head_guard failed without the #2513 marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        if '#2513 _head_source' not in log:
+            raise RuntimeError('round_head_guard failed without an _head_source '
+                              f'phase marker (exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 round.py _head_source 读到工作区文件或继承了被引导的'
+                             '环境：提交对象读取的变异体被当场抓住 '
+                             f'(exit={result.returncode})')
+
+
+def control_round_head_guard_gateway(scratch):
+    """#2513 fix-r8: the gateway-parity phases of the same control must pass.
+
+    Exclusivity: the kill is credited only when the failing phase carries the
+    ``#2513 gateway-parity`` marker (the dedicated phase-6..9 assertions);
+    an unrelated red in the same control entry stays a RuntimeError (INVALID),
+    never a KILLED.
+    """
+    result = run_control(scratch, 'round-head-gateway', ROUND_GUARD_ENTRY)
+    log = result.stdout + result.stderr
+    if result.returncode != 0:
+        if '#2513' not in log:
+            raise RuntimeError('round_head_guard failed without the #2513 marker '
+                              f'(exit={result.returncode}): {log.strip()}')
+        if '#2513 gateway-parity' not in log:
+            raise RuntimeError('round_head_guard failed without a gateway-parity '
+                              f'phase marker (exit={result.returncode}): {log.strip()}')
+        raise AssertionError('#2513 gateway-parity 装置核验的裸 git 读取或 GIT_DIR '
+                             f'直通分支被当场抓住 (exit={result.returncode})')
+
+
+RUNNERS = {
+    'control_round_host_env_isolation': control_round_host_env_isolation,
+    'control_round_head_guard': control_round_head_guard,
+    'control_round_head_guard_head_source': control_round_head_guard_head_source,
+    'control_round_head_guard_gateway': control_round_head_guard_gateway,
+}
+
+
+def check_errors():
+    """The ``--check`` verdict: anchors, mutants, bindings and rosters intact."""
+    errors = []
+    for name, path, before, after, control_name in mutations:
+        text = path.read_text(encoding='utf-8')
+        if text.count(before) != 1:
+            errors.append(f'{name}: anchor occurs {text.count(before)} times')
+        if before == after:
+            errors.append(f'{name}: anchor equals replacement')
+        else:
+            try:
+                compile(text.replace(before, after, 1), str(path), 'exec')
+            except SyntaxError as error:
+                errors.append(f'{name}: mutant does not compile: {error}')
+        if control_name not in RUNNERS:
+            errors.append(f'{name}: unknown control {control_name}')
+    for name, control_name in positives:
+        if control_name not in RUNNERS:
+            errors.append(f'{name}: unknown control {control_name}')
+    entry = CONTROL_ENTRY.read_text(encoding='utf-8')
+    for marker in CONTROL_MARKERS:
+        if marker not in entry:
+            errors.append(f'control entry lost its {marker!r} marker')
+    # The round-head guard entry is bound the same way, and the kill row
+    # above already pins the guard's call line in round.py itself (its
+    # ``before`` anchor): a renamed or removed guard call is refused here,
+    # never a silently smaller green run (#2513 fix-r6, MM boundary#3).
+    entry = ROUND_GUARD_ENTRY.read_text(encoding='utf-8')
+    for marker in ROUND_GUARD_MARKERS:
+        if marker not in entry:
+            errors.append(f'round-head guard entry lost its {marker!r} marker')
+    for marker in ROUND_GUARD_GATEWAY_MARKERS:
+        if marker not in entry:
+            errors.append(f'round-head guard entry lost its {marker!r} gateway marker')
+    return errors
+
+
+def scratch_dir(out, name):
+    directory = out / name
+    directory.mkdir(parents=True)
+    return directory
+
+
+def main():
+    # The rosters are validated before any branch, so the --check static gate
+    # (CI) refuses roster drift — a renamed or dropped row with a stale
+    # EXPECTED_* must not print "anchors OK" (the sdk-mcp-session-tools
+    # precedent).
+    try:
+        registered(mutations, EXPECTED_MUTATIONS)
+        registered(positives, EXPECTED_POSITIVES)
+    except ValueError as error:
+        refuse(f'control roster drifted: {error}')
+    if sys.argv[1:2] == ['--check']:
+        if len(sys.argv) > 2:
+            refuse('#2513 --check takes no output directory and no mutation names')
+        errors = check_errors()
+        if errors:
+            raise SystemExit('#2513 ' + '; '.join(errors))
+        print(f'#2513 {len(mutations)} mutation anchors OK')
+        return 0
+    if len(sys.argv) < 2:
+        refuse('usage: negative_controls.py --check | '
+               'fresh output directory [mutation names...]')
+    # A flag-shaped first argument is a misspelled mode, not an evidence
+    # directory: before this guard a typo'd --check spelling was mkdir'ed and
+    # the run went on to mutate the live tree (#2513 fix-r1 review P2#3).
+    if sys.argv[1].startswith('-'):
+        refuse(f'unknown option {sys.argv[1]!r} (modes: --check)')
+    # Every caller-side refusal fires before the claim, so a refused run
+    # leaves no evidence directory behind (specs/negative-controls shared
+    # contract; #2513 fix-r1 review P2#2 — claim_dir used to run first).
+    selected = sys.argv[2:]
+    if len(set(selected)) != len(selected):
+        refuse(f'repeated mutation name in the selection: {selected}')
+    chosen = [item for item in mutations if not selected or item[0] in selected]
+    if selected and set(selected) != {item[0] for item in chosen}:
+        unknown = sorted(set(selected) - {item[0] for item in chosen})
+        refuse(f'#2513 unknown mutation name: {unknown}')
+    if missing_target():
+        refuse('#2513 set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse_unusable_target()
+    out = claim_dir(Path(sys.argv[1]).resolve())
+    results = []
+    # The whole run (mutation windows, restored checks, positive checks) holds
+    # the same-tree lock: every control reads or executes the live tree, and a
+    # concurrent runner between windows would judge moving bytes.
+    with tree_lock(root):
+        for name, path, before, after, control_name in chosen:
+            control = RUNNERS[control_name]
+            status, reason, compiled = 'INVALID', 'not run', False
+            try:
+                with mutating_sources(root, [path],
+                                      lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
+                    text = originals[path].decode()
+                    if text.count(before) != 1:
+                        raise RuntimeError(f'#2513 stale anchor {name}: expected 1, found {text.count(before)}')
+                    control(scratch_dir(out, name + '-positive'))  # must pass on the unmutated source
+                    mutated = text.replace(before, after, 1)
+                    compile(mutated, str(path), 'exec')
+                    compiled = True
+                    write_source_atomic(root, path, mutated.encode())
+                    try:
+                        control(scratch_dir(out, name + '-negative'))
+                    except AssertionError as error:
+                        message = str(error)
+                        if '#2513' not in message:
+                            raise RuntimeError(f'control asserted without its marker: {message}')
+                        status, reason = 'KILLED', message
+                    else:
+                        status, reason = 'SURVIVED', 'control passed on the mutant'
+                control(scratch_dir(out, name + '-restored'))  # restoration verified on the live tree
+            except Exception as error:
+                status, reason = 'INVALID', f'{type(error).__name__}: {error}'
+            results.append(dict(name=name, status=status, reason=reason, compiled=compiled))
+            print(f'{name}: {status}: {reason}', flush=True)
+        for name, control_name in positives:
+            control = RUNNERS[control_name]
+            status, reason = 'FAIL', 'not run'
+            try:
+                control(scratch_dir(out, name))
+                status, reason = 'PASS', 'isolation observably in force on the committed tree'
+            except Exception as error:
+                reason = f'{type(error).__name__}: {error}'
+            results.append(dict(name=name, status=status, reason=reason, compiled=False))
+            print(f'{name}: {status}: {reason}', flush=True)
+    counts = {}
+    for row in results:
+        counts[row['status']] = counts.get(row['status'], 0) + 1
+    temporary = out / 'summary.json.tmp'
+    temporary.write_text(json.dumps({'controls': results, 'counts': counts},
+                                    ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    temporary.replace(out / 'summary.json')
+    print(json.dumps(counts), flush=True)
+    bad = [row for row in results
+           if (row['status'] not in ('KILLED', 'PASS'))]
+    return int(bool(bad) or not results)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

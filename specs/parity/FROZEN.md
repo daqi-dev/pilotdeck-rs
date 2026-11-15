@@ -20,15 +20,17 @@
 | `multimodal.md` | `e8a7b4c4025a2a3cccbabc34b3f2b3c8542f58268ccf327f5e4937e19e890742` | 2026-10-14 #35 新增（**AI 代批，待人复核**） | 原版多态场景登记（cancel_during_tool：TS 20 遍 17/3 两类）与每日重采流程 |
 | `normalization.md` | `5a0c10b70a89a42aa7808f2a0520116e557a4614545f3662fc19dccff1568450` | 2026-10-14（**AI 代批，待人复核**） | 两侧同路径硬前提、路径对齐、ID / 时间、seq、请求体 |
 | `scripts/parity/bind.mjs` | `1b4a38037cf526c6225e69bb4faeb24835d9390f37bed3becb0f8b0f8fd6bfd3` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/check_frozen.py` | `e86bcaf816bf01da18846b035b19a29e6745f0d08c811e6cba6e7fa0d4309a9f` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/check_frozen.py` | `cc602fcc748912440a6942430fadbd1f5f5ecf29f2b423e59aaf1cbfb985a41d` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/check_ruler.py` | `781b0e6d78ca11801e50954059bc6038cf75ea0e66229622eccd6bcabfe500a4` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/README.md` | `670697ffe0e1a3811561cd2ae4c7d572dd5e6b64ccea5e0fdbf68e98dfe6b9a3` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/controls/host_env_isolation.py` | `25852e14c9d03b1d9e1437adef0e2b21dccfe4affcedca1593ffb8054ef4f5c7` | 2026-11-11 #2513 重登记（**AI 代批，待人复核**） | 宿主环境隔离控制（#2513 fix-r1 新增）：清理元组补 PILOTDECK_GATEWAY_MODE，隔离族一致性正例 / 负例绑定 `src/pilotdeck-gateway/tests/fixtures/parity-env-isolation/negative_controls.py` |
 | `scripts/parity/controls/lock_release.py` | `ff8f573a108688bd851f0c2501c5e398d13f2f46a2b42b7613b95e77280a04d1` | 2026-10-30 #1067 重登记（**AI 代批，待人复核**） | 信号挂起 / 残留组保留 / cleanupPending 拒绝接管 / 中断 BLOCKED；TERM-KILL 失败、wait 超时、最终探测 OSError 三条未证实路径与接管断言即负控绑定失败点；setUp 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/controls/multimodal.py` | `ceaa70dfaafd3583eb43372aefbf11a60642861539ffe1ddcccdab3e1f300140` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 多态与日期前提的负例 / 正例；run_controls 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/controls/review_r1.py` | `5e619e08982f8fc852280bf61f72bd6c6c230ff0d6906e2ab3c2f2fb6bb6d377` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；setUp 先建 `_tmp/`（新检出可跑） |
+| `scripts/parity/controls/round_head_guard.py` | `401abdf2cabb05830140460e302691cbba8de8e60af4c2c907f598d02885442d` | 2026-11-15 #2513 重登记（**AI 代批，待人复核**） | round-head 守卫探针（#2513 fix-r5 起）：gate 假唤醒 / 头推进假过闸 / 环境继承改形三向正负例；负控绑定 parity-env-isolation `_guard.py`（原 `generated | frozen/` 字段族归位，哈希不变） |
 | `scripts/parity/controls/run_all.py` | `4d3d7683c48e14ca6a8567ad1482ec5e19da9d9790b62526515a040f9e9cb425` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；run_controls 先建 `_tmp/`（新检出可跑） |
-| `scripts/parity/g03_compare.py` | `d397bf878e56b93aed5ab2ba24c990114f212533a2572efe5a7388e443972f68` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/round.py` | `4b489d90cc82ee1ee0fd14f2e0d2e45fa04e5b752c33103c386c1a6729381843` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
+| `scripts/parity/g03_compare.py` | `56d778863bcf7e9eaed021e1f4b75b3632a83d408d25fea17d6a2d1c8a60cb97` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/round.py` | `d8beadfbc33e6061aa1cb5d95dd7d9080390938e8851ebaede5fafe66569a2c3` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
 | `scripts/parity/score.py` | `0b6b069af4bfe855eb122f21cc18461bd829991efd6b4b8c3d9ef557b587286b` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 计分：普通第 i 对第 i；多态整类匹配；日期 / 同源 / 不重叠前提 |
 | `scripts/parity/self_compare.py` | `22c98ea805780441d0d6cd241f7877f2e683ec660757ed0fafb0c11de6d9b083` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 

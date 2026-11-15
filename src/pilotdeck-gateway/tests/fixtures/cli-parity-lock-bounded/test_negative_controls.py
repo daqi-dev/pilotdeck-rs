@@ -599,5 +599,53 @@ class RunnerInvalidationControls(unittest.TestCase):
                               str(code), f'{message} ({label})')
 
 
+class CheckMisuseRefusal(unittest.TestCase):
+    """#2513 fix-r16: pin the delivered ``--check`` contract (rc + wording).
+
+    The fixture joined the ``--check takes no ...`` refusal family scanned by
+    test_negative_roster_guards; this file registered an exemption there
+    because its argparse contract differs from the TRIPLE tuple-table shape,
+    so the rc-2 refusal and its exact wording are pinned here instead (the
+    #2495 precedent). The clean ``--check`` must keep answering the static
+    lease-family assertion; the misuse shapes must refuse before the
+    execution layer is ever reached.
+    """
+
+    def drive(self, argv):
+        import io
+        holder = io.StringIO()
+
+        def reached(*_args, **_kwargs):
+            raise RuntimeError('#2513 misuse refusal must fire before any '
+                               'mutation window opens')
+        with patch.object(negative_controls, 'mutating_sources', reached), \
+                patch.object(sys, 'argv', ['negative_controls.py', *argv]), \
+                patch('sys.stderr', holder):
+            try:
+                code = negative_controls.main()
+            except SystemExit as error:
+                code = error.code
+        return code, holder.getvalue()
+
+    def test_clean_check_answers_the_static_assertion(self):
+        code, _stderr = self.drive(['--check'])
+        self.assertEqual(code, None,
+                         'clean --check returns without an exit; a refusal '
+                         'here would make CI red on a healthy tree')
+
+    def test_misuse_refuses_with_the_family_wording(self):
+        # Measured in this round's probe-triple-cli-parity-lock-bounded.log:
+        # both misuse shapes exit 2 with the same single stderr line.
+        for argv in (['--check', '/tmp/negctl-2513-misuse-out'],
+                     ['--check', 'runner-selection-guard-removed']):
+            with self.subTest(argv=argv):
+                code, stderr = self.drive(argv)
+                self.assertEqual(code, 2, f'{argv}: stdout/stderr={stderr!r}')
+                self.assertEqual(
+                    stderr.strip(),
+                    '#2513 --check takes no output directory or selection',
+                    f'{argv}: refusal wording drifted')
+
+
 if __name__ == '__main__':
     unittest.main()

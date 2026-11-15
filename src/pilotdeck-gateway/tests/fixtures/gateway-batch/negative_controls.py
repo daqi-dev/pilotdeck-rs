@@ -303,8 +303,8 @@ MUTATIONS = [
      'matches = _compiled_fingerprint(code) == _compiled_fingerprint(expected_code)',
      'matches = True'),
     ('import-verification-before-lock', COMMON,
-     '    with trusted.parity_lock(timeout, takeovers, lock):\n        verify_loaded_apparatus(head)\n        yield',
-     '    verify_loaded_apparatus(head)\n    with trusted.parity_lock(timeout, takeovers, lock):\n        yield'),
+     '    with trusted.parity_lock(timeout, takeovers, lock):\n        verify_loaded_apparatus(head)\n        with _host_hold(lock):\n            yield',
+     '    verify_loaded_apparatus(head)\n    with trusted.parity_lock(timeout, takeovers, lock):\n        with _host_hold(lock):\n            yield'),
     ('failed-import-cache-retained', GUARD,
      '        sys.modules.pop(name, None)\n        raise',
      '        pass  # mutant retains partial module\n        raise'),
@@ -315,11 +315,23 @@ MUTATIONS = [
      '    install_shutdown()\n    try:\n        with parity_lock(timeout=30, takeovers=takeovers):',
      '    try:\n        with parity_lock(timeout=30, takeovers=takeovers):'),
     ('import-verification-removed', COMMON,
-     '        verify_loaded_apparatus(head)\n        yield',
-     '        yield  # mutant accepts pre-lock imports'),
+     '        verify_loaded_apparatus(head)\n        with _host_hold(lock):\n            yield',
+     '        with _host_hold(lock):\n            yield  # mutant accepts pre-lock imports'),
+    # #2513 fix-r16 (DS sib#1): verify_loaded_apparatus compares executed
+    # bytes in two layers (loader registry, then surviving sys.modules
+    # stamps).  The row pins the registry layer's stamp read -- the popped-
+    # module shape only that layer can see -- and is bound to the popped-
+    # mutant test; a disk read there passes the restored bytes and the
+    # mutant escapes.
     ('import-verification-reads-disk', COMMON,
-     'isinstance(source, bytes) and source == expected',
-     'isinstance(source, bytes) and Path(path).read_bytes() == expected'),
+     "        # Self-pop no longer escapes: the loader's own record keeps the\n"
+     "        # executed bytes pinned against HEAD for every module it loaded.\n"
+     "        source = getattr(module, '_apparatus_source', None)\n"
+     "        if not isinstance(source, bytes) or source != _head_source(head, path):",
+     "        # Self-pop no longer escapes: the loader's own record keeps the\n"
+     "        # executed bytes pinned against HEAD for every module it loaded.\n"
+     "        source = Path(path).read_bytes()\n"
+     "        if not isinstance(source, bytes) or source != _head_source(head, path):"),
     ('import-provenance-after-exec', GUARD,
      '    module._apparatus_source = source',
      '    module._apparatus_source = path.read_bytes()'),
@@ -432,6 +444,49 @@ MUTATIONS = [
      "            'cleanupPending': True}", "            'cleanupPending': False}"),
     ('mutation-invalid-as-pass', COMMON,
      "'INVALID': 'BLOCKED'", "'INVALID': 'PASS'"),
+    # #2513 fix-r4 (review 条3): the three fail-open shapes of the ruler
+    # baseline check — a git failure, an unreadable tracked blob and a
+    # pre-lease --baseline — must each be a refusal, never a silent
+    # exemption, while guarded sources mutate.
+    ('ruler-git-failure-exempted', PROCESS,
+     '            raise SourceBaselineError(\n'
+     '                root, relative,\n'
+     '                f"cannot resolve {baseline} tree: {resolve_error}"\n'
+     '            ) from resolve_error',
+     '            return False  # mutant: a git failure reads as ruler absence'),
+    ('ruler-unreadable-blob-exempted', PROCESS,
+     '        if listing.strip():\n'
+     '            # Tracked by the baseline but unreadable: a git failure, never\n'
+     '            # an exemption.\n'
+     '            raise error\n'
+     '        return False',
+     '        if listing.strip():\n'
+     '            # Tracked by the baseline but unreadable: a git failure, never\n'
+     '            # an exemption.\n'
+     '            return False  # mutant: an unreadable ruler reads as absence\n'
+     '        return False'),
+    ('ruler-pre-lease-silent', PROCESS,
+     '        raise SourceBaselineError(\n'
+     '            root, "scripts/gateway-parity/common.py",\n'
+     '            f"baseline {baseline} predates the lease protocol; guarded "\n'
+     '            "sources would mutate without the shared lease; pass "\n'
+     '            "allow_unleased (CLI: --allow-unleased) to opt in explicitly")',
+     '        return False  # mutant: a pre-lease baseline silently drops the lease'),
+    # #2513 fix-r4 (review boundary#3): the reconciliation scan must see the
+    # concatenated, f-string and raw-fragment spellings of the lease path —
+    # reverting one dimension reopens the spelling blind spot the review
+    # demonstrated and the bound row must go red.
+    ('references-path-fragment-blind', PROCESS_TEST,
+     '                if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE) \\\n'
+     '                        and cls.LOCK_FILE in token.string:',
+     '                if token.type == tokenize.STRING and cls.LOCK_PATH in token.string:'),
+    ('references-fstring-blind', PROCESS_TEST,
+     '                if token.type in (tokenize.STRING, tokenize.FSTRING_MIDDLE) \\\n'
+     '                        and cls.LOCK_FILE in token.string:',
+     '                if token.type == tokenize.STRING and cls.LOCK_FILE in token.string:'),
+    ('references-raw-fragment-blind', PROCESS_TEST,
+     '            if cls.LOCK_FILE in text:',
+     '            if cls.LOCK_PATH in text:'),
     # -- #1061 runner paired mutants (this delivered file; RUNNER guard) ----
     # The guard catches only Exception, so a cancellation (KeyboardInterrupt /
     # SystemExit) during restore skips the INVALID publication and leaves no
@@ -571,7 +626,7 @@ CHECKS = {
     'session-lock-busy-wrong-exit': ('ImportIsolation.test_session_busy_or_cancelled_lock_is_blocked', '#166 session lock refusal must remain BLOCKED/2'),
     'session-shutdown-after-lease': ('ImportIsolation.test_entry_installs_shutdown_before_lock', '#166 shutdown handler must precede lease acquisition'),
     'import-verification-removed': ('ImportIsolation.test_imported_mutant_is_rejected_after_disk_restore', '#166 pre-lock mutant must be rejected after disk restoration'),
-    'import-verification-reads-disk': ('ImportIsolation.test_imported_mutant_is_rejected_after_disk_restore', '#166 pre-lock mutant must be rejected after disk restoration'),
+    'import-verification-reads-disk': ('ImportIsolation.test_popped_mutant_is_still_rejected', '#166 popped mutant must still be rejected'),
     'import-provenance-after-exec': ('ImportIsolation.test_loader_records_executed_bytes_not_later_disk', '#166 provenance must be exactly the compiled bytes'),
     'import-unknown-cache-open': ('ImportIsolation.test_unknown_cache_is_refused', '#166 cache without executed bytes must fail closed'),
     'verified-cleanup-detached': ('ImportIsolation.test_pending_cleanup_keeps_verified_lease', '#166 verified lock must preserve running cleanup registry'),
@@ -617,6 +672,12 @@ CHECKS = {
     'release-entry-unmasked': ('Safety.test_release_guard_interrupt_publishes_pending_before_delivery', '#209 release entry interrupt must publish pending groups'),
     'acquisition-marker-missing': ('Safety.test_cleanup_record_write_failure_keeps_preexisting_marker', '#209 lock must be marked before spawning'),
     'mutation-invalid-as-pass': ('ApparatusInputs.test_deadline_not_run_has_dedicated_exit_code', '#166 source control verdict mapping'),
+    'ruler-git-failure-exempted': ('BaselineTracksRuler.test_git_failure_fails_closed', '#2513 a git failure must not read as ruler absence'),
+    'ruler-unreadable-blob-exempted': ('BaselineTracksRuler.test_tracked_but_unreadable_blob_fails_closed', '#2513 a tracked ruler that cannot be read must not read as absent'),
+    'ruler-pre-lease-silent': ('BaselineTracksRuler.test_pre_lease_baseline_requires_explicit_opt_in', '#2513 a pre-lease baseline must not silently drop the lease'),
+    'references-path-fragment-blind': ('ParityLockHolderReconciliation.test_concatenated_lock_spelling_is_still_caught', '#2513 a concatenated lease-path spelling must still count as a lock reference'),
+    'references-fstring-blind': ('ParityLockHolderReconciliation.test_fstring_lock_spelling_is_still_caught', '#2513 an f-string lease-path spelling must still count as a lock reference'),
+    'references-raw-fragment-blind': ('ParityLockHolderReconciliation.test_raw_fragment_spelling_is_still_caught', '#2513 a raw filename fragment must still count as a lock reference'),
     'runner-baseexception-narrowed': ('RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary', '#1061 a cancellation must void the rows and publish INVALID'),
     'runner-publish-before-verify': ('RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary', '#1061 no summary may be readable before restore verification'),
     'runner-stale-summary-kept': ('RunnerInvalidationControls.test_interrupt_during_void_publish_leaves_no_killed_summary', '#1061 no summary may be readable before restore verification'),
@@ -639,12 +700,15 @@ CHECKS = {
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 66600
+LEASE_ACQUIRE_BUDGET_SECONDS = 69300
 
 
 def run(out, label, test):
     script = (DRIVER_TEST if test.startswith('AggregationAudit.') else
-              PROCESS_TEST if test.startswith('ParityMutationLock.') else
+              PROCESS_TEST if test.startswith(('ParityMutationLock.',
+                                               'BaselineTracksRuler.',
+                                               'ParityLockHolderReconciliation.'))
+              else
               RUNNER_TEST if test.startswith('RunnerInvalidationControls.') else SAFETY)
     result = run_owned([sys.executable, '-I', '-B', str(script), test, '-v'], cwd=ROOT, timeout=120)
     (out / (label + '.log')).write_text(result.stdout + result.stderr)

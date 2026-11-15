@@ -1032,6 +1032,63 @@ class RunnerInvalidationControls(unittest.TestCase):
         self.assertEqual(mutating_calls, 1,
                          '#1059 the runner lease must not wrap a second guard')
 
+    def test_round_only_subset_takes_no_outer_lease(self):
+        """#2513 fix-r2 (DS r2 sibling#1): a round-only subset must not self-deadlock.
+
+        ``--only a1-release-ungated`` mutates only scripts/parity/round.py.
+        The fix-r1 local ``shared`` copy knew only scripts/gateway-parity, so
+        such a subset computed shared=False, took the outer parity_lease() and
+        then deadlocked mutating_sources' second flock on
+        /tmp/pdrs-parity.lock.guard until the 60s bound, voiding every row.
+        With the shared parity_guarded predicate mutating_sources itself takes
+        the lease, so the outer lease must stand down and the run stays green.
+        """
+        out = Path(tempfile.mkdtemp(prefix='out-', dir=self.root))
+        # A scratch scripts/parity/round.py under a scratch ROOT: the row's
+        # target must resolve to a parity-guarded relative path without ever
+        # touching the real tree (mutating_sources, run_owned and the bound
+        # script are all mocked; only main()'s lease decision is real).
+        scratch = self.root / 'scripts' / 'parity'
+        scratch.mkdir(parents=True)
+        source = scratch / 'round.py'
+        source.write_text('x = 0\n')
+        calls = []
+
+        class Guard:
+            def __enter__(self):
+                return {source: b'x = 0\n'}
+
+            def __exit__(self, *exc):
+                return False
+
+        def mutating(root, paths, **kwargs):
+            return Guard()
+
+        def parity_lease():
+            calls.append('outer lease taken')
+            return contextlib.nullcontext()
+
+        with patch.multiple(self.runner,
+                            ROOT=self.root.resolve(),
+                            MUTATIONS=[('one', source, 'x = 0', 'x = 1')],
+                            CHECKS={'one': ('Controls.test_one',
+                                            '#209 exclusive message')},
+                            parity_lease=parity_lease,
+                            mutating_sources=mutating,
+                            run_owned=self._run_owned()), \
+                patch.object(sys, 'argv',
+                             [str(Path(self.runner.__file__)), '--output',
+                              str(out), '--only', 'one']):
+            code = self.runner.main()
+        self.assertEqual(code, 0,
+                         '#2513 fix-r2 the round-only subset must finish green')
+        self.assertEqual(calls, [],
+                         '#2513 fix-r2 the outer parity_lease must stand down '
+                         'when mutating_sources already holds the shared lease')
+        summary = self._read_summary(out)
+        self.assertEqual([row['status'] for row in summary], ['KILLED'],
+                         '#2513 fix-r2 the round-only row must still be judged')
+
     def test_final_guard_failure_rewrites_summary(self):
         """P0-2: a guard/restoration failure after the last row must void it."""
         code, summary, _, _ = self._drive(

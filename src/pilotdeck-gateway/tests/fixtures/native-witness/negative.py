@@ -70,6 +70,24 @@ cases = [
     ('trust-network-ledger', native, "network_equal = evidence['networkWitness'] == replay['networkWitness']", 'network_equal = True', 'test_replay_network'),
     ('omit-exit-status', source, "'-f', '-q', '-xx'", "'-f', '-qq', '-xx'", 'test_command'),
     ('bypass-parity-lock', collector, 'lease.enter_context(parity_lock(timeout=1))', 'lease.enter_context(ExitStack())', 'test_parity_lock_busy'),
+    ('bypass-apparatus-verify', collector, '            _verify_loaded_apparatus()', '            pass', 'test_apparatus_verified_after_lease'),
+    ('skip-module-provenance', collector, '        if not isinstance(source, bytes) or source != _head_source(relative):', '        if False:', 'test_apparatus_provenance_refused_after_lease'),
+    ('skip-entry-fingerprint', collector, '    if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):', '    if False:', 'test_apparatus_entry_fingerprint_refused_after_lease'),
+    # #2513 fix-r6 (MM boundary#1): _head_source reads the worktree file
+    # instead of the committed object — the verification becomes always-true
+    # under a mutation window while the apparatus rows above (all patching
+    # _head_source away) stay green. The bound cell is the one that does not
+    # patch it: the worktree read returns this mutant's own bytes, the
+    # independent git invocation still returns HEAD, and the single-line
+    # marker fires.
+    ('head-source-worktree-read', collector,
+     "    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT),\n"
+     "                             'show', f'HEAD:{relative}'],\n"
+     "                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                 'GIT_CONFIG_GLOBAL': '/dev/null'},\n"
+     "                            capture_output=True, timeout=30)",
+     "    return (ROOT / relative).read_bytes()  # mutant: the worktree file, not the committed object",
+     'test_head_source_reads_the_committed_object'),
     ('ignore-busy-port', collector, '            probe_bind(candidate, reuse_address=reuse_address)', '            pass', 'test_ports_blocked'),
     ('omit-provider-port-check', collector, '((port, False), (port + 1, True)):', '((port, False),):', 'test_ports_blocked'),
     ('misclassify-busy-port', collector, 'if error.errno == errno.EADDRINUSE:', 'if False:', 'test_ports_blocked'),
@@ -142,6 +160,10 @@ messages = {
     'publish-before-validation': '#1140 smoke runs before receipt publication',
     'ignore-gateway-bind-race': '#1140 gateway bind race reports BLOCKED',
     'bypass-parity-lock': '#1140 busy parity lease blocks before bind',
+    'bypass-apparatus-verify': '#2513 post-lease apparatus verification cannot be bypassed',
+    'skip-module-provenance': '#2513 imported apparatus provenance is verified after the lease',
+    'skip-entry-fingerprint': '#2513 executing entry code is verified after the lease',
+    'head-source-worktree-read': '#2513 _head_source reads the committed HEAD object, not the worktree or index',
     'ignore-busy-port': '#1140 occupied fixed port reports BLOCKED',
     'omit-provider-port-check': '#1140 occupied fixed port reports BLOCKED',
     'misclassify-busy-port': '#1140 occupied fixed port reports BLOCKED',
@@ -190,7 +212,7 @@ messages = {
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 65700
+LEASE_ACQUIRE_BUDGET_SECONDS = 68400
 
 
 def preflight():

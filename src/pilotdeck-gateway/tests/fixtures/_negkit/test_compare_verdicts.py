@@ -586,4 +586,7 @@ class CompareVerdictsTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    # #2513 fix-r15: verbosity=2 prints one id line per method so the
+    # negative_anchor_selfcheck preflight can assert class coverage from
+    # this script's own declared roster (the sibling scripts' convention).
+    unittest.main(verbosity=2)

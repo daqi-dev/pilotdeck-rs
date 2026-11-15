@@ -110,11 +110,12 @@ switches = [
 
 # The source-patch rows the routine run judges after the compiled switches:
 # the #2311 oracle-integrity controls (the bluebubbles precedent's three,
-# bound to the golden replay and its dedicated oracle pins in `tests.rs`)
-# and the #2312 failed-auth.test session release (bound to its dedicated
-# release pin). The table name is one anchor_selfcheck's TABLES recognizes,
-# so the anchor gate covers these rows the way the switches gate covers the
-# compiled table.
+# bound to the golden replay and its dedicated oracle pins in `tests.rs`),
+# the #2312 failed-auth.test session release (bound to its dedicated
+# release pin) and the #2513 fix-r6 stop-sentinel rows (bound to the
+# startup-window pin's two markers). The table name is one anchor_selfcheck's
+# TABLES recognizes, so the anchor gate covers these rows the way the
+# switches gate covers the compiled table.
 MUTATIONS = [
     # Dropping a case from the parsed oracle must trip the generator's
     # literal 36, never silently pass with fewer cells.
@@ -149,6 +150,30 @@ MUTATIONS = [
      '    if !super::sms::truthy(&auth.get("ok").cloned().unwrap_or(JsValue::Undefined)) {\n',
      'slack::tests::auth_test_failure_releases_the_session',
      '#2312 a failed auth.test releases the session'),
+    # #2513 fix-r6: the reader's stop sentinel inverted — the startup window
+    # (the reader is spawned before the session store) swallows every message
+    # frame, the interleave the DS r6 review identified: the bound pin waits
+    # for the startup frame's submitTurn and times out on its marker.
+    ('slack-closing-flag-inverted', SLACK / 'mod.rs',
+     '                    if shared.closing.load(Ordering::SeqCst) {\n'
+     '                        continue;\n'
+     '                    }\n',
+     '                    if !shared.closing.load(Ordering::SeqCst) {\n'
+     '                        continue;\n'
+     '                    }\n',
+     'slack::tests::startup_window_frame_dispatches_and_post_stop_stays_silent',
+     '#2513 a startup-window message frame is dispatched'),
+    # #2513 fix-r6: `stop` leaves the closing flag down — the old ambiguous
+    # `app.is_none()` sentinel restored in effect (a stopped channel looks
+    # live to the reader), so the post-stop frame in the bound pin's second
+    # phase dispatches a second turn where it must stay silent.
+    ('slack-stop-closing-off', SLACK / 'mod.rs',
+     '            // racing this stop already reads a closing channel.\n'
+     '            shared.closing.store(true, Ordering::SeqCst);\n',
+     '            // racing this stop already reads a closing channel.\n'
+     '            shared.closing.store(false, Ordering::SeqCst);\n',
+     'slack::tests::startup_window_frame_dispatches_and_post_stop_stays_silent',
+     '#2513 a post-stop message frame stays silent'),
 ]
 GUARDED = [SLACK / name for name in ('mod.rs', 'mapper.rs', 'render.rs', 'tests.rs')] + [
     ROOT / 'src/pilotdeck-gateway/src/channel/mod.rs',

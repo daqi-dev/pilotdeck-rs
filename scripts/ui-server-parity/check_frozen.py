@@ -30,15 +30,27 @@ if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
 import hashlib as _boot_hashlib
 import subprocess as _boot_subprocess
 _boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+# #2513 fix-r10 (DS sibling#1): the admission reads below must answer from
+# this checkout only — bare ``git -C`` inherits a steered GIT_DIR/GIT_WORK_TREE
+# (measured) and would admit a decoy repository's HEAD. Same hardened form
+# as the git() helper and the cli-parity/gateway _head_source twins.
+_boot_git_env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                 'GIT_CONFIG_GLOBAL': _boot_os.devnull}
+
+
+def _boot_git(*args):
+    return _boot_subprocess.check_output(
+        ['/usr/bin/git', '-c', 'safe.directory=*', '-C', _boot_root, *args],
+        env=_boot_git_env, stderr=_boot_subprocess.PIPE, timeout=30)
+
+
 _boot_write = __name__ == '__main__' and '--write' in _boot_sys.argv[1:]
 # Regeneration cannot use stale manifest pins. It admits only committed source,
 # including the executing code object, before loading the HEAD-verified scanner.
 # A dirty checker is rejected, never treated as a registration exemption.
 if _boot_write:
-    _boot_head = _boot_subprocess.check_output(
-        ['git', '-C', _boot_root, 'rev-parse', '--verify', 'HEAD']).decode().strip()
-    _boot_checker = _boot_subprocess.check_output(
-        ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/check_frozen.py'])
+    _boot_head = _boot_git('rev-parse', '--verify', 'HEAD').decode().strip()
+    _boot_checker = _boot_git('show', f'{_boot_head}:scripts/ui-server-parity/check_frozen.py')
     if _boot_sys._getframe().f_code != compile(
             _boot_checker, __file__, 'exec', dont_inherit=True, optimize=_boot_sys.flags.optimize):
         raise SystemExit('#1089 --write executing checker differs from HEAD')
@@ -47,8 +59,7 @@ with open(_boot_source, 'rb') as _boot_file:
     _boot_bytes = _boot_file.read()
 try:
     if _boot_write:
-        _boot_trusted = _boot_subprocess.check_output(
-            ['git', '-C', _boot_root, 'show', f'{_boot_head}:scripts/ui-server-parity/apparatus.py'])
+        _boot_trusted = _boot_git('show', f'{_boot_head}:scripts/ui-server-parity/apparatus.py')
         if _boot_bytes != _boot_trusted:
             raise ValueError('--write apparatus source differs from HEAD')
     elif _boot_os.path.isfile(_boot_manifest):
@@ -58,8 +69,7 @@ try:
         if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
             raise ValueError('apparatus bootstrap hash mismatch')
     else:
-        _boot_trusted = _boot_subprocess.check_output(
-            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        _boot_trusted = _boot_git('show', 'HEAD:scripts/ui-server-parity/apparatus.py')
         if _boot_bytes != _boot_trusted:
             raise ValueError('apparatus bootstrap differs from HEAD without manifest')
 except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
@@ -175,10 +185,15 @@ def git(root, *args):
     never read a global gitconfig, and always time out (#2372 fix-r1 review).
     fix-r1: safe.directory=* keeps cross-uid checkouts usable — pinning
     GIT_CONFIG_GLOBAL drops the caller's safe.directory, and without it a
-    dubious-ownership repo would turn this freeze gate into a false FAIL."""
-    env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
-    env['GIT_CONFIG_GLOBAL'] = os.devnull
-    return subprocess.check_output(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+    dubious-ownership repo would turn this freeze gate into a false FAIL.
+    #2513 fix-r10 (DS sibling#1): align with the hardened cli-parity/gateway
+    form — absolute /usr/bin/git (a PATH-steered decoy binary is not a read
+    of this checkout) and a fresh three-key env instead of an inherited one
+    stripped of GIT_* (system gitconfig is now refused too)."""
+    env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_CONFIG_GLOBAL': os.devnull}
+    return subprocess.check_output(['/usr/bin/git', '--no-optional-locks',
+                                    '-c', 'core.fsmonitor=false',
                                     '-c', 'core.hooksPath=/dev/null', '-c', 'safe.directory=*',
                                     '-C', str(root), *args],
                                    stderr=subprocess.PIPE, env=env, timeout=30)

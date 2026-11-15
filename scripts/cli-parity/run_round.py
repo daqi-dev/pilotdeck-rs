@@ -37,6 +37,7 @@ import argparse
 from contextlib import contextmanager
 import hashlib
 import json
+import marshal
 import math
 import os
 import selectors
@@ -47,6 +48,16 @@ import stat
 import subprocess
 import tempfile
 import time
+from types import CodeType
+
+# CPython has already compiled this entry before it can acquire the lease
+# (#2513 fix-r3, DS sibling#3 + MM sibling#1): a round launched while a
+# mutation window held mutated bytes on disk would otherwise run the
+# mutant's main() after the window restored the file and released the lease.
+# Capture the executing object now — never a later read of a file the window
+# may already have restored — for the post-lease HEAD verification
+# (scripts/parity/round.py #2513 fix-r2 precedent).
+_apparatus_code = sys._getframe().f_code
 
 _here = Path(__file__).resolve().parent
 _common = _load('common', _here / 'common.py')
@@ -74,10 +85,12 @@ per_stream_scenarios = _common.per_stream_scenarios
 save = _common.save
 snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
-compare = _load('compare', _here / 'compare.py').compare
-sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
-protected_trees = _load('policy', _here / 'policy.py').protected_trees
-ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
+_compare_module = _load('compare', _here / 'compare.py')
+_policy_module = _load('policy', _here / 'policy.py')
+compare = _compare_module.compare
+sandbox_profile = _policy_module.sandbox_profile
+protected_trees = _policy_module.protected_trees
+ts_read_root_overlap = _policy_module.ts_read_root_overlap
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -90,6 +103,139 @@ def git_head(path):
     if result.returncode:
         raise Blocked('cannot identify source HEAD: ' + result.stderr.strip())
     return result.stdout.strip()
+
+
+def _head_source(relative):
+    # The committed object only, read like git_head above: no worktree file,
+    # no config-steered git (#2513 fix-r3).
+    result = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(ROOT), 'show', f'HEAD:{relative}'],
+                            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'},
+                            capture_output=True, timeout=30)
+    if result.returncode:
+        raise Blocked('cannot read HEAD source ' + relative + ': '
+                      + result.stderr.decode(errors='replace').strip())
+    return result.stdout
+
+
+def _code_fingerprint(code):
+    """Stable full code serialization (gateway-parity #166 precedent).
+
+    Marshal v2 omits execution-dependent reference-sharing records. Normalize
+    newer constant types before serializing; tag tuples too to avoid collisions
+    with the slice representation. The transformed code is never executed.
+    """
+    def normalize(value):
+        if isinstance(value, CodeType):
+            return value.replace(co_consts=tuple(normalize(item) for item in value.co_consts))
+        if isinstance(value, slice):
+            return ('slice', normalize(value.start), normalize(value.stop), normalize(value.step))
+        if isinstance(value, tuple):
+            return ('tuple', tuple(normalize(item) for item in value))
+        if isinstance(value, frozenset):
+            return ('frozenset', tuple(sorted((normalize(item) for item in value),
+                                             key=lambda item: marshal.dumps(item, 2))))
+        return value
+    return marshal.dumps(normalize(code), 2)
+
+
+def _verify_loaded_apparatus():
+    """Compare executing code, never restored disk bytes, to HEAD (#2513 fix-r3).
+
+    The lease is taken inside main(), but CPython compiles this entry and
+    _bootstrap loads common/compare/policy from disk at import time, before
+    that; a round started inside a mutation window therefore holds the
+    window's mutant. After acquiring the lease, refuse before any work
+    unless the executing entry (code-object fingerprint, nested functions
+    included) and every apparatus module this process imported through
+    _bootstrap (the ``_apparatus_source`` bytes that actually executed)
+    match HEAD. Missing provenance fails closed. A mutant that deletes this
+    verification itself
+    escapes self-verification — the same boundary scripts/parity/round.py's
+    fix-r2 verification documents. The call-site deletion has two explicit
+    nets (#2513 fix-r6, MM boundary#2): the unit test
+    ``ContractTests.test_failed_preflight_cannot_start_any_product_round``
+    (main must call the gate exactly once before any work) and the
+    ``apparatus-verify-call-site-deleted`` kill row in the
+    cli-parity-mock-gateway negative controls, whose mutation deletes this
+    very call. The body-level mutants are covered separately — by the
+    ``apparatus-*`` kill rows that disarm the individual checks inside.
+
+    #2513 fix-r4 (review boundary#2): the bootstrap's executing code is
+    verified the same way — it is this entry's own loader, so a mutated
+    bootstrap under the lease would keep loading apparatus through the
+    mutant's ``load`` even when the three modules above are pristine.
+
+    #2513 fix-r15 (DS r14 review + MM conc-r2): the verified set is the
+    loader's caller-held registry (``sys._cli_parity_loaded_apparatus``,
+    written by ``_bootstrap.load``), not a sys.modules derivation — a module
+    that popped itself out of sys.modules kept its stamp and silently left
+    the fix-r14 comparison. Per-module stamp loss is red per-module; only a
+    genuine zero-load reaches the all-empty refusal. The surviving
+    sys.modules stamps are cross-checked against the registry fail-closed,
+    and the late controls load in main() is followed by a second
+    verification round (DS r14 b#6).
+    """
+    expected_entry = _head_source('scripts/cli-parity/run_round.py')
+    if not isinstance(_apparatus_code, CodeType):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/run_round.py')
+    expected_code = compile(expected_entry, _apparatus_code.co_filename, 'exec',
+                            dont_inherit=True, optimize=sys.flags.optimize)
+    if _code_fingerprint(_apparatus_code) != _code_fingerprint(expected_code):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/run_round.py')
+    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)
+    if not isinstance(bootstrap_code, CodeType):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')
+    expected_bootstrap = compile(_head_source('scripts/cli-parity/_bootstrap.py'),
+                                bootstrap_code.co_filename, 'exec',
+                                dont_inherit=True, optimize=sys.flags.optimize)
+    if _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):
+        raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')
+    # #2513 fix-r15 (DS r14 review + MM conc-r2): the verified set is the
+    # loader's own caller-held registry of (name, module object) pairs — a
+    # mutant cannot unbind a module reference the way it can edit sys.modules
+    # (the fix-r14 derivation let a module pop itself out with its stamp
+    # intact and silently leave the comparison). The registry is written by
+    # _bootstrap.load itself, so the set is every module the loading surface
+    # executed, pinned against _bootstrap's own APPARATUS_MODULES inventory
+    # instead of a hand-written list the two could drift past. A single
+    # module's missing or mismatched stamp is red per-module; only a genuine
+    # zero-load reaches the all-empty refusal below.
+    loaded = list(getattr(sys, '_cli_parity_loaded_apparatus', ()))
+    if not loaded:
+        raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')
+    registered = set(_bootstrap.APPARATUS_MODULES)
+    unregistered = sorted({name for name, _ in loaded if name not in registered})
+    if unregistered:
+        raise ValueError('#2513 loaded apparatus modules missing from the '
+                         '_bootstrap manifest: ' + ', '.join(unregistered))
+    for name, module in loaded:
+        _verify_loaded_module(name, module)
+    # Fail-closed derived-set comparison (MM conc-r2): every module still
+    # carrying a provenance stamp in sys.modules must be loader-recorded. A
+    # module that removed itself from sys.modules escapes the loop above
+    # only to be caught there by identity; a registry row deleted while the
+    # module survives in sys.modules is caught here by its stamp. Removal
+    # between the two snapshots is a refusal from these checks, never a
+    # bare KeyError: every lookup goes through .get and identity, and the
+    # snapshot is taken before any comparison runs.
+    recorded = {}
+    for pair in loaded:
+        recorded.setdefault(pair[0], []).append(id(pair[1]))
+    for name, module in list(sys.modules.items()):
+        if isinstance(getattr(module, '_apparatus_source', None), bytes):
+            if id(module) not in recorded.get(name, ()):
+                raise ValueError('#2513 stamped apparatus module is not recorded '
+                                'by _bootstrap.load: ' + name)
+
+
+def _verify_loaded_module(name, module):
+    """One registered apparatus module must be the loader's own verified object."""
+    source = getattr(module, '_apparatus_source', None)
+    if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):
+        raise ValueError(f'#2513 loaded apparatus differs from HEAD: scripts/cli-parity/{name}.py')
+    if sys.modules.get(name) is not module:
+        raise ValueError(f'#2513 loaded apparatus module is no longer in '
+                         f'sys.modules: {name}')
 
 
 def executable(path):
@@ -732,6 +878,11 @@ def main():
             ts_mock_profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts',
                                                        ts_read_dirs=roots, mock_gateway=True))
         with parity_lock() as owner:
+            # #2513 fix-r3: refuse before any work unless the executing entry
+            # and the import-time apparatus equal HEAD — the entry is
+            # compiled before the lease exists (DS sibling#3 + MM sibling#1;
+            # scripts/parity/round.py fix-r2 precedent).
+            _verify_loaded_apparatus()
             # Stop before other runners may consider the lease expired. The
             # handler raises through capture's finally so owned groups are reaped.
             previous_alarm = install_handlers(lease=True)
@@ -758,7 +909,13 @@ def main():
                 if summary['selfComparison']['status'] != 'PASS':
                     summary['status'] = 'FAIL'
                 else:
-                    run_controls = _load('controls', _here / 'controls.py').run_controls
+                    controls_module = _load('controls', _here / 'controls.py')
+                    # #2513 fix-r15 (DS r14 b#6): controls.py is loaded here,
+                    # after the post-lease gate above — a mutation window that
+                    # held until this point ran a mutated controls unverified.
+                    # Re-verify right after the late load, before it runs.
+                    _verify_loaded_apparatus()
+                    run_controls = controls_module.run_controls
                     summary['controls'] = run_controls(first, output / 'controls')
                     summary['status'] = summary['controls']['status']
                     if args.rust_bin:

@@ -20,6 +20,7 @@ pub mod render;
 mod tests;
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use futures_util::{SinkExt, StreamExt};
@@ -119,6 +120,22 @@ struct SlackShared {
     /// call-site paths carry their own `/api`), the loopback mock in tests.
     base_url: JsString,
     http: super::http_client::HttpClient,
+    /// #2513 fix-r6 (DS r6 concurrency P1): the channel's stop sentinel. The
+    /// Node client stops dispatching once its close handshake began (the `ws`
+    /// closing state), and `stop`/abandon are what begin it — so this flag,
+    /// set by them and re-armed by `start_session`, is the one value the
+    /// reader consults to drop frames on a stopped socket (#2312). It replaces
+    /// the old `app.is_none()` read, which was ambiguous: `app` is also empty
+    /// in the startup window between the socket open and the session store
+    /// (the reader is spawned before the store), so a `type:"message"` frame
+    /// landing there read as "stopped" and was silently dropped where the TS
+    /// baseline — its handlers registered at construction — dispatches it.
+    /// The 200-attempt probe in the round's RESULT measured the window as not
+    /// reachable on this stack (the store wins the race by orders of
+    /// magnitude), but the sentinel read itself was wrong twice over, and the
+    /// flag also makes the semantics explicit: `app` is state of the *sender*
+    /// half, not the admission gate.
+    closing: AtomicBool,
 }
 
 impl SlackShared {
@@ -153,6 +170,11 @@ impl ChannelHandle for SlackHandle {
         let reason = reason.to_owned();
         Box::pin(async move {
             shared.log("info", format!("slack: stopping ({reason})"));
+            // The close handshake begins here: the reader drops every frame
+            // from now on (#2513 fix-r6 — the stop sentinel, #2312's post-stop
+            // drop semantics). Set before the session is taken so a frame
+            // racing this stop already reads a closing channel.
+            shared.closing.store(true, Ordering::SeqCst);
             // The sink is taken out before any `await` on it: holding the
             // runtime mutex across `send(Close)` would stall every reader
             // frame and `send_reply` gate on a peer that stopped reading
@@ -247,6 +269,7 @@ impl SlackChannel {
                 app_token,
                 base_url: base_url.unwrap_or_else(default_base_url),
                 http: super::http_client::HttpClient::new(),
+                closing: AtomicBool::new(false),
             }),
         }
     }
@@ -366,6 +389,11 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     .map_err(|_| WEBSOCKET_ERROR.to_owned())?
     .map_err(|_| WEBSOCKET_ERROR.to_owned())?;
     let (sink, stream) = ws.split();
+    // A fresh session is not closing: the flag is the stop sentinel the
+    // reader consults (#2513 fix-r6), so it is re-armed here — a restart on a
+    // stopped channel would otherwise inherit the old session's closed state
+    // and drop every frame (the `restart-after-stop` oracle cell).
+    shared.closing.store(false, Ordering::SeqCst);
     let reader = spawn_reader(shared.clone(), stream);
     {
         let mut runtime = shared.runtime.lock().await;
@@ -427,6 +455,10 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
 /// recorded `close(1000)`. `NoopHandle::stop` stays empty because by the
 /// time the failure handle is returned there is nothing left to stop.
 async fn abandon_session(shared: &Arc<SlackShared>) {
+    // The session this start opened is over: the stop sentinel goes up with
+    // it (#2513 fix-r6), so a reader still draining the old socket drops any
+    // late frame instead of dispatching it.
+    shared.closing.store(true, Ordering::SeqCst);
     let app = {
         let mut runtime = shared.runtime.lock().await;
         runtime.app.take()
@@ -469,12 +501,13 @@ fn spawn_reader(
                     // The Node client stops dispatching once its close
                     // handshake began (the `ws` closing state): a frame that
                     // lands on the stopped socket is dropped, so `stop` then
-                    // `ws-send` stays silent.
-                    let stopped = {
-                        let runtime = shared.runtime.lock().await;
-                        runtime.app.is_none()
-                    };
-                    if stopped {
+                    // `ws-send` stays silent. #2513 fix-r6: the sentinel is
+                    // the `closing` flag, never `app.is_none()` — that value
+                    // also means "starting" in the window between the socket
+                    // open and the session store (the reader is spawned
+                    // before the store), and a frame landing there was
+                    // silently dropped where the TS baseline dispatches it.
+                    if shared.closing.load(Ordering::SeqCst) {
                         continue;
                     }
                     let is_message = value

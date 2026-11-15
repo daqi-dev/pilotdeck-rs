@@ -2785,8 +2785,19 @@ def _retirement_baseline_revision(baseline):
     bypassed.
     """
     try:
-        result = subprocess.run(['git', '-C', str(baseline), 'rev-parse', 'HEAD'],
-                                capture_output=True, text=True, timeout=10)
+        # #2513 fix-r14 (DS r13 review, b-tier): answer from the baseline
+        # directory only. The bare ``git -C`` read inherited the environment,
+        # so a steered GIT_DIR reported a decoy repository's HEAD and the
+        # revision gate could false-PASS (measured, red-baseline-revision-steer.py
+        # in this round's directory); absolute executable, scrubbed three-key
+        # environment, stderr piped — the same hardened form as the
+        # cli-parity/gateway _head_source twins.
+        result = subprocess.run(
+            ['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(baseline),
+             'rev-parse', 'HEAD'],
+            env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                 'GIT_CONFIG_GLOBAL': '/dev/null'},
+            capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as error:
         raise EvidenceError('BASELINE_REVISION', f'git rev-parse failed: {error}') from error
     require(result.returncode == 0, 'BASELINE_REVISION',
