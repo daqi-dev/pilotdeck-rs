@@ -11,7 +11,11 @@ per-mutant ``finally`` and skip ``summary.json`` entirely, the
 ``failures`` list used to reach only stderr (never the exit code), and
 the final line's numerator and denominator used to span different
 domains (``summary`` vs ``run_rows``), printing the byte-identical green
-line beside a failed exit. Each case execs the real script with the
+line beside a failed exit. fix-r3 (review boundary#1 + sibling#2)
+closed the ``failures`` face of that leak: the success wording now also
+requires no apparatus failure and a non-empty run, so a failures-only
+exit never prints the byte-identical green line either. Each case execs
+the real script with the
 cargo surface staged — ``mutating_sources`` / ``write_source_atomic``
 never touch the tree, ``run_owned`` / ``wait_for_slot`` return staged
 results — so nothing needs cargo, a tree lock or a committed tree; the
@@ -78,8 +82,14 @@ KILLED_LOG = (
 NARROWED_EXCEPT = (
     'except (subprocess.SubprocessError, OSError) as error:',
     'except OSError as error:')
+# The whole-condition swap back to the pre-fix-r2 shape (denominator on
+# run_rows, the fix-r3 failures/summary conjuncts gone with it): the
+# guards cannot be kept in a minimal mutant, because every non-KILLED
+# summary row — verdict or repair — arrives with a ``failures`` append,
+# so ``not failures`` would mask the wrong denominator in every
+# scenario the driver can stage.
 RUN_ROWS_DENOMINATOR = (
-    'if killed_rows == len(summary):',
+    'if summary and not failures and killed_rows == len(summary):',
     'if killed_rows == len(run_rows):')
 REMOVE_REPAIR_ROW_WRITE = (
     "                    summary.append(dict(\n"
@@ -237,6 +247,15 @@ class RepairVerdictPaths(unittest.TestCase):
         self.assertEqual(record.code, 1,
                          'a failures-only apparatus failure must exit nonzero')
         self.assertEqual([row['status'] for row in record.summary], ['KILLED'])
+        # fix-r3 (review boundary#1 ≡ sibling#2): the failures-only run
+        # must not print the green wording beside that exit either — on
+        # the fix-r2 shape of the condition this last line was GREEN_LINE
+        # itself; the ``summary``/``not failures`` conjuncts leave it the
+        # plain verdict count instead.
+        self.assertNotIn('restored byte-for-byte',
+                         record.stdout.splitlines()[-1],
+                         'a failures-only apparatus failure must not print '
+                         'the green wording beside its nonzero exit')
 
 
 class DegradedScriptNegativeControls(unittest.TestCase):

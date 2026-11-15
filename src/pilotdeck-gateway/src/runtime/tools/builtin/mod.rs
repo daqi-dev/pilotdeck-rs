@@ -1253,10 +1253,24 @@ mod errno_tests {
         let error = super::write_text_file(&JsString::from(path.as_str()), &"a".repeat(4096))
             .err()
             .expect("a write past RLIMIT_FSIZE must fail");
-        println!(
+        // fix-r3 (review sibling#1, with simplify#3): the fifth WRITE_ERROR
+        // child, back on the family's non-panicking receipt (#3152 item 8,
+        // the tool_budget / workspace_snapshot / file_memory shape) — a
+        // panicking `println!` on a failed write kills the very child the
+        // receipt reports on, and the parent (`child_write_error`) reads
+        // this line through `.output()`'s pipes. In the family by
+        // `test_console`'s own rule (the `WRITE_ERROR=` spill-marker
+        // class); the lexical guard missed it because the child sits in
+        // this production file's `#[cfg(test)] mod errno_tests`, whose
+        // cfg-gated items the detector's in-file skip
+        // (`is_cfg_test_attribute` → `index_past_cfg_test_item`)
+        // deliberately skips — the same skip that lets in-file test
+        // support keep its macros. Widening that guard is #3212's
+        // round, not this one.
+        crate::test_console::receipt_line(&format!(
             "WRITE_ERROR={}",
             String::from_utf16_lossy(error.message.units())
-        );
+        ));
     }
 
     /// A real descriptor write failure from the Write tool reads like Node's

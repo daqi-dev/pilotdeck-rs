@@ -2255,19 +2255,32 @@ fn startup_survives_a_failed_stderr_write() {
 /// pin that every spawn's receipt path survives the dead sink — so a
 /// smaller sample would not weaken the rule; the round keeps its
 /// size and instead carries the termination condition the rest of
-/// this file states on every wait: a 120 s overall budget, breached →
-/// named failure, so a slow or hanging host fails instead of sitting
-/// near the unbounded worst case (~28 s per spawn, ≈90 min) with only
-/// CI's outer timeout to end it.
+/// this file states on every wait: an overall budget linear in the
+/// round, one second per spawn (fix-r3, review concurrency#1: the
+/// flat 120 s priced a 200-round at a fixed 0.6 s/spawn average while
+/// the measured whole run is ~3 s on the reference host, so a merely
+/// slow host could breach it with nothing hanging; and this budget
+/// never ends a hang anyway — the inner 15/3/10 s timeouts do that
+/// themselves — it only names the round's own elapsed time when the
+/// host cannot afford it), breached → named failure, so a slow host
+/// fails by attribution instead of sitting near the unbounded worst
+/// case (~28 s per spawn, ≈90 min) with only CI's outer timeout to
+/// end it.
 #[test]
 fn dead_stderr_sink_fails_on_every_spawn() {
     const SPAWNS: usize = 200;
-    let deadline = Instant::now() + Duration::from_secs(120);
+    const PER_SPAWN_BUDGET: Duration = Duration::from_secs(1);
+    let start = Instant::now();
+    let overall = PER_SPAWN_BUDGET * SPAWNS as u32;
     for _ in 0..SPAWNS {
         assert!(
-            Instant::now() <= deadline,
-            "#2558 the {SPAWNS} dead-sink spawns exceeded the 120 s overall budget; \
-             a spawn is hanging (or the host is too slow for this round), not failing"
+            start.elapsed() <= overall,
+            "#2558 the {SPAWNS} dead-sink spawns took {:.1?} overall, over the \
+             linear budget of one second per spawn ({overall:?} for the round); \
+             the host is too slow for this round, not a spawn hanging — a hang \
+             is ended by the inner waits themselves (15 s line, 3 s connect, \
+             10 s read)",
+            start.elapsed()
         );
         let home = isolated_home();
         let gateway = Gateway::start(&home, Gateway::dead_stderr());
