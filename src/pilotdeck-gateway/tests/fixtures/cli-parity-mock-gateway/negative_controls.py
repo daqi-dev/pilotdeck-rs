@@ -94,6 +94,7 @@ policy = root / 'scripts/cli-parity/policy.py'
 common = root / 'scripts/cli-parity/common.py'
 compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
+bootstrap = root / 'scripts/cli-parity/_bootstrap.py'
 test_cli_parity = root / 'scripts/cli-parity/test_cli_parity.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
@@ -112,7 +113,10 @@ fixture_test = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gate
 # globals are read at call time, so entry-guard tests can patch individual
 # sources to copies under their own directories.
 def _machine_lease_sources():
-    return [policy, common, compare, run_round, mock_gateway,
+    # #2513 fix-r16 (DS r14 sib#5): _bootstrap.py joined the set with the
+    # registry-write row — the loader itself is now a mutated surface, so the
+    # window must snapshot and restore it like every other guarded source.
+    return [policy, common, compare, run_round, bootstrap, mock_gateway,
             isolation_probe, fixture, test_cli_parity]
 
 
@@ -377,6 +381,20 @@ mutations = [
      run_round,
      "    for name, module in loaded:\n",
      "    for name, module in (pair for pair in loaded if pair[0] != 'policy'):\n"),
+    # #2513 fix-r16 (MM r14 sib#4): the registry-loop family only covered
+    # three of the six loader-recorded modules. controls is the late-loaded
+    # module the second verification round re-checks (run_round.main) and
+    # host_negative_controls is its host-side twin — filtering either out
+    # of the loop left a mutated module running under the lease with no row
+    # red anywhere.
+    ('apparatus-controls-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'controls'):\n"),
+    ('apparatus-host-negative-controls-unverified',
+     run_round,
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'host_negative_controls'):\n"),
     ('apparatus-provenance-unchecked',
      run_round,
      "    if not loaded:\n"
@@ -406,6 +424,16 @@ mutations = [
      "    bootstrap_code = getattr(_bootstrap, '_bootstrap_code', None)\n"
      "    if not isinstance(bootstrap_code, CodeType):\n"
      "        bootstrap_code = compile(_head_source('scripts/cli-parity/_bootstrap.py'), str(_bootstrap_path), 'exec')"),
+    # #2513 fix-r16 (DS r14 sib#5): the registry write itself — the
+    # verified set's denominator.  With the append gone, no load is ever
+    # recorded, the post-lease verification falls to the all-empty refusal,
+    # and the whole ApparatusVerificationTests family passes without
+    # checking anything.  The bound cell asserts the registry content the
+    # loader's own process must carry.
+    ('apparatus-registry-not-recorded',
+     bootstrap,
+     "        sys._cli_parity_loaded_apparatus.append((name, module))\n",
+     "        pass  # mutant: no load is ever recorded\n"),
     # #2513 fix-r6 (MM boundary#1): _head_source reads the worktree file
     # instead of the committed object — the verification becomes always-true
     # under a mutation window (worktree bytes == loaded bytes) while every
@@ -514,11 +542,14 @@ EXPECTED_NAMES = (
     'apparatus-common-unverified',
     'apparatus-compare-unverified',
     'apparatus-policy-unverified',
+    'apparatus-controls-unverified',
+    'apparatus-host-negative-controls-unverified',
     'apparatus-provenance-unchecked',
     'apparatus-head-failure-swallowed',
     'apparatus-entry-fingerprint-unchecked',
     'apparatus-bootstrap-unverified',
     'apparatus-bootstrap-missing-accepted',
+    'apparatus-registry-not-recorded',
     'apparatus-head-source-worktree-read',
     'apparatus-verify-call-site-deleted',
     'apparatus-unregistered-unchecked',
@@ -558,6 +589,10 @@ tests = {
         'ApparatusVerificationTests.test_mutated_compare_is_refused',
     'apparatus-policy-unverified':
         'ApparatusVerificationTests.test_mutated_policy_is_refused',
+    'apparatus-controls-unverified':
+        'ApparatusVerificationTests.test_mutated_controls_is_refused',
+    'apparatus-host-negative-controls-unverified':
+        'ApparatusVerificationTests.test_mutated_host_negative_controls_is_refused',
     'apparatus-provenance-unchecked':
         'ApparatusVerificationTests.test_missing_provenance_fails_closed',
     'apparatus-head-failure-swallowed':
@@ -568,6 +603,8 @@ tests = {
         'ApparatusVerificationTests.test_mutated_bootstrap_is_refused',
     'apparatus-bootstrap-missing-accepted':
         'ApparatusVerificationTests.test_missing_bootstrap_code_fails_closed',
+    'apparatus-registry-not-recorded':
+        'ApparatusVerificationTests.test_loader_records_the_modules_it_loads',
     'apparatus-head-source-worktree-read':
         'ApparatusVerificationTests.test_head_source_reads_the_committed_object',
     'apparatus-verify-call-site-deleted':
@@ -640,6 +677,13 @@ failure_fragments = {
     'apparatus-policy-unverified':
         ('#2513 a mutated policy.py must be refused after the lease',
          "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/policy.py"),
+    'apparatus-controls-unverified':
+        ('#2513 a mutated controls.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/controls.py"),
+    'apparatus-host-negative-controls-unverified':
+        ('#2513 a mutated host_negative_controls.py must be refused after the lease',
+         "#2513 loaded apparatus differs from HEAD: "
+         'scripts/cli-parity/host_negative_controls.py'),
     'apparatus-provenance-unchecked':
         ('#2513 missing provenance must fail closed',
          '#2513 no apparatus module was loaded through _bootstrap.load'),
@@ -654,6 +698,8 @@ failure_fragments = {
     'apparatus-bootstrap-missing-accepted':
         ('#2513 a missing bootstrap code object must fail closed',
          "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py"),
+    'apparatus-registry-not-recorded':
+        '#2513 _bootstrap.load must record every module it loads',
     # fix-r6: both rows bind to the bound test's own markered msg (the
     # call-count shape fires the message; the worktree-read row's equality
     # carries it as its msg too).

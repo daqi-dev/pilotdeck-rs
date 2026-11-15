@@ -68,6 +68,17 @@ as roots, ``Path(...)``/``os.path.join`` folds count, and a guarded
 argument the resolver cannot read fails the scan closed instead of being
 silently skipped.
 
+#2513 fix-r16 (CI red C) grew the roster to seventeen and the family's
+budgets with it: parity-subprocess-hardening and parity-env-isolation are
+per-row-window runners (one window per mutation row, the row's positive and
+negative control runs inside it, the restored run outside), so their
+largest single window is one row's -- the same largest-window model
+frozen-manifest's shared-window row uses.  The two sdk redirect fixtures
+(sdk-signals, sdk-signal-read-lease) sit in ``EXCLUDED``: their windows hold
+the run's own ``out/parity-redirect.lock`` behind a machine-checked host
+pre-hold, and the fail-closed fallback queues on the shared lease with the
+shared default budget instead of bypassing mutual exclusion.
+
 Run isolated, from this directory::
 
     python3 -I test_lease_acquire_budgets.py
@@ -154,46 +165,46 @@ RUNNERS = {
     # fix-r1's eight members, re-derived from the family max (sibling#1).
     'native-witness/negative.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 30, 'guarded': static_guarded, 'budget': 65700},
+        'stage': 30, 'guarded': static_guarded, 'budget': 68400},
     'native-witness/negative_authentication.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 60, 'guarded': static_guarded, 'budget': 68400},
+        'stage': 60, 'guarded': static_guarded, 'budget': 71100},
     'native-witness/negative_boundary.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 60, 'guarded': static_guarded, 'budget': 65700},
+        'stage': 60, 'guarded': static_guarded, 'budget': 68400},
     'session-domain-lock-release/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
-        'stage': 180, 'guarded': static_guarded, 'budget': 65700},
+        'stage': 180, 'guarded': static_guarded, 'budget': 68400},
     'session-domain-native/negative_controls.py': {
         # baseline + mutant + unaffected + restored: every mutation but the
         # batch bypass has an unaffected control, so four is the worst case.
         'bounded_runs': lambda m: 4 * len(m.MUTATIONS),
-        'stage': 300, 'guarded': static_guarded, 'budget': 65700},
+        'stage': 300, 'guarded': static_guarded, 'budget': 68400},
     'session-domain-expectations/negative_controls.py': {
         # 2 * len(BOUND[name]) baseline+mutant runs plus one unaffected and
         # one restored run per mutation -- the BOUND sizes are read live.
         'bounded_runs': lambda m: sum(2 * len(m.BOUND[row[0]]) + 2
                                       for row in m.MUTATIONS),
-        'stage': 300, 'guarded': static_guarded, 'budget': 65700},
+        'stage': 300, 'guarded': static_guarded, 'budget': 68400},
     'gateway-batch/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 120,
         'guarded': lambda m, t: len({m.COMMON} | {row[1] for row in m.MUTATIONS}),
-        'budget': 66600},
+        'budget': 69300},
     'gateway-entry-guard/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 300,
         'guarded': lambda m, t: len({m.COMMON} | {row[1] for row in m.MUTATIONS}),
-        'budget': 67500},
+        'budget': 70200},
     # boundary#3's four call sites: the shared default 900 and an explicit 60.
     'session-lease/negative.py': {
         'bounded_runs': lambda m: 3 * len(m.cases),
-        'stage': 30, 'guarded': static_guarded, 'budget': 65700},
+        'stage': 30, 'guarded': static_guarded, 'budget': 68400},
     'parity-lock-release/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 180,
         'guarded': lambda m, t: len({m.RUNNER} | {row[1] for row in m.MUTATIONS}),
-        'budget': 65700},
+        'budget': 68400},
     'frozen-manifest/negative_controls.py': {
         # #2929 fix-r3: the gateway-parity rows share ONE window (they guard
         # the same file pair, with a per-row restore between rows); every
@@ -210,24 +221,24 @@ RUNNERS = {
         'guarded': lambda m, t: len(m.window_paths(
             [row for row in m.mutations
              if row[1].parent.name == 'gateway-parity'])) or 1,
-        'budget': 64800},
+        'budget': 67500},
     'frozen-reinsert-guard/negative_controls.py': {
         'bounded_runs': lambda m: 3 * len(m.MUTATIONS),
         'stage': 60,
         'guarded': lambda m, t: len({row[1] for row in m.MUTATIONS}
                                     | {m.COMMON, m.TEST, m.PROBE, Path(m.__file__)}),
-        'budget': 69300},
+        'budget': 72000},
     # the three pre-existing own-constant holders (sibling#6/#7/#8).
     'same-json-surfaces/negative_controls.py': {
         'hold': lambda m: m.LEASE_BUDGET_SECONDS,
         'stage': ('RUN_TIMEOUT_SECONDS', 60),
-        'guarded': static_guarded, 'budget': 65700},
+        'guarded': static_guarded, 'budget': 68400},
     'session-domain-cleanup/negative_controls.py': {
         'hold': lambda m: m.LEASE_BUDGET_SECONDS,
         'stage': ('CHECK_TIMEOUT_SECONDS', 180),
         'guarded': lambda m, t: len({m.COMMON_SOURCE}
                                      | {Path(row[1]) for row in m.MUTATIONS}),
-        'budget': 65700},
+        'budget': 68400},
     'native-session-e2e/negative_controls.py': {
         # fix-r3 (#2929 review): the round passes each per-case acquire the
         # remaining time of one monotonic deadline, not the full constant --
@@ -236,7 +247,33 @@ RUNNERS = {
         'call_shape': 'round_deadline',
         'hold': lambda m: m.PER_CASE_LEASE_SECONDS,
         'stage': ('BOUND_TEST_SECONDS', 300),
-        'guarded': static_guarded, 'budget': 66600},
+        'guarded': static_guarded, 'budget': 68400},
+    # #2513 fix-r16 (CI red C): the two per-row-window runners.  Each
+    # mutation row opens its own window -- the row's positive and negative
+    # control runs inside it, the restored run outside -- so the largest
+    # single window is one row's (the same largest-window model
+    # frozen-manifest's shared-window row uses).  The runtime auto-adds
+    # scripts/gateway-parity/common.py to every parity-guarded window
+    # (negative_process.mutating_sources), so the worst window guards the
+    # row's path plus common.py.
+    'parity-subprocess-hardening/negative_controls.py': {
+        # The lease-holding rows (scripts/parity/, scripts/gateway-parity/
+        # targets) stage at run_cli's default 180 s; the 300 s cfd rows
+        # guard scripts/check-frozen-delivery.py, which no
+        # PARITY_GUARDED_PREFIXES entry covers, so those windows never take
+        # the lease at all.
+        'bounded_runs': lambda m: 2,
+        'stage': 180,
+        'guarded': lambda m, t: max(len({row[1], m.COMMON})
+                                    for row in m.mutations),
+        'budget': 68400},
+    'parity-env-isolation/negative_controls.py': {
+        # run_control stages every in-window control run at 600 s.
+        'bounded_runs': lambda m: 2,
+        'stage': 600,
+        'guarded': lambda m, t: max(len({row[1], m.COMMON})
+                                    for row in m.mutations),
+        'budget': 68400},
 }
 
 # Scan candidates that never take the host-wide lease (boundary#6): their
@@ -251,9 +288,9 @@ EXCLUDED = {
             'every mutating_sources call runs against TemporaryDirectory scratch '
             'git repos; the ParityMutationLock fixture copies common.py into the '
             'temp root and patches the lock path, so none takes /tmp/pdrs-parity.lock',
-        # 13 real calls + the one inside the SIGKILL_RESIDUE script string.
-        'text_calls': 14,
-        'ast_calls': 13,
+        # 15 real calls + the one inside the SIGKILL_RESIDUE script string.
+        'text_calls': 16,
+        'ast_calls': 15,
         # The patch that keeps the fixture off the real lock: both real-lock
         # literals in the file are the fixture's assert+replace pair.
         'lock_literal': "Path('/tmp/pdrs-parity.lock')",
@@ -272,6 +309,40 @@ EXCLUDED = {
         'guarded_anchor':
             "relative = 'src/pilotdeck-gateway/tests/fixtures/"
             "negative-restore/test_restore.py'",
+    },
+    # #2513 fix-r16 (CI red C): the two sdk redirect fixtures.  Their
+    # windows hold the run's own out/parity-redirect.lock behind a
+    # machine-checked host pre-hold (the Python twin of the Rust families'
+    # PDRS_SDK_TEST_PARITY_LOCK redirect), so they never queue on the
+    # shared lease for a family-max wait; the fail-closed fallback queues
+    # on the shared lease with the shared default budget instead of
+    # bypassing mutual exclusion.
+    'src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py': {
+        'reason':
+            'its one mutating_sources call guards the Rust ParityLock-family '
+            'sources under src/pilotdeck-cli/tests/ behind '
+            '_redirect_window_parity_lock: a verified host pre-hold opens the '
+            "window on the run's own out/parity-redirect.lock, and the "
+            'fail-closed fallback queues on the shared lease with the shared '
+            'default budget, so the window never bypasses mutual exclusion '
+            'but never queues for a family-max wait either',
+        'text_calls': 1,
+        'ast_calls': 1,
+        'patch_anchor': 'negative_process._parity_mutation_lock = redirected',
+        'guarded_anchor': 'lease = out / "parity-redirect.lock"',
+    },
+    'src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py': {
+        'reason':
+            'three windows: the self-file and capture.py windows guard no '
+            'parity-guarded path at all (fixtures/ sits outside '
+            'PARITY_GUARDED_PREFIXES), and the read_lease.rs window runs '
+            'behind the same redirect as sdk-signals -- a verified host '
+            "pre-hold opens it on the run's own out/parity-redirect.lock, "
+            'with the fail-closed fallback queueing on the shared lease',
+        'text_calls': 3,
+        'ast_calls': 3,
+        'patch_anchor': 'negative_process._parity_mutation_lock = redirected',
+        'guarded_anchor': 'lease = out / "parity-redirect.lock"',
     },
 }
 
@@ -637,7 +708,7 @@ class LeaseAcquireBudgetTests(unittest.TestCase):
     def test_roster_is_the_closed_set_of_global_lease_call_sites(self):
         marker = ('#2929 fix-r2: the roster is the closed set of '
                   'global-lease call sites')
-        self.assertEqual(len(RUNNERS), 15, marker + ': roster count')
+        self.assertEqual(len(RUNNERS), 17, marker + ': roster count')
         found = global_lease_call_sites(REPO_ROOT)
         # Exclusion happens AFTER candidacy (fix-r3, MM boundary#3): a file
         # hidden in EXCLUDED must still show up as a candidate here, or the

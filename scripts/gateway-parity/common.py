@@ -804,37 +804,80 @@ def _compiled_fingerprint(code):
     return marshal.dumps(normalize(code), 2)
 
 
+def _refuse(path):
+    raise ValueError(f'#166 loaded apparatus differs from HEAD: {path}')
+
+
 def verify_loaded_apparatus(head=None):
     """Compare executed source/code, never restored disk bytes, to one pinned HEAD.
 
-    All apparatus imports use the bootstrap's byte-recording loader. Standalone
+    All apparatus imports use the guard's byte-recording loader. Standalone
     controls use this fail-closed check without reacquiring their parent's lock.
     Library controls called by a real round already run under its verified lock.
+
+    #2513 fix-r16 (DS sib#1): the verified set is the loader's caller-held
+    registry (``sys._gateway_parity_loaded_apparatus``, written by
+    ``_guard.load``), not a sys.modules derivation — a module that popped
+    itself out of sys.modules kept its stamp and silently left the comparison.
+    A recorded module is therefore byte-verified whether or not it is still
+    bound in sys.modules (controls and tests legitimately load entries under
+    working aliases and pop them afterwards); the surviving sys.modules stamps
+    are cross-checked against the registry fail-closed below, so a rebind under
+    a loader never executed is still red there.
     """
     if head is None and not _has_git_checkout(ROOT):
         return None  # Library controls also support static exports.
     head = head or _apparatus_head()
-    for module in tuple(sys.modules.values()):
+    loaded = list(getattr(sys, '_gateway_parity_loaded_apparatus', ()))
+    if not loaded:
+        raise ValueError('#166 no apparatus module was loaded through _guard.load')
+    for name, module in loaded:
         path = getattr(module, '__file__', None)
+        if not path or not Path(path).resolve().is_relative_to(SCRIPT):
+            # Outside this apparatus tree: not this check's module (the old
+            # scan scoped itself to SCRIPT the same way).
+            continue
+        # Self-pop no longer escapes: the loader's own record keeps the
+        # executed bytes pinned against HEAD for every module it loaded.
         source = getattr(module, '_apparatus_source', None)
-        if path and Path(path).resolve().is_relative_to(SCRIPT):
-            expected = _head_source(head, path)
-            if getattr(module, '__name__', None) == '__main__':
-                # __main__ is compiled by CPython, outside _load. Compare its
-                # actual executing code object (including nested functions) to
-                # HEAD compiled with identical filename/optimization settings.
-                code = getattr(module, '_apparatus_code', None)
-                matches = False
-                if isinstance(code, CodeType):
-                    expected_code = compile(expected, code.co_filename, 'exec',
-                                            dont_inherit=True, optimize=sys.flags.optimize)
-                    # Version 2 has no reference-sharing records; execution can
-                    # change object sharing without changing compiled content.
-                    matches = _compiled_fingerprint(code) == _compiled_fingerprint(expected_code)
-            else:
-                matches = isinstance(source, bytes) and source == expected
+        if not isinstance(source, bytes) or source != _head_source(head, path):
+            _refuse(path)
+    # Fail-closed cross-check over the surviving stamps: every module still
+    # carrying provenance inside this apparatus tree must be loader-recorded
+    # (a registry row deleted while the module survives is caught by its
+    # stamp), and the two non-loader surfaces keep their own comparisons —
+    # __main__ by executing code object, _guard by its preamble-stamped bytes
+    # (the entry preamble stamps _guard directly, never through load).
+    recorded = {}
+    for name, module in loaded:
+        recorded.setdefault(name, []).append(id(module))
+    for name, module in list(sys.modules.items()):
+        path = getattr(module, '__file__', None)
+        if not path or not Path(path).resolve().is_relative_to(SCRIPT):
+            continue
+        if getattr(module, '__name__', None) == '__main__':
+            # __main__ is compiled by CPython, outside _load. Compare its
+            # actual executing code object (including nested functions) to
+            # HEAD compiled with identical filename/optimization settings.
+            code = getattr(module, '_apparatus_code', None)
+            matches = False
+            if isinstance(code, CodeType):
+                expected_code = compile(_head_source(head, path), code.co_filename, 'exec',
+                                        dont_inherit=True, optimize=sys.flags.optimize)
+                # Version 2 has no reference-sharing records; execution can
+                # change object sharing without changing compiled content.
+                matches = _compiled_fingerprint(code) == _compiled_fingerprint(expected_code)
             if not matches:
-                raise ValueError(f'#166 loaded apparatus differs from HEAD: {path}')
+                _refuse(path)
+            continue
+        source = getattr(module, '_apparatus_source', None)
+        if not isinstance(source, bytes) or source != _head_source(head, path):
+            _refuse(path)
+        # _guard is stamped by the entry preamble, not by load, so registry
+        # membership is not its evidence; every other apparatus-path module
+        # in sys.modules must be one load recorded.
+        if name != '_guard' and id(module) not in recorded.get(name, ()):
+            _refuse(path)
     return head
 
 

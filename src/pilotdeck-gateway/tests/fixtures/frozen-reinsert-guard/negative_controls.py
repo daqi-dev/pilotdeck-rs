@@ -606,7 +606,7 @@ def run(out, label, test):
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).  This replaces the explicit 60 s wait, which was
 # fifteen times below even the old shared default 900 (#1528).
-LEASE_ACQUIRE_BUDGET_SECONDS = 69300
+LEASE_ACQUIRE_BUDGET_SECONDS = 72000
 
 
 def main():

@@ -33,5 +33,15 @@ for variables in matrix:
     row = json.loads(result.stdout)
     rows.append(row)
     print(json.dumps({'env': variables, 'resolved': row['resolved'], 'minimal': row['minimal']}, ensure_ascii=False))
-commit = subprocess.check_output(['git', '-C', str(baseline), 'rev-parse', 'HEAD'], text=True).strip()
+# #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3): the baseline commit read takes
+# the r15 run_resource_scaling.py:174-180 hardened form (absolute git +
+# safe.directory + the scrubbed three-key environment + a bounded timeout),
+# so a steered environment cannot pin a decoy HEAD into the evidence row.
+commit = subprocess.run(['/usr/bin/git', '-c', 'safe.directory=*', '-C',
+                         str(baseline), 'rev-parse', 'HEAD'],
+                        env={'PATH': '/usr/bin:/bin',
+                             'GIT_CONFIG_NOSYSTEM': '1',
+                             'GIT_CONFIG_GLOBAL': os.devnull},
+                        capture_output=True, text=True, timeout=10,
+                        check=True).stdout.strip()
 (output / 'node.json').write_text(json.dumps({'baselineCommit': commit, 'rows': rows}, ensure_ascii=False, indent=2) + '\n')

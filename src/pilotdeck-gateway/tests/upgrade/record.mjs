@@ -7,6 +7,7 @@ import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {join,dirname,resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
+import os from 'node:os';
 import {checkSuffix} from './check_suffix.mjs';
 import {captureSourceIdentity,verifySourceIdentity,assertBuildBinary} from './source_identity.mjs';
 const here=dirname(fileURLToPath(import.meta.url));
@@ -234,7 +235,8 @@ const inputPaths = {
  candidateFrames: join(root, 'src/pilotdeck-gateway/src/frame.rs'),
  candidatePairing: join(root, 'src/pilotdeck-gateway/src/pairing.rs'),
 };
-const inputs = {baselineGitHead: execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], {encoding:'utf8'}).trim(), nodeVersion: process.version, nodeExecutable: process.execPath,
+// #2513 fix-r16 (a.8 sweep / DS sib#2 + MM sib#3): the baseline commit read takes the r15 run_resource_scaling.py:174-180 hardened form (absolute git + safe.directory + the scrubbed three-key environment + a bounded timeout), so a steered environment cannot pin a decoy HEAD into inputs.json.
+const inputs = {baselineGitHead: execFileSync('/usr/bin/git', ['-c','safe.directory=*','-C', baseline, 'rev-parse', 'HEAD'], {encoding:'utf8', env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devnull}, timeout: 10000}).trim(), nodeVersion: process.version, nodeExecutable: process.execPath,
  files: Object.fromEntries(await Promise.all(Object.entries(inputPaths).map(async ([key, path]) => [key, {path, sha256Before: await sha(path)}]))),
  protocol: {helloHex: hello.toString('hex'), initialPingHex: initial.toString('hex'),
   postRequestHex: frame(JSON.stringify({type:'request',id:'post',method:'describe_server'})).toString('hex'),

@@ -35,6 +35,24 @@ HERE = Path(__file__).resolve().parent
 # itself always lives beside common.py.
 APPARATUS = HERE.parent if HERE.name == 'controls' else HERE
 
+# #2513 fix-r16 (DS sib#1): the loaded set is this guard's own caller-held
+# registry — (name, module object) pairs a mutant cannot unbind, unlike the
+# sys.modules derivation, where a module that popped itself out of sys.modules
+# kept its stamp and silently left common.verify_loaded_apparatus' comparison.
+# Every entry shares this one module (explicit-path load), so the registry is
+# process-shared; the verification replays it with the surviving sys.modules
+# stamps cross-checked fail-closed there.
+if not hasattr(sys, '_gateway_parity_loaded_apparatus'):
+    sys._gateway_parity_loaded_apparatus = []
+
+
+def _record_loaded(name, module):
+    # The registry holds module object references, so a mutant that edits or
+    # empties sys.modules cannot make a loaded module leave the verified set.
+    if not any(pair[0] == name and pair[1] is module
+               for pair in sys._gateway_parity_loaded_apparatus):
+        sys._gateway_parity_loaded_apparatus.append((name, module))
+
 
 def load(name, path):
     """Load one apparatus module by explicit path and record executed bytes."""
@@ -44,6 +62,7 @@ def load(name, path):
     if existing is not None and existing_file and Path(existing_file).resolve() == path:
         if not isinstance(getattr(existing, '_apparatus_source', None), bytes):
             raise RuntimeError(f'#166 unverified apparatus module cache: {path}')
+        _record_loaded(name, existing)
         return existing
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -57,6 +76,7 @@ def load(name, path):
     module._apparatus_source = source
     if Path(module.__file__).resolve() != path:
         raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    _record_loaded(name, module)
     return module
 
 

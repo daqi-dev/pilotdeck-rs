@@ -764,6 +764,27 @@ class ImportIsolation(unittest.TestCase):
         self.assertEqual(outcomes, ['REJECTED'], message)
         self.assertFalse(self.lock.exists(), message + ': own lease released')
 
+    def test_popped_mutant_is_still_rejected(self):
+        # #2513 fix-r16 (DS sib#1): the verified set is the loader's
+        # registry, so a module that popped itself out of sys.modules keeps
+        # its executed-bytes record.  The registry loop must compare that
+        # stamp (not the restored disk bytes): this is the one shape the
+        # surviving-stamps cross-check cannot see.
+        message = '#166 popped mutant must still be rejected'
+        self.path.write_bytes(b"VALUE = 'mutant'\n")
+        imported = _load('import_isolation_probe', self.path)
+        self.assertEqual(imported.VALUE, 'mutant', message + ': import hook')
+        sys.modules.pop('import_isolation_probe', None)
+        self.assertNotIn('import_isolation_probe', sys.modules, message + ': popped')
+        self.path.write_bytes(self.clean)
+        with self.environment():
+            try:
+                common.verify_loaded_apparatus(self.head)
+            except ValueError as error:
+                self.assertIn('#166 loaded apparatus differs from HEAD', str(error), message)
+            else:
+                self.fail(message + ': the loader registry must pin the popped record')
+
     def test_loader_records_executed_bytes_not_later_disk(self):
         source = ("from pathlib import Path\nPath(__file__).write_bytes(" + repr(self.clean) + ")\nVALUE = 'mutant'\n").encode()
         self.path.write_bytes(source)
@@ -818,7 +839,17 @@ class ImportIsolation(unittest.TestCase):
             return ((self.head + '\n').encode() if 'rev-parse' in command
                     else sources[command[-1].split(':', 1)[1]])
 
-        with patch.object(subprocess, 'check_output', side_effect=git_read):
+        # #2513 fix-r16 (DS sib#1): the mutant arm below loads deliberate
+        # mutant bytes through the real loader, so the process-shared
+        # registry keeps a row whose executed source differs from HEAD.
+        # Scope that row to this test: the registry attribute points at a
+        # copy for the duration, the poison dies with the with-block, and
+        # later in-process verifications (this suite's real-entry cells) see
+        # only pristine rows. Production subprocesses load no mutants, so
+        # their registry keeps exactly the rows their own entry created.
+        with patch.object(subprocess, 'check_output', side_effect=git_read), \
+                patch.object(sys, '_gateway_parity_loaded_apparatus',
+                             list(sys._gateway_parity_loaded_apparatus)):
             entry._verify_cli_imports()  # The independent CLI's initial check passes.
             for source in (original, mutant):
                 sys.modules.pop(alias, None)
@@ -1147,6 +1178,14 @@ class ImportIsolation(unittest.TestCase):
             for mutant in (False, True):
                 with self.subTest(entry=name, mutant=mutant), ExitStack() as stack:
                     stack.enter_context(patch.dict(sys.modules))
+                    # #2513 fix-r16 (DS sib#1): each mutant arm loads
+                    # deliberate mutant bytes through the real loader;
+                    # scope the registry rows to the arm (a copy of the
+                    # registry) so one entry's mutant arm cannot make the
+                    # next entry's pristine arm refuse on the stale row.
+                    stack.enter_context(patch.object(
+                        sys, '_gateway_parity_loaded_apparatus',
+                        list(sys._gateway_parity_loaded_apparatus)))
                     sys.modules.pop(alias, None)
                     executed = []
                     held = False
@@ -4350,14 +4389,24 @@ class RetirementScoring(unittest.TestCase):
                 folder = root / name
                 folder.mkdir()
                 (folder / 'marker.txt').write_text(name)
+                # #2513 fix-r16 (a.6 / DS bnd#5): the fixture builds its two
+                # repositories with a scrubbed three-key environment, so a
+                # poisoned host (GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE from an
+                # outer harness) cannot steer the setup onto an external
+                # repository — only the measured bare arm below keeps the
+                # inherited environment it exists to demonstrate.
+                scrubbed = {'PATH': '/usr/bin:/bin',
+                            'GIT_CONFIG_NOSYSTEM': '1',
+                            'GIT_CONFIG_GLOBAL': os.devnull}
                 for args in (['init', '-q'], ['add', '-A'],
                              ['-c', 'user.email=t@t', '-c', 'user.name=t',
                               'commit', '-q', '-m', name]):
                     subprocess.run(['/usr/bin/git', *args], cwd=folder, check=True,
-                                   capture_output=True, timeout=10)
+                                   capture_output=True, env=scrubbed, timeout=10)
                 return folder, subprocess.run(['/usr/bin/git', 'rev-parse', 'HEAD'],
                                               cwd=folder, check=True, capture_output=True,
-                                              text=True, timeout=10).stdout.strip()
+                                              text=True, env=scrubbed,
+                                              timeout=10).stdout.strip()
 
             baseline, head_a = repo('baseline')
             decoy, head_d = repo('decoy')

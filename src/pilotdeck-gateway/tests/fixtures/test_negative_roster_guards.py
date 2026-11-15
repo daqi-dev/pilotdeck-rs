@@ -1748,6 +1748,28 @@ CHECK_MISUSE_EXEMPTIONS = {
     # relative path, so a sibling numbered file growing the refusal text
     # cannot ride this entry silently.
     'user-dialog-http-store/negative_controls_1947.py': 'spelling-2 refusal (numbered variant)',
+    # #2513 fix-r16 (metadata-observer red after the #2572 merge): two new
+    # `--check takes no ...` refusals arrived with the r11-merge lane. Both
+    # were probed first (probe-triple-*.log in the round evidence): clean
+    # --check exits 0, misuse exits 2 with the family wording. Neither is
+    # TRIPLE-shaped -- see each reason -- so they register here, with the
+    # rc+wording pinned by their own tests instead of this table's
+    # shared drive() pins.
+    # cli-parity-lock-bounded: argparse (output/selection positional +
+    # --baseline), no EXPECTED_NAMES roster at all -- its --check asserts
+    # the guarded set still touches the parity-lock family (a different
+    # static contract), so the TRIPLE tuple-table and ordering pins do not
+    # transplant (the #2495 precedent). rc 2 + the wording are pinned by
+    # CheckMisuseRefusal in its own test_negative_controls.py.
+    'cli-parity-lock-bounded': 'argparse contract differs, pinned by its own tests',
+    # parity-env-isolation: manual sys.argv parsing with two rosters
+    # (EXPECTED_MUTATIONS/EXPECTED_POSITIVES via registered()) judged by
+    # RUNNERS controls; no EXPECTED_NAMES attribute and a different
+    # --check contract (anchors + mutant compilation + rosters), so the
+    # TRIPLE shape does not transplant either. rc 2 + the wording are
+    # pinned by test_parity_env_isolation_refuses_flag_shaped_argv in
+    # test_negative_optimize_guards.py.
+    'parity-env-isolation': 'two-roster judged-controls shape, pinned by its own tests',
 }
 # #2856 fix-r5: the sibling-form refusal text the reverse scan keys on --
 # #1437 phrases it without "positional", both spellings count. fix-r6
@@ -1757,10 +1779,12 @@ CHECK_MISUSE_EXEMPTIONS = {
 # (DS r7 concurrency#1/boundary#1/#2) corrects its census claim, which was
 # WRONG about the tree: the family boundary is exactly this, no more --
 # (a) the alternation covers the two argparse/ValueError wordings
-#     `--check takes no ...` (x6) and `--check does not take ...` (x12)
+#     `--check takes no ...` (x8) and `--check does not take ...` (x12)
 #     across negative_controls*.py -- counts pinned by the census
 #     assertion in test_every_check_refusal_fixture_is_in_the_table, not
-#     maintained by hand;
+#     maintained by hand (x6 grew to x8 in #2513 fix-r16 when
+#     cli-parity-lock-bounded and parity-env-isolation joined the family
+#     with their own exemptions above);
 # (b) sdk-cli-lifecycle refuses differently --
 #     `raise SystemExit('--check must be the only argument')` -- a
 #     direct-SystemExit shape, not the argparse/ValueError family, and
@@ -1960,7 +1984,7 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         does_not_take = sum('--check does not take ' in text
                             for text in texts.values())
         self.assertEqual(
-            (takes_no, does_not_take), (6, 12),
+            (takes_no, does_not_take), (8, 12),
             f'#2572 the family census pinned in the '
             f'CHECK_MISUSE_REFUSAL comment drifted; update the comment '
             f'from the scan, not from memory: '

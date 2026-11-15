@@ -370,6 +370,30 @@ def isolated_file_options(options):
     return isolated, True
 
 
+@contextmanager
+def macos_gate():
+    """#2513 fix-r16 (a.1): the darwin lies the leased-path cells share.
+
+    run_round's macOS-only sandbox-exec gate blocks a Linux host before the
+    lease, so every cell that drives main onto the leased path fakes the
+    platform and the sandbox-exec presence check exactly the same way
+    (baseline-red evidence in the fix-r15 round directory).  One context
+    manager now carries those two lies; the third copy had already drifted
+    from the other two by a comment.
+    """
+    real_is_file = Path.is_file
+
+    def darwin_is_file(self):
+        # The one lie this cell needs: macOS's sandbox-exec is present.
+        if self == Path('/usr/bin/sandbox-exec'):
+            return True
+        return real_is_file(self)
+
+    with patch('run_round.sys.platform', 'darwin'), \
+         patch.object(Path, 'is_file', darwin_is_file):
+        yield
+
+
 class BootstrapTests(unittest.TestCase):
     """#701 item 3: entries reject same-directory imposters before loading one."""
 
@@ -3297,17 +3321,8 @@ class ContractTests(unittest.TestCase):
         # the gate's call count was 0; baseline evidence in the fix-r15 round
         # directory), while staying green on macOS where it was authored.
         output = self.root / 'blocked-run'
-        real_is_file = Path.is_file
-
-        def darwin_is_file(self):
-            # The one lie this cell needs: macOS's sandbox-exec is present.
-            if self == Path('/usr/bin/sandbox-exec'):
-                return True
-            return real_is_file(self)
-
         with patch('sys.argv', ['run_round.py', '--node', sys.executable]), \
-             patch('run_round.sys.platform', 'darwin'), \
-             patch.object(Path, 'is_file', darwin_is_file), \
+             macos_gate(), \
              patch('run_round.output_path', return_value=output), \
              patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
@@ -3342,17 +3357,8 @@ class ContractTests(unittest.TestCase):
         # between main's entry and the lease is stubbed exactly like the
         # twin. The gate must run exactly once, before any product work.
         output = self.root / 'gate-run'
-        real_is_file = Path.is_file
-
-        def darwin_is_file(self):
-            # The one lie this cell needs: macOS's sandbox-exec is present.
-            if self == Path('/usr/bin/sandbox-exec'):
-                return True
-            return real_is_file(self)
-
         with patch('sys.argv', ['run_round.py', '--node', sys.executable]), \
-             patch('run_round.sys.platform', 'darwin'), \
-             patch.object(Path, 'is_file', darwin_is_file), \
+             macos_gate(), \
              patch('run_round.output_path', return_value=output), \
              patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
@@ -3386,18 +3392,11 @@ class ContractTests(unittest.TestCase):
         # #2513 fix-r15: same darwin lies as the two leased-path twins above
         # — without them main blocks at the macOS-only gate on a Linux host
         # and this cell can never reach the wiring it pins (baseline-red
-        # evidence in the fix-r15 round directory).
-        real_is_file = Path.is_file
-
-        def darwin_is_file(self):
-            if self == Path('/usr/bin/sandbox-exec'):
-                return True
-            return real_is_file(self)
-
+        # evidence in the fix-r15 round directory).  fix-r16 (a.1): the lies
+        # live in the shared macos_gate() context manager now.
         with patch('sys.argv', ['run_round.py', '--node', sys.executable,
                                 '--ts-read-dir', str(declared)]), \
-             patch('run_round.sys.platform', 'darwin'), \
-             patch.object(Path, 'is_file', darwin_is_file), \
+             macos_gate(), \
              patch('run_round.output_path', return_value=output), \
              patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
@@ -3608,7 +3607,15 @@ class ApparatusVerificationTests(unittest.TestCase):
         # #2513 fix-r15 (DS r14 review): the registry is pinned against
         # _bootstrap's own APPARATUS_MODULES inventory — a stamped module
         # the loading surface never registered is red, whatever its bytes.
+        # fix-r16 (MM r14 bnd#4): rogue also stays in sys.modules, so the
+        # identity check and the derived-set cross-check both see a module
+        # exactly where it claims to be — disarming the manifest branch
+        # alone leaves no other check to catch the rogue, and this row's
+        # kill is the manifest branch's own (not the identity check firing
+        # in its place).
         rogue = SimpleNamespace(_apparatus_source=b'# rogue stamped bytes\n')
+        sys.modules['rogue'] = rogue
+        self.addCleanup(sys.modules.pop, 'rogue', None)
         heads = self.heads(_common._apparatus_source)
         heads['scripts/cli-parity/rogue.py'] = rogue._apparatus_source
         registry = list(sys._cli_parity_loaded_apparatus) + [('rogue', rogue)]
@@ -3622,6 +3629,19 @@ class ApparatusVerificationTests(unittest.TestCase):
         self.assertEqual(str(caught.exception),
                          '#2513 loaded apparatus modules missing from the '
                          '_bootstrap manifest: rogue')
+
+    def test_loader_records_the_modules_it_loads(self):
+        # #2513 fix-r16 (DS r14 sib#5): _record_loaded's registry write is
+        # the verified set's denominator.  With the append gone, no load is
+        # ever recorded, every post-lease verification falls to the all-empty
+        # refusal, and the ApparatusVerificationTests family above passes
+        # without checking anything — so the registry content itself is
+        # asserted here, in the process that just loaded all six modules.
+        recorded = {name for name, _ in sys._cli_parity_loaded_apparatus}
+        self.assertEqual(
+            recorded, {'common', 'compare', 'controls',
+                        'host_negative_controls', 'policy', 'run_round'},
+            '#2513 _bootstrap.load must record every module it loads')
 
     def test_stamped_module_outside_registry_is_refused(self):
         # #2513 fix-r15 (MM r14 conc-r2 ①): the sys.modules-derived set must
@@ -3706,6 +3726,42 @@ class ApparatusVerificationTests(unittest.TestCase):
         self.assertEqual(str(caught.exception),
                          '#2513 loaded apparatus differs from HEAD: '
                          'scripts/cli-parity/policy.py')
+
+    def test_mutated_controls_is_refused(self):
+        # #2513 fix-r16 (MM r14 sib#4): controls is the module main() loads
+        # late and re-verifies — filtering it out of the registry loop let a
+        # mutated controls run under the lease with no row red anywhere.
+        # This cell is what apparatus-controls-unverified binds to.
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(sys.modules['controls'],
+                             '_apparatus_source', b'# mutant controls bytes\n'), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated controls.py must be '
+                                      'refused after the lease') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/controls.py')
+
+    def test_mutated_host_negative_controls_is_refused(self):
+        # #2513 fix-r16 (MM r14 sib#4): the host-side twin of the family —
+        # host_negative_controls must not be droppable from the registry
+        # loop either.  Bound cell of apparatus-host-negative-controls-
+        # unverified.
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(sys.modules['host_negative_controls'],
+                             '_apparatus_source', b'# mutant host bytes\n'), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a mutated host_negative_controls.py '
+                                      'must be refused after the lease') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/host_negative_controls.py')
 
     def test_mutated_bootstrap_is_refused(self):
         # fix-r4 boundary#2: the loader's executing code object is verified

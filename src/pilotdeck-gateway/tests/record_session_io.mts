@@ -6,6 +6,7 @@ import {syncBuiltinESMExports} from 'node:module';
 import {resolve,join,dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
+import os from 'node:os';
 const baseline=resolve(process.argv[2]),output=resolve(process.argv[3]),scratch=resolve(process.argv[4]);
 if(process.version!=='v22.22.0'||process.getuid?.()===0)throw Error('non-root Node 22 required');
 for(const k of ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR'])if(!process.env[k]?.startsWith(scratch))throw Error(`Unisolated ${k}`);
@@ -103,7 +104,8 @@ const spread:any[]=[];for(const enabled of [false,true])for(const webui of [[],[
  const env:any={PILOT_HOME:spreadHome,STAFFDECK_PROJECT_BINDING_ENABLED:'true',...(enabled?{STAFFDECK_FORMAL_API_ORIGIN:'https://staffdeck.invalid',STAFFDECK_COPY_TENANT_ID:'tenant'}:{})};
  const input={webui};const next=applyProjectBinding(input,spreadHome,env);spread.push({enabled,input,webui:next.webui});
 }
-fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),node:process.version,icu:process.versions.icu,routerCalls,cases:process.argv.includes('--round5')?results.filter(r=>/(?:longname|loop|deep|long-session)$/.test(r.io.scenario)):results},null,2)+'\n');
+// #2513 fix-r16 (a.8 / DS sib#2 + MM sib#3): the baseline commit read takes the r15 run_resource_scaling.py:174-180 hardened form (absolute git + safe.directory + the scrubbed three-key environment + a bounded timeout), so a steered environment cannot pin a decoy HEAD into the recorded manifest.
+fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('/usr/bin/git',['-c','safe.directory=*','-C',baseline,'rev-parse','HEAD'],{encoding:'utf8',env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devnull},timeout:10000}).trim(),node:process.version,icu:process.versions.icu,routerCalls,cases:process.argv.includes('--round5')?results.filter(r=>/(?:longname|loop|deep|long-session)$/.test(r.io.scenario)):results},null,2)+'\n');
 
 fs.writeFileSync(join(dirname(output),'webui-spread.json'),JSON.stringify({node:process.version,spread},null,2)+'\n');
 

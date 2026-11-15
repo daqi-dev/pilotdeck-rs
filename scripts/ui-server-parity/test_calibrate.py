@@ -369,24 +369,36 @@ class CalibrationControls(unittest.TestCase):
             decoy = Path(tmp) / 'decoy'
             decoy.mkdir()
             (decoy / 'marker.txt').write_text('decoy')
+            # #2513 fix-r16 (DS bnd#5): the decoy repository below is a
+            # fixture setup command, not the measured bare arm — it takes the
+            # hardened form (absolute git + the scrubbed three-key
+            # environment), while the bare read keeps the inherited
+            # environment it exists to demonstrate.
+            scrubbed = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                        'GIT_CONFIG_GLOBAL': os.devnull}
             for args in (['init', '-q'], ['add', '-A'],
                          ['-c', 'user.email=t@t', '-c', 'user.name=t',
                           'commit', '-q', '-m', 'decoy']):
                 subprocess.run(['/usr/bin/git', *args], cwd=decoy, check=True,
-                               capture_output=True, timeout=10)
+                               capture_output=True, timeout=30, env=scrubbed)
             checkout = Path(calibrate.__file__).resolve().parent.parent
             decoys = {'GIT_DIR': str(decoy / '.git'), 'GIT_WORK_TREE': str(decoy)}
             bare = subprocess.run(['git', '-C', str(checkout), 'rev-parse',
                                    '--path-format=absolute', '--git-common-dir'],
                                   env=dict(os.environ, **decoys), capture_output=True,
                                   text=True, timeout=10)
-            self.assertEqual(Path(bare.stdout.strip()).resolve().parent, decoy,
+            # #2513 fix-r16 (DS r15 review): both sides resolved — git
+            # canonicalizes its answer (/private/var vs /var on macOS), so
+            # the resolved left never equalled the unresolved decoy here,
+            # and the not-equal guard below could pass on the textual
+            # difference alone.
+            self.assertEqual(Path(bare.stdout.strip()).resolve().parent, decoy.resolve(),
                              f'the decoy environment did not steer the bare form: {bare.stdout!r}')
             with patch.dict(os.environ, decoys):
                 steered = calibrate.resource_root()
             self.assertEqual(steered, calibrate.resource_root(),
                              'the steered environment changed the resource root')
-            self.assertNotEqual(steered, decoy)
+            self.assertNotEqual(steered, decoy.resolve())
             self.assertTrue(steered.is_dir())
 
     def test_fresh_target_build_ignores_forged_old_binary_and_detects_new_drift(self):

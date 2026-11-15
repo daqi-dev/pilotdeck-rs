@@ -317,9 +317,21 @@ MUTATIONS = [
     ('import-verification-removed', COMMON,
      '        verify_loaded_apparatus(head)\n        with _host_hold(lock):\n            yield',
      '        with _host_hold(lock):\n            yield  # mutant accepts pre-lock imports'),
+    # #2513 fix-r16 (DS sib#1): verify_loaded_apparatus compares executed
+    # bytes in two layers (loader registry, then surviving sys.modules
+    # stamps).  The row pins the registry layer's stamp read -- the popped-
+    # module shape only that layer can see -- and is bound to the popped-
+    # mutant test; a disk read there passes the restored bytes and the
+    # mutant escapes.
     ('import-verification-reads-disk', COMMON,
-     'isinstance(source, bytes) and source == expected',
-     'isinstance(source, bytes) and Path(path).read_bytes() == expected'),
+     "        # Self-pop no longer escapes: the loader's own record keeps the\n"
+     "        # executed bytes pinned against HEAD for every module it loaded.\n"
+     "        source = getattr(module, '_apparatus_source', None)\n"
+     "        if not isinstance(source, bytes) or source != _head_source(head, path):",
+     "        # Self-pop no longer escapes: the loader's own record keeps the\n"
+     "        # executed bytes pinned against HEAD for every module it loaded.\n"
+     "        source = Path(path).read_bytes()\n"
+     "        if not isinstance(source, bytes) or source != _head_source(head, path):"),
     ('import-provenance-after-exec', GUARD,
      '    module._apparatus_source = source',
      '    module._apparatus_source = path.read_bytes()'),
@@ -614,7 +626,7 @@ CHECKS = {
     'session-lock-busy-wrong-exit': ('ImportIsolation.test_session_busy_or_cancelled_lock_is_blocked', '#166 session lock refusal must remain BLOCKED/2'),
     'session-shutdown-after-lease': ('ImportIsolation.test_entry_installs_shutdown_before_lock', '#166 shutdown handler must precede lease acquisition'),
     'import-verification-removed': ('ImportIsolation.test_imported_mutant_is_rejected_after_disk_restore', '#166 pre-lock mutant must be rejected after disk restoration'),
-    'import-verification-reads-disk': ('ImportIsolation.test_imported_mutant_is_rejected_after_disk_restore', '#166 pre-lock mutant must be rejected after disk restoration'),
+    'import-verification-reads-disk': ('ImportIsolation.test_popped_mutant_is_still_rejected', '#166 popped mutant must still be rejected'),
     'import-provenance-after-exec': ('ImportIsolation.test_loader_records_executed_bytes_not_later_disk', '#166 provenance must be exactly the compiled bytes'),
     'import-unknown-cache-open': ('ImportIsolation.test_unknown_cache_is_refused', '#166 cache without executed bytes must fail closed'),
     'verified-cleanup-detached': ('ImportIsolation.test_pending_cleanup_keeps_verified_lease', '#166 verified lock must preserve running cleanup registry'),
@@ -688,7 +700,7 @@ CHECKS = {
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 66600
+LEASE_ACQUIRE_BUDGET_SECONDS = 69300
 
 
 def run(out, label, test):

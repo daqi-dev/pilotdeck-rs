@@ -86,6 +86,13 @@ MUTATIONS = [
     ('guard-load-pop-removed', GUARD,
      '        sys.modules.pop(name, None)\n        raise',
      '        pass  # mutant retains partial module\n        raise'),
+    # #2513 fix-r16 (DS sib#1): the loader's registry write.  With the append
+    # gone, no load is ever recorded, so verify_loaded_apparatus's fail-closed
+    # empty-registry refusal fires instead of the byte comparison and the
+    # bound test -- which expects the differs-from-HEAD refusal -- fails.
+    ('guard-load-registry-not-recorded', GUARD,
+     '        sys._gateway_parity_loaded_apparatus.append((name, module))',
+     '        pass  # mutant records no load'),
     ('guard-verifier-skips', GUARD,
      '    trusted.verify_loaded_apparatus(head)\n    return head',
      '    return head  # mutant skips the HEAD verifier'),
@@ -261,6 +268,14 @@ CHECKS = {
     'guard-load-pop-removed': (
         'ImportIsolation.test_failed_import_does_not_poison_cache',
         '#166 failed import must not retain a partial module'),
+    # Bound to the popped-mutant test, not the disk-restore one: that test's
+    # own lease wait prints "waiting for" mid-run, splitting unittest's verbose
+    # " ... ok" line, and passed() must match the intact line -- the original
+    # binding could never validate its positive control (deterministic
+    # INVALID, r3 diagnosis).
+    'guard-load-registry-not-recorded': (
+        'ImportIsolation.test_popped_mutant_is_still_rejected',
+        '#166 popped mutant must still be rejected'),
     'guard-verifier-skips': (
         'ImportIsolation.test_cli_preflight_uses_head_verifier_for_mutated_common',
         '#166 CLI preflight must use HEAD verifier even when disk helper is mutant'),
@@ -567,7 +582,7 @@ class LogParsingTests(unittest.TestCase):
 # (fix-r3: such a residual now fails the acquire fast with a diagnostic
 # instead of waiting the budget out) -- and just has to cover the family's
 # largest live hold (#1528/#1529).
-LEASE_ACQUIRE_BUDGET_SECONDS = 67500
+LEASE_ACQUIRE_BUDGET_SECONDS = 70200
 
 
 def run_test(out, label, test, timeout=300):

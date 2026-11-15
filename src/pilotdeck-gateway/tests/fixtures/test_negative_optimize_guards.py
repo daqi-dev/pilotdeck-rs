@@ -486,6 +486,17 @@ class UnknownControlIsRefused(unittest.TestCase):
                     result.returncode, 2,
                     f'{script} {argv} must refuse to run: '
                     f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                # #2513 fix-r16 (metadata-observer red): the fixture joined the
+                # `--check takes no ...` refusal family (registered in
+                # test_negative_roster_guards CHECK_MISUSE_EXEMPTIONS), so its
+                # own wording is pinned here -- the reverse scan there keys on
+                # the family prefix, this row pins the exact stderr text.
+                if argv[0] == '--check':
+                    self.assertEqual(
+                        result.stderr.strip(),
+                        'INVALID: #2513 --check takes no output directory '
+                        'and no mutation names',
+                        f'{script} {argv} refusal wording drifted')
                 self.assertNotIn('0/0', result.stdout,
                                  f'{script} {argv} must not report an empty run')
                 # "Never started": no evidence directory anywhere this argv

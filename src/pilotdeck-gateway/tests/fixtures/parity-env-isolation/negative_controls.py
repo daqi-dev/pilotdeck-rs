@@ -333,6 +333,21 @@ ROUND_GUARD_MARKERS = ('#2513', 'scripts/parity/round.py')
 # kill to INVALID.
 ROUND_GUARD_GATEWAY_MARKERS = ('#2513 gateway-parity', 'scripts/gateway-parity/common.py')
 
+# The runtime auto-adds scripts/gateway-parity/common.py to every parity-
+# guarded window (negative_process.mutating_sources loads the lease protocol
+# from its verified bytes), so the worst per-row window guards the row's own
+# path plus this file; the lease-family roster reads the guarded count from
+# this binding instead of restating the path.
+COMMON = root / 'scripts/gateway-parity/common.py'
+
+# #2929/#2513 fix-r16: the acquire budget of the mutation windows -- the
+# parity family's largest live hold plus this runner's own restore tail and
+# one stage of handoff margin, rounded up to the 900 s family unit.  One
+# derivation for the whole family, recomputed live in
+# test_lease_acquire_budgets.py; its closed roster keeps a new global-lease
+# runner from silently missing a budget.
+LEASE_ACQUIRE_BUDGET_SECONDS = 68400
+
 
 def run_control(scratch, label, entry):
     command = [sys.executable, '-I', str(entry)]
@@ -510,7 +525,8 @@ def main():
             control = RUNNERS[control_name]
             status, reason, compiled = 'INVALID', 'not run', False
             try:
-                with mutating_sources(root, [path]) as originals:
+                with mutating_sources(root, [path],
+                                      lock_timeout=LEASE_ACQUIRE_BUDGET_SECONDS) as originals:
                     text = originals[path].decode()
                     if text.count(before) != 1:
                         raise RuntimeError(f'#2513 stale anchor {name}: expected 1, found {text.count(before)}')
