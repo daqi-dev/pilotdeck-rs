@@ -13,9 +13,8 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (dead_stream_print, mutating_sources,
-                              run_owned, wait_for_slot)
-from negative_selection import verdict_exit
+from negative_process import (mutating_sources, run_owned, wait_for_slot)
+from negative_selection import refuse_empty_table, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
@@ -127,10 +126,10 @@ def main():
     # directory left occupied). The ``--check-anchors`` green exit is the same
     # shape on an empty table ("#867 0 anchors valid"), so the refusal comes
     # first: exit 2, nothing on disk, re-runnable on the same path.
-    if not CASES:
-        dead_stream_print('EMPTY CASE TABLE: negative.py has no mutation to '
-                          'verify; refusing to run', stream='stderr')
-        return 2
+    # #3178 fix-r4 (DS simplify#3): the refusal is the shared helper now —
+    # one wording and one position for the runner family (the hand-copied
+    # versions had drifted in all three).
+    refuse_empty_table(CASES, 'case')
     try:
         check_anchors()
     except Exception as error:

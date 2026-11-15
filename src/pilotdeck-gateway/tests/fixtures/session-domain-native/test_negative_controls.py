@@ -23,6 +23,7 @@ Run with:
 """
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -90,6 +91,64 @@ class ZeroRowVerdictControls(unittest.TestCase):
         self.assertTrue(reclaimed,
                         message + ' (the re-admitted evidence directory must '
                         'hold a fresh claim)')
+
+
+CHECK_ANCHORS_CHILD = '''\
+import sys
+from pathlib import Path
+
+fixtures, source = (Path(argument) for argument in sys.argv[1:3])
+sys.path.insert(0, str(fixtures))
+namespace = {'__name': 'check_anchors_dead_stdout_child',
+             '__file__': str(source)}
+exec(compile(source.read_text(), str(source), 'exec'), namespace)
+# A mutation table that lost every row: the delivered --check-anchors
+# preflight must refuse (rc=2) instead of certifying zero anchors, on the
+# real shared helpers -- and still refuse inside this child, whose stdout
+# was closed at exec time (1>&-).
+namespace['MUTATIONS'] = []
+sys.argv = [source.name, '--check-anchors']
+raise SystemExit(namespace['main']())
+'''
+
+
+class CheckAnchorsDeadStdoutControls(unittest.TestCase):
+    """#3178 fix-r4 (DS sibling#4 + MM sibling#5): --check-anchors under 1>&-.
+
+    The guarded prints this family moved to ``dead_stream_print`` (the
+    empty-selection refusal put ahead of the loop this round, the
+    stale-anchor refusal in fix-r3) had no broken-pipe twin: in a real
+    process whose stdout was closed at exec time (``1>&-`` makes CPython set
+    ``sys.stdout = None``), a bare ``print`` ahead of the refusal would
+    crash, exit 1, and read as "ran and was red". ``CHECK_ANCHORS_CHILD``
+    runs the delivered ``negative_controls.py`` in a real child process —
+    the real ``negative_process`` helpers, nothing faked, no cargo run —
+    with an emptied table and ``--check-anchors``: the refusal must stay
+    at exit 2, its reason must still reach stderr, and the shutdown flush
+    must record no "Exception ignored".
+    """
+
+    def test_an_empty_selection_refuses_under_a_dead_stdout(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-sdn-check-') as temp:
+            child = Path(temp) / 'child.py'
+            child.write_text(CHECK_ANCHORS_CHILD)
+            result = subprocess.run(
+                ['/bin/sh', '-c',
+                 f'exec {sys.executable} -I {child} '
+                 f'{Path(__file__).resolve().parents[1]} '
+                 f'{Path(__file__).with_name("negative_controls.py")} 1>&-'],
+                capture_output=True, timeout=120)
+        message = ('#3178 the --check-anchors refusal must keep exit 2 under '
+                   'a dead stdout (a bare print ahead of the refusal would '
+                   'have crashed rc=1 and read as "ran and was red")')
+        self.assertEqual(result.returncode, 2,
+                         message + f' (got rc={result.returncode}, '
+                         f'stderr={result.stderr!r})')
+        self.assertIn(b'EMPTY ANCHOR SELECTION', result.stderr,
+                      message + ' (the refusal reason must still reach stderr)')
+        self.assertNotIn(b'Exception ignored', result.stderr,
+                         message + ' (the interpreter-shutdown flush must not '
+                         'see the dead stdout)')
 
 
 if __name__ == '__main__':

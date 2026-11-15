@@ -65,6 +65,8 @@ class EnvironmentControls(unittest.TestCase):
     # 实测合计 < 1 s，5 min 只防挂起，不参与任何模块的超时语义。
     # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
     # 三模块接入后十二模块实测合计约 2 s，预算不变。
+    # #3178 fix-r4：五模块接入（含四目录补断管孪生）后十七模块实测合计
+    # 约 2 s，预算不变。
     p2batch_twins_step_budget = 300
     copy_manifest_step_budget = 300
     isolation_step_budget = 900
@@ -1803,6 +1805,33 @@ class EnvironmentControls(unittest.TestCase):
             'without it a hung step silently falls back to the 360-minute '
             'job default' % (self.optimize_guards_step_budget // 60))
 
+    # #3178 fix-r4（四家撞条）：minimums 与 commands 原是两份手维护平行清单，
+    # 已第 3 次漂移（fix-r2 注释自记；fix-r3 抬三模块下限时命令侧靠人肉同步）。
+    # 收敛为单一 (module, minimum) 表：命令钉与真跑钉都从这同一表推导，新模块
+    # 只登记一处。fix-r4 接入五模块（2/2/18/9/9），同轮四目录补「死 stdout
+    # 下 --check-anchors 仍 rc=2」断管孪生后真跑 1→2，下限按真跑计数同步抬高
+    # （:1806 真跑钉同款口径——删掉新孪生 CI 仍绿的洞不再靠记性堵）；
+    # 十七模块合计 95，实测约 2 s。
+    p2batch_twin_suites = (
+        ('frozen-manifest/test_negative_controls.py', 2),
+        ('parity-lock-release/test_negative_controls.py', 2),
+        ('session-domain-lock-release/test_negative_controls.py', 2),
+        ('session-domain-expectations/test_negative_controls.py', 2),
+        ('session-domain-native/test_negative_controls.py', 2),
+        ('fe-coexist/test_negative_controls.py', 7),
+        ('memory-gateway/test_negative_controls.py', 6),
+        ('edgeclaw-messages/test_negative.py', 9),
+        ('user-dialog-http-store-1555/test_dirty_tree_control_1555.py', 2),
+        ('gateway-batch/test_negative_controls.py', 7),
+        ('html-timing/test_negative_controls.py', 12),
+        ('native-stimulus-plan/test_negative_controls.py', 2),
+        ('edgeclaw-real-provider/test_negative.py', 2),
+        ('model-http-encoding/test_negative.py', 2),
+        ('edgeclaw-dream/test_negative.py', 18),
+        ('edgeclaw-dream-run/test_negative.py', 9),
+        ('edgeclaw-dream-runner/test_negative.py', 9),
+    )
+
     def test_the_p2batch_twin_self_tests_collect_real_tests(self):
         # #3178 fix-r1（评审 sibling#4）：p2 批孪生步的守卫同样不能只钉「步存在
         # + 无条件 + cwd」——掏空任一孪生模块或整类 @unittest.skip 后
@@ -1815,27 +1844,16 @@ class EnvironmentControls(unittest.TestCase):
         # （2/7/9 实跑 vs 1/6/8 下限，删掉新孪生 CI 仍绿——本文件 :1646-1650
         # 记录的 #1800 fix-r2 同型下限漂移洞），本轮按真跑计数抬高；同轮的
         # native-stimulus-plan --check-anchors 孪生（DS3 F4）也把该模块抬到 2。
-        minimums = (
-            ('frozen-manifest/test_negative_controls.py', 2),
-            ('parity-lock-release/test_negative_controls.py', 1),
-            ('session-domain-lock-release/test_negative_controls.py', 1),
-            ('session-domain-expectations/test_negative_controls.py', 1),
-            ('session-domain-native/test_negative_controls.py', 1),
-            ('fe-coexist/test_negative_controls.py', 7),
-            ('memory-gateway/test_negative_controls.py', 6),
-            ('edgeclaw-messages/test_negative.py', 9),
-            ('user-dialog-http-store-1555/test_dirty_tree_control_1555.py', 2),
-            ('gateway-batch/test_negative_controls.py', 7),
-            ('html-timing/test_negative_controls.py', 12),
-            ('native-stimulus-plan/test_negative_controls.py', 2),
-        )
+        # #3178 fix-r4（四家撞条）：清单收敛——本钉与命令钉改从同一类级表
+        # p2batch_twin_suites 推导（下限即表值），不再各自手维护；五模块接入
+        # 与四目录断管孪生的下限同步记录在该表注释。
         started = time.monotonic()
-        for module, minimum in minimums:
+        for module, minimum in self.p2batch_twin_suites:
             self._assert_suite_really_runs(
                 '#3178', module, minimum, self.p2batch_twins_step_budget)
         self.assertLessEqual(
             time.monotonic() - started, self.p2batch_twins_step_budget,
-            '#3178 the twelve p2-batch twin modules together must fit the '
+            '#3178 the seventeen p2-batch twin modules together must fit the '
             'twin step budget (%d s); near-miss modules must not outlive the '
             'CI step they pin' % self.p2batch_twins_step_budget)
 
@@ -1846,23 +1864,10 @@ class EnvironmentControls(unittest.TestCase):
         # 同样必须红），步必须无条件、cwd 正确、带同源超时。
         # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
         # 三条同形补钉（十二命令）。
-        commands = ('python3 -B -m unittest -v frozen-manifest/test_negative_controls.py',
-                    'python3 -B -m unittest -v parity-lock-release/test_negative_controls.py',
-                    'python3 -B -m unittest -v '
-                    'session-domain-lock-release/test_negative_controls.py',
-                    'python3 -B -m unittest -v '
-                    'session-domain-expectations/test_negative_controls.py',
-                    'python3 -B -m unittest -v '
-                    'session-domain-native/test_negative_controls.py',
-                    'python3 -B -m unittest -v fe-coexist/test_negative_controls.py',
-                    'python3 -B -m unittest -v memory-gateway/test_negative_controls.py',
-                    'python3 -B -m unittest -v edgeclaw-messages/test_negative.py',
-                    'python3 -B -m unittest -v '
-                    'user-dialog-http-store-1555/test_dirty_tree_control_1555.py',
-                    'python3 -B -m unittest -v gateway-batch/test_negative_controls.py',
-                    'python3 -B -m unittest -v html-timing/test_negative_controls.py',
-                    'python3 -B -m unittest -v '
-                    'native-stimulus-plan/test_negative_controls.py')
+        # #3178 fix-r4（四家撞条）：命令清单从类级表 p2batch_twin_suites 推导
+        # （十七条命令），与真跑钉同一真相源，新增模块不再需要两处登记。
+        commands = tuple('python3 -B -m unittest -v ' + module
+                         for module, _minimum in self.p2batch_twin_suites)
         jobs = self.ci_jobs('#3178')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#3178')
         matching = [step for step in steps
@@ -2976,6 +2981,9 @@ class EnvironmentControls(unittest.TestCase):
         # #1666/#1570 步的同值 timeout 混淆——replace 取首个命中）。
         # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
         # 三条新命令同形各领一条删除负控——接进来的行同样删一行必须红。
+        # #3178 fix-r4（四家撞条）：五组空表孪生命令（edgeclaw-real-provider /
+        # model-http-encoding / edgeclaw-dream / edgeclaw-dream-run /
+        # edgeclaw-dream-runner）同形各领一条删除负控。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控 p2 批孪生自测（#3178）\n'
         command = ('python3 -B -m unittest -v '
@@ -2989,7 +2997,21 @@ class EnvironmentControls(unittest.TestCase):
                      'python3 -B -m unittest -v html-timing/test_negative_controls.py'),
                     ('p2batch-native-stimulus-plan-removed',
                      'python3 -B -m unittest -v '
-                     'native-stimulus-plan/test_negative_controls.py'))
+                     'native-stimulus-plan/test_negative_controls.py'),
+                    ('p2batch-real-provider-removed',
+                     'python3 -B -m unittest -v '
+                     'edgeclaw-real-provider/test_negative.py'),
+                    ('p2batch-model-http-encoding-removed',
+                     'python3 -B -m unittest -v '
+                     'model-http-encoding/test_negative.py'),
+                    ('p2batch-dream-removed',
+                     'python3 -B -m unittest -v edgeclaw-dream/test_negative.py'),
+                    ('p2batch-dream-run-removed',
+                     'python3 -B -m unittest -v '
+                     'edgeclaw-dream-run/test_negative.py'),
+                    ('p2batch-dream-runner-removed',
+                     'python3 -B -m unittest -v '
+                     'edgeclaw-dream-runner/test_negative.py'))
         cases = [(name_, workflow.replace(old, new, 1), message)
                  for name_, old, new, message in (
             *[(name_, old + '\n', '',

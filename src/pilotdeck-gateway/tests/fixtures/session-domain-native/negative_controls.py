@@ -209,6 +209,18 @@ def mutant_ok(code, verdict, case):
 
 
 def check_anchors(selected):
+    # #3178 fix-r4 (DS sibling#1): an empty selection used to print
+    # "0 anchors: ok" and return 0 — zero anchors validated but the gate
+    # looked green (the vacuum-green shape session-domain-expectations
+    # closed for the family under #1364 P0-b). Fail closed and say why,
+    # so a deleted MUTATIONS table can never pass preflight.
+    if not selected:
+        # #3178 fix-r2 (P2-a) family shape: the shared guarded print — a
+        # bare ``print`` under a dead stdout would crash rc=1 and read as
+        # "ran and was red"; the refusal must stay at rc=2.
+        dead_stream_print('EMPTY ANCHOR SELECTION: nothing to validate; '
+                          'the anchor gate must not pass', stream='stderr')
+        return 2
     for name, source, old, _new in selected:
         count = source.read_text().count(old)
         if count != 1:

@@ -486,13 +486,15 @@ class DreamEmptyTableControls(unittest.TestCase):
              patch.object(runner, 'run_owned', unreachable), \
              patch.object(runner, 'wait_for_slot', unreachable), \
              contextlib.redirect_stderr(errors):
-            # The refusal is a plain `return 2` out of main, so the twin
-            # asserts the returned contract code, not a SystemExit.
-            code = runner.main([str(Path(__file__).with_name('negative.py')),
-                                str(self.out)])
+            # #3178 fix-r4 (DS simplify#3): the refusal is the shared
+            # refuse_empty_table helper now — a SystemExit carrying the
+            # contract code, not a plain `return 2` out of main.
+            with self.assertRaises(SystemExit) as caught:
+                runner.main([str(Path(__file__).with_name('negative.py')),
+                             str(self.out)])
         message = ('#3178 an empty case table must refuse before any evidence '
                    '(the old tail read the empty run as all-KILLED, rc=0)')
-        self.assertEqual(code, 2, message)
+        self.assertEqual(caught.exception.code, 2, message)
         self.assertFalse(self.out.exists(),
                          message + ' (nothing may be created for a run that '
                          'never started; the same output path must stay '

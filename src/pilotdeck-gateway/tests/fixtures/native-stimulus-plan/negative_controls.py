@@ -253,8 +253,6 @@ def execution_environment():
 
 
 def main():
-    if sys.argv[1:2] == ['--memory-run']:
-        return memory_run(sys.argv[2])
     # #3178 fix-r2 (DS sibling#2): an emptied case table verified nothing, but
     # the old tail ``0 if len(results) == len(selected) and all(...)`` read
     # ``0 == 0 and all([])`` as all-KILLED (rc=0, the vacuum green: no mutant
@@ -265,10 +263,17 @@ def main():
     # --check-anchors green return -- an emptied table used to preflight zero
     # anchors ("#1368 0 unique anchors; all Python mutants compile") and then
     # let --check-anchors return rc=0 with nothing verified at all.
+    # #3178 fix-r4 (DS sibling#6 + boundary#3): it must precede the
+    # --memory-run dispatch too — an empty table used to reach
+    # memory_run's ``next(row for row in cases ...)`` as StopIteration
+    # (rc=1, reads "ran and was red") or, without a name argument, an
+    # IndexError; the refusal contract is rc=2 in every mode.
     if not cases:
         dead_stream_print('EMPTY CASE TABLE: negative_controls.py has no '
                           'mutation to verify; refusing to run', stream='stderr')
         return 2
+    if sys.argv[1:2] == ['--memory-run']:
+        return memory_run(sys.argv[2])
     preflight()
     if sys.argv[1:] == ['--check-anchors']:
         return 0

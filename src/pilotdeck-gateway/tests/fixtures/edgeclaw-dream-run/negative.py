@@ -26,7 +26,7 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned, wait_for_slot,
                               write_source_atomic)
-from negative_selection import verdict_exit
+from negative_selection import refuse_empty_table, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 run = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/run.rs'
@@ -217,10 +217,10 @@ def main(argv=None):
     # evidence directory left occupied). The ``--check-anchors`` green exit is
     # the same shape on an empty table ("OK 0 anchors"), so the refusal comes
     # first: exit 2, nothing on disk, re-runnable on the same path.
-    if not mutations:
-        dead_stream_print('EMPTY MUTATION TABLE: negative.py has no mutation '
-                          'to verify; refusing to run', stream='stderr')
-        sys.exit(2)
+    # #3178 fix-r4 (DS simplify#3): the refusal is the shared helper now —
+    # one wording and one position for the runner family (the hand-copied
+    # versions had drifted in all three).
+    refuse_empty_table(mutations, 'mutation')
     if '--check-anchors' in argv:
         sources = {path: path.read_text() for _name, path, _before, _after, _test in mutations}
         bad = [(name, path, sources[path].count(before))

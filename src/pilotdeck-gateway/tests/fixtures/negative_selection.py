@@ -211,6 +211,33 @@ def refuse(message):
     raise SystemExit(2)
 
 
+def refuse_empty_table(table, label):
+    """Refuse to run on an empty mutation/case table: exit 2, nothing on disk.
+
+    #3178 fix-r4 (DS simplify#3): the same refusal was hand-copied into nine
+    runners and drifted — two wordings (``EMPTY MUTATION TABLE`` /
+    ``EMPTY CASE TABLE``), two return forms (``sys.exit(2)`` / ``return 2``)
+    and three positions (before or after the ``CARGO_TARGET_DIR`` assert,
+    before or after ``preflight()``); the position drift is what let
+    cli-parity-lock-bounded's copy fall behind the four siblings in fix-r2.
+    One helper, one wording, one position: the first statement of the
+    runner's ``main()``. The guarded print keeps the exit-2 refusal intact
+    under a dead stderr (``2>&-``) or dead stdout (``1>&-``); the empty
+    table is "never started", not "ran and was red" (#3178 fix-r2/r3/r4).
+
+    ``label`` is the lowercase singular ('mutation', 'case'); the twins pin
+    the ``EMPTY <LABEL> TABLE`` prefix.
+    """
+    if table:
+        return
+    # Lazy like unusable_target: the twins that exec a runner source with a
+    # faked ``negative_process`` still resolve the real guarded print here.
+    from negative_process import dead_stream_print
+    dead_stream_print(f'EMPTY {label.upper()} TABLE: no {label} to verify; '
+                      'refusing to run', stream='stderr')
+    raise SystemExit(2)
+
+
 def verdict_exit(rows, *, key='verdict', killed='KILLED'):
     """Exit code for a finished negative-control run.
 

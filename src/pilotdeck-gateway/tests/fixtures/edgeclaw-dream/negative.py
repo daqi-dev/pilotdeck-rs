@@ -38,7 +38,7 @@ from negative_panic import named_test_killed
 from negative_process import (mutating_sources, new_run_token,
                               run_owned, wait_for_slot,
                               dead_stream_print, write_source_atomic)
-from negative_selection import verdict_exit
+from negative_selection import refuse_empty_table, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
@@ -183,19 +183,20 @@ def assertion_failure(log, test):
 
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
+    # #3178 fix-r3 (DS3 F6): an emptied case table verified nothing, but the
+    # old tail ``1 if survived else 0`` read it as all-KILLED (rc=0, the
+    # vacuum green: no mutant verified, the evidence directory left occupied).
+    # An empty table never started — refuse before the output argument, the
+    # environment, the evidence directory or any log exists (exit 2, nothing
+    # on disk, re-runnable on the same path). #3178 fix-r4 (DS boundary#4 +
+    # simplify#3): the refusal is the shared helper now — the first
+    # statement of main, one wording and one position for the runner family
+    # (the hand-copied versions had drifted in all three).
+    refuse_empty_table(cases, 'case')
     out = Path(argv[1]).resolve()
     target = os.environ.get('CARGO_TARGET_DIR')
     assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
     baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
-    # #3178 fix-r3 (DS3 F6): an emptied case table verified nothing, but the
-    # old tail ``1 if survived else 0`` read it as all-KILLED (rc=0, the
-    # vacuum green: no mutant verified, the evidence directory left occupied).
-    # An empty table never started — refuse before the evidence directory or
-    # any log exists (exit 2, nothing on disk, re-runnable on the same path).
-    if not cases:
-        dead_stream_print('EMPTY CASE TABLE: negative.py has no mutation to '
-                          'verify; refusing to run', stream='stderr')
-        return 2
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env['CARGO_TARGET_DIR'] = target

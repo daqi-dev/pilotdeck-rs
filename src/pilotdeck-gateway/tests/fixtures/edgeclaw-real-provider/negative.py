@@ -11,9 +11,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (dead_stream_print, mutating_sources,
-                              run_owned, wait_for_slot)
-from negative_selection import verdict_exit
+from negative_process import (mutating_sources, run_owned, wait_for_slot)
+from negative_selection import refuse_empty_table, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'scripts/smoke/edgeclaw.py'
@@ -70,11 +69,11 @@ def main():
     # verified, an empty summary.json published, the evidence directory left
     # occupied). The ``--check`` green exit is the same shape on an empty
     # table ("PASS: 0 mutants"), so the refusal comes first: exit 2, nothing
-    # on disk, re-runnable on the same path.
-    if not mutants:
-        dead_stream_print('EMPTY MUTATION TABLE: negative.py has no mutation '
-                          'to verify; refusing to run', stream='stderr')
-        return 2
+    # on disk, re-runnable on the same path. #3178 fix-r4 (DS simplify#3):
+    # the refusal is the shared helper now — one wording and one position
+    # for the runner family (the hand-copied versions had drifted in all
+    # three).
+    refuse_empty_table(mutants, 'mutation')
     if sys.argv[1:] == ['--check']:
         check(source.read_text())
         print(f'#1120 anchors and Python compilation PASS: {len(mutants)} mutants')

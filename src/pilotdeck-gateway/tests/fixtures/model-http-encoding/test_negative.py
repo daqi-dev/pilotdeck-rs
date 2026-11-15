@@ -59,12 +59,14 @@ class EncodingEmptyTableControls(unittest.TestCase):
              patch.object(sys, 'argv',
                           ['negative.py', str(self.out)]), \
              contextlib.redirect_stderr(errors):
-            # The refusal is a plain `return 2` out of main, so the twin
-            # asserts the returned contract code, not a SystemExit.
-            code = self.runner.main()
+            # #3178 fix-r4 (DS simplify#3): the refusal is the shared
+            # refuse_empty_table helper now — a SystemExit carrying the
+            # contract code, not a plain `return 2` out of main.
+            with self.assertRaises(SystemExit) as caught:
+                self.runner.main()
         message = ('#3178 an empty case table must refuse before any evidence '
                    '(the old tail read the empty run as all-KILLED, rc=0)')
-        self.assertEqual(code, 2, message)
+        self.assertEqual(caught.exception.code, 2, message)
         self.assertFalse(self.out.exists(),
                          message + ' (nothing may be created for a run that '
                          'never started; the same output path must stay '
@@ -77,11 +79,12 @@ class EncodingEmptyTableControls(unittest.TestCase):
         with patch.object(self.runner, 'CASES', []), \
              patch.object(sys, 'argv', ['negative.py', '--check-anchors']), \
              contextlib.redirect_stderr(errors):
-            code = self.runner.main()
+            with self.assertRaises(SystemExit) as caught:
+                self.runner.main()
         message = ('#3178 an empty case table must fail --check-anchors '
                    '(the green exit used to print "#867 0 anchors valid" '
                    'and certify a table with nothing in it)')
-        self.assertEqual(code, 2, message)
+        self.assertEqual(caught.exception.code, 2, message)
         self.assertIn('EMPTY CASE TABLE', errors.getvalue(),
                       message + ' (the refusal reason must reach stderr)')
 

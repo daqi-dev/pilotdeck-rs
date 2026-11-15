@@ -50,7 +50,8 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import published_module, run_owned  # noqa: E402
+from negative_process import (dead_stream_print, published_module,  # noqa: E402
+                              run_owned)
 from negative_selection import registered, verdict_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -500,9 +501,15 @@ def anchor_preflight(source):
         if count != 1:
             stale.append((name, count))
     if stale:
+        # #3178 fix-r4 (MM sibling#4): the shared guarded print — a bare
+        # ``print`` under a dead stdout would crash rc=1 and read as "ran
+        # and was red"; the refusal must stay at rc=2 (parity-lock-release
+        # fix-r3 family shape).
         for name, count in stale:
-            print(f"STALE ANCHOR {name}: {count} matches in the probe file")
-        print("STALE ANCHORS: negative-controls.py is out of sync with the probe; refusing to run")
+            dead_stream_print(f"STALE ANCHOR {name}: {count} matches in the probe file",
+                              stream='stderr')
+        dead_stream_print("STALE ANCHORS: negative-controls.py is out of sync with the probe; "
+                          "refusing to run", stream='stderr')
         return False
     print(f"{len(CONTROLS)} anchors: ok")
     return True

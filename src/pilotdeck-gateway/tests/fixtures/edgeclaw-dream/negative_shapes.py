@@ -61,6 +61,7 @@ from negative_panic import named_test_killed, panic_evidence
 from negative_process import (mutating_sources, new_run_token, run_owned,
                               wait_for_slot, dead_stream_print,
                               write_source_atomic)
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
@@ -401,6 +402,18 @@ def assertion_failure(log, test, case_id, throws_name):
 
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
+    # #3178 fix-r4 (DS sibling#3 + MM sibling#3): an emptied case table
+    # verified nothing, but the old tail ``if survived: sys.exit(1)`` fell
+    # through an empty list and exited 0 (the vacuum green), and the
+    # ``NEGATIVE_CHECK_ANCHORS`` precheck below validated zero anchors
+    # ("anchors: 0/0 current", rc=0). The refusal comes first — before
+    # the output argument and the environment too (the same ordering
+    # edgeclaw-dream/negative.py got this round): exit 2, nothing on
+    # disk, re-runnable on the same path.
+    if not cases:
+        dead_stream_print('EMPTY CASE TABLE: negative_shapes.py has no case '
+                          'to verify; refusing to run', stream='stderr')
+        sys.exit(2)
     out = Path(argv[1]).resolve()
     target = os.environ.get('CARGO_TARGET_DIR')
     if not target:
@@ -548,8 +561,13 @@ def main(argv=None):
     if run_suite('restored') != 0:
         print('RESTORED FAILED: source did not return to a passing baseline', flush=True)
         sys.exit(1)
-    if survived:
-        sys.exit(1)
+    # #3178 fix-r4: the family tail — the old ``if survived: sys.exit(1)``
+    # fell through an emptied table and exited 0 (the front refusal above
+    # now catches it first; verdict_exit keeps the tail itself honest too).
+    sys.exit(verdict_exit(
+        [{'status': 'KILLED', 'name': name} for name in killed]
+        + [{'status': 'SURVIVED', 'reason': reason} for _name, reason in survived],
+        key='status'))
 
 
 if __name__ == '__main__':

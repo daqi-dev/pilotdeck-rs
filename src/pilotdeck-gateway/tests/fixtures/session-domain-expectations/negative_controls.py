@@ -371,7 +371,14 @@ def main():
             dead_stream_print(prefix + ': ' + message, stream='stderr')
         return 2
     if not args.list:
-        print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
+        # #3178 fix-r4 (MM concurrency#3): this diagnostic line runs before
+        # check_anchors on the --check-anchors path — a bare ``print`` there
+        # is the one crash left ahead of the rc=2 refusal under a dead
+        # stdout (``1>&-``), reading as "ran and was red". The shared
+        # guarded print keeps the refusal reachable (#1087 fix-r8 family
+        # shape); the diagnostic moves to stderr with it.
+        dead_stream_print('derived counts: ' + json.dumps(counts, sort_keys=True),
+                          stream='stderr')
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
         # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with

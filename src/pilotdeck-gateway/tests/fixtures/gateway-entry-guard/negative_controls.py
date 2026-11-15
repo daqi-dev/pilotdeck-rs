@@ -25,7 +25,8 @@ import unittest
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-991-negative-pyc-')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (dead_stream_print, mutating_sources,
+                              run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
 GUARD = ROOT / 'scripts/gateway-parity/_guard.py'
@@ -586,10 +587,16 @@ def check_anchors():
         count = source.read_text().count(before)
         if count != 1:
             stale.append((name, source.relative_to(ROOT).as_posix(), count))
+    # #3178 fix-r4 (MM sibling#4): the shared guarded print — a bare
+    # ``print`` under a dead stdout would crash rc=1 and read as "ran
+    # and was red"; the refusal must stay at rc=2 (parity-lock-release
+    # fix-r3 family shape).
     for name, relative, count in stale:
-        print(f'STALE ANCHOR {name}: {count} matches in {relative}')
+        dead_stream_print(f'STALE ANCHOR {name}: {count} matches in {relative}',
+                          stream='stderr')
     if stale:
-        print('STALE ANCHORS: refusing to run; anchors are out of sync')
+        dead_stream_print('STALE ANCHORS: refusing to run; anchors are out of sync',
+                          stream='stderr')
         return 2
     print(f'{len(MUTATIONS)} anchors: ok')
     return 0

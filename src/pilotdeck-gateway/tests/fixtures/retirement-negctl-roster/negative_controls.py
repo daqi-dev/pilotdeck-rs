@@ -24,7 +24,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import defer_signal_exit, mutating_sources
+from negative_process import (dead_stream_print, defer_signal_exit,
+                              mutating_sources)
 from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 
 
@@ -211,8 +212,13 @@ with mutating_sources(root, sorted({path for _name, path, _old, _new in run_rows
              for name, path, old, _new in run_rows if path is not None
              if snapshots[path].decode().count(old) != 1]
     if stale:
+        # #3178 fix-r4 (MM sibling#4): the shared guarded print — a bare
+        # ``print(file=sys.stderr)`` crashes with rc=1 under a dead stderr
+        # (``2>&-``) and reads as "ran and was red"; the refusal must stay
+        # at rc=2 (parity-lock-release fix-r3 family shape).
         for name, count in stale:
-            print(f'STALE ANCHOR {name}: {count} matches', file=sys.stderr)
+            dead_stream_print(f'STALE ANCHOR {name}: {count} matches',
+                              stream='stderr')
         raise SystemExit(2)
     for name, path, old, new in run_rows:
         out_dir = out / name

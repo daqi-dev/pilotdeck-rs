@@ -23,7 +23,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (dead_stream_print, mutating_sources,
+                              run_owned, wait_for_slot)
 from negative_suite import Case, run_cases
 
 root = Path(__file__).resolve().parents[5]
@@ -249,9 +250,14 @@ def check_anchors(selected):
         if count != 1:
             stale.append((name, source.relative_to(root).as_posix(), count))
     if stale:
+        # #3178 fix-r4 (MM sibling#4): the shared guarded print — a bare
+        # ``print`` under a dead stdout would crash rc=1 and read as "ran
+        # and was red"; the refusal must stay at rc=2 (parity-lock-release
+        # fix-r3 family shape).
         for name, path, count in stale:
-            print(f"STALE ANCHOR {name}: {count} matches in {path}")
-        print("STALE ANCHORS: refusing to run")
+            dead_stream_print(f"STALE ANCHOR {name}: {count} matches in {path}",
+                              stream='stderr')
+        dead_stream_print("STALE ANCHORS: refusing to run", stream='stderr')
         raise SystemExit(2)
     print(f"{len(selected)} anchors: ok")
 
