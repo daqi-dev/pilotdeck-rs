@@ -114,10 +114,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import _head_bytes, _kill_group, run_owned, tree_lock
 from negative_selection import verdict_exit
 
-root = Path(__file__).resolve().parents[5]
+# Staging-safe home: the harness execs a mutated copy from a shallow temp
+# directory, where `Path(__file__).parents[5]` does not exist (CI's /tmp is
+# two levels deep -> IndexError at import, macOS only passes because TMPDIR
+# happens to be deep). The harness passes the real fixture home through
+# PDRS_CONTROL_HOME; the in-file location stays the fallback.
+_here = Path(os.environ.get('PDRS_CONTROL_HOME',
+                            str(Path(__file__).resolve().parent)))
+root = _here.parents[4]
 RELATIVE = 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
 source = root / RELATIVE
-probe = Path(__file__).resolve().parent / 'rss_probe_1555.py'
+probe = _here / 'rss_probe_1555.py'
 # Process-unique: two controls in the same worktree write the same file, and a
 # bare constant let one restore the other's marker (review, concurrency P2).
 MARKER = f'\n// #1555 fix-r2 dirty-tree control pid={os.getpid()}\n'.encode()

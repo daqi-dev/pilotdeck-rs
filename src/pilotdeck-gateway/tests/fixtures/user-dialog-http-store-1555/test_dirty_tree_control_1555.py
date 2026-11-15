@@ -48,7 +48,12 @@ def _load(source_text):
         spec = importlib.util.spec_from_file_location(
             'dirty_tree_control_1555_negative', mutated)
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        # The staged copy cannot derive the repo root from its own shallow
+        # temp location; hand it the real fixture home (#3178 CI-only fix:
+        # macOS passes because TMPDIR is deep, Linux /tmp is two levels).
+        with patch.dict(os.environ,
+                        {'PDRS_CONTROL_HOME': str(Path(__file__).resolve().parent)}):
+            spec.loader.exec_module(module)
     return module
 
 
