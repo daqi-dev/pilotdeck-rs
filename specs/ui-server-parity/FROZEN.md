@@ -44,7 +44,7 @@ ed5d447d3ac2e4ba03def27645f355997be981e3d82012427f14b1f1a76870c1  ../../scripts/
 c8a21ce64dfa798a64667f82777704175b520115263f1917f56e0010c4b1754b  ../../scripts/ui-server-parity/README.md
 8bb17d057cfd291d8dbccabbca1b0f886ece88a340d606f88d5d4b00464a608c  ../../scripts/ui-server-parity/apparatus.py
 3d1055724ebf4a0f26ce59df9ea94a7b848097127b10f2c1cf0cb3d582449e0c  ../../scripts/ui-server-parity/benchmark_clock.py
-880e915491161e42a326e90aa2d25d42f881cba5cd5dd045a9f6b47fc0865690  ../../scripts/ui-server-parity/calibrate.py
+01e67c185255b58b095aa985b3b12357c85aa241a8335b8fcc02800bbed70dad  ../../scripts/ui-server-parity/calibrate.py
 22c484287c2da2a818861bbe3c9e25f77e3883e50c248ce4ccfdfd3409cd0f30  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
 edab23dddf96e243465f5adc94d8e9024b3c513b153947ab4adb3a85e54646dc  ../../scripts/ui-server-parity/check_coverage.py
@@ -71,7 +71,7 @@ e5168ece5f6e5245fe391b8dbdeaeadda1b34f91c0f6ec400bf46a77b298a46a  ../../scripts/
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 357a9927e48225918c997db5c39fa9147aa524cc474af1cf04ea42780a23d8a2  ../../scripts/ui-server-parity/test_compare.py
 558f4cd3f737c2a0d46941558597ec5b80f414efb65c2be69f8780015d885285  ../../scripts/ui-server-parity/test_coverage.py
-8699347c671685bb9f6c58140323a5514e8b7f14143f10ca1a707d37ea6aedf9  ../../scripts/ui-server-parity/test_frozen.py
+5f439d4151a0a88e1561907bc7f0349524529cd2848f7c31db013f8684087bd2  ../../scripts/ui-server-parity/test_frozen.py
 f99404d9f2c80b2b20c8b5f2c076f63e423f1f495e94123545031ee90bfb3efa  ../../scripts/ui-server-parity/test_multimodal.py
 8e2eae33c81aadb5c8731a09943e69ed835231196aa13e518df62e9f533247c5  ../../scripts/ui-server-parity/test_recording.py
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs
