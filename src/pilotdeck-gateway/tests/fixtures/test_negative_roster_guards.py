@@ -1734,6 +1734,11 @@ CHECK_MISUSE_EXEMPTIONS = {
     'channel-slack': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'channel-sms': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'channel-sms-head-timeout': 'spelling-2 refusal family (ValueError/rc-2 shape)',
+    # #2959 fix-r13: http-proxy-read-boundary's refusal is the same
+    # spelling-2 family (ValueError caught by the entrypoint, rc 2) --
+    # its docstring cites channel-sms-head-timeout (#2020) as its shape
+    # precedent, and the TRIPLE tuple-table pins do not transplant.
+    'http-proxy-read-boundary': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'locale-adaptive': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'mcp-resolver-lease': 'spelling-2 refusal family (ValueError/rc-2 shape)',
     'module-host': 'spelling-2 refusal family (ValueError/rc-2 shape)',
@@ -1757,7 +1762,7 @@ CHECK_MISUSE_EXEMPTIONS = {
 # (DS r7 concurrency#1/boundary#1/#2) corrects its census claim, which was
 # WRONG about the tree: the family boundary is exactly this, no more --
 # (a) the alternation covers the two argparse/ValueError wordings
-#     `--check takes no ...` (x6) and `--check does not take ...` (x12)
+#     `--check takes no ...` (x6) and `--check does not take ...` (x13)
 #     across negative_controls*.py -- counts pinned by the census
 #     assertion in test_every_check_refusal_fixture_is_in_the_table, not
 #     maintained by hand;
@@ -1952,7 +1957,8 @@ class TripleFixtureRosterGuard(unittest.TestCase):
             f'(unregistered={sorted(found - members - set(CHECK_MISUSE_EXEMPTIONS))} '
             f'stale={sorted((members | set(CHECK_MISUSE_EXEMPTIONS)) - found)})')
         # #2856 fix-r9 (DS r8 sibling#1 + simplify#1): the census counts the
-        # CHECK_MISUSE_REFUSAL family comment quotes (x6 / x12) are
+        # CHECK_MISUSE_REFUSAL family comment quotes (x6 / x13 after #2959
+        # fix-r13 registered http-proxy-read-boundary) are
         # recomputed here from the same scan, not maintained by hand --
         # a fixture added or removed flips this pin, not just a comment.
         takes_no = sum('--check takes no ' in text
@@ -1960,7 +1966,7 @@ class TripleFixtureRosterGuard(unittest.TestCase):
         does_not_take = sum('--check does not take ' in text
                             for text in texts.values())
         self.assertEqual(
-            (takes_no, does_not_take), (6, 12),
+            (takes_no, does_not_take), (6, 13),
             f'#2572 the family census pinned in the '
             f'CHECK_MISUSE_REFUSAL comment drifted; update the comment '
             f'from the scan, not from memory: '

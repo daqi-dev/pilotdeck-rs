@@ -32,7 +32,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 
-const EXPECTED_CASE_COUNT = 59;
+const EXPECTED_CASE_COUNT = 61;
 // #1901: the stalled-body cell can only end at Node's default `requestTimeout`
 // (300 s), whose 408 lands on the 30 s connections-checker grid — worst case
 // just under 330 s. The generator runs every case twice, so this cell alone
@@ -42,6 +42,11 @@ const EXPECTED_CASE_COUNT = 59;
 // point: one interval is exactly the grid, so a loaded host could otherwise
 // fail a healthy generation on event-loop lag alone.
 const STALLED_PROBE_DEADLINE_MS = 480_000;
+// #2499: the head-stall cells wait out the `headersTimeout` (60 s) whose 408
+// also lands on the 30 s connections-checker grid — worst case just under
+// delay + 90 s. The budget starts at the probe's own write, so the delay and
+// the landing both sit inside it with a full checker interval of slack.
+const HEAD_STALL_PROBE_BUDGET_MS = 150_000;
 
 // ---------------------------------------------------------------------------
 // real module graph, transpiled once, with `twilio` mocked at the require seam
@@ -228,6 +233,45 @@ function stalledRequest(port: number, raw: string, deadlineMs: number): Promise<
     }, deadlineMs).unref();
   });
 }
+// #2499: a head-stall probe — connect, wait `delayMs`, then write the step's
+// (possibly empty, always incomplete) head bytes and keep the write side open.
+// Only the server's own `headersTimeout` can finish it: Node answers the
+// 51-byte `408 Request Timeout` + `Connection: close` at the deadline's
+// connections-checker grid landing (measured in
+// `_tmp/20261107-issue-1955/smoke/ts-half-head.out` and
+// `ts-zero-and-delayed.out`), which is why this probe carries the stalled
+// deadline instead of `rawRequest`'s 3 s one. Recording semantics match
+// `stalledRequest` (first close wins, latin1 head/body split) so the two
+// timeout cells land in the oracle in the same shape.
+function headStall(port: number, head: string, delayMs: number, deadlineMs: number): Promise<any> {
+  return new Promise((done, fail) => {
+    const socket = net.connect(port, '127.0.0.1');
+    const chunks: Buffer[] = [];
+    socket.on('connect', () => {
+      setTimeout(() => { if (head) socket.write(head); }, delayMs).unref();
+    });
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk));
+    socket.on('close', () => {
+      const text = Buffer.concat(chunks).toString('latin1');
+      if (!text) {
+        done({ closed: true });
+        return;
+      }
+      const [head, ...rest] = text.split('\r\n\r\n');
+      const status = Number.parseInt(head.split('\r\n')[0].split(' ')[1], 10);
+      const contentType = /^content-type:\s*(.*)$/im.exec(head)?.[1] ?? null;
+      done({ status, contentType, body: rest.join('\r\n\r\n') });
+    });
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED') done({ refused: true });
+      else fail(error);
+    });
+    setTimeout(() => {
+      socket.destroy();
+      fail(new Error(`#2499 head-stall probe timeout after ${deadlineMs} ms`));
+    }, delayMs + deadlineMs).unref();
+  });
+}
 const REQUEST = (
   body: string | { repeat: string; count: number },
   headers: Record<string, string>,
@@ -305,6 +349,11 @@ const definitions: Definition[] = [];
 const scenario = (definition: Definition) => definitions.push(definition);
 const port = (index: number) => 18800 + index;
 const request = (step: any) => ({ op: 'request', ...step });
+// #2499: a stalled request head — connect, wait `delayMs`, write half a head
+// (or none at all, `head: ''`) and keep the write side open. The oracle field
+// names stay the step's own (`head`, `delayMs`), replayed verbatim by the
+// Rust side.
+const headStallStep = (head: string, delayMs: number) => ({ op: 'head-stall', head, delayMs });
 const form = (body: string, extra: Record<string, string> = {}) =>
   request({ body, headers: { ...FORM, ...extra }, method: 'POST', path: '/sms/incoming' });
 const text = (message: string, extra: Record<string, string> = {}) =>
@@ -961,6 +1010,37 @@ scenario({
   ],
   turn: { events: [textDelta('never')] },
 });
+scenario({
+  // #2499 (#2026 decision B): the request-head deadline anchors at the
+  // awaited head's first byte — Node's `on_message_begin` sets
+  // `last_message_start_`. Connect, wait 1.5 s, then write half a request
+  // head and keep the write side open; the answer is Node's 51-byte `408
+  // Request Timeout` + `Connection: close` at the first connections-checker
+  // grid point after the head's own +60 s deadline (measured with a 35 s
+  // delay at 120.008 s in
+  // `_tmp/20261107-issue-1955/smoke/ts-zero-and-delayed.out`). The recording
+  // keeps the delay small — the oracle records only the semantic triple
+  // `{status, contentType, body}`, the anchor/grid discrimination lives in
+  // the Rust paused-clock cells (`head_timeout_tests.rs`). This cell costs
+  // ~90 s per run (two runs per generation).
+  name: 'headers-timeout-first-byte', port: port(59),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    headStallStep('POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\n', 1500),
+    stop(),
+  ],
+});
+scenario({
+  // #2499 (#2026 decision B): a connection that never sends a byte — the
+  // first head's deadline anchors at the connection's establishment (Node
+  // arms `last_message_start_` at the accept), and the zero-byte first head
+  // is answered with the same 408 (measured at 90.004 s,
+  // `_tmp/20261107-issue-1955/smoke/ts-zero-and-delayed.out`).
+  name: 'headers-timeout-connect-anchor', port: port(60),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    headStallStep('', 0),
+    stop(),
+  ],
+});
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1339 generator case count');
 
 // ---------------------------------------------------------------------------
@@ -1008,6 +1088,15 @@ async function run(definition: Definition) {
         }
         case 'connect': {
           record.responses.push(await connectProbe(definition.port));
+          break;
+        }
+        case 'head-stall': {
+          const delayMs = step.delayMs ?? 0;
+          // #2499: the probe budget starts at the step's own start (the
+          // delay) so a head written late still has its full budget.
+          record.responses.push(
+            await headStall(definition.port, step.head ?? '', delayMs, HEAD_STALL_PROBE_BUDGET_MS),
+          );
           break;
         }
         case 'wait-log':

@@ -508,6 +508,9 @@ fn cancelling_service_lease_wakes_paused_reader() {
         // #1292 fix-r2: no body pending in this gate-level test — it pins
         // the lease wake path, not the mid-stream anchoring.
         Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        // #2499 fix-r5: no withholding park in this gate-level test — an
+        // empty release slot wakes nothing, which is the point.
+        Arc::new(Mutex::new(None)),
     );
     let lease = ReadLease(state.clone());
     let mut bytes = [0; 1];
@@ -873,6 +876,7 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
     let (io, mut client) = tokio::io::duplex(128 * 1024);
     let now = tokio::time::Instant::now();
     let in_flight = Arc::new(AtomicUsize::new(1));
+    let release_waker: Arc<Mutex<Option<std::task::Waker>>> = Arc::new(Mutex::new(None));
     let mut gated = UpgradeReadGate::new(
         io,
         state,
@@ -889,6 +893,7 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
         // the *next* head's, which the gate withholds while the response
         // streams.
         Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        release_waker.clone(),
     );
     // Far more next-head bytes than Node's 16 KB TrackHeader budget: TS
     // answers 431 + destroy instead of buffering them.
@@ -914,4 +919,678 @@ async fn withheld_next_head_bytes_stay_bounded_while_a_response_streams() {
         "#1292 fix-r3: the gate read the whole 40 KB flood ({} bytes) — Node rejects a head past the 16 KB budget instead of buffering it",
         gated.withheld_head.len()
     );
+    assert!(
+        release_waker.lock().unwrap().is_some(),
+        "#2499 fix-r5: the withholding park registered its waker in the release slot"
+    );
+}
+
+/// #2499 fix-r5 (review sibling#1, mirroring the sms lane's reworked cap cell):
+/// a next head parked at the withholding cap leaves its waker in the release
+/// slot, and the response body's completion — [`IdleBody::release`], the exact
+/// place Node's llhttp serves pipelined heads (the fix-r5 Node probe
+/// `probe-node-pipeline-serve.out` legs A/B: 512 parked complete heads all
+/// answered right after the previous response, never a 408 of their own) —
+/// takes and wakes it. The socket cannot be the wake: at the cap the
+/// withholding loop stops polling it, and a zero-length poll on a production
+/// `TcpStream` after a full scratch read registers nothing while kernel data
+/// remains (the fix-r5 tokio probe `probe-tcp-empty-poll/probe-run.out` legs
+/// 1/2b: the successor byte fires 0). This cell pins the whole mechanism at
+/// the gate itself: the park stores the waker, the successor byte fires
+/// nothing, a real [`IdleBody`] dropped after the park fires it exactly once,
+/// and the re-fed poll hands hyper the parked bytes. Binds the negative
+/// control `native-http-withheld-park-no-wake` (the release wake is skipped,
+/// the count stays 0 and the re-fed poll parks instead of answering).
+#[tokio::test]
+async fn a_next_head_parked_at_the_withholding_cap_wakes_at_the_response_release() {
+    use std::task::Wake;
+    struct Counter(AtomicUsize);
+    impl Wake for Counter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let counter = Arc::new(Counter(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+    let state = Arc::new(Mutex::new(ReadState {
+        paused: false,
+        waker: None,
+    }));
+    let (io, mut client) = tokio::io::duplex(128 * 1024);
+    let now = tokio::time::Instant::now();
+    let in_flight = Arc::new(AtomicUsize::new(1));
+    let (activity, _activity_rx) = tokio::sync::watch::channel(None::<tokio::time::Instant>);
+    let (rearm, rearm_rx) = tokio::sync::watch::channel(0usize);
+    let release_waker: Arc<Mutex<Option<std::task::Waker>>> = Arc::new(Mutex::new(None));
+    let mut gated = UpgradeReadGate::new(
+        io,
+        state,
+        activity.clone(),
+        Arc::new(AtomicUsize::new(1)),
+        Some(NODE_HEADERS_TIMEOUT),
+        Some(now + NODE_HEADERS_TIMEOUT),
+        Some(now),
+        None,
+        rearm_rx,
+        in_flight.clone(),
+        // #1517: no unflushed write tail in this gate-level test — it pins
+        // the release wake, not the write-side attach window.
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        // The request's own body is fully read: every byte from here on is
+        // the *next* head's, parked while the response streams.
+        Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        release_waker.clone(),
+    );
+    let flood = vec![b'X'; WITHHELD_HEAD_CAP];
+    client
+        .write_all(&flood)
+        .await
+        .expect("duplex write must accept the flood without a reader");
+    let mut bytes = [0; 1];
+    assert!(
+        Pin::new(&mut gated)
+            .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+            .is_pending(),
+        "#2499 fix-r5: the gate parks a next head parked at the withholding cap"
+    );
+    assert!(
+        gated.withheld_head.len() >= WITHHELD_HEAD_CAP,
+        "#2499 fix-r5: the withholding loop stopped at the cap ({} bytes)",
+        gated.withheld_head.len()
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r5: no wake before the release — the parked poll \
+         registered its wakers without firing them"
+    );
+    // The successor byte is NOT the wake anymore: on a production TcpStream a
+    // zero-length poll after a full scratch read stores no waker while kernel
+    // data remains (the fix-r5 tokio probe, legs 1/2b), so the release slot,
+    // not the socket, carries the re-feed.
+    client
+        .write_all(b"Y")
+        .await
+        .expect("duplex write must accept the successor byte");
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r5: the successor byte woke nothing — the release slot, \
+         not the socket, is the parked cap's wake"
+    );
+    // The response's completion: a real IdleBody carrying this gate's state,
+    // dropped the way hyper tears a finished response body down.
+    let body = IdleBody {
+        body: plain(StatusCode::OK, "done").into_body(),
+        held: Some((InFlightRequest(in_flight.clone()), activity)),
+        rearm: Some(rearm),
+        release_waker: release_waker.clone(),
+        // #1517: this cell pins the release wake alone — no write-side flag
+        // to hold open, so the flush mechanism stays out of the picture.
+        write_pending: None,
+    };
+    drop(body);
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "#2499 fix-r5: the IdleBody release woke the parked gate — the \
+         release slot the withholding park registered"
+    );
+    assert_eq!(
+        in_flight.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r5: the release cleared the in-flight slot before the \
+         wake, so the re-entering poll takes the re-feed branch"
+    );
+    assert!(
+        release_waker.lock().unwrap().is_none(),
+        "#2499 fix-r5: the release took the slot's waker"
+    );
+    // The woken poll re-enters the gate and the re-feed branch hands hyper
+    // the parked bytes.
+    let mut byte = [0; 1];
+    let mut buffer = ReadBuf::new(&mut byte);
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_read(&mut cx, &mut buffer),
+            Poll::Ready(Ok(()))
+        ),
+        "#2499 fix-r5: the re-entered poll re-fed the withheld head bytes"
+    );
+    assert_eq!(
+        buffer.filled(),
+        b"X",
+        "#2499 fix-r5: the re-fed bytes are the parked head's first"
+    );
+}
+
+/// #2499 fix-r10 (merge review concurrency#1/boundary#1, the double
+/// collision on fix-r9's flush-side wake): with a request in flight the
+/// parked read stores the dispatcher's waker in the release slot, and
+/// hyper 1.7.0's `poll_loop` runs read → write → flush every round — so a
+/// flush that takes the slot unconditionally wakes the very waker the
+/// same iteration parked: park → flush → wake → re-park, a self-sustaining
+/// busy spin pinning one core per pipelined connection, with nothing ever
+/// written (`write_pending` sits false the whole spin). The machine
+/// criterion pins both halves of the r10 narrowing: (a) two idle
+/// flush-repark rounds wake no one — the second flush's wake is the spin's
+/// minimal repro, red on r9's unconditional take; (b) a flush that
+/// confirms a real accepted write — `write_pending`'s true→false, the
+/// swap's old value — wakes exactly once, the completing half of the
+/// release re-feed (the release stores the flag before its wake, so the
+/// woken gate's confirming flush is this same transition). Gate level,
+/// the fix-r5 counting-waker family: the criterion drives `poll_flush`
+/// and `poll_write` directly against the counting waker the park stores,
+/// which needs `UpgradeReadGate`'s private constructor (the r9
+/// full-connection cell in `native_http/tests.rs`,
+/// `unflushed_tail_flush_completion_serves_the_parked_complete_head`,
+/// pins the serving behavior this mechanism exists for; its
+/// ParkedWriteTransport parks writes to pin completion interleaves — here
+/// the roomy duplex keeps every flush available, which is the point).
+#[tokio::test]
+async fn idle_flushes_wake_no_one_and_a_confirming_flush_wakes_once() {
+    use std::task::Wake;
+    struct Counter(AtomicUsize);
+    impl Wake for Counter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let counter = Arc::new(Counter(AtomicUsize::new(0)));
+    let waker = Waker::from(counter.clone());
+    let mut cx = Context::from_waker(&waker);
+    let state = Arc::new(Mutex::new(ReadState {
+        paused: false,
+        waker: None,
+    }));
+    let (io, mut client) = tokio::io::duplex(128 * 1024);
+    let now = tokio::time::Instant::now();
+    let in_flight = Arc::new(AtomicUsize::new(1));
+    let (activity, _activity_rx) = tokio::sync::watch::channel(None::<tokio::time::Instant>);
+    let write_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let release_waker: Arc<Mutex<Option<std::task::Waker>>> = Arc::new(Mutex::new(None));
+    let mut gated = UpgradeReadGate::new(
+        io,
+        state,
+        activity,
+        Arc::new(AtomicUsize::new(1)),
+        Some(NODE_HEADERS_TIMEOUT),
+        Some(now + NODE_HEADERS_TIMEOUT),
+        Some(now),
+        None,
+        tokio::sync::watch::channel(0usize).1,
+        in_flight,
+        write_pending.clone(),
+        // The request's own body is fully read: every byte from here on is
+        // the *next* head's, parked while the response streams.
+        Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        release_waker.clone(),
+    );
+    let flood = vec![b'X'; WITHHELD_HEAD_CAP];
+    client
+        .write_all(&flood)
+        .await
+        .expect("duplex write must accept the flood without a reader");
+    let mut bytes = [0; 1];
+    assert!(
+        Pin::new(&mut gated)
+            .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+            .is_pending(),
+        "#2499 fix-r10: the gate parks a next head behind the in-flight slot"
+    );
+    assert!(
+        release_waker.lock().unwrap().is_some(),
+        "#2499 fix-r10: the park stored the counting waker in the release slot"
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r10: the park itself wakes no one"
+    );
+    // (a) The busy spin's minimal reproduction, two rounds of it: an idle
+    // flush (nothing written, `write_pending` false), then the re-park the
+    // spin's own wake performs. r9's unconditional take wakes on every
+    // round — the second flush's wake is the repro; r10's `was_pending`
+    // narrowing leaves both rounds at zero.
+    for round in 0..2 {
+        assert!(
+            matches!(
+                Pin::new(&mut gated).poll_flush(&mut cx),
+                Poll::Ready(Ok(()))
+            ),
+            "#2499 fix-r10: round {round}: the idle flush itself succeeds"
+        );
+        assert!(
+            Pin::new(&mut gated)
+                .poll_read(&mut cx, &mut ReadBuf::new(&mut bytes))
+                .is_pending(),
+            "#2499 fix-r10: round {round}: the re-polled read re-parks"
+        );
+        assert!(
+            release_waker.lock().unwrap().is_some(),
+            "#2499 fix-r10: round {round}: the re-park re-stored the waker"
+        );
+    }
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "#2499 fix-r10: two idle flush-repark rounds woke no one — r9's \
+         unconditional take is the busy spin, the second flush's wake its \
+         minimal repro"
+    );
+    // (b) The one transition that may wake: an accepted write leaves a tail
+    // (`write_pending` true), and the flush confirming it wakes the parked
+    // gate exactly once.
+    let tail = b"unflushed-tail";
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_write(&mut cx, tail),
+            Poll::Ready(Ok(written)) if written == tail.len()
+        ),
+        "#2499 fix-r10: the roomy duplex accepts the tail whole"
+    );
+    assert!(
+        write_pending.load(Ordering::Relaxed),
+        "#2499 fix-r10: the accepted write left a tail to confirm"
+    );
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ),
+        "#2499 fix-r10: the confirming flush succeeds"
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "#2499 fix-r10: exactly one wake — the flush confirming the tail"
+    );
+    assert!(
+        release_waker.lock().unwrap().is_none(),
+        "#2499 fix-r10: the confirming flush took the slot's waker"
+    );
+    // And that wake is one-shot: the next idle flush adds nothing — the
+    // spin cannot restart from a confirmed tail.
+    assert!(
+        matches!(
+            Pin::new(&mut gated).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ),
+        "#2499 fix-r10: the follow-up idle flush still succeeds"
+    );
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        1,
+        "#2499 fix-r10: the confirming flush's wake is one-shot — the next \
+         idle flush adds none"
+    );
+}
+
+/// #2499 fix-r5 (review sibling#1, the native re-feed twin): a next head
+/// parked at the withholding cap is re-fed and **served** once the response
+/// completes — no successor bytes needed. The release wake is the only thing
+/// that re-enters the parked gate (hyper's end-of-response `maybe_notify`
+/// short-circuits on the io layer's `read_blocked` flag, which the park set),
+/// and with it the parked heads follow Node's one-by-one serving: 512 complete
+/// pipelined heads parked behind a held first response are all answered right
+/// after it (the fix-r5 Node probe `probe-node-pipeline-serve.out` legs A/B:
+/// 513 responses, the last right after the hold ends, no 408 ever). The
+/// handler parks on a oneshot held by the test — request 1 is in flight, its
+/// CL-less GET body owed nothing — so the flood the test writes next can only
+/// park in the withholding buffer, exactly at the cap (512 × 64-byte heads =
+/// [`WITHHELD_HEAD_CAP`]). Killing the release wake
+/// (`native-http-withheld-park-no-wake`) strands the parked heads: whatever
+/// incidental re-polls the in-memory duplex still allows serve a partial
+/// burst, then nothing re-polls the gate, the reads stall dead, and this
+/// cell's own per-read dead window fires.
+#[tokio::test]
+async fn a_capped_withheld_head_is_re_fed_and_served_once_the_response_completes() {
+    timeout(Duration::from_secs(10), async {
+        let (io, mut client) = tokio::io::duplex(128 * 1024);
+        let (stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = oneshot::channel();
+        let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+        let server = tokio::spawn(serve_connection_native_with_shutdown(
+            io,
+            move |request, _lease| {
+                let release = if request.uri().path() == "/first" {
+                    release_rx.lock().unwrap().take()
+                } else {
+                    None
+                };
+                async move {
+                    if let Some(release) = release {
+                        release.await.unwrap();
+                    }
+                    Ok(plain(StatusCode::OK, "ok"))
+                }
+            },
+            stop_rx,
+            None,
+            None,
+        ));
+        // Request 1, held by the un-sent oneshot: its handler is pending, so
+        // hyper keeps polling the gate's read while nothing is written back —
+        // the exact state the withholding branch keys on.
+        client
+            .write_all(b"GET /first HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .expect("write the held request");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The flood: exactly the cap's worth of complete heads.
+        let mut head = String::from("GET /any HTTP/1.1\r\nHost: xy\r\nX-P: ");
+        head.push_str(&"p".repeat(64 - head.len() - 4));
+        head.push_str("\r\n\r\n");
+        assert_eq!(head.len(), 64, "#2499 fix-r5: the flood head is 64 bytes");
+        let flood = head.repeat(WITHHELD_HEAD_CAP / 64);
+        assert_eq!(
+            flood.len(),
+            WITHHELD_HEAD_CAP,
+            "#2499 fix-r5: the flood is exactly the cap"
+        );
+        client
+            .write_all(flood.as_bytes())
+            .await
+            .expect("write the capped flood of next heads");
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The release: the held response completes, its IdleBody wakes the
+        // parked gate, and the parked heads re-feed and serve one by one.
+        release_tx.send(()).expect("release the held response");
+        let status_lines = |output: &[u8]| {
+            output
+                .windows(b"HTTP/1.1 200 OK".len())
+                .filter(|window| *window == b"HTTP/1.1 200 OK")
+                .count()
+        };
+        let mut output = Vec::new();
+        let mut chunk = [0u8; 4096];
+        // The dead window is per read, not for the whole cell: every response
+        // must follow the previous one within 1 s (the whole re-feed burst
+        // takes ~80 ms), and killing the release wake strands the parked heads
+        // mid-burst — without the wake nothing re-polls the gate, the reads
+        // stop dead, and this arm fires with however few responses made it out.
+        loop {
+            let read = tokio::select! {
+                biased;
+                read = client.read(&mut chunk) => read.expect("read the served responses"),
+                _ = tokio::time::sleep(Duration::from_secs(1)) => panic!(
+                    "#2499 fix-r5: only {} of the 513 responses arrived — the \
+                     parked heads were never re-fed and served",
+                    status_lines(&output)
+                ),
+            };
+            if read == 0 {
+                panic!(
+                    "#2499 fix-r5: EOF after {} of the 513 responses — the \
+                     parked heads were not all served",
+                    status_lines(&output)
+                );
+            }
+            output.extend_from_slice(&chunk[..read]);
+            if status_lines(&output) >= 513 {
+                break;
+            }
+        }
+        assert_eq!(
+            status_lines(&output),
+            513,
+            "#2499 fix-r5: exactly the held request's and the 512 parked \
+             heads' responses arrived, one by one like Node's llhttp"
+        );
+        // The client's EOF ends the standby connection promptly, so the
+        // serve task joins without waiting out the 6 s keep-alive idle.
+        drop(client);
+        drop(stop);
+        server
+            .await
+            .expect("the withholding-cap re-feed cell's serve task join")
+            .expect("serve_connection must end cleanly");
+    })
+    .await
+    .expect("the capped withheld heads must be re-fed and served at the release");
+}
+
+// ── #2499 fix-r6: the never-completing 408 landing cell, the native mirror of
+// the sms lane's fix-r5 cell (head_timeout_tests.rs), on the paused tokio
+// clock. Virtual time moves only through the explicit advances below, so the
+// landing instant is probed, never raced.
+
+/// #2499 fix-r6: the paused-clock probe family's read window — the timeout
+/// each windowed probe below arms on its read before its
+/// [`PAUSED_PROBE_ADVANCE`] advance.
+const PAUSED_PROBE_READ_WINDOW_MS: u64 = 50;
+const PAUSED_PROBE_READ_WINDOW: Duration = Duration::from_millis(PAUSED_PROBE_READ_WINDOW_MS);
+/// #2499 fix-r6: the paused-clock probe family's advance — the virtual time
+/// each windowed probe crosses while its read is pending. It stays strictly
+/// greater than the read window (the probe must cross the read's timeout
+/// with the advance), the same arithmetic as the sms lane's
+/// `head_timeout_tests` family.
+const PAUSED_PROBE_ADVANCE_MS: u64 = 60;
+const PAUSED_PROBE_ADVANCE: Duration = Duration::from_millis(PAUSED_PROBE_ADVANCE_MS);
+const _: () = assert!(PAUSED_PROBE_ADVANCE_MS > PAUSED_PROBE_READ_WINDOW_MS);
+
+/// #2499 fix-r6: the virtual-clock harness (the sms lane's `manual_clock`,
+/// itself from `native_ws::tests` via `native_http/tests.rs`): the wrapped
+/// future is polled against yields of the current-thread runtime, so the
+/// spawned serve task makes progress between advances. The wall guard only
+/// diagnoses a stalled future; it is never a timing result.
+async fn manual_clock<F: std::future::Future>(future: F) -> F::Output {
+    tokio::pin!(future);
+    let wall = std::time::Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut future => return result,
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(
+            wall.elapsed() < Duration::from_secs(60),
+            "#2499 fix-r6 manual-clock harness stalled: the serve future never resolved"
+        );
+    }
+}
+
+/// #2499 fix-r6: give the spawned serve task scheduling slots on the paused
+/// clock — eight yields, enough for the parse → arm → park cycle of one
+/// connection between advances.
+async fn yield_a_beat() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// #2499 fix-r6: the probe/tail helpers' latin-1 rendering — every byte is one
+/// character, so the expected ASCII never re-encodes on the way out.
+fn latin1_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| *byte as char).collect()
+}
+
+/// #2499 fix-r6: probe for data/EOF at the current virtual time — the windowed
+/// read is armed before its [`PAUSED_PROBE_ADVANCE`] advance, so a still-open
+/// read resolves `Elapsed`, while a close latched during the advance wins.
+async fn probe_still_open(client: &mut DuplexStream, what: &str) {
+    yield_a_beat().await;
+    let mut probe = [0u8; 1];
+    let pending = timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut probe));
+    tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+    yield_a_beat().await;
+    match pending.await {
+        Err(_quiet) => {}
+        Ok(Ok(0)) => panic!("#2499 {what}"),
+        Ok(Ok(count)) => panic!("#2499 {what}: {count} unexpected byte(s) arrived"),
+        Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+    }
+}
+
+/// #2499 fix-r6: read the 51-byte headersTimeout 408 inside the same windowed
+/// probe pattern as [`probe_still_open`]. The bytes are asserted equal to
+/// [`NODE_HEADERS_TIMEOUT_408`] itself — this lane's own copy of the exact
+/// canned response Node writes, never a re-typed literal. A missing 408 (a
+/// landing that never comes) fails at this helper's own message instead of
+/// hanging the harness. Unlike the sms lane's twin (whose destroy() closes the
+/// socket with the 408), the EOF here is read by the cell itself after the
+/// serve task joins — hyper holds the duplex until its connection ends.
+async fn headers_timeout_408_arrives(client: &mut DuplexStream, what: &str) {
+    let expected = NODE_HEADERS_TIMEOUT_408;
+    let mut buffer = Vec::new();
+    while buffer.len() < expected.len() {
+        let mut chunk = [0u8; 64];
+        let pending = timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut chunk));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        match pending.await {
+            Ok(Ok(0)) => panic!(
+                "#2499 {what}: EOF before the 408 arrived (buffer so far: {:?})",
+                latin1_string(&buffer)
+            ),
+            Ok(Ok(count)) => buffer.extend_from_slice(&chunk[..count]),
+            Ok(Err(error)) => panic!("#2499 {what}: {error}"),
+            Err(_no_408) => {
+                panic!(
+                    "#2499 {what}: the 51-byte 408 never arrived at the head \
+                     deadline's grid landing"
+                )
+            }
+        }
+    }
+    assert_eq!(
+        buffer, expected,
+        "#2499 {what}: the bytes are exactly Node's canned 51-byte 408"
+    );
+}
+
+/// #2499 fix-r6 (the sms lane's fix-r5 never-completing cell, mirrored): a
+/// next head parked at the withholding cap behind a response that NEVER
+/// completes is retired by its own deadline's grid landing — the 408 written
+/// straight onto the socket even though the response is still in flight,
+/// exactly Node's answer for the same shape: the fix-r5 Node probe's leg-C/D
+/// (an incomplete follow-up head behind a held response, 200 ms checker grid,
+/// 1500 ms deadline) gets its `408 Request Timeout` at ~1.6 s and the socket
+/// destroyed, the held response never written — Node's `socketOnError` writes
+/// the 408 while the in-flight response has not sent its head
+/// (`!_httpMessage._headerSent`), and destroys it. The withheld head's first
+/// byte armed its own deadline at the withholding (t ≈ 0), so the injected
+/// +15 s deadline on the 30 s grid lands at +30 s; the probes bracket it
+/// (observed +29.52 s still open with the response still unarrived, and
+/// the 51-byte 408 read at +30.12~+30.18 s — each observation lands at
+/// its advance target plus this probe family's own `PAUSED_PROBE_ADVANCE`,
+/// defined at `:1193-1205` above). The +29.52 s still-open probe is the
+/// `native-http-headers-grid-off`
+/// discriminator (the mutant's 408 lands at the +15 s deadline itself and the
+/// probe reads its first byte). The bounded divergence from Node — a parked
+/// head that was COMPLETE would never be header-timed-out there (leg A/B:
+/// deadline-immune, served at the finish) while this lane's parked bytes
+/// cannot be told apart without parsing them — is the residual
+/// `A8.4-NATIVE-HTTP-002-R6` item 2 registers; this cell is its machine
+/// judgment (the sms lane's twin pins `A8.3-CH-SMS-017` residual 4). Unlike
+/// the sms lane's destroy(), hyper keeps the duplex open until its connection
+/// ends, so the EOF is read after the serve task joins — the held handler is
+/// let go first and its late response's write is refused (BrokenPipe).
+#[tokio::test(start_paused = true)]
+async fn a_capped_withheld_head_behind_a_never_completing_response_gets_its_408_at_the_landing() {
+    manual_clock(async {
+        let grid_anchor = tokio::time::Instant::now();
+        let (io, mut client) = tokio::io::duplex(128 * 1024);
+        let (stop, stop_rx) = watch::channel(false);
+        // The interleave control, held for the whole cell: the handler never
+        // finishes, so the response never completes — nothing is ever written
+        // back (Node leg-C/D's held-response shape).
+        let (release_tx, release_rx) = oneshot::channel();
+        let release_rx = Arc::new(Mutex::new(Some(release_rx)));
+        let task = tokio::spawn(serve_connection_configured(
+            io,
+            move |request, _lease| {
+                let release = if request.uri().path() == "/first" {
+                    release_rx.lock().unwrap().take()
+                } else {
+                    None
+                };
+                async move {
+                    if let Some(release) = release {
+                        release.await.unwrap();
+                    }
+                    Ok(plain(StatusCode::OK, "ok"))
+                }
+            },
+            // The native lane, a 15 s injected headers deadline, the
+            // production checker grid anchored at the spawn instant.
+            true,
+            Some(stop_rx),
+            Some(Duration::from_secs(15)),
+            None,
+            Some(grid_anchor),
+        ));
+        // Request 1, held by the un-sent oneshot: its handler is pending, so
+        // hyper keeps polling the gate's read while nothing is written back —
+        // the exact state the withholding branch keys on.
+        client
+            .write_all(b"GET /first HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .expect("write the held request");
+        yield_a_beat().await;
+        // The flood: exactly the cap's worth of complete heads, all parked at
+        // the withholding cap — the first of them anchors the cell's +15 s
+        // deadline, whose grid landing is +30 s.
+        let mut head = String::from("GET /any HTTP/1.1\r\nHost: xy\r\nX-P: ");
+        head.push_str(&"p".repeat(64 - head.len() - 4));
+        head.push_str("\r\n\r\n");
+        assert_eq!(head.len(), 64, "#2499 fix-r6: the flood head is 64 bytes");
+        let flood = head.repeat(WITHHELD_HEAD_CAP / 64);
+        assert_eq!(
+            flood.len(),
+            WITHHELD_HEAD_CAP,
+            "#2499 fix-r6: the flood is exactly the cap"
+        );
+        client
+            .write_all(flood.as_bytes())
+            .await
+            .expect("write the capped flood of next heads");
+        yield_a_beat().await;
+        // t = +29.46 s advance: before the withheld head's +30 s landing,
+        // with the held response still unarrived — the connection open,
+        // nothing on the wire.
+        tokio::time::advance(Duration::from_millis(29_460)).await;
+        probe_still_open(
+            &mut client,
+            "the capped withheld head keeps the connection open before its \
+             deadline's +30 s grid landing",
+        )
+        .await;
+        // t = +30.06 s advance (the +30 s landing fired inside it): this
+        // head received bytes, so the answer is the 408, written straight
+        // onto the socket even though the response is still in flight
+        // (Node leg-C/D: the 408 lands while `_headerSent` is false).
+        tokio::time::advance(Duration::from_millis(600)).await;
+        headers_timeout_408_arrives(&mut client, "next head parked at the withholding cap").await;
+        // The held handler is let go: the 408 already answered the connection,
+        // so the late response's write is refused (BrokenPipe) and the serve
+        // task joins — in either the clean close or the io error; the cell's
+        // subject is the 408 landing, not the join's flavor.
+        let _ = release_tx.send(());
+        drop(stop);
+        let joined = task
+            .await
+            .expect("#2499 the never-completing cap cell's serve task join");
+        drop(joined);
+        // The serve task's end is what closes the socket — Node's destroy()
+        // shape: the 408 was the connection's last word.
+        let mut tail = [0u8; 1];
+        let pending = timeout(PAUSED_PROBE_READ_WINDOW, client.read(&mut tail));
+        tokio::time::advance(PAUSED_PROBE_ADVANCE).await;
+        yield_a_beat().await;
+        match pending.await {
+            Ok(Ok(0)) => {}
+            other => panic!(
+                "#2499 next head parked at the withholding cap: the \
+                 connection closes after the 408 like Node's destroy(), got \
+                 {other:?}"
+            ),
+        }
+    })
+    .await;
 }

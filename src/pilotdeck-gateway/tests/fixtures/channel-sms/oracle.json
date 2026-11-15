@@ -687,7 +687,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
-  "expectedCaseCount": 59,
+  "expectedCaseCount": 61,
   "cases": [
     {
       "name": "start-missing-config",
@@ -6478,6 +6478,120 @@
             "status": 400,
             "contentType": null,
             "body": "0\r\n\r\n"
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "headers-timeout-first-byte",
+      "port": 18859,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18859,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": null,
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "head-stall",
+          "head": "POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\n",
+          "delayMs": 1500
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18859/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "status": 408,
+            "contentType": null,
+            "body": ""
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "headers-timeout-connect-anchor",
+      "port": 18860,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18860,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": null,
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "head-stall",
+          "head": "",
+          "delayMs": 0
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18860/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [],
+        "rpcs": [],
+        "responses": [
+          {
+            "status": 408,
+            "contentType": null,
+            "body": ""
           }
         ],
         "unhandled": [],
