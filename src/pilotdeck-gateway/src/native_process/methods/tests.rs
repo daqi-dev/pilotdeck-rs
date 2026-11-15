@@ -1612,27 +1612,46 @@ fn steer_turn_fifo_unstrand_drop_leaves_no_path_and_no_writer() {
 /// the fix-r3 entry above retired a 500ms form of exactly this ("an
 /// OS-starved … thread flips it red with production code untouched"),
 /// and a starved reader here loses the race two ways: its open lands
-/// after the unlink (ENOENT — the reader dies and the main thread reads
+/// after the unlink (the reader dies and the main thread reads
 /// Disconnected) or its lookup beats the unlink while its registration
 /// misses the rescue handle (parked on the unlinked inode, "opened"
-/// never arrives). Both spell "not parked for the drop", so a lost race
-/// retries on a fresh FIFO instead of turning red: the head start is 1s
-/// (this file's bound scale, up from the 200ms the cell was born
-/// with), and after `START_RACE_ATTEMPTS` attempts a still-red cell is
-/// judged — a real defect repeats on every fresh FIFO, a lost race does
-/// not, so the attempt count stays small. A reader parked past the drop
-/// cannot be collected (no writer will ever pair it); like the guard's
-/// registered residual cells it stays parked for the process lifetime,
-/// bounded by the attempt count.
+/// never arrives — Timeout). fix-r11 (review DS concurrency#1, P1):
+/// the two spellings are not the same evidence, so the single attempt
+/// counter is split by shape and only **Timeout** keeps the defect
+/// judgment — the single wall-clock judgment became a bounded retry,
+/// 1s head start on each attempt, red only after `RED_AFTER_TIMEOUTS`
+/// Timeout observations, because a real defect repeats on every fresh
+/// FIFO while scheduler noise does not. **Disconnected** is a lost
+/// start race by construction — the reader's open failed fast instead
+/// of parking, whatever the errno spelling (ENOENT once the guard's
+/// unlink succeeded; EMFILE/EACCES from the environment) — so it never
+/// judges a defect: after `INCONCLUSIVE_AFTER_DISCONNECTED`
+/// observations the cell exits **inconclusive** (green, named in the
+/// output, registered in the ledger) instead of red; the fix-r10 form
+/// judged this shape red after three and was itself a false-FAIL
+/// class. Every non-final observation and the inconclusive exit print
+/// through `console_log_line` — libtest captures and discards
+/// `eprintln!` on green runs, and a failing stderr write panics (the
+/// fix-r7 form this file already retired for the guard). A reader
+/// parked past the drop cannot be collected (no writer will ever pair
+/// it); like the guard's registered residual cells it stays parked for
+/// the process lifetime, bounded by the Timeout attempt count.
 #[test]
 fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer() {
     use std::io::Read as _;
 
-    const START_RACE_ATTEMPTS: u32 = 3;
+    // Red only after this many Timeout observations; Disconnected never
+    // judges a defect (the shape split is documented above).
+    const RED_AFTER_TIMEOUTS: u32 = 3;
+    const INCONCLUSIVE_AFTER_DISCONNECTED: u32 = 5;
     let scratch = crate::test_scratch::Scratch::new("1444-fifo-unstrand-rescue");
-    let mut attempt: u32 = 0;
+    let mut timeouts = 0u32;
+    let mut disconnections = 0u32;
     loop {
-        attempt += 1;
+        // One observation per iteration; the caps below make the loop
+        // terminate within RED_AFTER_TIMEOUTS + INCONCLUSIVE_AFTER_DISCONNECTED
+        // - 1 iterations at the worst interleaving.
+        let attempt = timeouts + disconnections + 1;
         // Each attempt parks on its own fresh FIFO; the previous
         // attempt's path was already unlinked by its own guard drop.
         let fifo = scratch.path().join(format!("parked-{attempt}"));
@@ -1704,9 +1723,13 @@ fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writ
                 );
                 reader.join().expect("#1444 unstrand rescue reader join");
                 if attempt > 1 {
-                    eprintln!(
-                        "#1444 unstrand rescue cell: parked on attempt {attempt} \
-                         of {START_RACE_ATTEMPTS} after lost start races"
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!(
+                            "#1444 unstrand rescue cell: parked on attempt {attempt} \
+                             after {timeouts} Timeout-shaped and {disconnections} \
+                             Disconnected-shaped lost races"
+                        ),
                     );
                 }
                 return;
@@ -1720,44 +1743,75 @@ fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writ
                     "#1444 the unstrand rescue reader reported {other:?} while its open was still pending"
                 );
             }
-            // "opened" never arrived: the reader either lost the start
-            // race and is parked past the drop on the unlinked inode
-            // (the guard's gap-reader cell), or the guard really left it
-            // parked — the two spell identically here, so the cell
-            // retries on a fresh FIFO and only judges after the last
-            // attempt: a real defect repeats on every fresh FIFO, a
-            // lost race does not. The parked reader of a lost attempt
-            // cannot be collected (no writer will ever pair it); it
-            // stays parked for the process lifetime, like the guard's
-            // registered residual cells, bounded by the attempts.
+            // "opened" never arrived: the only shape that can witness a
+            // real defect (the guard leaves the reader parked) — judged
+            // red only after RED_AFTER_TIMEOUTS repetitions on fresh
+            // FIFOs; see the doc above for the shape split. The parked
+            // reader of a lost attempt cannot be collected (no writer
+            // will ever pair it); it stays parked for the process
+            // lifetime, like the guard's registered residual cells,
+            // bounded by the attempts.
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                timeouts += 1;
+                if timeouts < RED_AFTER_TIMEOUTS {
+                    crate::native_process::channels::console_log_line(
+                        &mut std::io::stderr(),
+                        &format!(
+                            "#1444 unstrand rescue cell: attempt {attempt} never saw \
+                             the parked reader's open complete ({timeouts}/\
+                             {RED_AFTER_TIMEOUTS} Timeout observations); a real defect \
+                             repeats on every fresh FIFO — retrying on a new one"
+                        ),
+                    );
+                    continue;
+                }
                 negative_assert!(
-                    attempt < START_RACE_ATTEMPTS,
+                    false,
                     "#1444 the parked reader never pairs with the guard's rescue \
-                     open across {START_RACE_ATTEMPTS} attempts (attempt {attempt}): \
-                     the reader lost every start race — parked past the drop — or \
-                     the guard leaves it parked"
+                     open across {RED_AFTER_TIMEOUTS} fresh FIFOs ({timeouts} Timeout \
+                     observations, attempt {attempt}): either the reader was parked \
+                     past the drop every time — pure scheduling — or the guard leaves \
+                     its parked readers stranded"
                 );
             }
-            // The reader died before its open completed: it lost the
-            // start race and met the unlinked path (ENOENT — the only
-            // open failure available once the guard's unlink
-            // succeeded). Join it to surface its panic text, then retry
-            // on a fresh FIFO; a reader still dying after the last
-            // attempt judges the guard.
+            // The reader's open failed fast instead of parking — a lost
+            // start race by construction, never defect evidence; see
+            // the doc above for why the last one exits inconclusive.
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                disconnections += 1;
                 let panic_text = match reader.join() {
                     Ok(()) => "the reader exited without panicking".to_string(),
-                    Err(payload) => payload
-                        .downcast::<String>()
-                        .map_or_else(|_| "a panic without text".to_string(), |text| *text),
+                    Err(payload) => crate::runtime::cleanup_task::panic_message(payload.as_ref())
+                        .unwrap_or("a panic without text")
+                        .to_string(),
                 };
-                negative_assert!(
-                    attempt < START_RACE_ATTEMPTS,
-                    "#1444 the rescue reader lost the start race on all \
-                     {START_RACE_ATTEMPTS} attempts (attempt {attempt}); its open \
-                     failed after the drop: {panic_text}"
+                // Every observation is logged with the reader's own
+                // panic text: the errno spelling (ENOENT once the
+                // guard's unlink succeeded, EMFILE/EACCES from the
+                // environment) stays on the record even though the
+                // shape never judges a defect.
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &format!(
+                        "#1444 unstrand rescue cell: attempt {attempt} lost the \
+                         start race ({disconnections}/{INCONCLUSIVE_AFTER_DISCONNECTED}): \
+                         the reader's open failed instead of parking: {panic_text}"
+                    ),
                 );
+                if disconnections < INCONCLUSIVE_AFTER_DISCONNECTED {
+                    continue;
+                }
+                crate::native_process::channels::console_log_line(
+                    &mut std::io::stderr(),
+                    &format!(
+                        "#1444 unstrand rescue cell: {INCONCLUSIVE_AFTER_DISCONNECTED} \
+                         lost start races without one Timeout observation — this run \
+                         is INCONCLUSIVE for the rescue shape (the Disconnected \
+                         spelling never judges a defect; registered in \
+                         A7.2-STEER-ATTACH-001-R2 fix-r11)"
+                    ),
+                );
+                return;
             }
         }
     }
@@ -1804,10 +1858,12 @@ async fn steer_turn_profile_gate_does_not_block_the_serial_host_executor() {
     // branch below keep that path red (see the guard's doc for the
     // measured before/after forms). The cells the guard does not rescue
     // (its doc names all three) can still park a reader — there the
-    // outer 30s bound below only guarantees the panic text is printed
-    // first; the verdict never lands, and the runtime teardown still
-    // waits for the parked blocking task, so the binary hangs with only
-    // a trace — that cell is the ledger's residual 7.
+    // outer 30s bound below only guarantees the panic happens first:
+    // its text rides libtest's capture, which a test thread that never
+    // returns never flushes (fix-r11, review DS boundary#3), so the
+    // hang can land traceless; the verdict never lands either, and the
+    // runtime teardown still waits for the parked blocking task, so the
+    // binary hangs — that cell is the ledger's residual 7.
     use crate::runtime::turn::gateway::GatewayRequests;
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt;

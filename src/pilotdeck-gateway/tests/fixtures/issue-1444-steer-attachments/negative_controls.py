@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """#1444 steer_turn attachments-merge controls; run after commit.
 
-The #1444 tests live in methods/tests.rs; this runner mutates only
-production files that are already on HEAD. Until the #1444 tests themselves
-are committed, the shared source guard refuses to run (the whole src tree
-must equal HEAD), so the coordinator runs this after the commit lands.
+The #1444 tests live in methods/tests.rs; this runner mutates only files
+that are already on HEAD — production sources for the first six mutants,
+and methods/tests.rs itself for the two fix-r11 guard-duty mutants (the
+FifoUnstrand drop this fixture anchors lives in the test file). Until the
+#1444 tests themselves are committed, the shared source guard refuses to
+run (the whole src tree must equal HEAD), so the coordinator runs this
+after the commit lands.
 
-Six mutants (taskbook hard requirement; ledger
+Eight mutants (taskbook hard requirement; ledger
 A7.2-STEER-ATTACH-001-R2 machine criteria):
   - attachments-rejection-restored: the pre-#1444 explicit rejection
     (STEER_ATTACHMENTS_UNSUPPORTED) is reinstated for non-empty attachments —
@@ -34,6 +37,14 @@ A7.2-STEER-ATTACH-001-R2 machine criteria):
     of `spawn_blocking` — on the current-thread host runtime a parked
     config read pins the executor and the concurrency probe cannot finish
     before the release write.
+  - rescue-open-rerouted (fix-r11, review DS sibling #3): the guard's
+    rescue open is rerouted to /dev/null — the parked reader never pairs,
+    the no-other-writer cell collects its Timeout observations on fresh
+    FIFOs and judges the guard red (the rescue open's write-side duty).
+  - rescue-handle-leaked (fix-r11, review DS sibling #3): the rescue
+    handle is forgotten instead of closed — the parked reader pairs but
+    never reads EOF, and the cell's EOF assertion turns red (the rescue
+    handle's close duty).
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
 """
@@ -47,6 +58,7 @@ from negative_suite import Case, run_cases
 
 STEER = root / 'src/pilotdeck-gateway/src/native_process/methods/steer.rs'
 ASSEMBLY = root / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+TESTS = root / 'src/pilotdeck-gateway/src/native_process/methods/tests.rs'
 
 TEST = 'native_process::methods::tests::'
 
@@ -127,6 +139,24 @@ mutations = [
      '    validate_profile_gate(&options.project, &options.home, env, management)\n',
      TEST + 'steer_turn_profile_gate_does_not_block_the_serial_host_executor',
      '#1444 the profile gate\'s config load must not block the serial host executor'),
+    # fix-r11 (review DS sibling #3): the retry criterion's guard-duty
+    # binding — rerouting the rescue open to /dev/null leaves the parked
+    # reader unpaired on every fresh FIFO, so the no-other-writer cell
+    # collects its Timeout observations and judges the guard red.
+    ('rescue-open-rerouted', TESTS,
+     '            .open(self.0);',
+     '            .open("/dev/null");',
+     TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
+     "#1444 the parked reader never pairs with the guard's rescue open"),
+    # fix-r11 (review DS sibling #3): the rescue handle's close is the EOF
+    # the parked reader drains — forgetting the handle instead of closing
+    # it leaves the write side open, so the reader pairs but never sees
+    # EOF and the cell's EOF assertion turns red.
+    ('rescue-handle-leaked', TESTS,
+     '        drop(rescue);',
+     '        std::mem::forget(rescue);',
+     TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
+     '#1444 the parked reader reads EOF once the rescue handle closes'),
 ]
 
 
