@@ -100,7 +100,10 @@ mod test_console;
 // inline `mod tests` blocks whose virtual directories a `#[path]`
 // escape cannot traverse (the OS cannot walk `..` through
 // `src/http_proxy/tests/`, which only exists as a path prefix).
-#[cfg(test)]
+// fix-r4 review P2 (DS bnd#2 + DS conc#1, same chain): the probe's
+// sink is the unix-only `dead_stderr` socketpair, so the mount and
+// every site that includes it carry the unix gate.
+#[cfg(all(test, unix))]
 #[path = "../tests/common/failed_stderr_probe.rs"]
 mod failed_stderr_probe;
 // #3152 fix-r2 (review sibling#3): the proven-dead stderr sink, one
@@ -109,7 +112,11 @@ mod failed_stderr_probe;
 // (`tests/console_panic_safety.rs` mounts the same file), so the
 // parent-side probe write and its `BrokenPipe` assertion cannot drift
 // between them.
-#[cfg(test)]
+// fix-r4 review P2 (DS bnd#2 + DS conc#1, two roles): the mounted file
+// uses `std::os::unix`, so this mount carries the same `unix` gate as
+// `test_write_stage` below — without it a non-unix `cargo test --no-run`
+// fails at E0432 before any test runs.
+#[cfg(all(test, unix))]
 #[path = "../tests/common/dead_stderr.rs"]
 mod dead_stderr;
 // fix-r3 review P2: `write_stage` hardcodes `/bin/sh` helpers and calls

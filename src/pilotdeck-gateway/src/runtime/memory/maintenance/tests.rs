@@ -498,6 +498,8 @@ const DIAGNOSTIC_STDERR_MARKER_ENV: &str = "PDRS_2558_MAINTENANCE_STDERR_MARKER"
 /// (#3152 item 9), so every write fails with EPIPE; the child installs a
 /// panic hook first, so a panicking `eprintln!` leaves a marker file and
 /// exits 33 instead of passing.
+// fix-r4 review P2: the probe's dead sink is unix-only.
+#[cfg(unix)]
 #[tokio::test]
 async fn default_diagnostic_survives_a_failed_stderr_write() {
     if let Some(token) = crate::failed_stderr_probe::probe_token(DIAGNOSTIC_STDERR_PROBE_ENV) {
@@ -524,6 +526,8 @@ async fn default_diagnostic_survives_a_failed_stderr_write() {
 /// the default closure — the shared non-panicking writer — and still clear
 /// its flight. Nothing here prints to stdout: the single-threaded receipt
 /// needs the whole test line intact.
+// fix-r4 review P2: the probe's dead sink is unix-only.
+#[cfg(unix)]
 async fn default_diagnostic_stderr_probe_child(token: &str) {
     crate::failed_stderr_probe::install_panic_hook(DIAGNOSTIC_STDERR_MARKER_ENV, "#2558", token);
     let events = Events::default();

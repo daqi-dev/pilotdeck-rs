@@ -74,6 +74,12 @@ mod source_inputs;
 // fix-r2 (review sibling#3): the same shared dead sink the lib tree
 // mounts (`src/lib.rs` mounts this file too) — one implementation of
 // the parent-side probe write and its `BrokenPipe` assertion.
+// fix-r4 review P2 (DS bnd#2 + DS conc#1): the mounted file uses
+// `std::os::unix`, so the mount is unix-gated like the tree's other
+// unix-only helpers (`baseline_provenance.rs` shape) — without the
+// gate a non-unix `cargo test --no-run` fails at E0432 before any
+// test runs.
+#[cfg(unix)]
 #[allow(dead_code)]
 #[path = "common/dead_stderr.rs"]
 mod dead_stderr;
@@ -2107,6 +2113,9 @@ impl Gateway {
     /// fix-r2 (review sibling#3): the mechanics are the shared module
     /// both trees mount (`common/dead_stderr.rs`); this call is the
     /// integration-tree entry into it, so the twins cannot drift.
+    // fix-r4 review P2 (DS bnd#2 + DS conc#1): the shared module is
+    // unix-only, so its entry point here is too.
+    #[cfg(unix)]
     fn dead_stderr() -> Stdio {
         dead_stderr::dead_stderr("#2558 gateway")
     }
@@ -2224,6 +2233,8 @@ fn assert_served_502(address: &SocketAddr, why: &str) {
 /// connect alone would not be the receipt: the bind precedes the
 /// banners, so the kernel accepts connections even from a process that
 /// panicked at the line in between.)
+// fix-r4 review P2: the dead sink it builds is unix-only.
+#[cfg(unix)]
 #[test]
 fn startup_survives_a_failed_stderr_write() {
     let home = isolated_home();
@@ -2266,6 +2277,8 @@ fn startup_survives_a_failed_stderr_write() {
 /// fails by attribution instead of sitting near the unbounded worst
 /// case (~28 s per spawn, ≈90 min) with only CI's outer timeout to
 /// end it.
+// fix-r4 review P2: the dead sink it builds is unix-only.
+#[cfg(unix)]
 #[test]
 fn dead_stderr_sink_fails_on_every_spawn() {
     const SPAWNS: usize = 200;
