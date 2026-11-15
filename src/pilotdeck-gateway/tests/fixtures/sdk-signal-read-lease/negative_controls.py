@@ -942,8 +942,15 @@ def window_lock_check(out):
                 # The mutant poisoned the lane. Recover the lease before
                 # failing (dead pid + a stand-in we spawned and stopped —
                 # provably our leftover, not a live round's), so the lane
-                # is usable after the run; then fail with the marker.
-                shutil.rmtree(common.LOCK)
+                # is usable after the run; then fail with the marker. The
+                # takeover holds the tree guard while removing the lease:
+                # a parity_lock waiter does exists()/owner()/stat() under
+                # that same guard, so an unguarded rmtree lands between the
+                # waiter's checks and turns the intended marker failure into
+                # a FileNotFoundError crash (same guarded form as common.py's
+                # own takeover; #2513 fix-r13 concurrency#1).
+                with common.guard(common.LOCK):
+                    shutil.rmtree(common.LOCK)
             raise AssertionError(
                 HOST_POISON_MARKER + '：停止共享持有者后租约不可再取（持有者被 '
                 'SIGKILL，留下 cleanupPending 的死 pid owner，车道被毒化）') from error

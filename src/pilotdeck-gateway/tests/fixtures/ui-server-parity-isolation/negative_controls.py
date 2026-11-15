@@ -88,10 +88,34 @@ REALPATH_GUARD = (
     '       for entry in _boot_sys.path):')
 
 
+def refresh_all_pins(root):
+    """#2513 fix-r13: admit the copied worktree bytes before the coordinator re-pins.
+
+    Pre-write mirrors copy current source while the manifest still pins the
+    older hashes; refresh every registered row to the copied bytes so the lane
+    judges the mutation, not the stale registration. On a re-pinned tree every
+    digest already matches and this rewrites nothing.
+    """
+    manifest = root / SPEC / 'FROZEN.md'
+    lines = manifest.read_text().splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        row = line.rstrip('\n')
+        if len(row) < 67 or row[64:66] != '  ' or not re.fullmatch(r'[0-9a-f]{64}', row[:64]):
+            continue
+        source = root / SPEC / row[66:]
+        if not source.is_file():
+            continue
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if digest != row[:64]:
+            lines[index] = f'{digest}  {row[66:]}\n'
+    manifest.write_text(''.join(lines))
+
+
 def copy_apparatus(destination):
     for name in (APPARATUS, 'scripts/exp008', SPEC):
         shutil.copytree(ROOT / name, destination / name)
     shutil.copy2(ROOT / 'rust-toolchain.toml', destination / 'rust-toolchain.toml')
+    refresh_all_pins(destination)
     # Preflight calls toolchain_files(), which reads the index; stage the same
     # tracked set a real checkout would have. No history is needed.
     subprocess.run(['git', 'init', '-q', str(destination)], check=True)
@@ -299,6 +323,33 @@ def os_preflight(root):
         'FrozenControls.test_entry_guards_require_preloaded_os', '#1023-11:'
 
 
+# #2513 fix-r13 (DS sibling#1): the bootstrap admission env must not inherit a
+# steered GIT_DIR (a decoy HEAD would false-pass and admit mutated apparatus
+# bytes for execution), and the admission read must go through _boot_git; a
+# revert to bare ``git -C`` is caught by the fail-closed machine check.
+HARDENED_ADMISSION = (
+    "        _boot_trusted = _boot_git('show', 'HEAD:scripts/ui-server-parity/apparatus.py')")
+BARE_ADMISSION = (
+    "        _boot_trusted = _boot_subprocess.check_output(\n"
+    "            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])")
+HARDENED_ENV = 'env=_boot_git_env, stderr=_boot_subprocess.PIPE, timeout=30)'
+INHERITED_ENV = 'env=dict(_boot_os.environ), timeout=30)'
+
+
+def row_boot_env_inherited(root):
+    """#2513 fix-r13: a steered GIT_DIR must not admit a decoy HEAD."""
+    rewrite_source(root, APPARATUS + '/snapshot.py', HARDENED_ENV, INHERITED_ENV)
+    return run_bound(root, 'FrozenControls.test_git_dir_decoy_cannot_false_pass_head_admission'), \
+        'FrozenControls.test_git_dir_decoy_cannot_false_pass_head_admission', '#2513 fix-r13:'
+
+
+def row_boot_bare_git(root):
+    """#2513 fix-r13: the machine check must reject a bare-git admission revert."""
+    rewrite_source(root, APPARATUS + '/snapshot.py', HARDENED_ADMISSION, BARE_ADMISSION)
+    return run_bound(root, 'FrozenControls.test_bootstrap_git_admission_is_hardened_machine_check'), \
+        'FrozenControls.test_bootstrap_git_admission_is_hardened_machine_check', '#2513 fix-r13:'
+
+
 ROWS = {
     'readme-discover': row_readme,
     'entry-guard-removed': row_guard,
@@ -306,6 +357,8 @@ ROWS = {
     'discover-guard-removed': row_discover,
     'alias-reinsertion': alias_reinsertion,
     'os-preflight-removed': os_preflight,
+    'boot-git-env-inherited': row_boot_env_inherited,
+    'boot-git-bare-revert': row_boot_bare_git,
 }
 
 

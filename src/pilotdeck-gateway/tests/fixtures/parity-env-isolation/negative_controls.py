@@ -65,6 +65,14 @@ Two kill rows below are judged by ``control_round_head_guard_gateway``
 against the control's phase-10 and phase-12 markers, with the same
 INVALID-never-KILLED exclusivity.
 
+Guard under test (#2513 fix-r13, sibling#2): ``_guard.py``'s source ``show``
+read under the hardened rev-parse kept the scrubbed environment but no
+mutation row pinned it (the r8 rows covered the rev-parse above it). One
+kill row below is judged by ``control_round_head_guard_gateway`` against
+the control's phase-8 marker: an env-inheriting mutant reads the decoy
+HEAD's lobotomized common.py and false-passes the loaded-apparatus
+verification instead of refusing.
+
 Every mutated source equals HEAD before its window opens (mutating_sources);
 each mutant compiles before its control runs; stale anchors abort instead of
 being recorded as SURVIVED.  No shadow repository or HEAD exemption is used.
@@ -207,6 +215,20 @@ mutations = [
      "                                    'rev-parse', '--verify', 'HEAD'],\n"
      "                                   env=dict(os.environ), timeout=30).decode().strip()",
      'control_round_head_guard_gateway'),
+    # #2513 fix-r13 (sibling#2): _guard.py's source `show` read below the
+    # hardened rev-parse kept the scrubbed env but had no mutation row of its
+    # own. An env-inheriting mutant reads the decoy HEAD's common.py (phase 8
+    # pins a lobotomized verifier there), execs it and false-passes the
+    # loaded-apparatus verification instead of refusing.
+    ('gateway-guard-source-show-env-inherited', root / 'scripts/gateway-parity/_guard.py',
+     "    source = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                      'show', f'{head}:scripts/gateway-parity/common.py'],\n"
+     "                                     env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',\n"
+     "                                          'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=30)",
+     "    source = subprocess.check_output(['/usr/bin/git', '-c', 'safe.directory=*', '-C', str(root),\n"
+     "                                      'show', f'{head}:scripts/gateway-parity/common.py'],\n"
+     "                                     env=dict(os.environ), timeout=30)",
+     'control_round_head_guard_gateway'),
     ('gateway-guard-has-git-checkout-gitdir-pass', root / 'scripts/gateway-parity/_guard.py',
      "    if 'GIT_DIR' in os.environ:\n"
      "        # #2513 fix-r8: GIT_DIR alone is not checkout evidence. A variable\n"
@@ -279,6 +301,7 @@ EXPECTED_MUTATIONS = [
     'gateway-common-head-source-env-inherited',
     'gateway-common-has-git-checkout-gitdir-pass',
     'gateway-guard-verify-cli-imports-env-inherited',
+    'gateway-guard-source-show-env-inherited',
     'gateway-guard-has-git-checkout-gitdir-pass',
     'gateway-common-cargo-config-env-inherited',
     'gateway-common-has-git-checkout-broken-fail-open',

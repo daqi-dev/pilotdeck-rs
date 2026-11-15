@@ -28,6 +28,20 @@ if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
 import hashlib as _boot_hashlib
 import subprocess as _boot_subprocess
 _boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+# #2513 fix-r13 (DS sibling#1): the admission read below must answer from
+# this checkout only — bare ``git -C`` inherits a steered GIT_DIR/GIT_WORK_TREE
+# (measured) and would admit a decoy repository's HEAD. Same hardened form as
+# check_frozen.py, the git() helper and the cli-parity/gateway _head_source twins.
+_boot_git_env = {'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                 'GIT_CONFIG_GLOBAL': _boot_os.devnull}
+
+
+def _boot_git(*args):
+    return _boot_subprocess.check_output(
+        ['/usr/bin/git', '-c', 'safe.directory=*', '-C', _boot_root, *args],
+        env=_boot_git_env, stderr=_boot_subprocess.PIPE, timeout=30)
+
+
 _boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
     _boot_bytes = _boot_file.read()
@@ -39,8 +53,7 @@ try:
         if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
             raise ValueError('apparatus bootstrap hash mismatch')
     else:
-        _boot_trusted = _boot_subprocess.check_output(
-            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        _boot_trusted = _boot_git('show', 'HEAD:scripts/ui-server-parity/apparatus.py')
         if _boot_bytes != _boot_trusted:
             raise ValueError('apparatus bootstrap differs from HEAD without manifest')
 except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
@@ -63,7 +76,7 @@ import tempfile
 from unittest.mock import patch
 from check_frozen import self_test, required_files, ROOT, SPEC
 from common import apparatus_hashes
-from apparatus import ApparatusUnsafe, EXP008_FILES, scan, git_admission
+from apparatus import ApparatusUnsafe, EXP008_FILES, scan, git_admission, manifest_pins
 
 
 def copy_apparatus(root):
@@ -318,6 +331,202 @@ class FrozenControls(unittest.TestCase):
             subprocess.run(['git', '-C', str(root), 'add', str(path)], check=True)
             with self.assertRaisesRegex(ApparatusUnsafe, 'dirty apparatus'):
                 git_admission(root, head)
+
+    def test_bootstrap_git_admission_is_hardened_machine_check(self):
+        """#2513 fix-r13 (DS sibling#1): fail-closed AST scan of every bootstrap.
+
+        Every script the manifest registers is parsed; a bootstrap-marked
+        file's admission block (module statements up to the ``exec(compile(``
+        anchor) may reach subprocess only through the check_frozen.py
+        ``_boot_git`` helper — ``/usr/bin/git`` under a scrubbed environment —
+        and must admit ``_boot_trusted`` through it. A parse failure, a missing
+        anchor, any bare or indirect git launch, a drifted helper shape or an
+        unregistered bootstrap-marked file is red, so the 22nd missed
+        hardening cannot ship.
+        """
+        marker = '#2513 fix-r13: bootstrap admission must be the hardened _boot_git form'
+        registered = manifest_pins(ROOT)
+        self.assertGreaterEqual(len(registered), 20,
+                                marker + ': manifest registration must not be empty')
+
+        def admission_region(path):
+            source = path.read_text()
+            tree = ast.parse(source)
+            for index, statement in enumerate(tree.body):
+                value = getattr(statement, 'value', None)
+                if (isinstance(statement, ast.Expr) and isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Name) and value.func.id == 'exec'
+                        and value.args and isinstance(value.args[0], ast.Call)
+                        and isinstance(value.args[0].func, ast.Name)
+                        and value.args[0].func.id == 'compile'):
+                    return source, tree.body[:index]
+            raise AssertionError(marker + f': {path.name} has no exec(compile( admission anchor')
+
+        _, canonical = admission_region(ROOT / 'scripts/ui-server-parity/check_frozen.py')
+        canonical_git = [node for node in canonical
+                         if isinstance(node, ast.FunctionDef) and node.name == '_boot_git']
+        canonical_env = [node for node in canonical
+                         if isinstance(node, ast.Assign) and len(node.targets) == 1
+                         and isinstance(node.targets[0], ast.Name)
+                         and node.targets[0].id == '_boot_git_env']
+        self.assertEqual(len(canonical_git), 1, marker + ': canonical _boot_git missing')
+        self.assertEqual(len(canonical_env), 1, marker + ': canonical _boot_git_env missing')
+        git_shape, env_shape = ast.dump(canonical_git[0]), ast.dump(canonical_env[0])
+        # Direct subprocess API names; a bootstrap must not launch anything else.
+        subprocess_family = {'check_output', 'check_call', 'Popen'}
+        scanned = 0
+        for path in sorted(registered):
+            if path.suffix != '.py' or not path.is_file():
+                continue
+            if '# Isolated bootstrap' not in path.read_text():
+                continue
+            scanned += 1
+            _, region = admission_region(path)
+            helpers = [node for node in region
+                       if isinstance(node, ast.FunctionDef) and node.name == '_boot_git']
+            envs = [node for node in region
+                    if isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == '_boot_git_env']
+            self.assertEqual(len(helpers), 1,
+                             marker + f': {path.name} must define _boot_git exactly once')
+            self.assertEqual(len(envs), 1,
+                             marker + f': {path.name} must define _boot_git_env exactly once')
+            self.assertEqual(ast.dump(helpers[0]), git_shape,
+                             marker + f': {path.name} _boot_git must equal check_frozen.py verbatim')
+            self.assertEqual(ast.dump(envs[0]), env_shape,
+                             marker + f': {path.name} _boot_git_env must equal check_frozen.py verbatim')
+            admissions = 0
+            for statement in region:
+                for node in ast.walk(statement):
+                    if isinstance(node, ast.Call):
+                        func, launched = node.func, False
+                        if (isinstance(func, ast.Attribute) and func.attr in subprocess_family
+                                and isinstance(func.value, ast.Name)
+                                and func.value.id in ('subprocess', '_boot_subprocess')):
+                            launched = True
+                        elif isinstance(func, ast.Name) and func.id in subprocess_family:
+                            launched = True
+                        if launched:
+                            argv = node.args[0] if node.args else None
+                            self.assertTrue(
+                                isinstance(argv, ast.List) and argv.elts
+                                and isinstance(argv.elts[0], ast.Constant)
+                                and argv.elts[0].value == '/usr/bin/git',
+                                marker + f': {path.name} launches a subprocess without the '
+                                '/usr/bin/git hardened argv: ' + ast.unparse(node))
+                    if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                            and isinstance(node.targets[0], ast.Name)
+                            and node.targets[0].id == '_boot_trusted'):
+                        admissions += 1
+                        rendered = ast.unparse(node)
+                        self.assertTrue(
+                            isinstance(node.value, ast.Call)
+                            and isinstance(node.value.func, ast.Name)
+                            and node.value.func.id == '_boot_git'
+                            and "'show'" in rendered
+                            and 'scripts/ui-server-parity/apparatus.py' in rendered,
+                            marker + f': {path.name} admission read must be a _boot_git show '
+                            'of the apparatus source: ' + rendered)
+            self.assertGreaterEqual(admissions, 1,
+                                     marker + f': {path.name} has no admission read')
+        self.assertGreaterEqual(scanned, 22,
+                                 marker + ': bootstrap-marked registered scripts must not vanish')
+        # A bootstrap-marked file outside the registration would escape this scan.
+        apparatus = ROOT / 'scripts/ui-server-parity'
+        marked = {path.resolve() for path in apparatus.rglob('*.py')
+                  if '# Isolated bootstrap' in path.read_text()}
+        self.assertFalse(marked - set(registered),
+                         marker + ': bootstrap-marked files must stay manifest-registered')
+
+    def test_git_dir_decoy_cannot_false_pass_head_admission(self):
+        """#2513 fix-r13 (DS sibling#1): a steered GIT_DIR must not admit a decoy HEAD.
+
+        Without a manifest every entry admits its apparatus bytes by reading
+        HEAD of this checkout. Bare ``git -C`` inherits a steered GIT_DIR and
+        would admit a decoy repository's bytes instead (measured); the
+        hardened admission scrubs the environment. The refusal arm pins
+        mutated disk bytes in a decoy repository's HEAD and requires every
+        entry to refuse before executing them; the paired control replays the
+        same steering over pristine bytes and proves the refusal comes from
+        the decoy mismatch, not from the steering itself.
+        """
+        marker = '#2513 fix-r13: steered GIT_DIR must not admit a decoy HEAD'
+        with tempfile.TemporaryDirectory(prefix='b2-decoy-') as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            # No manifest: every entry below takes the no-manifest HEAD branch.
+            (root / 'specs/ui-server-parity/FROZEN.md').unlink()
+            device = root / 'scripts/ui-server-parity'
+            # Run the staged copies, not the checkout's entries: only the mirror
+            # has its manifest removed and its apparatus bytes mutated.
+            entries = [path for path in sorted(device.rglob('*.py'))
+                       if '# Isolated bootstrap' in path.read_text()]
+            self.assertGreaterEqual(len(entries), 22, marker + ': guard inventory must not be empty')
+            pristine = (device / 'apparatus.py').read_bytes()
+            decoy_marker = root / 'DECOY_APPARATUS_EXECUTED'
+            mutated = pristine + (
+                '\nopen(' + repr(str(decoy_marker)) + ', "w").write("decoy")\n').encode()
+            decoy = Path(tmp) / 'decoy'
+            (decoy / 'scripts/ui-server-parity').mkdir(parents=True)
+            (decoy / 'scripts/ui-server-parity/apparatus.py').write_bytes(mutated)
+            subprocess.run(['git', 'init', '-q', str(decoy)], check=True)
+            subprocess.run(['git', '-C', str(decoy), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(decoy), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            steered = dict(os.environ, GIT_DIR=str(decoy / '.git'))
+
+            def run_entry(entry, flag):
+                return subprocess.run(
+                    [sys.executable, '-I', str(entry), flag],
+                    cwd=root, env=steered, capture_output=True, text=True, timeout=120)
+
+            for path in entries:
+                relative = path.relative_to(device)
+                with self.subTest(entry=str(relative), arm='refusal'):
+                    (device / 'apparatus.py').write_bytes(mutated)
+                    decoy_marker.unlink(missing_ok=True)
+                    result = run_entry(path, '--help')
+                    output = result.stdout + result.stderr
+                    self.assertEqual(
+                        result.returncode, 1,
+                        marker + f': {relative} admitted a steered decoy HEAD (rc={result.returncode}): '
+                        + output[-300:])
+                    self.assertIn('apparatus bootstrap hash admission failed', output,
+                                  marker + f': {relative} must fail at the admission, not later: '
+                                  + output[-300:])
+                    self.assertIn('apparatus bootstrap differs from HEAD without manifest', output,
+                                  marker + f': {relative} must name the decoy mismatch: ' + output[-300:])
+                    self.assertFalse(
+                        decoy_marker.exists(),
+                        marker + f': {relative} executed decoy-admitted apparatus bytes')
+            # Paired control: pristine bytes under the same steering must still
+            # pass admission, so the refusal above is the decoy mismatch's, not
+            # the steering environment's. Post-admission behaviour is each
+            # entry's own; only the admission outcome is asserted here.
+            (device / 'apparatus.py').write_bytes(pristine)
+            decoy_marker.unlink(missing_ok=True)
+            controls = {
+                'run.py': 0, 'test_compare.py': 0,  # entrypoint and unittest -h both reach 0
+                'check_frozen.py': None,           # refuses a missing manifest after admission
+                'common.py': None,                  # library module; admission outcome only
+            }
+            for name, code in controls.items():
+                with self.subTest(entry=name, arm='control'):
+                    result = run_entry(device / name, '-h' if name.startswith('test_') else '--help')
+                    output = result.stdout + result.stderr
+                    self.assertNotIn('apparatus bootstrap', output,
+                                     marker + f': {name} refused pristine bytes under steering: '
+                                     + output[-300:])
+                    self.assertFalse(decoy_marker.exists(),
+                                     marker + f': {name} executed unexpected apparatus bytes')
+                    if code is not None:
+                        self.assertEqual(
+                            result.returncode, code,
+                            marker + f': {name} did not run after admission (rc={result.returncode}): '
+                            + output[-300:])
 
     def test_checked_source_loader_rejects_changed_bytes_before_execution(self):
         from apparatus import SourceLoader, manifest_pins
