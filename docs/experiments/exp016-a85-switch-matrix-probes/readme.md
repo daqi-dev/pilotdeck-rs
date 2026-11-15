@@ -3,7 +3,7 @@ type: experiment
 number: "016"
 date: 2026-11-09
 title: A8.5 切换状态机矩阵 · 探针装置进仓与补格（#2251/#2255/#2258）
-status: 装置进仓（P1–P7 移植参数化）+ P8–P16 补格完成（#2251/#2255/#2258，批次 p2batch-d6 收口）
+status: 装置进仓（P1–P7 移植参数化）+ P8–P16 补格完成（#2251/#2255/#2258，批次 p2batch-d6 收口）+ #2259 零字节观测窗口径修正（≥95 s 待补）
 related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fixtures]
 ---
 
@@ -27,6 +27,60 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   ICU 78.2。
 - **落位**：`scripts/a8-5/`（common.mjs + 各探针；`--base`/`--out` 参数化，默认基线取
   `PILOTDECK_BASE` 或标准 runner 路径）。`node scripts/a8-5/<probe>.mjs --out <证据目录>`。
+  <a id="p12-window-spec"></a>p12 合规复跑（≥95 s 观测窗，#2259；fix-r5 起本段为 p12 装置规约正本——
+  矩阵侧只留指针）：`P12_WINDOW_MS=120000 node scripts/a8-5/p12_zero_byte_close.mjs --out <新目录>`
+  （窗长须为 (0, 300000] 内安全整数毫秒，未设置或空串回退默认 70_000，非法值 exit 2 且不落盘；
+  端口默认 39891、可 `--port`/`P12_PORT` 改（非法值同 exit 2）；占用预检失败与 bind 失败
+  （EADDRINUSE——预检→加载→bind 间竞态败者，fix-r5）均受控快速失败 exit 3、不落观测记录；
+  三超时字段两层（server 直读/包装层）均读不到 ⇒ probe-shape-mismatch 受控 exit 4、不落观测
+  产物（fix-r6，第四态——先修探针再复跑）；证据名带窗长+时间戳+pid，不覆写既有证据）。**判据与判废条件（fix-r5 登记、fix-r6 结构性收口；
+  判废条件照 `specs/gateway-parity/diffs/A8.3-CH-SMS-012-R1.md:121-134` 逐字段对齐，且判读以
+  下文判废面矩阵为正本）**：产物须含首条 `scenario` 记录——`headersTimeout`（两层实读：server
+  对象直读、未命中再读 `server.server` 包装层——真实基线返回对象可能是包装层而非原生
+  `http.Server`（close() 为 Promise 形态为证），三字段同形回退；`serverShape` 记录实际命中层级
+  `native`/`wrapped`；两层均读不到 ⇒ **第四态 probe-shape-mismatch**：探针 exit 4、不落观测产物、
+  不进 K/I/S 三态也不判有效/判废——**先修探针再复跑**，这是 ≥95 s 合规复跑的验收前置）
+  **须 =60000**；`requestTimeout`/`connectionsCheckingInterval` 同形两层实读）/`port`/`windowMs`/
+  `windowEnvRaw`/`serverShape`。observation 行判别字段 `firstByteMs`/`bytes`/`hex`/`closeSettled`，
+  时间字段 `closeCalledMs`/`elapsedMs`（= R1 `stopWaitedMs` 对应面）恒有限数值、`closeResolvedMs`/
+  `connectionEndedMs`/`closeWaitedMs`（= `closeResolvedMs − closeCalledMs`，settle 才有限；R1:127
+  「提前 resolve ⇒ 走到的不是真实监听器」的 p12 对应面）事件发生才为有限数值（「窗内不 settle」
+  正是观察对象，与 R1「必须有限」的差异点如实登记；`connectionEndedMs` 终值在 cleanup 行落定，
+  200 ms 内未达记 null、此时该字段只用于 observation 行结论）；note 谓词（fix-r5）：判「支持『close 清
+  checker ⇒ 永不 settle』」须同 observation 行核「bytes=0 且窗内无 end/close/error 服务端事件
+  且 socket 本地仍开」，不满足只报事实不作机制归因；fix-r7 boundary#1（M11 自守）：「支持②」
+  另须 scenario 行 `headersTimeout=60000`——读到但 ≠60000 时该产物按矩阵 M11 判废，探针
+  不输出支持性结论、只报事实（fix-r8 boundary#1 + sibling#1：该自守**短路前置到一切 note
+  分支之前**——≠60000 一律走 M11 判废事实分支，settle/有字节形状同样不得输出机制结论；
+  分支序收敛进 `p12NoteBranch` 纯函数 `scripts/a8-5/p12_note_branch.mjs`，微测
+  `p12_note_microtest.mjs` 直调）；settle 分支 note 携带 `closeWaitedMs` 与
+  「是否 ≥60 s 相位窗」（fix-r6），且命中早 settle 判废面时产物带 `invalidationHit` 标注。
+  **判废面矩阵（fix-r6 结构性正本——形状 × 判定全覆盖，判官按本表判读；r3→r5 逐轮补词
+  不收敛后改为枚举形状）**：
+
+| # | 形状（observation/scenario 字段组合） | 判定 | 探针侧行为 | 对应实测形状 |
+|---|---|---|---|---|
+| M1 | ≥95 s 窗不 settle、bytes=0、无窗内服务端事件、socketLocalStillOpen=true、headersTimeout=60000 | 有效（支持②判别面；第五条件=判据载重字段——≠60000 时 M1 不成立、落 M11 判废，fix-r7 起） | note 支持②分支 | fixr6 m3-delay0（plain/60000/96 s 不 settle、bytes=0——`STUB_CLOSE_DELAY_MS=0` 竞态计入侧；fix-r7 改引：原引 hang-96 的 headersTimeout=3600000，按 M11 即判废产物）；fixr7 m1-plain60000 同形复核（close 延后 300 ms 保证计入，新自守谓词下支持②分支照常命中） |
+| M2 | settle 且 closeWaitedMs<1000 且 firstByteMs=null 且窗内无事件且 connectionEndedMs=null | **判废**（早 settle/连接未被计入——close 落定不可归因于该连接的任何可观测事件，非零字节观测；R1:127 对应面） | `invalidationHit` 标注 + note 判废句 | stub close 落到不含本连接的 server（STUB_CLOSE_TARGET=other） |
+| M3 | settle 且 closeWaitedMs<1000 且窗内有 error/close 事件（connectionEndedMs≈closeResolvedMs） | 有效（settle·机制=close 清/断该连接（未被计入时 RST、计入则空闲清理），非 408 驱动） | note settle 分支 + closeWaitedMs<60 s 相位窗 | 实测 STUB_CLOSE_SYNC=1（fixr6 race-close-sync：settle、closeWaitedMs=0、事件=[error,close]）；STUB_CLOSE_DELAY_MS=0 同轮落竞态另一侧（连接计入→不 settle，同 M1 形状）——两态均为 close 时序竞态的真实结果，fixr5 目录旧 delay0 run 出过本行形状 |
+| M4 | settle 且 closeWaitedMs≥60000（408 相位窗内，firstByteMs 通常非 null） | 有效（settle·408 驱动面） | note settle 分支 + ≥60 s 相位窗 | stub late408（61 s 写 408 字节后销毁连接） |
+| M5 | 不 settle 且 firstByteMs≠null | 有效（排除「close 清 checker ⇒ 408 不发」） | note 排除分支 | fixr7 m5-bytes（stub bytes 在 headersTimeout=60000 下重跑换引；fixr6 旧 run 抬到 3600000，按 M11 即判废产物） |
+| M6 | 不 settle、bytes=0、窗内有 end/close/error 事件或 socket 本地已关 | 有效（只报事实，不作机制归因） | note 事实分支 | fixr7 m6-finnever（stub finnever 在 headersTimeout=60000 下重跑换引；fixr6 旧 run 抬到 3600000，按 M11 即判废产物） |
+| M7 | 不 settle 且窗 <95 s | 有效·右删失下界（不得作对拍判 PASS 依据） | note 右删失分支 | 1 s 窗冒烟 |
+| M8 | 1 s 冒烟窗（装置自检） | 有效·装置自检（同 M7 形状） | 同上 | 同上 |
+| M9 | 三超时字段两层（server/server.server）均读不到 | **第四态 probe-shape-mismatch**：exit 4、无产物、先修探针再复跑（不进 K/I/S、不判有效/判废） | exit 4 + stderr 诊断 | stub STUB_SHAPE=unreachable |
+| M10 | `serverShape=wrapped`（命中包装层） | 有效（读取层级记录在案） | scenario 带 serverShape | stub STUB_SHAPE=wrapped |
+| M11 | headersTimeout 读到但 ≠60000 | 判废（R1:124） | headersTimeout≠60000 **一律走判废事实分支**（fix-r8 boundary#1 + sibling#1 短路前置：settle/有字节形状同样只报事实并写明按 M11 判废，不再仅在「不 settle 且无字节」可达——分支序收敛进 `p12NoteBranch` 纯函数 `scripts/a8-5/p12_note_branch.mjs`，微测 `p12_note_microtest.mjs` 直调；反证不该出现时不输出「支持」） | stub hang 模式（抬到 3600000，作判废演示；fixr7 重跑核：note 只报事实并写明 M11 判废）；fixr8 补 M11×settle（late408+3600000）与 M11×bytes（bytes+3600000）两格负控（`STUB_HEADERS_TIMEOUT_MS` 通用旋钮），红侧（短路挪回只盖「支持②」分支）两格必红 |
+| M12 | 无 scenario/observation 行或必需字段缺失 | 判废（R1:121-124） | — | 受控探针构不出：健康探针必落两行；该条防的是进程被杀/产物截断/主控写坏 |
+| M13 | connectionEndedMs（非 null 时）< closeCalledMs | 判废（连接在 close() 前已没了） | — | 受控构不出（fixr6 实测 earlyrst 最近似形状 connectionEndedMs=26 > closeCalledMs=25——探针 connect→close 为同一同步块，连接结束事件只能在下一 tick 派发、恒晚于 close 调用；该条防探针结构变更/写坏产物） |
+| M14 | closeSettled=false 且 elapsedMs<windowMs | 判废（早退/被截断） | — | 受控探针构不出：观测循环只在 settle 或窗满退出，两者都使条件不成立；防进程被杀/截断产物 |
+| M15 | 窗 <95 s 而结论含「支持」 | 判废（探针自守谓词防绕过） | — | 受控探针构不出：COVERS_WORST_PHASE 谓词在探针内强制 |
+
+  判废（任一 M2/M11/M12/M13/M14/M15 命中即作废重跑）；有效性只看上述条件、不看退出码
+  （exit 4 例外：第四态根本没有产物可判）。边缘登记：settle 且 closeWaitedMs≥1000 而无可归因
+  证据（无字节、无事件、connectionEndedMs=null）不落 M2（时间下界外的弱证据形状）——判官
+  按 M12 字段完整性复核后人工判读，理由：该形状与「close 不等该连接」的真实机制不可由
+  观测面区分，且 r3→r5 教训是不为未观测形状扩判废词。
 - **必跑（fix-r4 接线登记）**：P16 守门/note 纯函数的入仓负控微测
   `node scripts/a8-5/p16_gate_microtest.mjs`（无参数、无落盘副作用、不依赖 TS 基线 dist，
   端口 39994；退出码 0 = 全过 T1–T16，任一断言失败 exit 1、总时限 watchdog 60s 超时
@@ -38,6 +92,13 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   node-version 22.22.0 的 node 步（`test_metadata_observer.mjs`）可挂 `node
   scripts/a8-5/p16_gate_microtest.mjs`，或新增 `check_a8_5_gates.sh`——CI 闸门面属全员
   策略，归 #2759 P2-跟进由协调者终判）。
+- **必跑（fix-r8 接线登记）**：P12 note 分支纯函数的入仓负控微测
+  `node scripts/a8-5/p12_note_microtest.mjs`（无参数、无端口、无落盘副作用、不依赖
+  TS 基线 dist，同步执行；退出码 0 = 全过 T1–T11，任一断言失败收集后汇总 exit 1）——
+  直调 `p12_note_branch.mjs` 的 `p12NoteBranch`（p12 note 分支序整体收敛于此，M11 短路
+  前置）；凡改动 `p12_zero_byte_close.mjs` / `p12_note_branch.mjs` 的 note/分支面，本微测
+  必跑、原始输出归档进当轮证据目录。**该微测当前不被任何 runner/CI 收录**（同上 p16 微测
+  的收录问题，归 #2759 P2-跟进）。
 - **纪律**：仅 loopback 高位端口（39871–39898 段；p16 守门微测用 39994——fix-r4 挪出该段，
   原 39894 与 p15_driver 的 A-elevate 用例撞号）、隔离 `PILOT_HOME`/`diskSpillDir`、不外发网络
   （provider 指不可路由 loopback）、子进程记 pid 逐个收尸、观察窗全部有界、无无界派生。
@@ -60,7 +121,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p9_background_descendants | #2251 条目 3 | 同组 TERM 免疫后代零残留（组 SIGKILL 覆盖）；setsid 跨组后代逃逸存活（ppid→1、自有 pgid；任务 pid 锚定的 ppid 链漏检） |
 | p10_background_hangs | #2251 条目 4 | start 永不 settle ⇒ dispose 卡 whenStartsDrained（3s 窗右删失）；快照写挂起 ⇒ TERM 已杀、dispose 卡 `await done`（settleEntry 停 store.write） |
 | p11_child/p11_driver | §4.5 S1–S3 接纳 + 连接两态 | closing 窗口内 E5 新任务被接纳（running）；断开 ⇒ dispose 杀（码 0 零残留）；保持 ⇒ close 永不 settle，SIGKILL 后 detached 任务成孤儿 |
-| p12_zero_byte_close | A4 零字节 ≥65s | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（>60s headersTimeout，右删失下界 70s）、服务端不主动断该连接 |
+| p12_zero_byte_close | A4 零字节，70 s 窗（右删失下界；#2259，见结论 6） | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（窗未覆盖最坏相位 408 落点，见结论 6）、服务端不主动断该连接（fix-r4 限定：旧 70 s run 无字节观测面——探针只挂 close/error，只证窗内无 close/error 事件；字节面（408 是否发）由 p12 判别面判别，≥95 s 观测待复跑。复跑用法/参数/退出码与判据判废条件见「做法」p12 段（锚点 `p12-window-spec`，fix-r5 起为装置规约正本）；判据字段名：`firstByteMs`/`bytes`/`hex`/`closeSettled` + 首条 `scenario` 行（`headersTimeout` 两层实读须 =60000，`serverShape` 记命中层级，读不到走第四态 exit 4；`closeWaitedMs` 落 observation 行；判读以 p12 段判废面矩阵为正本，判废条件照 R1:121-134）） |
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
@@ -80,7 +141,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
    （无二次超时）；是否加界归 #1353 决策卡。
 5. **E5 在 S1–S3 照常接纳 + 孤儿路径**（p11）：接纳面只看运行时自身状态；提交连接保持打开 ⇒
    S4 不可达 ⇒ SIGKILL 旧进程后 detached 任务成孤儿。
-6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s，>headersTimeout(60s)。
+6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s——408 落点为相位窗 (60, 90] s 内的相位值（含毫秒级 tick 执行抖动），随网格相位变化（见 `A7.4-HTTPSTORE-KEEPALIVE-001-R5` / `A8.4-NATIVE-HTTP-002-R2`），70 s 窗未覆盖最坏相位落点、不得作对拍判 PASS 依据（#2259）。两说须分列判别：①SmsChannel 实例 close → `httpServerPreClose` 清 connections checker（`A8.3-CH-SMS-014-R2` 机制链，SmsChannel 实例级在档）；②GatewayServer 实例 close 路径是否同样清 checker **未实测**——p12 起零字节 socket 挂 data/end 监听（`firstByteMs`/`bytes`/`hex` 落产物），≥95 s 窗内「不 settle 且无服务端字节、无 end/close/error 服务端事件且 socket 本地仍开，且 scenario 行 headersTimeout=60000（fix-r7 第五条件，M11 判废面——≠60000 的产物按矩阵 M11 判废）」（fix-r5/r7 谓词）支持②同①（408 不发）、「不 settle 且有字节」则排除①型机制（settle 等待另有原因）、谓词不满足时只报事实不作机制归因。**该 ≥95 s 观测待复跑**（当前未跑，不伪造观测）：复跑命令、判据与判废条件见「做法」p12 段（锚点 `p12-window-spec`）；判据字段名 = `firstByteMs`/`bytes`/`hex`/`closeSettled`/`closeWaitedMs` + 首条 `scenario` 行（`headersTimeout` 两层实读须 =60000、`serverShape` 记命中层级、读不到走第四态 exit 4——先修探针再复跑；判读以 p12 段判废面矩阵 M1–M15 为正本，判废条件照 R1:121-134）。
 7. **空集合不挂起**（p13）：零任务/零 channel/零连接下全部停机面 0–4ms 落定——「空集合快速干净退出」
    断言有基线支撑（A13 同构）。
 8. **半停无重试**（p14）：部分组件停成后失败——已停不回滚、失败组件永不再被停（二次 stop no-op）、
@@ -95,7 +156,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 
 ## 边界（时间与规模）
 
-- P8–P12 的观察窗有界（3–70s），「不落定」均为右删失下界、非「永不」证明；dispose 挂起格以源码
+- P8–P12 的观察窗有界（3–70 s；p12 经 `P12_WINDOW_MS` 可放大，≥95 s（保守 120 s）观测才可立对拍断言；非法值探针拒绝落盘），「不落定」均为右删失下界、非「永不」证明；dispose 挂起格以源码
   无超时逻辑 + 窗口不落定共同支撑。
 - mbp2（Darwin）与 cb8（Linux）行为差异未系统排查；p2b/p1_smoke 复验一致是移植可用性的证据，
   不构成全谱系跨平台等价声明。macOS 无 `setsid` 命令，逃逸用例用 `python3 os.setsid()` 构造。

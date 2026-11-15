@@ -5,6 +5,11 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
+The execution table is verified against the static EXPECTED_NAMES roster with
+the shared `negative_selection.registered` in every mode (--check, the default
+full run, and an explicit subset) before anything runs, so a row dropped from
+`mutations` cannot silently shrink the denominator, and a drift is a
+never-started refusal (exit 2), not a shorter run that still reads green.
 """
 import argparse
 import json
@@ -26,7 +31,8 @@ PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_registry_switch.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, withdraw_claim
+from negative_selection import claim_dir, missing_target, refuse, \
+    refuse_unusable_target, registered, verdict_exit, withdraw_claim
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 # Discovery anchor: fixtures/rust_binding_views.py (the shared binding-scan
 # views this table's test_body reads; without the literal a change to the
@@ -228,6 +234,30 @@ def main():
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
     check_binding_scope()
+    # #2572: every mode re-enters the roster check (import-time covers a
+    # drifted source file; this covers a roster that drifted between import
+    # and run -- same registered()/refuse contract, same rc 2).
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
+    # #2572 fix-r2 (both review families): the name refusals fire before any
+    # guard reads mutable sources — under a concurrent full run holding the
+    # tree, a typo'd name must report itself (exit 2, never started), not a
+    # stale-anchor rc 1 that reads as "it ran and was not green".
+    repeated = sorted({name for name in args.selected
+                       if args.selected.count(name) > 1})
+    if repeated:
+        refuse('#1369 repeated mutation name: ' + ', '.join(repeated))
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if unknown:
+        refuse('#1369 unknown mutation name: ' + ', '.join(unknown))
+    # #2572 fix-r2: `--check` only verifies the roster and bindings; a caller
+    # that also passes an output slot or names means a run and must not get a
+    # green line that silently drops them.
+    if args.check and (args.output is not None or args.selected
+                       or args.compile_only):
+        refuse('#1369 --check takes no positional arguments')
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
@@ -238,7 +268,10 @@ def main():
     if stale:
         raise SystemExit('#1369 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
-        print(f'#1369 {len(mutations)} unique anchors and assertion bindings: OK')
+        total = len(EXPECTED_NAMES)
+        print(f'#1369 {total} registered mutations present '
+              f'(EXPECTED_NAMES roster matched); {total} unique anchors '
+              f'and assertion bindings: OK')
         return 0
     # #1642 fix-r3 (review b, MM sibling#2): the startup refusals the four-way
     # table (specs/negative-controls/README.md) promises go through
@@ -377,7 +410,11 @@ def main():
               for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
-        {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
+        {'controls': results, 'counts': counts, 'rosterTotal': len(EXPECTED_NAMES),
+         # #2572 fix-r1: record what actually ran (manager-gateway #2309 fix-r3
+         # precedent) — a shrunken run is auditable from the summary alone.
+         'selected': [row[0] for row in selected],
+         'guardedSha256': guarded_sha256, 'sidecarSha256': sidecar_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
     # A guard failure after the body ran leaves no trustworthy row (and the
@@ -385,8 +422,11 @@ def main():
     # recorded statuses happen to read green: rc 1, the four-way table.
     if guard_failed:
         return 1
+    # #2572: the tail verdict is the shared `verdict_exit`, so an empty result
+    # list (a future branch that records nothing) is a failure, never `any()`
+    # over nothing reading green — invariant 2 of specs/negative-controls.
     success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(any(row['status'] != success for row in results))
+    return verdict_exit(results, key='status', killed=success)
 
 
 if __name__ == '__main__':

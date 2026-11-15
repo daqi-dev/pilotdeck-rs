@@ -1059,6 +1059,18 @@ def main():
             raise SystemExit('#1231 stale test/assertion bindings: ' + ', '.join(stale))
         print(f'#1231 {len(selected_rows)} mutation anchors and assertion bindings: OK')
         return 0
+    # #2856 fix-r3 (MM sibling#3, a档): the exact match above let a misplaced
+    # `--check` (`--check=1`, or `--check OUT` with OUT landing in the output
+    # slot) fall through to the run path and claim a directory named
+    # `--check` in the cwd while starting the full cargo batch. Any other
+    # placement of --check is a never-started refusal (rc 2), and a first
+    # token that merely starts with a dash is an unrecognized flag, never the
+    # OUT directory of a full run (the shape issue-1437 carries since its
+    # fix-r2/fix-r3).
+    if '--check' in sys.argv[1:]:
+        refuse('#1642 --check takes no arguments')
+    if sys.argv[1:] and sys.argv[1].startswith('-'):
+        refuse('#1642 unrecognized flag: ' + sys.argv[1])
     if len(sys.argv) < 2:
         # #3143 fix-r1 (boundary#1): an empty argv is a never-started
         # refusal (rc 2), the same exit-code four-way table entry the three

@@ -1668,12 +1668,20 @@ class EnvironmentControls(unittest.TestCase):
         # cancel×plain 单控制普通中止 rc 2）Ran 16→20，下限同步抬到
         # 20——不抬则删掉任一新用例（枚举校验被删 / 守卫放宽回全网格
         # 两个方向）CI 仍绿。
+        # #2856 fix-r6（DS r5 sibling P2a）：名册守卫加反向扫描 + 误用拒跑
+        # 次序钉两用例 Ran 27→29，下限同步抬——不抬则删掉这两条
+        # 新尺子（反向扫描 / 次序钉被删，剩 27 仍 ≥20）CI 仍绿，正是
+        # 上面连环修过的下限漂移洞（实跑 Ran 29 为准，不用评审报的
+        # 31——它把本两条又计进基线了一次）。
+        # #2856 fix-r7（DS r6 sibling P1#2）：留 1 条余量仍留单删逃逸
+        # （删任一用例 Ran=28 ≥ 28 仍绿），下限改 29 取实测等值——
+        # r7 未加删用例，Ran 仍 29。
         minimums = (
             ('test_negative_optimize_guards', 10),
             ('settings-gateway/test_negative_controls.py', 13),
             ('test_negative_run_guards', 8),
             ('network-timing/test_negative_controls.py', 10),
-            ('test_negative_roster_guards', 20),
+            ('test_negative_roster_guards', 29),
             ('issue-2495/test_negative_controls.py', 30),
             ('sdk-signals-close-order-pin/test_negative_controls.py', 20),
         )
