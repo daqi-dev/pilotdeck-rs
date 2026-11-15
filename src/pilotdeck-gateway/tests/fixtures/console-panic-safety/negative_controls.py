@@ -861,7 +861,16 @@ killed_rows = sum(1 for row in summary if row['status'] == 'KILLED')
 # success wording now prints only when every verdict row is KILLED (on
 # the green path ``len(summary) == len(run_rows)``, so those bytes are
 # unchanged).
-if killed_rows == len(summary):
+# fix-r3 (review boundary#1 + sibling#2, the ``failures`` face of the
+# same close): the success wording must not fire beside the failed exit
+# its own guard below imposes — a failures-only apparatus failure (the
+# future shape the fix-r2 guard exists for) still printed ``every source
+# restored byte-for-byte``, and an empty ``summary`` satisfied ``0 == 0``
+# vacuously (the ``verdict_exit`` zero-row guard below is that domain's
+# exit side). The #2498 family form is kept: the verdict line still
+# prints first, then the guard — the line just stops reading green on a
+# run that did not end green.
+if summary and not failures and killed_rows == len(summary):
     print(f'{killed_rows}/{len(summary)} killed; every source restored byte-for-byte', flush=True)
 else:
     print(f'{killed_rows}/{len(summary)} killed; '
