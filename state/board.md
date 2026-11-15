@@ -7355,3 +7355,31 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 6 | 2960 dispatch-resume fix-r8 | coord2/e7 | 本机盘 ≥20 GiB 即恢复 |
 | 7 | 3159 等 2800 合入窗口（重锚+双谱系全量重跑计划 /tmp/3159-hold-reason.md） | coord2/e7 | 2800 MERGED 即启动 |
 | 8 | #3217 十五条 P2：到 #2499/#2959 关单自查时逐条处置（b 档升级走仲裁）；m01 /tmp/fixr14-2499 测试树用毕回收 | coord2/e7 | 关单自查时 |
+
+### 交接段（17:0x–21:2x，coord2/e7 中轮段十；超时补写）
+
+**做了什么**：
+1. **2513 fix-r16 三超时接续后收货闭环**：r1/r2 两次被 7200 s 时限整点判杀（无 RESULT/patch），用 `remote-worker.sh --from-local`（整树哈希双侧校验）两续现场；r3 1h25m 正常交付（DONE 三件齐）。收货子代理重建树：基线 74d9033d4 + final.patch 逐字节一致 → 提交 e4466cb15（44 文件 +1287/−409）推送。**协调者冻结重钉**：两套 `--write`（gateway 3 件 / ui-server 2 件）+ r16 事件件两条 Change 行新旧哈希写反就地更正（worker 笔误，new 位误填 r15 前陈旧哈希；PR 新增件允许，r15 先例）；修法依据 merge-base 74d9033d4 钉值 b8f06d45/4b8445b1 走链复核。三套 `check_frozen.py --base origin/main` 全 PASS（gateway 30 / parity / ui-server 53 entries），parity README sha 对得上。重钉提交 bbf112bc0（gitleaks 绿）已推（SSL 抖动第 7 次重试成）。DS+MM 增量评审已派在跑（base=74d9033d4，`_tmp/20261115-2513-fixr16-review-{ds,mm}/`）。
+2. **2959 收口链走完入队**：fix-r15（评审 r14 全 P2 当轮收口）→ fix-r16（r15 残差两条当轮收口，DS 增量覆盖 r15+r16 四角色全 PASS P0=0 P1=0，唯一 P2 开 **#3219** 前置于 #2499 阶段复核）；分支含三个重锚 merge 无法逐提交重放，按 #3185 先例线性重放单提交 61424a938（22 文件 blob 逐字节一致，PR 补丁指纹不变）；body 手术完成后 CI 全绿入队（队列 pos=1，等待器在挂）。
+3. **3185 镜像 flake 踢一次重入队**：合并组 run 43705501476 failure 根因＝镜像守卫 #3078（rust=20261111.370.1 vs negative-controls=.127.1 不同 runner 镜像构建，fail-closed 拒绝），与 3177/2989 同日同形；`gh pr merge 3185` 重入队（pos=2，GraphQL 验 QUEUED）。
+4. **2800 fix-r13 收货闭环**：r1 worker 交付（DONE 清单缺，三副本互证 RESULT/patch/commit-msg sha256 一致 + waiter FINISH exit=0 判定链完整）；提交 36f90a192 已推（基线 f6f6aa792 核过，ls-remote 断言）；三套 check_frozen `--base` PASS + gitleaks 绿。**DS 增量四角色全 PASS：P0=0 P1=0**（P2=6，其中「INVALID-SHAPE 入全局 STATUSES 连带放宽 legacy schema」与「rc=3 分档无仓内回归测试」两家角色双撞，待三分判档）；MM 增量在跑。
+5. **3178 r2 收货闭环**：提交 13c784b00 已推，检查过；DS 评审在跑（子代理挂）。
+6. **2856 MM 增量四角色全 ECONNRESET**（连接断开重试仍失败，`_tmp/20261115-2572-fixr11-review-mm/`），与 GitHub SSL 抖动同时段——代理切节点类，待网络稳定重派；DS 侧先前块已 PASS。
+7. **用户唯一真实消息已答（21:0x）**：机器负载/进度表、瓶颈卡点、#1357 前置与预估（乐观 4–5 天～1 周+，取决于磁盘人拍板与大线实质开发量）。**新输出令（人定）**：给用户看的内容一律「说人话」——领域内最通用术语、不自造新词。
+8. 现场：本机 Data 卷 ~6 GiB 维持（2960 继续缓，编译走 m01）；MM 通道恢复（探测过）；GitHub 网络 21:0x 起间歇 SSL 断续（push 重试可成，gh api 时断时续）。
+
+**事故**：无新事故（事件件 Change 新旧哈希写反为 worker 笔误，协调者重钉中就地更正并留判据；网络 SSL 抖动为环境噪声非仓内问题）。
+
+**下一步**：①2513 DS/MM 评审出块 → P2 三分（4 张候选 P2-跟进先查重）→ PR #2939 body → gate → CI → 入队；②2800 MM 增量出块 → P2 三分 → body → CI → 入队；③3178 DS 出块 → body → CI → 入队；④2856 MM 重派（网络稳定后）→ body → 入队；⑤2959/3185 队列终态 → 核邮箱 → 2959 走 #2499 关单链（#3095/#3213/#3217/#3219 前置核）、3185 收账（#3204 五条 + #3152 关单链）；再镜像 flake 按 #3078 先例重入队；⑥#1353/#1355/#1356/#1317 四条大线剩余量摸底（已向用户承诺）；⑦2960 等本机盘 ≥20 GiB；3159 等 2800 合入窗口。
+
+未结义务表（21:2x）：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 2513 评审收块 → P2 三分（bnd#2 分母外置 / bnd#4 二次验证 / conc#4 heads-coverage / conc#5 timeout 无 killpg，均先查重）→ PR #2939 body → gate → CI → 入队 | coord2/e7 | 评审哨兵触发即收 |
+| 2 | 2800 MM 增量出块 → P2 三分（DS 侧 6 条：INVALID-SHAPE legacy 放宽 + rc=3 无回归测试双撞优先判档）→ body → CI → 入队 | coord2/e7 | 同上 |
+| 3 | 3178 DS 评审出块 → body → CI → 入队 | coord2/e7 | 同上 |
+| 4 | 2856 MM 增量重派（网络稳定后；DS 侧已 PASS）→ body → 入队 | coord2/e7 | 网络恢复即派 |
+| 5 | 2959（pos=1）/3185（pos=2）队列终态 → 核邮箱 → 2959 #2499 关单链（#3095/#3213/#3217/#3219）/ 3185 收账（#3204+#3152）；镜像 flake 按 #3078 重入队 | coord2/e7 | 哨兵触发即收 |
+| 6 | #1353/#1355/#1356/#1317 剩余量摸底（向用户承诺项） | coord2/e7 | 本轮内 |
+| 7 | 2960 dispatch-resume fix-r8 | coord2/e7 | 本机盘 ≥20 GiB 即恢复 |
+| 8 | 3159 等 2800 合入窗口（重锚+全量重跑计划 /tmp/3159-hold-reason.md） | coord2/e7 | 2800 MERGED 即启动 |
