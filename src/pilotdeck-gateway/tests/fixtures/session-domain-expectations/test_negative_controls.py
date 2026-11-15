@@ -106,13 +106,14 @@ from pathlib import Path
 
 fixtures, source = (Path(argument) for argument in sys.argv[1:3])
 sys.path.insert(0, str(fixtures))
-namespace = {'__name': 'check_anchors_dead_stdout_child',
+namespace = {'__name__': 'check_anchors_dead_stdout_child',
              '__file__': str(source)}
 exec(compile(source.read_text(), str(source), 'exec'), namespace)
 # A mutation table that lost every row: the delivered --check-anchors
 # preflight must refuse (rc=2) instead of certifying zero anchors, on the
 # real shared helpers -- and still refuse inside this child, whose stdout
-# was closed at exec time (1>&-).
+# was closed before exec by the parent's preexec_fn (fix-r5 P2-a#2: the
+# list-form spelling of the old ``1>&-`` shell redirect).
 namespace['MUTATIONS'] = []
 # An emptied table trips the binding-drift refusal (a different rc=2
 # owner) before --check-anchors; this twin pins the anchor gate, so the
@@ -125,42 +126,53 @@ raise SystemExit(namespace['main']())
 
 
 class CheckAnchorsDeadStdoutControls(unittest.TestCase):
-    """#3178 fix-r4 (DS sibling#4 + MM sibling#5 + MM concurrency#3): 1>&-.
+    """#3178 fix-r4 (DS sibling#4 + MM sibling#5 + MM concurrency#3), revised
+    by fix-r5 (P1-4 + P2-a#2): 1>&-.
 
-    The guarded prints this family moved to ``dead_stream_print`` (the
-    derived-counts diagnostic ahead of ``--check-anchors`` this round, the
-    stale-anchor refusal in fix-r3) had no broken-pipe twin: in a real
-    process whose stdout was closed at exec time (``1>&-`` makes CPython
-    set ``sys.stdout = None``), a bare ``print`` ahead of the refusal would
-    crash, exit 1, and read as "ran and was red". ``CHECK_ANCHORS_CHILD``
+    The guarded prints this family routed through ``dead_stream_print``
+    (the derived-counts diagnostic ahead of ``--check-anchors``, the
+    stale-anchor refusal) had no dead-stream twin. ``CHECK_ANCHORS_CHILD``
     runs the delivered ``negative_controls.py`` in a real child process —
     the real ``negative_process`` helpers, nothing faked, no cargo run —
-    with an emptied table and ``--check-anchors``: the diagnostic and the
-    refusal must both reach stderr, the exit must stay at 2, and the
-    shutdown flush must record no "Exception ignored".
+    with an emptied table and ``--check-anchors``, stdout closed at exec
+    time (fix-r5 P2-a#2: the list-form ``preexec_fn=lambda: os.close(1)``
+    replaces the unquoted ``/bin/sh -c`` spelling; the two are
+    indistinguishable, pinned by fix-r5's probe-dead-stdout-semantics.log).
+
+    Pinned semantics (same probe, correcting fix-r4's causal claim): a
+    dead exec-time stdout makes CPython set ``sys.stdout = None`` and a
+    bare ``print`` silently returns — the line is lost, never a crash and
+    never re-routed; the intended exit code survives either way. So the
+    refusal must still reach stderr and the exit must stay at 2, while the
+    derived-counts diagnostic (a stdout contract again since fix-r5 P1-4)
+    is silently lost here and must never leak onto stderr.
     """
 
     def test_an_empty_selection_refuses_under_a_dead_stdout(self):
+        import os
+
         with tempfile.TemporaryDirectory(prefix='pdrs-sde-check-') as temp:
             child = Path(temp) / 'child.py'
             child.write_text(CHECK_ANCHORS_CHILD)
             result = subprocess.run(
-                ['/bin/sh', '-c',
-                 f'exec {sys.executable} -I {child} '
-                 f'{Path(__file__).resolve().parents[1]} '
-                 f'{Path(__file__).with_name("negative_controls.py")} 1>&-'],
+                [sys.executable, '-I', str(child),
+                 str(Path(__file__).resolve().parents[1]),
+                 str(Path(__file__).with_name('negative_controls.py'))],
+                preexec_fn=lambda: os.close(1),
                 capture_output=True, timeout=120)
         message = ('#3178 the --check-anchors refusal must keep exit 2 under '
-                   'a dead stdout (a bare print ahead of the refusal would '
-                   'have crashed rc=1 and read as "ran and was red")')
+                   'a dead stdout (the refusal reason must still reach '
+                   'stderr; a lost stdout line is never a crash and never '
+                   'a re-route)')
         self.assertEqual(result.returncode, 2,
                          message + f' (got rc={result.returncode}, '
                          f'stderr={result.stderr!r})')
         self.assertIn(b'EMPTY ANCHOR SELECTION', result.stderr,
                       message + ' (the refusal reason must still reach stderr)')
-        self.assertIn(b'derived counts: ', result.stderr,
-                      message + ' (the diagnostic moved to the guarded print '
-                      'this round must survive the dead stdout too)')
+        self.assertNotIn(b'derived counts: ', result.stderr,
+                         message + ' (the diagnostic is a stdout contract '
+                         'again since fix-r5 P1-4; under the dead stdout it '
+                         'is silently lost, never re-routed to stderr)')
         self.assertNotIn(b'Exception ignored', result.stderr,
                          message + ' (the interpreter-shutdown flush must not '
                          'see the dead stdout)')

@@ -21,8 +21,8 @@ from contextlib import redirect_stderr
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from negative_selection import (baseline_passed, claim_dir, refuse,
-                                registered, select, verdict_exit,
-                                withdraw_claim)
+                                refuse_empty_table, registered, select,
+                                verdict_exit, withdraw_claim)
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -264,6 +264,82 @@ class Refuse(unittest.TestCase):
                         f'(got {result.returncode}, stderr={result.stderr!r})')
         self.assertTrue(result.stdout == b'',
                         '#1087 refuse() must not write the reason to stdout')
+
+
+class RefuseEmptyTable(unittest.TestCase):
+    """#3178 fix-r5 c-档（DS sibling#5）：the shared empty-table refusal itself.
+
+    Nine runners call ``refuse_empty_table`` but the helper had no use case of
+    its own — only the per-runner twins exercised it through their runners.
+    The same three-pulse shape as ``Refuse`` above pins the helper directly:
+    the wording and exit code, the non-empty no-op, and the two dead-stderr
+    shapes (in-process closed stream, real closed fd).
+    """
+
+    def test_the_emptied_table_exits_two_with_the_shared_wording(self):
+        for label in ('mutation', 'case'):
+            with self.subTest(label=label):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        refuse_empty_table([], label)
+                self.assertEqual(raised.exception.code, 2,
+                                 'the empty table is "never started", rc 2')
+                self.assertEqual(stderr.getvalue(),
+                                 f'EMPTY {label.upper()} TABLE: '
+                                 f'no {label} to verify; refusing to run\n')
+
+    def test_a_non_empty_table_is_a_silent_no_op(self):
+        # Only the emptied table refuses; a live table must fall through to
+        # the runner's own preflight instead of exiting here.
+        self.assertIsNone(refuse_empty_table(ROWS, 'mutation'))
+
+    def test_the_emptied_table_exits_two_when_stderr_is_closed_in_process(self):
+        # #3178 fix-r5 (dead-stdout semantics pinned by the round's
+        # probe-dead-stdout-semantics.log): the guarded print resolves the
+        # target by name and swallows the closed-stream ValueError, so the
+        # exit code stays the contract.
+        class ClosedStderr:
+            def write(self, data):
+                raise ValueError('I/O operation on closed file')
+
+            def flush(self):
+                pass
+
+        stderr = sys.stderr
+        sys.stderr = ClosedStderr()
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                refuse_empty_table([], 'case')
+        finally:
+            sys.stderr = stderr
+        self.assertTrue(raised.exception.code == 2,
+                        '#3178 refuse_empty_table must keep exit 2 '
+                        'under a closed stderr')
+
+    def test_the_emptied_table_exits_two_with_a_real_closed_fd(self):
+        # The ``2>&-`` shape, spelled the fix-r5 P2-a#2 list-form way (no
+        # unquoted ``/bin/sh -c`` path concat); the two spellings are
+        # indistinguishable per the round's dead-stdout semantics probe.
+        fixtures = Path(__file__).resolve().parent
+        child = (f'import sys\n'
+                 f'sys.path.insert(0, {str(fixtures)!r})\n'
+                 f'from negative_selection import refuse_empty_table\n'
+                 f"refuse_empty_table([], 'case')\n"
+                 f"raise SystemExit('refuse_empty_table returned without exiting')\n")
+        with tempfile.TemporaryDirectory(prefix='pdrs-ret-2fd-') as base:
+            script = Path(base) / 'child.py'
+            script.write_text(child)
+            result = subprocess.run(
+                [sys.executable, '-I', str(script)],
+                preexec_fn=lambda: os.close(2),
+                capture_output=True, timeout=60)
+        self.assertTrue(result.returncode == 2,
+                        f'#3178 refuse_empty_table must exit 2 with fd 2 '
+                        f'closed (got {result.returncode}, '
+                        f'stdout={result.stdout!r})')
+        self.assertTrue(result.stdout == b'',
+                        '#3178 the refusal must not re-route to stdout')
 
 
 if __name__ == '__main__':

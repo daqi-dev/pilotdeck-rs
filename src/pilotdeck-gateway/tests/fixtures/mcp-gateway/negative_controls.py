@@ -289,6 +289,22 @@ def cases_for(names):
 
 
 def check_anchors(selected):
+    # #3178 fix-r5 (DS sibling#1 + MM sibling#1): an empty selection used to
+    # fall through the loop below and print "0 anchors: ok" while main()
+    # returned 0 — zero anchors validated but the gate looked green, the
+    # vacuum-green shape fix-r4 closed for the parity-lock family and #1364
+    # P0-b closed for session-domain-expectations. Fail closed and say why,
+    # so a deleted MUTATIONS table can never pass preflight.
+    if not selected:
+        # #3178 fix-r5 (P2-a family shape, dead-stdout semantics pinned by
+        # fix-r5's probe-dead-stdout-semantics.log): the shared guarded
+        # print — under a dead stdout (``1>&-`` makes CPython set
+        # ``sys.stdout = None``) a bare ``print`` silently loses the line,
+        # and under ``2>&-`` a stderr print re-routes; the refusal must
+        # stay at rc=2 either way.
+        dead_stream_print("EMPTY ANCHOR SELECTION: nothing to validate; "
+                          "the anchor gate must not pass", stream="stderr")
+        return 2
     stale = []
     for name in selected:
         source, old = MUTATIONS[name][0], MUTATIONS[name][1]
@@ -297,15 +313,21 @@ def check_anchors(selected):
             stale.append((name, source.relative_to(root).as_posix(), count))
     if stale:
         # #3178 fix-r4 (MM sibling#4): the shared guarded print — a bare
-        # ``print`` under a dead stdout would crash rc=1 and read as "ran
-        # and was red"; the refusal must stay at rc=2 (parity-lock-release
-        # fix-r3 family shape).
+        # ``print`` under a dead stdout loses the refusal reason (exec-time
+        # ``1>&-`` makes CPython set ``sys.stdout = None`` and ``print``
+        # returns without writing, pinned by fix-r5's dead-stdout probe);
+        # the refusal must stay at rc=2 (parity-lock-release fix-r3 family
+        # shape).
         for name, path, count in stale:
             dead_stream_print(f"STALE ANCHOR {name}: {count} matches in {path}",
                               stream='stderr')
         dead_stream_print("STALE ANCHORS: refusing to run", stream='stderr')
         raise SystemExit(2)
-    print(f"{len(selected)} anchors: ok")
+    # #3178 fix-r5 (MM sibling#3): the green line takes the guarded print
+    # too — a dead stdout must not turn the ok line into a crash or a lost
+    # verdict; task-budget-zero / js-math-zero already use this shape.
+    dead_stream_print(f"{len(selected)} anchors: ok", stream="stdout")
+    return 0
 
 
 def compile_cases(selected, out):
@@ -356,8 +378,10 @@ def main():
     args = parser.parse_args()
     selected = ["busy-gate-removed"] if args.sample else (args.names or list(MUTATIONS))
     if args.check_anchors:
-        check_anchors(selected)
-        return 0
+        # #3178 fix-r5 (DS sibling#1): the preflight exit must carry
+        # check_anchors's refusal — the old call dropped the return value,
+        # so even a returning refusal could not reach the exit code.
+        return check_anchors(selected)
     assert args.out is not None, "provide the output directory"
     args.out.mkdir(parents=True, exist_ok=False)
     check_anchors(selected)

@@ -177,10 +177,13 @@ jobs:
       # model-http-encoding / edgeclaw-dream / edgeclaw-dream-run /
       # edgeclaw-dream-runner）此前同样只有 docstring「Run with」，接线进同一
       # 步；十七模块实测合计约 2 s，预算不变。
+      # #3178 fix-r5（修复面 1 接线）：四组空表拒绝（mcp-gateway /
+      # skills-external / gateway-entry-guard / shared-runner-failclosed）
+      # 的死 stdout 断管孪生同样接线进同一步；二十一模块合计仍远低于预算。
       - name: 网关负控 p2 批孪生自测（#3178）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         shell: bash
-        # 挂起时占满 job 默认 360 分钟；十七模块实测合计约 2 s，5 min 即卡死即红。
+        # 挂起时占满 job 默认 360 分钟；二十一模块实测合计约 2 s，5 min 即卡死即红。
         timeout-minutes: 5
         run: |
           python3 -B -m unittest -v frozen-manifest/test_negative_controls.py
@@ -200,6 +203,10 @@ jobs:
           python3 -B -m unittest -v edgeclaw-dream/test_negative.py
           python3 -B -m unittest -v edgeclaw-dream-run/test_negative.py
           python3 -B -m unittest -v edgeclaw-dream-runner/test_negative.py
+          python3 -B -m unittest -v mcp-gateway/test_negative_controls.py
+          python3 -B -m unittest -v skills-external/test_negative_controls.py
+          python3 -B -m unittest -v gateway-entry-guard/test_negative_controls.py
+          python3 -B -m unittest -v shared-runner-failclosed/test_negative_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。

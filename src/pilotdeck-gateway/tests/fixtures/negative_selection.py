@@ -214,8 +214,8 @@ def refuse(message):
 def refuse_empty_table(table, label):
     """Refuse to run on an empty mutation/case table: exit 2, nothing on disk.
 
-    #3178 fix-r4 (DS simplify#3): the same refusal was hand-copied into nine
-    runners and drifted — two wordings (``EMPTY MUTATION TABLE`` /
+    #3178 fix-r4 (DS simplify#3): the same refusal was hand-copied across
+    the runners and drifted — two wordings (``EMPTY MUTATION TABLE`` /
     ``EMPTY CASE TABLE``), two return forms (``sys.exit(2)`` / ``return 2``)
     and three positions (before or after the ``CARGO_TARGET_DIR`` assert,
     before or after ``preflight()``); the position drift is what let
@@ -224,6 +224,20 @@ def refuse_empty_table(table, label):
     runner's ``main()``. The guarded print keeps the exit-2 refusal intact
     under a dead stderr (``2>&-``) or dead stdout (``1>&-``); the empty
     table is "never started", not "ran and was red" (#3178 fix-r2/r3/r4).
+
+    Callers (fix-r5 counts nine): edgeclaw-dream, edgeclaw-dream-run,
+    edgeclaw-dream-runner, edgeclaw-llm, edgeclaw-llm-index,
+    edgeclaw-llm-telemetry, edgeclaw-real-provider, edgeclaw-retriever,
+    model-http-encoding — the fix-r5 surface-2 trio joined with the
+    shared wording (P2-a#5). Hand copies that remain, each pinned by its
+    own constraint: fe-coexist and frozen-manifest refuse their
+    post-``--only`` selection, not the raw table; edgeclaw-messages
+    refuses after the output path and the ``CARGO_TARGET_DIR`` assert;
+    edgeclaw-llm-recall refuses at module level between ``--list`` and
+    ``--check-anchors`` (fix-r4's ordering pin — it has no ``main()``);
+    edgeclaw-dream/negative_shapes, edgeclaw-llm-dream and
+    native-stimulus-plan keep their fix-r2/r4 positions. Migrating them
+    needs their own twins and is registered as fix-r5 residue.
 
     ``label`` is the lowercase singular ('mutation', 'case'); the twins pin
     the ``EMPTY <LABEL> TABLE`` prefix.

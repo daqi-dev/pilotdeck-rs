@@ -259,6 +259,14 @@ class DriftTests(unittest.TestCase):
                         '#1279 standalone-anchors: standalone must not print the JSON listing')
         self.assertTrue(errors.getvalue() == '',
                         '#1279 standalone-anchors: the ok path must not print usage or drift diagnostics')
+        # #3178 fix-r5 (P1-4 / mm-boundary#3): the derived-counts diagnostic
+        # is a stdout contract; fix-r4's dead-stdout hardening silently moved
+        # it to stderr and only this test's empty-stderr pin noticed. Keep the
+        # destination pinned so a future stream flip is red here, not silent.
+        self.assertTrue(any(line.startswith('derived counts: ') for line in lines),
+                        '#3178 standalone-anchors: the derived-counts diagnostic '
+                        'is a stdout contract (a silent stderr move broke this '
+                        'test in fix-r4)')
         with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
                 patch.object(gate, 'check_anchors', return_value=2), \
                 contextlib.redirect_stdout(io.StringIO()), \

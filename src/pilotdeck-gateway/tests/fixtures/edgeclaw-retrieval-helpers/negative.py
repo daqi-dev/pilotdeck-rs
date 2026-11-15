@@ -33,6 +33,9 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
+# #3178 fix-r5 (DS sibling#3): the family verdict — the dream family's
+# shared exit, migrated here with the tail below.
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/helpers.rs'
@@ -242,5 +245,14 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
         sys.exit(1)
 print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
 print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-if survived:
-    sys.exit(1)
+# #3178 fix-r5 (DS sibling#3 / MM sibling#2): the family tail — the dream
+# family migrated this handwritten ``if survived: sys.exit(1)`` to
+# negative_selection.verdict_exit (fix-r3); this copy still read a zero-row
+# run as all-KILLED (rc=0, the vacuum green pinned by fix-r5's
+# probe-s3-edgeclaw-retrieval-helpers-before.log: an emptied cases table
+# made the guarded window a no-op and the tail fell through green). The
+# summary lines stay; the verdict is the shared exit.
+sys.exit(verdict_exit(
+    [{'status': 'KILLED', 'name': name} for name in killed]
+    + [{'status': 'SURVIVED', 'reason': reason}
+       for _name, reason in survived], key='status'))

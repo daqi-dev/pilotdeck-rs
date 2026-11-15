@@ -38,7 +38,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (dead_stream_print, mutating_sources,
+                              new_output_directory, run_owned)
 
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
@@ -509,9 +510,29 @@ def main():
     selected = [row for row in MUTANT_ROWS if not args.only or row[0] in args.only]
 
     if args.check:
+        # #3178 fix-r5 (DS sibling#7 + MM sibling#1): an emptied MUTANT_ROWS
+        # table used to fall through the loop and print "0 anchors: ok"
+        # with rc=0 — zero anchors validated but the gate looked green, the
+        # vacuum-green shape fix-r4 closed for the parity-lock family and
+        # #1364 P0-b closed for session-domain-expectations. Fail closed
+        # and say why, so a deleted table can never pass this preflight.
+        if not selected:
+            # #3178 fix-r5 (P2-a family shape, dead-stdout semantics pinned
+            # by fix-r5's probe-dead-stdout-semantics.log): the shared
+            # guarded print — under a dead stdout (``1>&-`` makes CPython
+            # set ``sys.stdout = None``) a bare ``print`` silently loses the
+            # line, and under ``2>&-`` a stderr print re-routes; the
+            # refusal must stay at rc=2 either way.
+            dead_stream_print('EMPTY ANCHOR SELECTION: nothing to validate; '
+                              'the anchor gate must not pass', stream='stderr')
+            return 2
         for name, path, before, after, _test, _message in selected:
             apply_mutation(name, path.read_text(), before, after)
-        print(f'{len(selected)} anchors: ok')
+        # #3178 fix-r5 (MM sibling#3): the green line takes the guarded
+        # print too — a dead stdout must not turn the ok line into a crash
+        # or a lost verdict; task-budget-zero / js-math-zero already use
+        # this shape.
+        dead_stream_print(f'{len(selected)} anchors: ok', stream='stdout')
         return 0
     if args.output is None:
         print('--output is required unless --check is used', file=sys.stderr)

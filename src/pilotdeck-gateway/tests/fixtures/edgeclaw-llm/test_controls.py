@@ -94,5 +94,57 @@ class Controls(unittest.TestCase):
                          message + ' (the refusal must stay exit 2, not crash rc=1)')
 
 
+class EmptyTableControls(unittest.TestCase):
+    """#3178 fix-r5 (DS sibling#2): an emptied case table must refuse.
+
+    The delivered script is module-level: after its tables it validates the
+    anchors and then answers ``--check-anchors`` with a green ``0 unique
+    anchors; no mutation`` (rc=0) — the vacuum green r4 closed for
+    edgeclaw-llm-recall. The refusal now precedes both the validation and
+    the green exit, and covers the run tail too. The twin executes the
+    delivered script once with its two tables emptied by an in-memory
+    source edit; no cargo run and no product source write happens here,
+    and the read_text patch proves the refusal fires before any anchor
+    read.
+    """
+
+    def test_an_emptied_case_table_refuses_the_check_anchors_green_exit(self):
+        script = here / 'negative.py'
+        text = script.read_text()
+        for before, after in (
+                ('cases = [', 'cases = []\n_twin_emptied_cases = ['),
+                ('messages = {', 'messages = {}\n_twin_emptied_messages = {')):
+            count = text.count(before)
+            self.assertEqual(count, 1,
+                             f'{script}: anchor {before!r} occurs {count} times')
+            text = text.replace(before, after, 1)
+        output, errors = io.StringIO(), io.StringIO()
+        argv = sys.argv
+        sys.argv = [str(script), '--check-anchors']
+        try:
+            with patch.object(Path, 'read_text', autospec=True,
+                              side_effect=AssertionError(
+                                  '#3178 the refusal must precede the anchor '
+                                  'read')), \
+                 contextlib.redirect_stdout(output), \
+                 contextlib.redirect_stderr(errors):
+                with self.assertRaises(SystemExit) as stopped:
+                    exec(compile(text, str(script), 'exec'),
+                         {'__name__': 'llm_empty_table_twin',
+                          '__file__': str(script)})
+        finally:
+            sys.argv = argv
+        message = ('#3178 an emptied case table must refuse before the '
+                   '--check-anchors green exit (the old preflight validated '
+                   'zero anchors and exited 0; the old run tail finished an '
+                   'empty run green)')
+        self.assertEqual(stopped.exception.code, 2,
+                         message + ' (the refusal must exit 2)')
+        self.assertIn('EMPTY CASE TABLE', errors.getvalue(),
+                      message + ' (the refusal reason must reach stderr)')
+        self.assertNotIn('unique anchors', output.getvalue(),
+                         message + ' (the green preflight line must never print)')
+
+
 if __name__ == '__main__':
     unittest.main()

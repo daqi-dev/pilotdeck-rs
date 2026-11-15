@@ -149,7 +149,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 282 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 78 in both; 1555 keys: 417 bare-filename joins and 1138 shared-helper import keys.
+# 282 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 202 blind only, 2 with unresolvable shapes only, 78 in both; 1559 keys: 417 bare-filename joins and 1142 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -214,19 +214,19 @@ KNOWN_BLIND = {
     'edgeclaw-file-memory/negative.py': '3 keys',
     'edgeclaw-heartbeat-indexer/negative.py': '4 keys',
     'edgeclaw-heartbeat-isolation/negative.py': '10 keys',
-    'edgeclaw-heartbeat/negative.py': '4 keys',
+    'edgeclaw-heartbeat/negative.py': '5 keys',
     'edgeclaw-llm-config/negative.py': '4 keys',
     'edgeclaw-llm-dream/negative.py': '4 keys',
     'edgeclaw-llm-envelope/negative.py': '3 keys',
-    'edgeclaw-llm-index/negative.py': '1 key',
+    'edgeclaw-llm-index/negative.py': '2 keys',
     'edgeclaw-llm-recall/negative.py': '3 keys',
     'edgeclaw-llm-telemetry/negative.py': '6 keys',
-    'edgeclaw-llm/negative.py': '1 key',
+    'edgeclaw-llm/negative.py': '2 keys',
     'edgeclaw-messages/negative.py': '5 keys',
     'edgeclaw-native-default/negative.py': '11 keys',
     'edgeclaw-provider/negative.py': '11 keys',
     'edgeclaw-real-provider/negative.py': '3 keys',
-    'edgeclaw-retrieval-helpers/negative.py': '3 keys',
+    'edgeclaw-retrieval-helpers/negative.py': '4 keys',
     'edgeclaw-retriever/negative.py': '4 keys',
     'edgeclaw-same-root-generation/negative.py': '12 keys',
     'edgeclaw-service-facade/negative.py': '6 keys',

@@ -118,13 +118,19 @@ from negative_selection import verdict_exit
 # directory, where `Path(__file__).parents[5]` does not exist (CI's /tmp is
 # two levels deep -> IndexError at import, macOS only passes because TMPDIR
 # happens to be deep). The harness passes the real fixture home through
-# PDRS_CONTROL_HOME; the in-file location stays the fallback.
-_here = Path(os.environ.get('PDRS_CONTROL_HOME',
-                            str(Path(__file__).resolve().parent)))
-root = _here.parents[4]
+# PDRS_CONTROL_HOME; the in-file location stays the fallback. An empty value
+# counts as unset (Path('') is the cwd, not a home), and a shallow or wrong
+# home resolves to a root that holds neither the guarded source nor the
+# probe — #3178 fix-r5 (P2-a#3) validates both instead of failing far away
+# with a confusing trace: the control refuses before it starts.
+_here = Path(os.environ.get('PDRS_CONTROL_HOME')
+             or str(Path(__file__).resolve().parent))
+root = _here.parents[4] if len(_here.parents) > 4 else _here
 RELATIVE = 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
 source = root / RELATIVE
 probe = _here / 'rss_probe_1555.py'
+if not source.is_file() or not probe.is_file():
+    raise SystemExit('unusable control home: %s (source=%s)' % (_here, source))
 # Process-unique: two controls in the same worktree write the same file, and a
 # bare constant let one restore the other's marker (review, concurrency P2).
 MARKER = f'\n// #1555 fix-r2 dirty-tree control pid={os.getpid()}\n'.encode()

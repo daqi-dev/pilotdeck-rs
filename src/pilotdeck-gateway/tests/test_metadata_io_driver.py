@@ -1812,6 +1812,10 @@ class EnvironmentControls(unittest.TestCase):
     # 下 --check-anchors 仍 rc=2」断管孪生后真跑 1→2，下限按真跑计数同步抬高
     # （:1806 真跑钉同款口径——删掉新孪生 CI 仍绿的洞不再靠记性堵）；
     # 十七模块合计 95，实测约 2 s。
+    # #3178 fix-r5（修复面 1 接线）：fix-r5 给四处空表拒绝（mcp-gateway /
+    # skills-external / gateway-entry-guard / shared-runner-failclosed）补的
+    # 死 stdout 断管孪生接线进同表；每模块真跑 1，二十一模块合计 99，
+    # 实测合计仍约 2 s（新孪生为单测真子进程，约 0.04 s/模块）。
     p2batch_twin_suites = (
         ('frozen-manifest/test_negative_controls.py', 2),
         ('parity-lock-release/test_negative_controls.py', 2),
@@ -1830,6 +1834,10 @@ class EnvironmentControls(unittest.TestCase):
         ('edgeclaw-dream/test_negative.py', 18),
         ('edgeclaw-dream-run/test_negative.py', 9),
         ('edgeclaw-dream-runner/test_negative.py', 9),
+        ('mcp-gateway/test_negative_controls.py', 1),
+        ('skills-external/test_negative_controls.py', 1),
+        ('gateway-entry-guard/test_negative_controls.py', 1),
+        ('shared-runner-failclosed/test_negative_controls.py', 1),
     )
 
     def test_the_p2batch_twin_self_tests_collect_real_tests(self):
@@ -1853,9 +1861,9 @@ class EnvironmentControls(unittest.TestCase):
                 '#3178', module, minimum, self.p2batch_twins_step_budget)
         self.assertLessEqual(
             time.monotonic() - started, self.p2batch_twins_step_budget,
-            '#3178 the seventeen p2-batch twin modules together must fit the '
-            'twin step budget (%d s); near-miss modules must not outlive the '
-            'CI step they pin' % self.p2batch_twins_step_budget)
+            '#3178 the twenty-one p2-batch twin modules together must fit '
+            'the twin step budget (%d s); near-miss modules must not '
+            'outlive the CI step they pin' % self.p2batch_twins_step_budget)
 
     def test_required_job_runs_the_p2batch_twin_self_tests(self):
         # #3178 fix-r1（评审 sibling#4）：六个孪生文件交付时只有 docstring 里的
@@ -1865,7 +1873,8 @@ class EnvironmentControls(unittest.TestCase):
         # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
         # 三条同形补钉（十二命令）。
         # #3178 fix-r4（四家撞条）：命令清单从类级表 p2batch_twin_suites 推导
-        # （十七条命令），与真跑钉同一真相源，新增模块不再需要两处登记。
+        # （fix-r5 后二十一条命令），与真跑钉同一真相源，新增模块不再需要
+        # 两处登记。
         commands = tuple('python3 -B -m unittest -v ' + module
                          for module, _minimum in self.p2batch_twin_suites)
         jobs = self.ci_jobs('#3178')
@@ -2984,6 +2993,9 @@ class EnvironmentControls(unittest.TestCase):
         # #3178 fix-r4（四家撞条）：五组空表孪生命令（edgeclaw-real-provider /
         # model-http-encoding / edgeclaw-dream / edgeclaw-dream-run /
         # edgeclaw-dream-runner）同形各领一条删除负控。
+        # #3178 fix-r5（修复面 1 接线）：四组死 stdout 断管孪生命令（mcp-gateway /
+        # skills-external / gateway-entry-guard / shared-runner-failclosed）
+        # 同形各领一条删除负控——接进来的行同样删一行必须红。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控 p2 批孪生自测（#3178）\n'
         command = ('python3 -B -m unittest -v '
@@ -3011,7 +3023,19 @@ class EnvironmentControls(unittest.TestCase):
                      'edgeclaw-dream-run/test_negative.py'),
                     ('p2batch-dream-runner-removed',
                      'python3 -B -m unittest -v '
-                     'edgeclaw-dream-runner/test_negative.py'))
+                     'edgeclaw-dream-runner/test_negative.py'),
+                    ('p2batch-mcp-gateway-removed',
+                     'python3 -B -m unittest -v '
+                     'mcp-gateway/test_negative_controls.py'),
+                    ('p2batch-skills-external-removed',
+                     'python3 -B -m unittest -v '
+                     'skills-external/test_negative_controls.py'),
+                    ('p2batch-gateway-entry-guard-removed',
+                     'python3 -B -m unittest -v '
+                     'gateway-entry-guard/test_negative_controls.py'),
+                    ('p2batch-shared-runner-failclosed-removed',
+                     'python3 -B -m unittest -v '
+                     'shared-runner-failclosed/test_negative_controls.py'))
         cases = [(name_, workflow.replace(old, new, 1), message)
                  for name_, old, new, message in (
             *[(name_, old + '\n', '',

@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (dead_stream_print, detach_dead_streams,
                               mutating_sources, run_owned, unique_summary_tmp,
                               wait_for_slot, write_source_atomic)
+from negative_selection import refuse_empty_table
 from negative_suite import Case, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -136,6 +137,13 @@ def classify(result, case):
 
 
 def main():
+    # #3178 fix-r5 (DS sibling#2 + P2-a#5): the empty-table refusal must
+    # precede the --check-anchors green exit — an emptied table used to
+    # validate zero anchors ("0 unique anchors; no mutation", rc=0), the
+    # vacuum-green ordering fix-r4 closed for edgeclaw-llm-recall. One
+    # helper, one wording (fix-r5 P2-a#5): the shared refuse_empty_table —
+    # rc=2, nothing on disk.
+    refuse_empty_table(cases, 'case')
     anchors()
     if sys.argv[1:] == ['--check-anchors']:
         dead_stream_print(f'{len(cases)} unique anchors; no mutation')
