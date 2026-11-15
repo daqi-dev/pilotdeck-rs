@@ -164,6 +164,16 @@ def _verify_loaded_apparatus():
     verified the same way — it is this entry's own loader, so a mutated
     bootstrap under the lease would keep loading apparatus through the
     mutant's ``load`` even when the three modules above are pristine.
+
+    #2513 fix-r15 (DS r14 review + MM conc-r2): the verified set is the
+    loader's caller-held registry (``sys._cli_parity_loaded_apparatus``,
+    written by ``_bootstrap.load``), not a sys.modules derivation — a module
+    that popped itself out of sys.modules kept its stamp and silently left
+    the fix-r14 comparison. Per-module stamp loss is red per-module; only a
+    genuine zero-load reaches the all-empty refusal. The surviving
+    sys.modules stamps are cross-checked against the registry fail-closed,
+    and the late controls load in main() is followed by a second
+    verification round (DS r14 b#6).
     """
     expected_entry = _head_source('scripts/cli-parity/run_round.py')
     if not isinstance(_apparatus_code, CodeType):
@@ -180,26 +190,52 @@ def _verify_loaded_apparatus():
                                 dont_inherit=True, optimize=sys.flags.optimize)
     if _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):
         raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')
-    # #2513 fix-r14 (DS r13 review, a-tier): the loop below was a hardcoded
-    # triple — a second inventory next to _bootstrap.APPARATUS_FILES. A
-    # module loaded for the judge but missing from the triple would run
-    # unverified once the two lists drifted. Derive the verified set from
-    # the process instead: every module _bootstrap.load executed sits in
-    # sys.modules carrying its _apparatus_source bytes, must be a registered
-    # apparatus module, and must match HEAD.
-    loaded = sorted(name for name, module in sys.modules.items()
-                    if isinstance(getattr(module, '_apparatus_source', None), bytes))
+    # #2513 fix-r15 (DS r14 review + MM conc-r2): the verified set is the
+    # loader's own caller-held registry of (name, module object) pairs — a
+    # mutant cannot unbind a module reference the way it can edit sys.modules
+    # (the fix-r14 derivation let a module pop itself out with its stamp
+    # intact and silently leave the comparison). The registry is written by
+    # _bootstrap.load itself, so the set is every module the loading surface
+    # executed, pinned against _bootstrap's own APPARATUS_MODULES inventory
+    # instead of a hand-written list the two could drift past. A single
+    # module's missing or mismatched stamp is red per-module; only a genuine
+    # zero-load reaches the all-empty refusal below.
+    loaded = list(getattr(sys, '_cli_parity_loaded_apparatus', ()))
     if not loaded:
         raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')
-    unregistered = [name for name in loaded
-                    if name not in _bootstrap.APPARATUS_MODULES]
+    registered = set(_bootstrap.APPARATUS_MODULES)
+    unregistered = sorted({name for name, _ in loaded if name not in registered})
     if unregistered:
         raise ValueError('#2513 loaded apparatus modules missing from the '
                          '_bootstrap manifest: ' + ', '.join(unregistered))
-    for name in loaded:
-        source = sys.modules[name]._apparatus_source
-        if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):
-            raise ValueError(f'#2513 loaded apparatus differs from HEAD: scripts/cli-parity/{name}.py')
+    for name, module in loaded:
+        _verify_loaded_module(name, module)
+    # Fail-closed derived-set comparison (MM conc-r2): every module still
+    # carrying a provenance stamp in sys.modules must be loader-recorded. A
+    # module that removed itself from sys.modules escapes the loop above
+    # only to be caught there by identity; a registry row deleted while the
+    # module survives in sys.modules is caught here by its stamp. Removal
+    # between the two snapshots is a refusal from these checks, never a
+    # bare KeyError: every lookup goes through .get and identity, and the
+    # snapshot is taken before any comparison runs.
+    recorded = {}
+    for pair in loaded:
+        recorded.setdefault(pair[0], []).append(id(pair[1]))
+    for name, module in list(sys.modules.items()):
+        if isinstance(getattr(module, '_apparatus_source', None), bytes):
+            if id(module) not in recorded.get(name, ()):
+                raise ValueError('#2513 stamped apparatus module is not recorded '
+                                'by _bootstrap.load: ' + name)
+
+
+def _verify_loaded_module(name, module):
+    """One registered apparatus module must be the loader's own verified object."""
+    source = getattr(module, '_apparatus_source', None)
+    if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):
+        raise ValueError(f'#2513 loaded apparatus differs from HEAD: scripts/cli-parity/{name}.py')
+    if sys.modules.get(name) is not module:
+        raise ValueError(f'#2513 loaded apparatus module is no longer in '
+                         f'sys.modules: {name}')
 
 
 def executable(path):
@@ -873,7 +909,13 @@ def main():
                 if summary['selfComparison']['status'] != 'PASS':
                     summary['status'] = 'FAIL'
                 else:
-                    run_controls = _load('controls', _here / 'controls.py').run_controls
+                    controls_module = _load('controls', _here / 'controls.py')
+                    # #2513 fix-r15 (DS r14 b#6): controls.py is loaded here,
+                    # after the post-lease gate above — a mutation window that
+                    # held until this point ran a mutated controls unverified.
+                    # Re-verify right after the late load, before it runs.
+                    _verify_loaded_apparatus()
+                    run_controls = controls_module.run_controls
                     summary['controls'] = run_controls(first, output / 'controls')
                     summary['status'] = summary['controls']['status']
                     if args.rust_bin:

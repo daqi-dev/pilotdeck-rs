@@ -4331,6 +4331,55 @@ class RetirementScoring(unittest.TestCase):
             self.assertIn('/feishu/webhook', ungated['unhit'])
             self.assertEqual(ungated['status'], 'BLOCKED')
 
+    def test_baseline_revision_reads_the_baseline_not_the_environment(self):
+        # #2513 fix-r15 (r14 review task 8): a real-git regression for the
+        # hardened baseline revision read.  Two real temporary repositories —
+        # repo A (the baseline under test, one commit) and repo D (a decoy
+        # with a different HEAD).  With GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_GLOBAL
+        # steered at repo D in the environment: ① the pre-fix bare ``git -C``
+        # form is demonstrably steered onto the decoy HEAD (the decoy is
+        # effective, so the refusal below is the hardening, not a broken
+        # decoy); ② the hardened read refuses on the real revision — the
+        # registered constant is untouched, so the mismatch must name HEAD_A,
+        # never the decoy's; ③ positive control — with the constant pinned to
+        # the real HEAD the same poisoned environment still passes.
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-baserev-') as tmp:
+            root = Path(tmp)
+
+            def repo(name):
+                folder = root / name
+                folder.mkdir()
+                (folder / 'marker.txt').write_text(name)
+                for args in (['init', '-q'], ['add', '-A'],
+                             ['-c', 'user.email=t@t', '-c', 'user.name=t',
+                              'commit', '-q', '-m', name]):
+                    subprocess.run(['/usr/bin/git', *args], cwd=folder, check=True,
+                                   capture_output=True, timeout=10)
+                return folder, subprocess.run(['/usr/bin/git', 'rev-parse', 'HEAD'],
+                                              cwd=folder, check=True, capture_output=True,
+                                              text=True, timeout=10).stdout.strip()
+
+            baseline, head_a = repo('baseline')
+            decoy, head_d = repo('decoy')
+            self.assertNotEqual(head_a, head_d)
+            decoys = {'GIT_DIR': str(decoy / '.git'),
+                      'GIT_WORK_TREE': str(decoy),
+                      'GIT_CONFIG_GLOBAL': str(decoy / '.git' / 'config')}
+            steered = subprocess.run(['git', '-C', str(baseline), 'rev-parse', 'HEAD'],
+                                     env=dict(os.environ, **decoys), capture_output=True,
+                                     text=True, timeout=10)
+            self.assertEqual(steered.stdout.strip(), head_d,
+                             f'the decoy environment did not steer the bare form: {steered.stdout!r}')
+            with patch.dict(os.environ, decoys):
+                with self.assertRaises(self.session.EvidenceError) as refusal:
+                    self.session._retirement_baseline_revision(baseline)
+            self.assertEqual(refusal.exception.rule, 'BASELINE_REVISION')
+            self.assertIn(head_a, str(refusal.exception))
+            self.assertNotIn(head_d, str(refusal.exception))
+            with patch.dict(os.environ, decoys), \
+                    patch.object(self.session, 'RETIREMENT_BASELINE_REVISION', head_a):
+                self.assertEqual(self.session._retirement_baseline_revision(baseline), head_a)
+
 
 if __name__ == '__main__':
     unittest.main()

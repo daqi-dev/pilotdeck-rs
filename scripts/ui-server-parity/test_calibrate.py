@@ -355,6 +355,40 @@ class CalibrationControls(unittest.TestCase):
                 report = calibrate.space_check(root, root / 'reference')
             self.assertEqual(report['projected_bytes'], 18_468_000_000)
 
+    def test_resource_root_answers_from_the_checkout_not_the_environment(self):
+        # #2513 fix-r15 (r14 review task 8): real-git regression for the
+        # hardened disk-budget root.  A decoy repository with GIT_DIR and
+        # GIT_WORK_TREE steered into the environment: ① the bare
+        # inherited-environment read is demonstrably steered onto the decoy
+        # (the decoy is effective, so ② answering the checkout is the
+        # hardening, not a broken decoy); ② resource_root() under the same
+        # poisoned environment equals the clean-environment value and is
+        # never the decoy's directory.
+        import os
+        with tempfile.TemporaryDirectory(prefix='pdrs-2513-resroot-') as tmp:
+            decoy = Path(tmp) / 'decoy'
+            decoy.mkdir()
+            (decoy / 'marker.txt').write_text('decoy')
+            for args in (['init', '-q'], ['add', '-A'],
+                         ['-c', 'user.email=t@t', '-c', 'user.name=t',
+                          'commit', '-q', '-m', 'decoy']):
+                subprocess.run(['/usr/bin/git', *args], cwd=decoy, check=True,
+                               capture_output=True, timeout=10)
+            checkout = Path(calibrate.__file__).resolve().parent.parent
+            decoys = {'GIT_DIR': str(decoy / '.git'), 'GIT_WORK_TREE': str(decoy)}
+            bare = subprocess.run(['git', '-C', str(checkout), 'rev-parse',
+                                   '--path-format=absolute', '--git-common-dir'],
+                                  env=dict(os.environ, **decoys), capture_output=True,
+                                  text=True, timeout=10)
+            self.assertEqual(Path(bare.stdout.strip()).resolve().parent, decoy,
+                             f'the decoy environment did not steer the bare form: {bare.stdout!r}')
+            with patch.dict(os.environ, decoys):
+                steered = calibrate.resource_root()
+            self.assertEqual(steered, calibrate.resource_root(),
+                             'the steered environment changed the resource root')
+            self.assertNotEqual(steered, decoy)
+            self.assertTrue(steered.is_dir())
+
     def test_fresh_target_build_ignores_forged_old_binary_and_detects_new_drift(self):
         import os
         import shutil

@@ -94,6 +94,7 @@ policy = root / 'scripts/cli-parity/policy.py'
 common = root / 'scripts/cli-parity/common.py'
 compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
+test_cli_parity = root / 'scripts/cli-parity/test_cli_parity.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
 isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
 fixture = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gateway/negative_controls.py'
@@ -112,7 +113,7 @@ fixture_test = root / 'src/pilotdeck-gateway/tests/fixtures/cli-parity-mock-gate
 # sources to copies under their own directories.
 def _machine_lease_sources():
     return [policy, common, compare, run_round, mock_gateway,
-            isolation_probe, fixture]
+            isolation_probe, fixture, test_cli_parity]
 
 
 _WINDOW_HOLDS_MACHINE_LEASE = any(parity_guarded(path.resolve().relative_to(root).as_posix())
@@ -358,23 +359,24 @@ mutations = [
      "            raise RuntimeError(\n"
      "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
      "        yield"),
-    # #2513 fix-r4 (review sibling#2 + boundary#2), re-anchored fix-r14: the
-    # post-lease apparatus verification derives its surfaces from the process
-    # (every module _bootstrap.load executed) — filtering one name out of the
-    # derived loop (or disarming one check) lets a mutated module run under
-    # the lease while the bound ApparatusVerificationTests row goes red.
+    # #2513 fix-r4 (review sibling#2 + boundary#2), re-anchored fix-r14 and
+    # fix-r15: the post-lease apparatus verification derives its surfaces from
+    # the loader's caller-held registry (every (name, module) pair
+    # _bootstrap.load executed) — filtering one name out of the registry loop
+    # (or disarming one check) lets a mutated module run under the lease
+    # while the bound ApparatusVerificationTests row goes red.
     ('apparatus-common-unverified',
      run_round,
-     "    for name in loaded:\n",
-     "    for name in (n for n in loaded if n != 'common'):\n"),
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'common'):\n"),
     ('apparatus-compare-unverified',
      run_round,
-     "    for name in loaded:\n",
-     "    for name in (n for n in loaded if n != 'compare'):\n"),
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'compare'):\n"),
     ('apparatus-policy-unverified',
      run_round,
-     "    for name in loaded:\n",
-     "    for name in (n for n in loaded if n != 'policy'):\n"),
+     "    for name, module in loaded:\n",
+     "    for name, module in (pair for pair in loaded if pair[0] != 'policy'):\n"),
     ('apparatus-provenance-unchecked',
      run_round,
      "    if not loaded:\n"
@@ -432,6 +434,53 @@ mutations = [
      "            # Stop before other runners may consider the lease expired. The",
      "            pass  # mutant: the post-lease apparatus gate is never called\n"
      "            # Stop before other runners may consider the lease expired. The"),
+    # #2513 fix-r15 (DS r14 review): the registry is pinned against
+    # _bootstrap's own APPARATUS_MODULES inventory — disarming the
+    # unregistered branch lets a stamped rogue module run under the lease.
+    ('apparatus-unregistered-unchecked',
+     run_round,
+     "    if unregistered:\n"
+     "        raise ValueError('#2513 loaded apparatus modules missing from the '\n",
+     "    if False:\n"
+     "        raise ValueError('#2513 loaded apparatus modules missing from the '\n"),
+    # #2513 fix-r15 (MM conc-r2 ②): a module that popped itself out of
+    # sys.modules keeps its stamp — disarming the identity check lets it
+    # silently leave the comparison instead of being red.
+    ('apparatus-self-removal-unchecked',
+     run_round,
+     "    if sys.modules.get(name) is not module:\n",
+     "    if False and sys.modules.get(name) is not module:\n"),
+    # #2513 fix-r15 (MM conc-r2 ②): a single module's stamp going missing must
+    # be red per-module; this mutant turns "not bytes" into "is bytes and
+    # differs", letting a stampless module through the per-module check.
+    ('apparatus-single-stamp-unchecked',
+     run_round,
+     "    if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):\n",
+     "    if isinstance(source, bytes) and source != _head_source(f'scripts/cli-parity/{name}.py'):\n"),
+    # #2513 fix-r15 (MM conc-r2 ①): the sys.modules-derived set must stay a
+    # subset of the loader registry — disarming the cross-check lets a
+    # stamped module whose registry row was deleted run unverified.
+    ('apparatus-derived-set-unchecked',
+     run_round,
+     "            if id(module) not in recorded.get(name, ()):\n",
+     "            if False:\n"),
+    # #2513 fix-r15 (DS r14 b#6): controls.py loads after the post-lease gate
+    # — deleting the second verification round leaves that late load
+    # unverified.
+    ('apparatus-late-controls-unverified',
+     run_round,
+     "                    _verify_loaded_apparatus()\n"
+     "                    run_controls = controls_module.run_controls\n",
+     "                    pass  # mutant: the late controls load is never re-verified\n"
+     "                    run_controls = controls_module.run_controls\n"),
+    # #2513 fix-r15 (DS r14 review): the bound cells' controlled HEAD is
+    # heads() itself — dropping a row from it makes every verification cell
+    # silently stop covering that module. The bound row is the inventory
+    # coverage cell, whose own assertion names the missing entry.
+    ('heads-coverage-shrunk',
+     test_cli_parity,
+     "            'scripts/cli-parity/controls.py': sys.modules['controls']._apparatus_source,\n",
+     ""),
 ]
 
 # #1666: the denominator is this static roster, not `len(mutations)`. Deleting
@@ -472,6 +521,12 @@ EXPECTED_NAMES = (
     'apparatus-bootstrap-missing-accepted',
     'apparatus-head-source-worktree-read',
     'apparatus-verify-call-site-deleted',
+    'apparatus-unregistered-unchecked',
+    'apparatus-self-removal-unchecked',
+    'apparatus-single-stamp-unchecked',
+    'apparatus-derived-set-unchecked',
+    'apparatus-late-controls-unverified',
+    'heads-coverage-shrunk',
 )
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -517,6 +572,18 @@ tests = {
         'ApparatusVerificationTests.test_head_source_reads_the_committed_object',
     'apparatus-verify-call-site-deleted':
         'ContractTests.test_post_lease_apparatus_gate_is_called_by_main',
+    'apparatus-unregistered-unchecked':
+        'ApparatusVerificationTests.test_unregistered_stamped_module_is_refused',
+    'apparatus-self-removal-unchecked':
+        'ApparatusVerificationTests.test_self_removed_module_is_refused',
+    'apparatus-single-stamp-unchecked':
+        'ApparatusVerificationTests.test_single_module_stamp_missing_is_refused',
+    'apparatus-derived-set-unchecked':
+        'ApparatusVerificationTests.test_stamped_module_outside_registry_is_refused',
+    'apparatus-late-controls-unverified':
+        'ApparatusVerificationTests.test_late_controls_load_is_reverified',
+    'heads-coverage-shrunk':
+        'ApparatusVerificationTests.test_heads_cover_every_loader_recorded_module',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -594,6 +661,26 @@ failure_fragments = {
         '#2513 _head_source reads the committed HEAD object, not the worktree or index',
     'apparatus-verify-call-site-deleted':
         '#2513 the post-lease apparatus gate runs before any work',
+    # fix-r15 rows: same convention — the bound test's own markered msg (the
+    # not-raised shape) and the refusal message whose absence the mutant
+    # causes, both naming #2513 exclusively.
+    'apparatus-unregistered-unchecked':
+        ('#2513 a stamped module missing from the _bootstrap manifest must be refused',
+         '#2513 loaded apparatus modules missing from the _bootstrap manifest: rogue'),
+    'apparatus-self-removal-unchecked':
+        ('#2513 a module that removed itself from sys.modules must be refused',
+         '#2513 loaded apparatus module is no longer in sys.modules: controls'),
+    'apparatus-single-stamp-unchecked':
+        ("#2513 a single module's missing stamp must fail closed per-module",
+         '#2513 loaded apparatus differs from HEAD: '
+         'scripts/cli-parity/host_negative_controls.py'),
+    'apparatus-derived-set-unchecked':
+        ('#2513 a stamped module outside the loader registry must be refused',
+         '#2513 stamped apparatus module is not recorded by _bootstrap.load: policy'),
+    'apparatus-late-controls-unverified':
+        '#2513 the late controls load must be followed by another verification round',
+    'heads-coverage-shrunk':
+        '#2513 heads() must cover every loader-recorded module',
 }
 
 SEPARATOR = '-' * 70

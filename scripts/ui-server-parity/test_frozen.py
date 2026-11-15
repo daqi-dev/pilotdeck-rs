@@ -116,6 +116,46 @@ def admission_region(path, marker):
     return tree.body[:index]
 
 
+def bootstrap_entries(root, marker):
+    """Anchor-derived bootstrap inventory of a device tree (#2513 fix-r15).
+
+    The entry set is the structural fact — a top-level ``exec(compile(``
+    admission anchor — and every ``*.py`` file carrying the
+    ``'# Isolated bootstrap'`` marker must be in it: a marked file without
+    the anchor, or one that stopped parsing, is red instead of silently
+    dropping out of a guard list. Returns ``(entries, marked)``; callers
+    assert the closure ``marked ⊆ entries`` themselves so their own marker
+    names the failing list.
+    """
+    entries, marked = set(), set()
+    for path in sorted(Path(root).rglob('*.py')):
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        has_marker = '# Isolated bootstrap' in text
+        try:
+            tree = ast.parse(text)
+        except SyntaxError as error:
+            if has_marker:
+                raise AssertionError(marker + f': {path.name} does not parse: {error}')
+            continue
+        if has_marker:
+            marked.add(path)
+        if admission_anchor_index(tree.body) is not None:
+            entries.add(path)
+    return sorted(entries), marked
+
+
+# #2513 fix-r15 (DS r14 review, task 5): os.system/os.popen and the os spawn/
+# exec families launch commands with the inherited environment; the admission
+# region may not reach any of them, under any os alias or from-import member.
+OS_LAUNCH_ATTRS = frozenset(('system', 'popen', 'popen2', 'popen3', 'popen4',
+                             'spawnl', 'spawnle', 'spawnlp', 'spawnlpe',
+                             'spawnv', 'spawnve', 'spawnvp', 'spawnvpe',
+                             'execl', 'execle', 'execlp', 'execlpe',
+                             'execv', 'execve', 'execvp', 'execvpe'))
+
+
 def admission_violations(region, git_shape, env_shape):
     """Inverted, deny-by-default scan of one admission region (#2513 fix-r14).
 
@@ -126,12 +166,24 @@ def admission_violations(region, git_shape, env_shape):
     review, b-tier). The judgment is now inverted to deny-by-default:
 
     * exactly one ``_boot_git`` and one ``_boot_git_env``, both byte-verbatim
-      against check_frozen.py (the fix-r13 pin, unchanged);
+      against check_frozen.py (the fix-r13 pin, unchanged). #2513 fix-r15
+      (DS r14 review): the ``_boot_git_env`` binding is counted at any depth
+      (a conditional rebind used to escape the top-level-only count), and
+      outside the helper and the single verbatim binding no code may touch
+      the name at all — ``.update(dict(_boot_os.environ))`` and
+      ``_boot_git_env['GIT_DIR'] = ...`` are red;
     * outside the helper the region may not touch the subprocess module at
       all — any alias, any API name, any indirect load or ``__import__`` is
       red. An ``except`` clause's exception type may *name* the module (the
       ``_boot_subprocess.CalledProcessError`` form), but its type expression
-      must not evaluate a call;
+      must not evaluate a call. #2513 fix-r15 (MM r14 conc-r2): the import
+      collection walks each statement to the same depth as this loop, so a
+      conditional or nested import cannot bind a name the loop never saw, and
+      the indirect classes are denied outright — a star import (the fix-r14
+      collector stored the literal ``'*'`` no code could reference), an
+      importlib import, any touch of ``__import__``, any call to
+      getattr/eval/exec, any subscript of a ``.modules`` mapping, and any
+      launch through os.system/os.popen/os.spawn*/os.exec*;
     * inside the helper every launched call must scrub the environment
       through the ``_boot_git_env`` name (no ``**`` splat);
     * every ``_boot_trusted`` read stays a ``_boot_git('show', ...)`` of the
@@ -140,30 +192,48 @@ def admission_violations(region, git_shape, env_shape):
     violations = []
     helpers = [node for node in region
                if isinstance(node, ast.FunctionDef) and node.name == '_boot_git']
-    envs = [node for node in region
-            if isinstance(node, ast.Assign) and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id == '_boot_git_env']
+    # #2513 fix-r15 (DS r14 review): count the env binding at any depth, and
+    # count augmented/annotated rebinds too — a conditional second
+    # assignment ``if ...: _boot_git_env = dict(_boot_os.environ)`` used to
+    # leave the top-level count at one and the verbatim pin green.
+    env_bindings = []
+    for statement in region:
+        for node in ast.walk(statement):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if any(isinstance(target, ast.Name) and target.id == '_boot_git_env'
+                       for target in targets if target is not None):
+                    env_bindings.append(node)
     if len(helpers) != 1:
         violations.append(f'_boot_git must be defined exactly once, found {len(helpers)}')
         return violations
-    if len(envs) != 1:
-        violations.append(f'_boot_git_env must be defined exactly once, found {len(envs)}')
+    if len(env_bindings) != 1:
+        violations.append(f'_boot_git_env must be bound exactly once at any depth, '
+                          f'found {len(env_bindings)}')
         return violations
     if ast.dump(helpers[0]) != git_shape:
         violations.append('_boot_git must equal check_frozen.py verbatim')
-    if ast.dump(envs[0]) != env_shape:
+    if not isinstance(env_bindings[0], ast.Assign) or ast.dump(env_bindings[0]) != env_shape:
         violations.append('_boot_git_env must equal check_frozen.py verbatim')
-    # Every name the region binds to the subprocess module or its members.
+    # Every name the region binds to the subprocess module or its members,
+    # and the os-module surface the launch rules below deny.
     module_aliases, member_aliases = set(), set()
-    for node in region:
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == 'subprocess':
-                    module_aliases.add(alias.asname or 'subprocess')
-        elif isinstance(node, ast.ImportFrom) and node.module == 'subprocess':
-            for alias in node.names:
-                member_aliases.add(alias.asname or alias.name)
+    os_aliases, os_members = set(), {}
+    for statement in region:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == 'subprocess':
+                        module_aliases.add(alias.asname or 'subprocess')
+                    if alias.name == 'os':
+                        os_aliases.add(alias.asname or 'os')
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == 'subprocess':
+                    for alias in node.names:
+                        member_aliases.add(alias.asname or alias.name)
+                if node.module == 'os':
+                    for alias in node.names:
+                        os_members[alias.asname or alias.name] = alias.name
     # The one carve-out: an except clause may name the module in its
     # exception type, as long as the type expression evaluates no call.
     exempt = set()
@@ -186,7 +256,7 @@ def admission_violations(region, git_shape, env_shape):
                 violations.append('the admission region touches subprocess ('
                                  + node.id + ') outside _boot_git: '
                                  + ast.unparse(statement)[:160])
-            elif isinstance(node, ast.Attribute):
+            if isinstance(node, ast.Attribute):
                 root = node.value
                 while isinstance(root, ast.Attribute):
                     root = root.value
@@ -195,10 +265,53 @@ def admission_violations(region, git_shape, env_shape):
                     violations.append('the admission region touches subprocess ('
                                       + root.id + ') outside _boot_git: '
                                       + ast.unparse(statement)[:160])
-            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                    and node.func.id == '__import__'):
-                violations.append('the admission region calls __import__: '
+                if node.attr == '__import__':
+                    violations.append('the admission region reaches __import__ '
+                                     'indirectly: ' + ast.unparse(statement)[:160])
+                if (isinstance(root, ast.Name) and root.id in os_aliases
+                        and node.attr in OS_LAUNCH_ATTRS):
+                    violations.append('the admission region may not launch through os.'
+                                      + node.attr + ': ' + ast.unparse(statement)[:160])
+            if isinstance(node, ast.Name):
+                if node.id == '__import__':
+                    violations.append('the admission region touches __import__: '
+                                     + ast.unparse(statement)[:160])
+                if node.id == 'importlib':
+                    # importlib is preloaded by the interpreter, so
+                    # ``importlib.import_module('subprocess')`` needs no import
+                    # statement to be live (measured; the probe class this
+                    # closes).
+                    violations.append('the admission region touches importlib: '
+                                     + ast.unparse(statement)[:160])
+                if node.id in os_members and os_members[node.id] in OS_LAUNCH_ATTRS:
+                    violations.append('the admission region may not launch through the '
+                                     'imported os.' + os_members[node.id] + ': '
+                                     + ast.unparse(statement)[:160])
+                if node.id == '_boot_git_env' and isinstance(node.ctx, ast.Load):
+                    violations.append('_boot_git_env is touched outside its single '
+                                      'verbatim binding and _boot_git: '
+                                      + ast.unparse(statement)[:160])
+            if isinstance(node, ast.ImportFrom):
+                if any(alias.name == '*' for alias in node.names):
+                    violations.append('the admission region uses a star import: '
+                                     + ast.unparse(statement)[:160])
+                if node.module == 'importlib':
+                    violations.append('the admission region imports importlib: '
+                                     + ast.unparse(statement)[:160])
+            if (isinstance(node, ast.Import)
+                    and any(alias.name == 'importlib'
+                            or alias.name.startswith('importlib.')
+                            for alias in node.names)):
+                violations.append('the admission region imports importlib: '
+                                 + ast.unparse(statement)[:160])
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in ('__import__', 'getattr', 'eval', 'exec')):
+                violations.append('the admission region calls ' + node.func.id + ': '
                                   + ast.unparse(statement)[:160])
+            if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+                    and node.value.attr == 'modules'):
+                violations.append('the admission region subscripts a modules mapping '
+                                  '(sys.modules): ' + ast.unparse(statement)[:160])
     for node in ast.walk(helpers[0]):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
                 and node.func.id == '__import__':
@@ -534,19 +647,41 @@ class FrozenControls(unittest.TestCase):
             self.assertEqual(violations, [],
                              marker + f': {path.name}: ' + '; '.join(violations))
             scanned += 1
-        self.assertEqual(scanned, len(anchored),
-                        marker + ': every anchored script must be scanned')
+        # #2513 fix-r15 (DS r14 review): the fix-r14 closure was the tautology
+        # ``scanned == len(anchored)`` — the loop's own counter against its own
+        # input, so nothing constrained that input against an independent
+        # denominator. The denominator is now the marker-bearing files: every
+        # ``'# Isolated bootstrap'`` file must carry the exec(compile( anchor
+        # (a marked-but-anchorless script would drop out of ``anchored``
+        # silently and go unscanned), and every anchored registered script
+        # must have been scanned.
+        apparatus = ROOT / 'scripts/ui-server-parity'
+        entries, marked = bootstrap_entries(apparatus, marker)
+        self.assertTrue(marked, marker + ': the marker inventory must not be empty')
+        self.assertFalse(marked - set(entries),
+                         marker + ': bootstrap-marked files must keep the '
+                         'exec(compile( admission anchor: '
+                         + ', '.join(path.name for path in sorted(marked - set(entries))))
+        registered_set = set(registered)
+        marked_registered = {path for path in marked if path.resolve() in registered_set}
+        self.assertTrue(marked_registered,
+                        marker + ': no bootstrap-marked file is manifest-registered')
+        self.assertFalse(marked_registered - set(anchored),
+                         marker + ': bootstrap-marked registered scripts must keep the '
+                         'exec(compile( admission anchor: '
+                         + ', '.join(path.name for path in sorted(marked_registered - set(anchored))))
         # Both closures around this scan are structural: an anchored file
         # without the marker comment, or a marked file outside the
         # registration, escapes it.
-        apparatus = ROOT / 'scripts/ui-server-parity'
-        marked = {path.resolve() for path in apparatus.rglob('*.py')
-                  if '# Isolated bootstrap' in path.read_text()}
         anchored_resolved = {path.resolve() for path in anchored}
-        self.assertFalse(anchored_resolved - marked,
+        marked_resolved = {path.resolve() for path in marked}
+        self.assertFalse(anchored_resolved - marked_resolved,
                          marker + ': every anchored script must carry the bootstrap marker')
-        self.assertFalse(marked - set(registered),
+        self.assertFalse(marked_resolved - registered_set,
                          marker + ': bootstrap-marked files must stay manifest-registered')
+        self.assertGreaterEqual(scanned, len(marked_registered),
+                                marker + ': every marker-bearing registered bootstrap '
+                                'must be scanned')
 
     def test_bootstrap_admission_rejects_inherited_env_and_alias_launches(self):
         """#2513 fix-r14 (DS r13 review, b-tier): deny-by-default over the subprocess surface.
@@ -561,24 +696,33 @@ class FrozenControls(unittest.TestCase):
         """
         marker = '#2513 fix-r14: the admission region may not touch subprocess outside _boot_git'
         source = (ROOT / 'scripts/ui-server-parity/check_frozen.py').read_text()
-        region_text = source[:source.index('exec(compile(')]
         import_line = 'import subprocess as _boot_subprocess\n'
         statement_anchor = '_boot_manifest = _boot_os.path.join('
         helper_launch = 'env=_boot_git_env, stderr=_boot_subprocess.PIPE, timeout=30)'
-        self.assertEqual(region_text.count(import_line), 1, marker + ': import anchor moved')
-        self.assertEqual(region_text.count(statement_anchor), 1, marker + ': insert anchor moved')
-        self.assertEqual(region_text.count(helper_launch), 1, marker + ': helper anchor moved')
+        self.assertEqual(source.count(import_line), 1, marker + ': import anchor moved')
+        self.assertEqual(source.count(statement_anchor), 1, marker + ': insert anchor moved')
+        self.assertEqual(source.count(helper_launch), 1, marker + ': helper anchor moved')
 
         def region_of(text):
+            # #2513 fix-r15 (DS r14 review): one anchor definition for the
+            # production scan and this control — the AST admission anchor,
+            # fail-closed. The fix-r14 control sliced the mutant text at the
+            # first textual 'exec(compile(' and cut the parsed tree with
+            # ``tree.body[:admission_anchor_index(...)]``, which silently
+            # returned the whole tree when the anchor was missing; both are
+            # gone — mutants are built over the full source and cut here.
             tree = ast.parse(text)
-            return tree.body[:admission_anchor_index(tree.body)]
+            index = admission_anchor_index(tree.body)
+            if index is None:
+                self.fail(marker + ': the admission anchor disappeared')
+            return tree.body[:index]
 
         def insert_statement(statement, base=None):
-            text = region_text if base is None else base
+            text = source if base is None else base
             return text.replace(statement_anchor, statement + statement_anchor, 1)
 
         def insert_import(extra):
-            return region_text.replace(import_line, import_line + extra, 1)
+            return source.replace(import_line, import_line + extra, 1)
 
         inherited_env_run = (
             "_boot_probe = _boot_subprocess.run(\n"
@@ -613,7 +757,7 @@ class FrozenControls(unittest.TestCase):
              lambda: insert_statement("_boot_probe = __import__('subprocess')\n"),
              '__import__'),
             ('the helper itself launching with the inherited environment',
-             lambda: region_text.replace(
+             lambda: source.replace(
                  helper_launch,
                  'env=dict(_boot_os.environ), stderr=_boot_subprocess.PIPE, timeout=30)', 1),
              'scrub the environment'),
@@ -725,11 +869,106 @@ class FrozenControls(unittest.TestCase):
                     result = run_entry(
                         path, '-h' if path.name.startswith('test_') else '--help')
                     output = result.stdout + result.stderr
+                    # #2513 fix-r15 (MM r14 conc-r2): the control arm used to
+                    # assert only the absence of the refusal message, so an
+                    # entry that exited or crashed before the admission
+                    # counted as "admission passed". Every entry reaches its
+                    # normal --help/-h exit (rc 0, measured over all 22
+                    # anchored entries) after passing the admission; an
+                    # earlier exit is red here instead.
+                    self.assertEqual(
+                        result.returncode, 0,
+                        marker + f': {relative} did not reach its normal exit under '
+                        f'steering (rc={result.returncode}): ' + output[-300:])
                     self.assertNotIn('apparatus bootstrap', output,
                                      marker + f': {relative} refused pristine bytes under steering: '
                                      + output[-300:])
                     self.assertFalse(decoy_marker.exists(),
                                      marker + f': {relative} executed unexpected apparatus bytes')
+
+    def test_boot_git_env_runtime_content_is_pinned_under_a_poisoned_environment(self):
+        """#2513 fix-r15 (DS r14 review): the runtime content of ``_boot_git_env``.
+
+        The three verbatim AST pins prove the source form only; this test
+        runs a real admission area and pins the form that actually executes.
+        The dump arm stops a staged entry right before its admission read and
+        prints the live ``_boot_git_env`` under a fully poisoned environment —
+        GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM,
+        GIT_EXEC_PATH, PATH and HOME all steered at decoys — and the printed
+        content must be exactly the three pinned keys with the real devnull.
+        The refusal arm replays the r14 b#1 construction under the same
+        poison: the decoy HEAD carries the worktree's mutated bytes, so only
+        a scrubbed launch can produce the mismatch refusal.
+        """
+        marker = '#2513 fix-r15: _boot_git_env must stay the pinned three keys at runtime'
+        with tempfile.TemporaryDirectory(prefix='b1-envpin-') as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            (root / 'specs/ui-server-parity/FROZEN.md').unlink()
+            device = root / 'scripts/ui-server-parity'
+            entry = device / 'check_frozen.py'
+            decoy_home = root / 'decoy-home'
+            decoy_home.mkdir()
+            (decoy_home / 'gitconfig').write_text('[safe]\n\tdirectory = *\n')
+            poison = dict(os.environ,
+                          GIT_DIR=str(root / 'nonexistent-decoy' / '.git'),
+                          GIT_WORK_TREE=str(root / 'nonexistent-decoy'),
+                          GIT_CONFIG_GLOBAL=str(decoy_home / 'gitconfig'),
+                          GIT_CONFIG_SYSTEM=str(decoy_home / 'gitconfig'),
+                          GIT_EXEC_PATH=str(decoy_home / 'git-exec'),
+                          PATH=str(decoy_home / 'bin'),
+                          HOME=str(decoy_home))
+            # Dump arm: the same admission region with the read replaced by a
+            # print of the live _boot_git_env, so the content that would be
+            # handed to /usr/bin/git is observed, not inferred.
+            dump = ('import json as _boot_json\n'
+                    'print(_boot_json.dumps(sorted(_boot_git_env.items())))\n'
+                    'raise SystemExit(0)\n')
+            dumped = device / 'env-dump.py'
+            dumped.write_text(entry.read_text().replace(
+                '_boot_manifest = _boot_os.path.join(',
+                dump + '_boot_manifest = _boot_os.path.join(', 1))
+            expected = [['GIT_CONFIG_GLOBAL', os.devnull],
+                        ['GIT_CONFIG_NOSYSTEM', '1'],
+                        ['PATH', '/usr/bin:/bin']]
+            result = subprocess.run([sys.executable, '-I', str(dumped)], cwd=root, env=poison,
+                                     capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, marker + ': dump arm: ' + result.stderr[-300:])
+            self.assertEqual(json.loads(result.stdout), expected,
+                             marker + ': the live _boot_git_env inherited the poisoned '
+                             'environment: ' + result.stdout)
+            # Refusal arm: pristine staged HEAD, mutated worktree bytes, and a
+            # decoy repository whose HEAD carries exactly those mutated bytes
+            # under the same poison — an environment leak admits them, the
+            # scrubbed launch reads the real repository and refuses.
+            pristine = (device / 'apparatus.py').read_bytes()
+            decoy_marker = root / 'DECOY_APPARATUS_EXECUTED'
+            mutated = pristine + (
+                '\nopen(' + repr(str(decoy_marker)) + ', "w").write("decoy")\n').encode()
+            decoy = Path(tmp) / 'decoy'
+            (decoy / 'scripts/ui-server-parity').mkdir(parents=True)
+            (decoy / 'scripts/ui-server-parity/apparatus.py').write_bytes(mutated)
+            subprocess.run(['git', 'init', '-q', str(decoy)], check=True)
+            subprocess.run(['git', '-C', str(decoy), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(decoy), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            (device / 'apparatus.py').write_bytes(mutated)
+            decoy_marker.unlink(missing_ok=True)
+            refusal = dict(poison, GIT_DIR=str(decoy / '.git'), GIT_WORK_TREE=str(decoy))
+            result = subprocess.run([sys.executable, '-I', str(entry), '--help'],
+                                    cwd=root, env=refusal, capture_output=True, text=True,
+                                    timeout=120)
+            output = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 1,
+                             marker + ': a fully poisoned environment admitted the admission: '
+                             + output[-300:])
+            self.assertIn('apparatus bootstrap differs from HEAD without manifest', output,
+                          marker + ': the refusal must name the real-repository mismatch: '
+                          + output[-300:])
+            self.assertFalse(decoy_marker.exists(),
+                            marker + ': the admission executed decoy-admitted apparatus bytes')
 
     def test_checked_source_loader_rejects_changed_bytes_before_execution(self):
         from apparatus import SourceLoader, manifest_pins
@@ -775,9 +1014,14 @@ class FrozenControls(unittest.TestCase):
 
     def test_entrypoints_reject_reinserted_apparatus_directory(self):
         apparatus = ROOT / 'scripts/ui-server-parity'
-        entries = [path for path in sorted(apparatus.rglob('*.py'))
-                   if '# Isolated bootstrap' in path.read_text()]
-        self.assertGreaterEqual(len(entries), 20, '#1023-2: guard inventory must not be empty')
+        # #2513 fix-r15 (DS r14 review): anchor-set derivation with the marker
+        # inventory as the denominator — the comment-string filter plus the
+        # magic ``>= 20`` let a bootstrap whose anchor was edited away drop
+        # out of this guard silently.
+        entries, marked = bootstrap_entries(apparatus, '#1023-2')
+        self.assertTrue(entries, '#1023-2: guard inventory must not be empty')
+        self.assertFalse(marked - set(entries),
+                         '#1023-2: bootstrap-marked files must keep the admission anchor')
         probe = ('import runpy, sys\n'
                  'sys.path.insert(0, sys.argv[1])\n'
                  'runpy.run_path(sys.argv[2], run_name="__main__")\n')
@@ -794,9 +1038,12 @@ class FrozenControls(unittest.TestCase):
 
     def test_entry_guards_compare_directory_identity(self):
         apparatus = ROOT / 'scripts/ui-server-parity'
-        entries = [path for path in sorted(apparatus.rglob('*.py'))
-                   if '# Isolated bootstrap' in path.read_text()]
-        self.assertGreaterEqual(len(entries), 20, '#1023-5: guard inventory must not be empty')
+        # #2513 fix-r15 (DS r14 review): anchor-set derivation with the marker
+        # inventory as the denominator, same as the other guard lists.
+        entries, marked = bootstrap_entries(apparatus, '#1023-5')
+        self.assertTrue(entries, '#1023-5: guard inventory must not be empty')
+        self.assertFalse(marked - set(entries),
+                         '#1023-5: bootstrap-marked files must keep the admission anchor')
         for path in entries:
             relative = path.relative_to(ROOT)
             with self.subTest(entry=str(relative)):
@@ -863,9 +1110,12 @@ class FrozenControls(unittest.TestCase):
             return ''.join(lines)
 
         apparatus = ROOT / 'scripts/ui-server-parity'
-        entries = [path for path in sorted(apparatus.rglob('*.py'))
-                   if '# Isolated bootstrap' in path.read_text()]
-        self.assertGreaterEqual(len(entries), 20, '#1023-11: guard inventory must not be empty')
+        # #2513 fix-r15 (DS r14 review): anchor-set derivation with the marker
+        # inventory as the denominator, same as the other guard lists.
+        entries, marked = bootstrap_entries(apparatus, '#1023-11')
+        self.assertTrue(entries, '#1023-11: guard inventory must not be empty')
+        self.assertFalse(marked - set(entries),
+                         '#1023-11: bootstrap-marked files must keep the admission anchor')
         with tempfile.TemporaryDirectory(prefix='b2-osguard-') as temp:
             holder = Path(temp)
             for path in entries:
@@ -925,9 +1175,12 @@ class FrozenControls(unittest.TestCase):
 
     def test_entry_guards_reject_alias_spellings(self):
         apparatus = ROOT / 'scripts/ui-server-parity'
-        entries = [path for path in sorted(apparatus.rglob('*.py'))
-                   if '# Isolated bootstrap' in path.read_text()]
-        self.assertGreaterEqual(len(entries), 20, '#1023-6: guard inventory must not be empty')
+        # #2513 fix-r15 (DS r14 review): anchor-set derivation with the marker
+        # inventory as the denominator, same as the other guard lists.
+        entries, marked = bootstrap_entries(apparatus, '#1023-6')
+        self.assertTrue(entries, '#1023-6: guard inventory must not be empty')
+        self.assertFalse(marked - set(entries),
+                         '#1023-6: bootstrap-marked files must keep the admission anchor')
         probe = ('import runpy, sys\n'
                  'sys.path.insert(0, sys.argv[1])\n'
                  'runpy.run_path(sys.argv[2], run_name="__main__")\n')

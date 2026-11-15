@@ -3291,8 +3291,23 @@ class ContractTests(unittest.TestCase):
         # #2231 r1: since the pinned-Node gate (#122) runs before preflight,
         # node_identity must be patched too — otherwise it raises first and
         # the assertions below would pass without preflight ever running.
+        # #2513 fix-r15: the darwin gate and the sandbox-exec presence check
+        # are faked exactly like the twin below — this cell used to be red on
+        # every Linux host (main blocked at the gate before the lease, so
+        # the gate's call count was 0; baseline evidence in the fix-r15 round
+        # directory), while staying green on macOS where it was authored.
         output = self.root / 'blocked-run'
+        real_is_file = Path.is_file
+
+        def darwin_is_file(self):
+            # The one lie this cell needs: macOS's sandbox-exec is present.
+            if self == Path('/usr/bin/sandbox-exec'):
+                return True
+            return real_is_file(self)
+
         with patch('sys.argv', ['run_round.py', '--node', sys.executable]), \
+             patch('run_round.sys.platform', 'darwin'), \
+             patch.object(Path, 'is_file', darwin_is_file), \
              patch('run_round.output_path', return_value=output), \
              patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
@@ -3368,8 +3383,21 @@ class ContractTests(unittest.TestCase):
         declared = self.root / 'deps/libuv-1.52.1/lib'
         declared.mkdir(parents=True)
         output = self.root / 'wired-run'
+        # #2513 fix-r15: same darwin lies as the two leased-path twins above
+        # — without them main blocks at the macOS-only gate on a Linux host
+        # and this cell can never reach the wiring it pins (baseline-red
+        # evidence in the fix-r15 round directory).
+        real_is_file = Path.is_file
+
+        def darwin_is_file(self):
+            if self == Path('/usr/bin/sandbox-exec'):
+                return True
+            return real_is_file(self)
+
         with patch('sys.argv', ['run_round.py', '--node', sys.executable,
                                 '--ts-read-dir', str(declared)]), \
+             patch('run_round.sys.platform', 'darwin'), \
+             patch.object(Path, 'is_file', darwin_is_file), \
              patch('run_round.output_path', return_value=output), \
              patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
@@ -3515,10 +3543,12 @@ class ApparatusVerificationTests(unittest.TestCase):
                          'scripts/cli-parity/common.py')
 
     def test_missing_provenance_fails_closed(self):
-        # #2513 fix-r14: the verified set is derived from the provenance
-        # stamps themselves, so the missing-provenance refusal is the
-        # aggregate one — strip every stamp and the verification must refuse
-        # the round instead of silently verifying nothing.
+        # #2513 fix-r15 (DS r14 review): the verified set is the loader's
+        # caller-held registry, so the aggregate missing-provenance refusal
+        # is reserved for a genuine zero-load — no module was ever loaded
+        # through _bootstrap.load and nothing survives stamped in
+        # sys.modules. A single module's stamp going missing is the
+        # per-module refusal (test_single_module_stamp_missing_is_refused).
         heads = self.heads(_common._apparatus_source)
         stamped = sorted(name for name, module in sys.modules.items()
                          if isinstance(getattr(module, '_apparatus_source', None), bytes))
@@ -3526,6 +3556,7 @@ class ApparatusVerificationTests(unittest.TestCase):
                       '#2513 the test process must load common through _bootstrap')
         with patch.object(_run_round, '_head_source',
                           side_effect=lambda relative: heads[relative]), \
+                patch.object(sys, '_cli_parity_loaded_apparatus', []), \
                 ExitStack() as stack:
             for name in stamped:
                 stack.enter_context(
@@ -3537,6 +3568,118 @@ class ApparatusVerificationTests(unittest.TestCase):
         self.assertEqual(str(caught.exception),
                          '#2513 no apparatus module was loaded through '
                          '_bootstrap.load')
+
+    def test_single_module_stamp_missing_is_refused(self):
+        # #2513 fix-r15 (MM r14 conc-r2 ②): one module losing its stamp is
+        # red per-module — not a silent skip out of the comparison, and not
+        # the all-empty refusal.
+        heads = self.heads(_common._apparatus_source)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(sys.modules['host_negative_controls'],
+                             '_apparatus_source', None), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a single module\'s missing stamp '
+                                      'must fail closed per-module') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus differs from HEAD: '
+                         'scripts/cli-parity/host_negative_controls.py')
+
+    def test_self_removed_module_is_refused(self):
+        # #2513 fix-r15 (MM r14 conc-r2 ①): a module that removes itself from
+        # sys.modules (pop or set None) keeps its stamp — the registry's
+        # module reference must make that red, not a silent exit from the
+        # comparison.
+        heads = self.heads(_common._apparatus_source)
+        removed = sys.modules.pop('controls')
+        self.addCleanup(sys.modules.__setitem__, 'controls', removed)
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a module that removed itself from '
+                                      'sys.modules must be refused') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus module is no longer in '
+                         'sys.modules: controls')
+
+    def test_unregistered_stamped_module_is_refused(self):
+        # #2513 fix-r15 (DS r14 review): the registry is pinned against
+        # _bootstrap's own APPARATUS_MODULES inventory — a stamped module
+        # the loading surface never registered is red, whatever its bytes.
+        rogue = SimpleNamespace(_apparatus_source=b'# rogue stamped bytes\n')
+        heads = self.heads(_common._apparatus_source)
+        heads['scripts/cli-parity/rogue.py'] = rogue._apparatus_source
+        registry = list(sys._cli_parity_loaded_apparatus) + [('rogue', rogue)]
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(sys, '_cli_parity_loaded_apparatus', registry), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a stamped module missing from the '
+                                      '_bootstrap manifest must be refused') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 loaded apparatus modules missing from the '
+                         '_bootstrap manifest: rogue')
+
+    def test_stamped_module_outside_registry_is_refused(self):
+        # #2513 fix-r15 (MM r14 conc-r2 ①): the sys.modules-derived set must
+        # stay a subset of the loader registry — a stamped module whose
+        # registry row was deleted is red, not silently outside the
+        # comparison.
+        heads = self.heads(_common._apparatus_source)
+        registry = [pair for pair in sys._cli_parity_loaded_apparatus
+                    if pair[0] != 'policy']
+        self.assertNotEqual(registry, list(sys._cli_parity_loaded_apparatus),
+                             '#2513 the policy pair must exist to be dropped')
+        with patch.object(_run_round, '_head_source',
+                          side_effect=lambda relative: heads[relative]), \
+                patch.object(sys, '_cli_parity_loaded_apparatus', registry), \
+                self.assertRaises(ValueError,
+                                  msg='#2513 a stamped module outside the loader '
+                                      'registry must be refused') as caught:
+            _run_round._verify_loaded_apparatus()
+        self.assertEqual(str(caught.exception),
+                         '#2513 stamped apparatus module is not recorded by '
+                         '_bootstrap.load: policy')
+
+    def test_heads_cover_every_loader_recorded_module(self):
+        # #2513 fix-r15 (DS r14 review): heads() is the controlled-HEAD
+        # inventory of this process's loader registry — a row dropped from
+        # it is a module the cells above silently stop covering.
+        recorded = sorted({name for name, _ in sys._cli_parity_loaded_apparatus})
+        self.assertEqual(recorded, ['common', 'compare', 'controls',
+                                    'host_negative_controls', 'policy', 'run_round'],
+                         '#2513 heads() must cover every loader-recorded module')
+        heads = self.heads(_common._apparatus_source)
+        for name in recorded:
+            self.assertIn(f'scripts/cli-parity/{name}.py', heads,
+                          '#2513 heads() must cover every loader-recorded '
+                          'module: ' + name)
+
+    def test_late_controls_load_is_reverified(self):
+        # #2513 fix-r15 (DS r14 b#6): controls.py loads inside main() after
+        # the post-lease gate — a mutation window that held until that point
+        # ran a mutated controls unverified. main must run another
+        # verification round right after the late load, before it executes.
+        source = (SCRIPT / 'run_round.py').read_text()
+        tree = ast.parse(source)
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == '_verify_loaded_apparatus']
+        self.assertEqual(len(calls), 2,
+                         '#2513 the late controls load must be followed by '
+                         'another verification round')
+        loads = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == '_load'
+                 and any(isinstance(arg, ast.Constant) and arg.value == 'controls'
+                         for arg in node.args)]
+        self.assertTrue(loads, '#2513 main must load controls through _bootstrap')
+        self.assertGreater(calls[-1].lineno, loads[0].lineno,
+                           '#2513 the second verification round must follow '
+                           'the late controls load')
 
     def test_mutated_compare_is_refused(self):
         heads = self.heads(_common._apparatus_source)
