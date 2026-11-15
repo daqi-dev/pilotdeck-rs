@@ -733,9 +733,19 @@ def _collect_names(node, names):
     ``node.elt`` and collected ``x`` anyway, so the bound loop variable
     polluted the guarded set, the unresolvable window looked resolvable,
     and the empty-window fail-closed never fired (a false PASS). The bound
-    targets are now collected first and subtracted from everything the
-    element and the iters draw on; a chained ``for y in x`` iter is also a
-    bound target and joins the subtraction.
+    targets are now collected first and subtracted from what the element
+    draws on; a chained ``for y in x`` iter is also a bound target and
+    joins the subtraction.
+
+    #3178 fix-r3 (DS3 boundary#1 + ds1 sibling#8): the subtraction is
+    confined to the element/condition pool — the iters are evaluated in
+    the *enclosing* scope, so ``[p for p in [p]]`` draws the outer ``p``
+    through the iter and the old blanket ``drawn - bound`` wrongly dropped
+    it (a same-name shadow hid the true guarded name and the window looked
+    resolvable without it: a false PASS on truncated writes). And the
+    ``ifs`` conditions are the third draw position of the same production:
+    names appearing only there (``if p in CANDIDATES``) used to miss the
+    guarded set entirely.
     """
     if isinstance(node, ast.Name):
         names.add(node.id)
@@ -757,31 +767,52 @@ def _collect_names(node, names):
     elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
         # The loop variables a comprehension binds are local to it — they
         # are not names drawn from the enclosing scope. Collect what the
-        # element and the iters draw on, then drop the bound targets.
+        # element, the filter conditions and the iters draw on. The bound
+        # targets are subtracted from the element/condition pool only: the
+        # iters are evaluated in the enclosing scope, so a name that
+        # coincides with a bound target (``[p for p in [p]]``) is a real
+        # outer draw and must survive the subtraction (fix-r3, DS3
+        # boundary#1); the ``ifs`` conditions join the element pool because
+        # they draw outer names of their own (fix-r3, ds1 sibling#8).
         bound = set(_assigned_names([generator.target
                                       for generator in node.generators]))
-        drawn = set()
-        _collect_names(node.elt, drawn)
+        drawn_elt = set()
+        _collect_names(node.elt, drawn_elt)
+        drawn_iters = set()
         for generator in node.generators:
-            _collect_names(generator.iter, drawn)
-        names |= drawn - bound
+            _collect_names(generator.iter, drawn_iters)
+            for condition in generator.ifs:
+                _collect_names(condition, drawn_elt)
+        names |= (drawn_elt - bound) | drawn_iters
     elif isinstance(node, ast.DictComp):
-        # Same rule for the dict shapes: key and value draw (recursively),
-        # the bound targets stay out.
+        # Same rule for the dict shapes: key and value (and the ``ifs``
+        # conditions) draw (recursively), the bound targets stay out of that
+        # pool, and the iters keep their names whole.
         bound = set(_assigned_names([generator.target
                                       for generator in node.generators]))
-        drawn = set()
-        _collect_names(node.key, drawn)
-        _collect_names(node.value, drawn)
+        drawn_elt = set()
+        _collect_names(node.key, drawn_elt)
+        _collect_names(node.value, drawn_elt)
+        drawn_iters = set()
         for generator in node.generators:
-            _collect_names(generator.iter, drawn)
-        names |= drawn - bound
+            _collect_names(generator.iter, drawn_iters)
+            for condition in generator.ifs:
+                _collect_names(condition, drawn_elt)
+        names |= (drawn_elt - bound) | drawn_iters
     elif isinstance(node, ast.BinOp):
         _collect_names(node.left, names)
         _collect_names(node.right, names)
     elif isinstance(node, ast.Subscript):
         _collect_names(node.value, names)
         _collect_names(node.slice, names)
+    elif isinstance(node, ast.Compare):
+        # #3178 fix-r3 (ds1 sibling#8): the comprehension ``ifs`` are filter
+        # conditions, and the canonical shape is a Compare (``if p in
+        # CANDIDATES``) — without this branch the ifs collection the same
+        # round adds to the comprehension draw pools resolves nothing for it.
+        _collect_names(node.left, names)
+        for comparator in node.comparators:
+            _collect_names(comparator, names)
     elif isinstance(node, ast.IfExp):
         _collect_names(node.body, names)
         _collect_names(node.test, names)
@@ -1145,6 +1176,61 @@ class MigrationWindowSweepTests(unittest.TestCase):
             '#3178 dropping the comprehension target must not blind the scan '
             'to the collection it iterates (paths.values() is still a '
             'guarded-name draw, and the truncating write through it must red)')
+
+    def test_scan_keeps_shadowed_iter_names_and_collects_ifs(self):
+        """#3178 fix-r3 (DS3 boundary#1 + ds1 sibling#8): the red side.
+
+        Two draw positions the fix-r2 blanket ``drawn - bound`` got wrong or
+        missed. The iters are evaluated in the *enclosing* scope, so
+        ``[p for p in [p]] + [q]`` draws the outer ``p`` through the iter;
+        subtracting the bound target from it dropped the true guarded name,
+        the window looked resolvable without it, and the truncated write on
+        ``p`` went unseen (a false PASS the pre-fix-r2 code — which never
+        collected the target at all — did flag). And the ``ifs`` conditions
+        draw names of their own: a name appearing only in the filter clause
+        (``if p in CANDIDATES``) used to miss the guarded set entirely. The
+        DictComp branch carries the same two probes.
+        """
+        for guard in ('[p for p in [p]] + [q]',
+                      '{p: p for p in [p] if p in [p]}'):
+            with self.subTest(shadow=guard):
+                source = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard, body="    p.write_text('mutated')")
+                self.assertTrue(
+                    any('truncating write_text on the guarded source' in v
+                        for v in scan_migration(source, 'probe/table.py')),
+                    '#3178 a name shadowed by the comprehension target must '
+                    'stay guarded through its iter draw (the enclosing-scope '
+                    'name the subtraction used to drop)')
+        for guard in ('[p for p in [q] if r in [q]]',
+                      '{k: v for k, v in [(q, q)] if r in paths}'):
+            with self.subTest(ifs=guard):
+                source = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard, body="    r.write_text('mutated')")
+                self.assertTrue(
+                    any('truncating write_text on the guarded source' in v
+                        for v in scan_migration(source, 'probe/table.py')),
+                    '#3178 a name drawn only by a comprehension ``ifs`` '
+                    'condition must stay guarded (the third draw position the '
+                    'collector used to skip entirely)')
+        # The positive side: an ifs-carrying guard still resolves, stays
+        # green in its atomic shape, and a truncating write through the
+        # iterated collection still reds (no false red from the fix).
+        atomic = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in [q] if q in paths]',
+            body="    for path, data in originals.items():\n"
+                 "        write_source_atomic(root, path, data)")
+        self.assertEqual(scan_migration(atomic, 'probe/table.py'), [],
+                         '#3178 an ifs-carrying computed guard must resolve '
+                         'and stay green in its atomic shape')
+        reverted = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values() if p in paths.values()]',
+            body="    paths['src'].write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(reverted, 'probe/table.py')),
+            '#3178 the iterated collection behind an ifs filter is still a '
+            'guarded-name draw, and the truncating write through it must red')
 
     def test_scan_allows_evidence_writes_and_population_follows_the_marker(self):
         self.assertEqual(

@@ -482,7 +482,11 @@ def check_anchors(selected):
         text = source.read_text()
         count = text.count(old)
         if count != 1:
-            print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(ROOT)}')
+            # #3178 fix-r3 (DS3 F5): the shared guarded print — a bare
+            # ``print`` under a dead stdout would crash rc=1 and read as
+            # "ran and was red"; the refusal must stay at rc=2.
+            dead_stream_print(f'STALE ANCHOR {name}: {count} matches in '
+                             f'{source.relative_to(ROOT)}', stream='stderr')
             return 2
     print(f'{len(selected)} anchors: ok')
     return 0

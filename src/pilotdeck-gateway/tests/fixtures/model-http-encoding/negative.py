@@ -13,7 +13,9 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (dead_stream_print, mutating_sources,
+                              run_owned, wait_for_slot)
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
@@ -119,6 +121,16 @@ def cargo(test, env, out, label, *, no_run=False):
 
 
 def main():
+    # #3178 fix-r3 (DS3 F6): an emptied case table verified nothing, but the
+    # old tail ``0 if all(row['status'] == 'KILLED' ...)`` read ``all([])`` as
+    # all-KILLED (rc=0, the vacuum green: no mutant verified, the evidence
+    # directory left occupied). The ``--check-anchors`` green exit is the same
+    # shape on an empty table ("#867 0 anchors valid"), so the refusal comes
+    # first: exit 2, nothing on disk, re-runnable on the same path.
+    if not CASES:
+        dead_stream_print('EMPTY CASE TABLE: negative.py has no mutation to '
+                          'verify; refusing to run', stream='stderr')
+        return 2
     try:
         check_anchors()
     except Exception as error:
@@ -170,7 +182,10 @@ def main():
         print(f"{name}: {row['status']} — {row['reason']}", flush=True)
         (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({status: sum(r['status'] == status for r in summary) for status in ['KILLED', 'SURVIVED', 'INVALID']}))
-    return 0 if all(row['status'] == 'KILLED' for row in summary) else 1
+    # #3178 fix-r3 (DS3 F6): the family tail — the old ``0 if all(...) else
+    # 1`` was vacuously green on an emptied table (the front refusal above
+    # now catches it first; verdict_exit keeps the tail itself honest too).
+    return verdict_exit(summary, key='status')
 
 if __name__ == '__main__':
     sys.exit(main())

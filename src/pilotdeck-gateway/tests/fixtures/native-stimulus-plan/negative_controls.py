@@ -255,6 +255,20 @@ def execution_environment():
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
+    # #3178 fix-r2 (DS sibling#2): an emptied case table verified nothing, but
+    # the old tail ``0 if len(results) == len(selected) and all(...)`` read
+    # ``0 == 0 and all([])`` as all-KILLED (rc=0, the vacuum green: no mutant
+    # verified, an empty summary.json published, and the evidence directory
+    # left occupied). Refuse before the environment, the directory or any
+    # log exists (exit 2, nothing on disk, re-runnable on the same path).
+    # #3178 fix-r3 (DS3 F4): the refusal must also precede preflight() and the
+    # --check-anchors green return -- an emptied table used to preflight zero
+    # anchors ("#1368 0 unique anchors; all Python mutants compile") and then
+    # let --check-anchors return rc=0 with nothing verified at all.
+    if not cases:
+        dead_stream_print('EMPTY CASE TABLE: negative_controls.py has no '
+                          'mutation to verify; refusing to run', stream='stderr')
+        return 2
     preflight()
     if sys.argv[1:] == ['--check-anchors']:
         return 0
@@ -264,16 +278,6 @@ def main():
     parser.add_argument('--case', choices=[row[0] for row in cases])
     args = parser.parse_args()
     selected = [row for row in cases if args.case is None or row[0] == args.case]
-    # #3178 fix-r2 (DS sibling#2): an emptied case table verified nothing, but
-    # the old tail ``0 if len(results) == len(selected) and all(...)`` read
-    # ``0 == 0 and all([])`` as all-KILLED (rc=0, the vacuum green: no mutant
-    # verified, an empty summary.json published, and the evidence directory
-    # left occupied). Refuse before the environment, the directory or any
-    # log exists (exit 2, nothing on disk, re-runnable on the same path).
-    if not selected:
-        dead_stream_print('EMPTY CASE TABLE: negative_controls.py has no '
-                          'mutation to verify; refusing to run', stream='stderr')
-        return 2
     env = execution_environment()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)

@@ -38,6 +38,7 @@ from negative_panic import named_test_killed
 from negative_process import (mutating_sources, new_run_token,
                               run_owned, wait_for_slot,
                               dead_stream_print, write_source_atomic)
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
@@ -186,6 +187,15 @@ def main(argv=None):
     target = os.environ.get('CARGO_TARGET_DIR')
     assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
     baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
+    # #3178 fix-r3 (DS3 F6): an emptied case table verified nothing, but the
+    # old tail ``1 if survived else 0`` read it as all-KILLED (rc=0, the
+    # vacuum green: no mutant verified, the evidence directory left occupied).
+    # An empty table never started — refuse before the evidence directory or
+    # any log exists (exit 2, nothing on disk, re-runnable on the same path).
+    if not cases:
+        dead_stream_print('EMPTY CASE TABLE: negative.py has no mutation to '
+                          'verify; refusing to run', stream='stderr')
+        return 2
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env['CARGO_TARGET_DIR'] = target
@@ -273,7 +283,13 @@ def main(argv=None):
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-    return 1 if survived else 0
+    # #3178 fix-r3 (DS3 F6): the family tail — the old ``1 if survived else
+    # 0`` was vacuously green on an empty table (the front refusal above now
+    # catches it first; verdict_exit keeps the tail itself honest too).
+    return verdict_exit(
+        [{'status': 'KILLED', 'name': name} for name in killed]
+        + [{'status': 'SURVIVED', 'reason': reason}
+           for _name, reason in survived], key='status')
 
 
 if __name__ == '__main__':

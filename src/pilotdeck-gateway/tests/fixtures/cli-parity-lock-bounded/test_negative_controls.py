@@ -293,7 +293,7 @@ class RunnerInvalidationControls(unittest.TestCase):
         """Run the real ``main`` with only the guard and the bound runs mocked."""
         out = Path(tempfile.mkdtemp(prefix='out-', dir=self.root))
         source = self.source
-        captured = {'mutating_calls': 0, 'paths': None}
+        captured = {'mutating_calls': 0, 'paths': None, 'out': out}
 
         class Guard:
             def __enter__(self):
@@ -431,6 +431,21 @@ class RunnerInvalidationControls(unittest.TestCase):
                           'publish — nothing on disk for a run that never started')
         self.assertEqual(captured['mutating_calls'], 1,
                          message + ': the guard must still wrap the (empty) run')
+        # #3178 fix-r3 (DS1 concurrency#1 ≡ DS3 concurrency#1/boundary#2): the
+        # admission (new_output_directory) had already claimed the directory,
+        # and the rc-2 refusal used to leave the ``.claim`` behind — a host
+        # re-running the same output path was then refused on the leftover
+        # never-ran directory (#1060/#953). The refusal must withdraw the
+        # claim: the directory is gone, and the same path is re-admissible
+        # with a freshly created ``.claim``.
+        out = captured['out']
+        self.assertFalse(out.exists(),
+                         message + ': the refused run must withdraw its claim '
+                         '(the claimed directory must not survive the rc 2)')
+        reclaimed = self.runner.new_output_directory(out)
+        self.assertTrue(reclaimed.exists() and (reclaimed / '.claim').is_file(),
+                        message + ': the same output path must be re-admissible '
+                        'after the refusal, with a fresh ``.claim`` marker')
 
     def test_fully_filtered_selection_fails_closed(self):
         """fix-r2 P1: an unknown --selection must fail closed, never run empty.

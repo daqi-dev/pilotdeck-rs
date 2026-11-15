@@ -59,6 +59,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (dead_stream_print, mutating_sources,
                               new_output_directory, run_owned)
+from negative_selection import withdraw_claim
 from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
@@ -242,6 +243,14 @@ mutations = [
      "    if not summary:\n"
      "        dead_stream_print('no mutations selected: the table is empty or the '\n"
      "                          'selection matched no row', stream='stderr')\n"
+     "        # #3178 fix-r3 (DS1 concurrency#1 ≡ DS3 concurrency#1/boundary#2):\n"
+     "        # the refusal still owned the claimed evidence directory — the\n"
+     "        # ``.claim`` marker sat in it — so a host re-running the same output\n"
+     "        # path was refused on the leftover never-ran directory (#1060/#953;\n"
+     "        # the four sibling runners got the same withdraw in fix-r2, this one\n"
+     "        # was left behind). Withdraw the claim; an OSError must not mask the\n"
+     "        # rc 2.\n"
+     "        withdraw_claim(out)\n"
      "        return 2\n",
      ""),
     # fix-r2 P1: the selection gate no longer fails closed on an unknown name,
@@ -545,6 +554,14 @@ def main():
     if not summary:
         dead_stream_print('no mutations selected: the table is empty or the '
                           'selection matched no row', stream='stderr')
+        # #3178 fix-r3 (DS1 concurrency#1 ≡ DS3 concurrency#1/boundary#2):
+        # the refusal still owned the claimed evidence directory — the
+        # ``.claim`` marker sat in it — so a host re-running the same output
+        # path was refused on the leftover never-ran directory (#1060/#953;
+        # the four sibling runners got the same withdraw in fix-r2, this one
+        # was left behind). Withdraw the claim; an OSError must not mask the
+        # rc 2.
+        withdraw_claim(out)
         return 2
     write_summary(out, summary)
     counts = _counts(summary)

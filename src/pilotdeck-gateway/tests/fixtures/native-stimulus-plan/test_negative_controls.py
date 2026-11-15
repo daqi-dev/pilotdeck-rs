@@ -14,7 +14,9 @@ The runner's tail used to be ``0 if len(results) == len(selected) and
 all(...)`` — an emptied table gave ``0 == 0 and all([])``: rc=0, an empty
 ``summary.json`` published, and the evidence directory left occupied. The
 refusal must come first: exit 2, no evidence directory at all, the same
-output path re-runnable.
+output path re-runnable.  #3178 fix-r3 (DS3 F4) adds the ``--check-anchors``
+twin: the green preflight return used to sit after the empty-table refusal
+point, so an emptied table certified zero anchors as ok.
 
 Run with:
 
@@ -32,8 +34,9 @@ CHILD = '''\
 import sys
 from pathlib import Path
 
-fixtures, runner, out = (Path(argument) for argument in sys.argv[1:4])
-sys.path.insert(0, str(fixtures / 'native-stimulus-plan'))
+fixtures, runner, out, mode = sys.argv[1:5]
+runner, out = Path(runner), Path(out)
+sys.path.insert(0, str(Path(fixtures) / 'native-stimulus-plan'))
 import negative_controls
 
 
@@ -46,7 +49,7 @@ negative_controls.cases = []
 negative_controls.run_owned = unreachable
 negative_controls.wait_for_slot = unreachable
 negative_controls.mutating_sources = unreachable
-sys.argv = [str(runner), str(out)]
+sys.argv = [str(runner)] + ([str(out)] if mode == 'run' else ['--check-anchors'])
 raise SystemExit(negative_controls.main())
 '''
 
@@ -54,19 +57,22 @@ raise SystemExit(negative_controls.main())
 class StimulusEmptyTableControls(unittest.TestCase):
     """An emptied stimulus-plan case table is a refusal, not a vacuum green."""
 
+    def _drive(self, temp, mode):
+        child = Path(temp) / 'child.py'
+        child.write_text(CHILD)
+        fixtures = Path(__file__).resolve().parents[1]
+        runner = Path(__file__).with_name('negative_controls.py')
+        env = dict(os.environ,
+                   CARGO_TARGET_DIR=str(Path(temp) / 'target'))
+        return subprocess.run(
+            [sys.executable, '-I', str(child), str(fixtures),
+             str(runner), str(Path(temp) / 'run'), mode],
+            capture_output=True, timeout=120, env=env)
+
     def test_an_empty_case_table_refuses_before_any_evidence(self):
         with tempfile.TemporaryDirectory(prefix='pdrs-ns-empty-') as temp:
+            result = self._drive(temp, 'run')
             out = Path(temp) / 'run'
-            child = Path(temp) / 'child.py'
-            child.write_text(CHILD)
-            fixtures = Path(__file__).resolve().parents[1]
-            runner = Path(__file__).with_name('negative_controls.py')
-            env = dict(os.environ,
-                       CARGO_TARGET_DIR=str(Path(temp) / 'target'))
-            result = subprocess.run(
-                [sys.executable, '-I', str(child), str(fixtures),
-                 str(runner), str(out)],
-                capture_output=True, timeout=120, env=env)
             listing = (sorted(path.name for path in out.iterdir())
                        if out.exists() else None)
         message = ('#3178 an empty case table must refuse before any evidence '
@@ -87,6 +93,32 @@ class StimulusEmptyTableControls(unittest.TestCase):
         self.assertNotIn(b'summary.json', result.stdout + result.stderr,
                          message + ' (no summary may be published for a '
                          'run that never started)')
+
+    def test_an_empty_case_table_fails_the_check_anchors_preflight(self):
+        """#3178 fix-r3 (DS3 F4): --check-anchors on an emptied table is rc=2.
+
+        The green return used to sit after preflight(), so an emptied table
+        preflighted zero anchors ("#1368 0 unique anchors") and let
+        ``--check-anchors`` return rc=0 — the anchor gate certifying a table
+        with nothing in it.
+        """
+        with tempfile.TemporaryDirectory(prefix='pdrs-ns-empty-') as temp:
+            result = self._drive(temp, 'check-anchors')
+            out = Path(temp) / 'run'
+        message = ('#3178 an empty case table must fail --check-anchors '
+                   '(the green return used to precede the empty-table '
+                   'refusal, certifying zero anchors as ok)')
+        self.assertEqual(result.returncode, 2, message + f' (got rc='
+                         f'{result.returncode}, stderr='
+                         f'{result.stderr!r})')
+        self.assertIn(b'EMPTY CASE TABLE', result.stderr,
+                      message + ' (the refusal reason must reach stderr)')
+        self.assertNotIn(b'unique anchors', result.stdout,
+                         message + ' (a never-started run must not print a '
+                         'green-toned preflight line)')
+        self.assertFalse(out.exists(),
+                         message + ' (nothing may be created for a '
+                         'never-started run)')
 
 
 if __name__ == '__main__':

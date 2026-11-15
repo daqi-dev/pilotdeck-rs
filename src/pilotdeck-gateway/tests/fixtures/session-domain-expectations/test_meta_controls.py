@@ -379,8 +379,12 @@ def negative_checks():
         # "0 anchors: ok" / rc 0 behaviour, which the bound test must catch.
         ('empty-anchors-pass', 'check_anchors',
          "    if not selected:\n"
-         "        print('EMPTY ANCHOR SELECTION: nothing to validate; '\n"
-         "              'the anchor gate must not pass', file=sys.stderr)\n"
+         "        # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with\n"
+         "        # rc=1 under a dead stderr (``2>&-``) and reads as \"ran and was red\";\n"
+         "        # the shared guarded print keeps the refusal at rc=2 (#1087 fix-r8\n"
+         "        # family shape).\n"
+         "        dead_stream_print('EMPTY ANCHOR SELECTION: nothing to validate; '\n"
+         "                          'the anchor gate must not pass', stream='stderr')\n"
          "        return 2\n", '',
          'test_check_anchors_rejects_empty_selection',
          '#1364 empty-anchors: an empty selection must not return success'),

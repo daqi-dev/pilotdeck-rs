@@ -1811,19 +1811,23 @@ class EnvironmentControls(unittest.TestCase):
         # fix-r1 干净树实测：1/1/1/1/1/6/6/8/2，合计 27，九模块 < 1 s；
         # #3178 fix-r2（P2-a-4）接进 gateway-batch / html-timing / 新增
         # native-stimulus-plan 三模块：7/12/1，合计 47，十二模块约 2 s。
+        # #3178 fix-r3（DS3 boundary#3）：fix-r2 新增的三条空表孪生当时没抬下限
+        # （2/7/9 实跑 vs 1/6/8 下限，删掉新孪生 CI 仍绿——本文件 :1646-1650
+        # 记录的 #1800 fix-r2 同型下限漂移洞），本轮按真跑计数抬高；同轮的
+        # native-stimulus-plan --check-anchors 孪生（DS3 F4）也把该模块抬到 2。
         minimums = (
-            ('frozen-manifest/test_negative_controls.py', 1),
+            ('frozen-manifest/test_negative_controls.py', 2),
             ('parity-lock-release/test_negative_controls.py', 1),
             ('session-domain-lock-release/test_negative_controls.py', 1),
             ('session-domain-expectations/test_negative_controls.py', 1),
             ('session-domain-native/test_negative_controls.py', 1),
-            ('fe-coexist/test_negative_controls.py', 6),
+            ('fe-coexist/test_negative_controls.py', 7),
             ('memory-gateway/test_negative_controls.py', 6),
-            ('edgeclaw-messages/test_negative.py', 8),
+            ('edgeclaw-messages/test_negative.py', 9),
             ('user-dialog-http-store-1555/test_dirty_tree_control_1555.py', 2),
             ('gateway-batch/test_negative_controls.py', 7),
             ('html-timing/test_negative_controls.py', 12),
-            ('native-stimulus-plan/test_negative_controls.py', 1),
+            ('native-stimulus-plan/test_negative_controls.py', 2),
         )
         started = time.monotonic()
         for module, minimum in minimums:
@@ -1838,7 +1842,7 @@ class EnvironmentControls(unittest.TestCase):
     def test_required_job_runs_the_p2batch_twin_self_tests(self):
         # #3178 fix-r1（评审 sibling#4）：六个孪生文件交付时只有 docstring 里的
         # 「Run with」——仓内没有任何入口执行它们，删掉文件全绿。本钉与真跑钉
-        # 互补：九条命令逐一钉进同一步（子集判断下少一条不红，删掉 CI 里任一行
+        # 互补：十二条命令逐一钉进同一步（子集判断下少一条不红，删掉 CI 里任一行
         # 同样必须红），步必须无条件、cwd 正确、带同源超时。
         # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
         # 三条同形补钉（十二命令）。
