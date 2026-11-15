@@ -332,7 +332,6 @@ def failing_subtest_blocks(log):
 
 def main():
     out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
     selected = set(sys.argv[2:])
     unknown = selected - {row[0] for row in mutations}
     if unknown:
@@ -344,6 +343,16 @@ def main():
                           stream='stderr')
         return 2
     rows = [row for row in mutations if not selected or row[0] in selected]
+    # #3178 fix-r2 (P2-a, DS sibling#2 family): an emptied mutation table
+    # verified nothing, but the old tail still wrote an empty summary.json and
+    # exited 1 — a summary that exists reads like a completed run, and rc=1
+    # reads "ran and was red". Refuse before the evidence directory is
+    # claimed (exit 2, nothing on disk, re-runnable on the same path).
+    if not rows:
+        dead_stream_print("EMPTY MUTATION TABLE: negative_controls.py has no "
+                          "mutation to verify; refusing to run", stream="stderr")
+        return 2
+    out.mkdir(parents=True, exist_ok=False)
     paths = sorted({row[1] for row in rows})
     results = []
 

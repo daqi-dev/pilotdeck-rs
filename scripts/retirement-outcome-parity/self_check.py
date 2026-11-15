@@ -255,7 +255,8 @@ def check_emit():
 
 def _assert_emit_publish_failure_surface(checker=None):
     """emit 发布失败孪生（fix-r15，DS r14 sibling#3 / MM sibling#1 / MM
-    boundary#1 三撞 P2a）：失败路径清理错不得顶掉原发布错。
+    boundary#1 三撞 P2a；#3178 fix-r2 MM sibling#2 补③）：失败路径清理错不得
+    顶掉原发布错，且失败路径必须收走半成品 tmp。
 
     三份 check_frozen 的同款不变量已有 frozen-manifest 夹具的孪生+负控；emit 侧
     此前只在成功路径上比金样字节，`publish_json` 的失败分支是裸的。进程内加载
@@ -264,8 +265,15 @@ def _assert_emit_publish_failure_surface(checker=None):
     - 发布成功 + 清理会失败：金样照常落地（成功路径不得被清理反咬——将来有人
       给成功路径加清理也必须吞掉清理错，与 check_frozen 的孪生同款）；
     - 发布失败 + 清理也失败：冒出来的必须是发布自己的错（裸 unlink 会把清理错
-      顶上去＝r14 修掉的归因掩蔽形态）。
-    牙齿由 control_emit 的「裸化 unlink」变异提供（--self-check-controls）。
+      顶上去＝r14 修掉的归因掩蔽形态）；
+    - 发布失败 + 清理可用（#3178 fix-r2 MM sibling#2，与 negctl 侧③同款）：
+      失败路径必须把半成品 tmp 收走，目录里不残留 *.tmp——②把 unlink 挂掉时
+      tmp 本来就留在目录里（吞清理错不删文件），所以这里换一个干净舞台、放行
+      真实 unlink 再驱动一次失败。
+    牙齿由 control_emit 的两个变异分别提供（--self-check-controls）：「裸化
+    unlink」红在②的归因判定，「删除失败路径清理」红在③的残留判定——裸化变异下
+    unlink 仍会收走 tmp（③绿），删除变异下清理错无从顶掉发布错（②绿），两个
+    坏改法各咬各的牙。
     """
     saved_prefix = sys.pycache_prefix
     try:
@@ -322,6 +330,30 @@ def _assert_emit_publish_failure_surface(checker=None):
         finally:
             os.replace = original_replace
             Path.unlink = original_unlink
+
+        # ③ 失败路径的残留清理（#3178 fix-r2 MM sibling#2，与 negctl 侧③同款）：
+        # 真实 unlink 放行，发布失败后半成品 tmp 必须被收走。②挂掉 unlink 时
+        # tmp 本来就留在目录里（吞清理错不删文件），所以这里必须换一个干净舞台
+        # 再驱动一次失败，残留判定才不被②的合法残留污染。
+        with tempfile.TemporaryDirectory(prefix='pdrs-retirement-emit-twin-') as fresh:
+            residue_target = Path(fresh) / 'oracle.json'
+            try:
+                os.replace = failing_replace
+                module.publish_json(residue_target, {'probe': 'residue'})
+            except OSError as error:
+                if '#emit-twin publish boom' not in str(error):
+                    raise CheckFailure(
+                        'the emit publish failure surfaced an unexpected error: '
+                        f'{error!r}') from error
+            else:
+                raise CheckFailure('the emit publish failure was swallowed entirely')
+            finally:
+                os.replace = original_replace
+            leftovers = sorted(entry.name for entry in Path(fresh).iterdir())
+            if leftovers:
+                raise CheckFailure(
+                    'the emit publish failure left a half-written tmp behind '
+                    f'(the failure path must clean up): {leftovers}')
 
 
 def _assert_negctl_publish_failure_surface(controls=None):
@@ -3220,14 +3252,19 @@ def control_wiring():
 
 def control_emit():
     """emit 发布失败孪生的牙齿（fix-r15，DS r14 sibling#3 / MM sibling#1 / MM
-    boundary#1 三撞 P2a）：把清理 unlink 裸化的变异必须让孪生红在专属判定上。
+    boundary#1 三撞 P2a；#3178 fix-r2 MM sibling#2 加第二变异）：失败路径清理的
+    两种坏改法必须各自红在专属判定上。
 
-    与 control_lock 的弱化 flock 变异同一形态：临时 checker 副本退回 r14 之前的
-    口径（失败路径清理错顶掉原发布错），孪生必须红在「surfaced the wrong error」
-    的专属文案上——裸 unlink 变异下②的 `except OSError` 收到的是清理错
-    `#emit-twin cleanup boom`，不含 `#emit-twin publish boom`。正控只跑进程内
-    孪生本身（check_emit 的子进程金样复算在七项自检里已跑，这里不重复起子进程，
-    预算行无新增贡献）。
+    ①裸化（与 control_negctl 的裸化 remove_at 同一形态）：临时 checker 副本退
+    回 r14 之前的口径——失败路径清理错顶掉原发布错，孪生红在②的「surfaced the
+    wrong error」专属文案上（裸 unlink 下②的 `except OSError` 收到的是清理错
+    `#emit-twin cleanup boom`，不含 `#emit-twin publish boom`）。②删除清理：整段
+    `with suppress(OSError): tmp.unlink(missing_ok=True)` 拿掉，失败路径根本不
+    收半成品 tmp，孪生红在③的「left a half-written tmp behind」上。两个变异互不
+    代偿：裸化下 unlink 仍会收走 tmp（③绿），删除下清理错无从顶掉发布错（②
+    绿）——清理守卫的归因面与残留面各咬各的牙（与 control_negctl 的双变异同
+    款）。正控只跑进程内孪生本身（check_emit 的子进程金样复算在七项自检里已
+    跑，这里不重复起子进程，预算行无新增贡献）。
     """
     _assert_emit_publish_failure_surface()
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-emit-') as tmp:
@@ -3238,23 +3275,30 @@ def control_emit():
             raise CheckFailure('the emit cleanup-suppress anchor is not uniquely '
                                f'present in {CHECKER.name} to mutate; update this '
                                'control with the current anchor')
-        weakened = source.replace(
-            mutation, '        tmp.unlink(missing_ok=True)\n')
-        mutated = Path(tmp) / 'check_outcome_parity.py'
-        mutated.write_text(weakened, encoding='utf-8')
-        try:
-            _assert_emit_publish_failure_surface(mutated)
-        except CheckFailure as error:
-            if 'surfaced the wrong error' not in str(error):
+        mutants = (
+            ('bare unlink',
+             source.replace(mutation, '        tmp.unlink(missing_ok=True)\n'),
+             'surfaced the wrong error'),
+            ('deleted failure-path cleanup',
+             source.replace(mutation, ''),
+             'left a half-written tmp behind'),
+        )
+        for label, weakened, expected in mutants:
+            mutated = Path(tmp) / 'check_outcome_parity.py'
+            mutated.write_text(weakened, encoding='utf-8')
+            try:
+                _assert_emit_publish_failure_surface(mutated)
+            except CheckFailure as error:
+                if expected not in str(error):
+                    raise CheckFailure(
+                        f'the {label} mutant was rejected by the wrong judgment: '
+                        f'{error}') from error
+            else:
                 raise CheckFailure(
-                    'the bare-unlink mutant was rejected by the wrong judgment: '
-                    f'{error}') from error
-        else:
-            raise CheckFailure(
-                'the emit publish twin did not reject a bare cleanup unlink (the '
-                'failure-path cleanup error masks the original publish error; '
-                'the r14 invariant has rotted)')
-    return 'the bare cleanup-unlink mutant is rejected by the publish twin'
+                    f'the emit publish twin did not reject the {label} mutant '
+                    '(the failure-path cleanup invariant has rotted)')
+    return ('the bare-unlink and deleted-cleanup mutants are both rejected '
+            'by the emit publish twin')
 
 
 def control_negctl():

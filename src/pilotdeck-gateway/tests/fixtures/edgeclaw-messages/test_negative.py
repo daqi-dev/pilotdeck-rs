@@ -183,6 +183,62 @@ class MessagesRefusalControls(unittest.TestCase):
                         message + ' (the refusal report must still reach the disk)')
 
 
+class MessagesEmptyTableControls(unittest.TestCase):
+    """#3178 fix-r2 (DS sibling #1): an empty case table is a refusal, not a
+    vacuum green.
+
+    The runner's tail used to be ``return 1 if survived else 0``, so an
+    emptied table (no mutation verified at all) finished with ``survived ==
+    []`` and exited 0 — read as all-KILLED. It must refuse before the
+    evidence directory exists: exit 2, no summary, no log, and the output
+    path left untouched for a re-run. The process layer is patched on the
+    imported module (no cargo run happens here).
+    """
+
+    def setUp(self):
+        entry = str(Path(__file__).resolve().parent)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            self.addCleanup(sys.path.remove, entry)
+        import negative
+        self.runner = negative
+        self.tmp = tempfile.TemporaryDirectory(prefix='messages-empty-')
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name).resolve() / 'run'
+
+    def test_an_empty_case_table_refuses_before_any_evidence(self):
+        class Guard:
+            def __enter__(self):
+                return {}
+
+            def __exit__(self, *exc):
+                return False
+
+        def unreachable(*_args, **_kwargs):
+            raise AssertionError('#3178 the empty table must refuse before '
+                                 'any run or slot wait')
+
+        runner = self.runner
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': self.tmp.name,
+                                     'NEGATIVE_ONLY': '', 'NEGATIVE_BASELINE': ''}), \
+             patch.object(runner, 'cases', []), \
+             patch.object(runner, 'mutating_sources',
+                          lambda root, paths, **kwargs: Guard()), \
+             patch.object(runner, 'run_owned', unreachable), \
+             patch.object(runner, 'wait_for_slot', unreachable):
+            # The refusal is a plain `return 2` out of main, so the twin
+            # asserts the returned contract code, not a SystemExit.
+            code = runner.main([str(Path(__file__).with_name('negative.py')),
+                                str(self.out)])
+        message = ('#3178 an empty case table must refuse before any evidence '
+                   '(the old tail read the empty run as all-KILLED, rc=0)')
+        self.assertEqual(code, 2, message)
+        self.assertFalse(self.out.exists(),
+                         message + ' (nothing may be created for a run that '
+                         'never started; the same output path must stay '
+                         're-runnable)')
+
+
 REFUSAL_CHILD = '''\
 import os
 import sys

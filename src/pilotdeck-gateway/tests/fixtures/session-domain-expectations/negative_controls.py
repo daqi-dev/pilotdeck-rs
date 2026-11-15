@@ -65,7 +65,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (dead_stream_print, mutating_sources,  # noqa: E402
                              new_output_directory, run_owned)
-from negative_selection import verdict_exit
+from negative_selection import verdict_exit, withdraw_claim
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -318,8 +318,12 @@ def check_anchors(selected):
     # 0 -- zero anchors validated but the gate looked green. Fail closed and
     # say why, so a deleted MUTATIONS table can never pass preflight.
     if not selected:
-        print('EMPTY ANCHOR SELECTION: nothing to validate; '
-              'the anchor gate must not pass', file=sys.stderr)
+        # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with
+        # rc=1 under a dead stderr (``2>&-``) and reads as "ran and was red";
+        # the shared guarded print keeps the refusal at rc=2 (#1087 fix-r8
+        # family shape).
+        dead_stream_print('EMPTY ANCHOR SELECTION: nothing to validate; '
+                          'the anchor gate must not pass', stream='stderr')
         return 2
     for name, source, old, _new in selected:
         count = source.read_text().count(old)
@@ -355,14 +359,22 @@ def main():
     drift = [('BINDING DRIFT', message) for message in
              check_bindings(expectation_cases, MUTATIONS, BOUND, UNAFFECTED)]
     if drift:
+        # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with
+        # rc=1 under a dead stderr (``2>&-``) and reads as "ran and was red";
+        # the shared guarded print keeps the refusal at rc=2 (#1087 fix-r8
+        # family shape).
         for prefix, message in drift:
-            print(prefix + ': ' + message, file=sys.stderr)
+            dead_stream_print(prefix + ': ' + message, stream='stderr')
         return 2
     if not args.list:
         print('derived counts: ' + json.dumps(counts, sort_keys=True), flush=True)
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
-        print('unknown or duplicate --only name', file=sys.stderr)
+        # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with
+        # rc=1 under a dead stderr (``2>&-``) and reads as "ran and was red";
+        # the shared guarded print keeps the refusal at rc=2 (#1087 fix-r8
+        # family shape).
+        dead_stream_print('unknown or duplicate --only name', stream='stderr')
         return 2
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     if args.check_anchors:
@@ -376,8 +388,8 @@ def main():
                           'counts': counts}, indent=2, ensure_ascii=False))
         return 0
     if args.output is None or args.source is None:
-        print('--output and --source are required unless --list or --check-anchors is used',
-              file=sys.stderr)
+        dead_stream_print('--output and --source are required unless --list or '
+                          '--check-anchors is used', stream='stderr')
         return 2
     out = new_output_directory(args.output)
     source = args.source.resolve()
@@ -470,6 +482,16 @@ def main():
         # keeps the reason off stdout under a dead stderr (#1087 fix-r8).
         dead_stream_print('no mutations selected: the table is empty or the '
                           'selection matched no row', stream='stderr')
+        # #3178 fix-r2 (DS concurrency#1): the refusal still owned the
+        # claimed evidence directory — the ``.claim`` marker and the
+        # derived-counts.json written before the guarded window sat in it, so
+        # a bare rmdir shape could not even clean it — and a host re-running
+        # the same output path was refused on the leftover never-ran
+        # directory long after this process exited (#1060/#953). Withdraw the
+        # claim the same way native-dispatch withdraws its enter-phase
+        # refusal (native-dispatch/negative_controls.py:209-213); an OSError
+        # must not mask the rc 2.
+        withdraw_claim(out)
         return 2
     publish_summary(out, results)
     counts = _counts(results)

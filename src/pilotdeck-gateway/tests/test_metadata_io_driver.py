@@ -63,6 +63,8 @@ class EnvironmentControls(unittest.TestCase):
     optimize_guards_step_budget = 300
     # #3178 fix-r1（评审 sibling#4）：p2 批孪生自测步的预算同源常量——八模块
     # 实测合计 < 1 s，5 min 只防挂起，不参与任何模块的超时语义。
+    # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
+    # 三模块接入后十二模块实测合计约 2 s，预算不变。
     p2batch_twins_step_budget = 300
     copy_manifest_step_budget = 300
     isolation_step_budget = 900
@@ -1806,7 +1808,9 @@ class EnvironmentControls(unittest.TestCase):
         # + 无条件 + cwd」——掏空任一孪生模块或整类 @unittest.skip 后
         # `python3 -B -m unittest -v` 收 0 个测试仍退 0，CI 绿而孪生静默为空
         # （r35/r37/r38 连环修过的洞）。逐模块真跑并核「Ran N」下限；下限取
-        # fix-r1 干净树实测：1/1/1/1/1/6/6/8/2，合计 27，九模块 < 1 s。
+        # fix-r1 干净树实测：1/1/1/1/1/6/6/8/2，合计 27，九模块 < 1 s；
+        # #3178 fix-r2（P2-a-4）接进 gateway-batch / html-timing / 新增
+        # native-stimulus-plan 三模块：7/12/1，合计 47，十二模块约 2 s。
         minimums = (
             ('frozen-manifest/test_negative_controls.py', 1),
             ('parity-lock-release/test_negative_controls.py', 1),
@@ -1817,6 +1821,9 @@ class EnvironmentControls(unittest.TestCase):
             ('memory-gateway/test_negative_controls.py', 6),
             ('edgeclaw-messages/test_negative.py', 8),
             ('user-dialog-http-store-1555/test_dirty_tree_control_1555.py', 2),
+            ('gateway-batch/test_negative_controls.py', 7),
+            ('html-timing/test_negative_controls.py', 12),
+            ('native-stimulus-plan/test_negative_controls.py', 1),
         )
         started = time.monotonic()
         for module, minimum in minimums:
@@ -1824,15 +1831,17 @@ class EnvironmentControls(unittest.TestCase):
                 '#3178', module, minimum, self.p2batch_twins_step_budget)
         self.assertLessEqual(
             time.monotonic() - started, self.p2batch_twins_step_budget,
-            '#3178 the nine p2-batch twin modules together must fit the '
+            '#3178 the twelve p2-batch twin modules together must fit the '
             'twin step budget (%d s); near-miss modules must not outlive the '
             'CI step they pin' % self.p2batch_twins_step_budget)
 
     def test_required_job_runs_the_p2batch_twin_self_tests(self):
         # #3178 fix-r1（评审 sibling#4）：六个孪生文件交付时只有 docstring 里的
         # 「Run with」——仓内没有任何入口执行它们，删掉文件全绿。本钉与真跑钉
-        # 互补：八条命令逐一钉进同一步（子集判断下少一条不红，删掉 CI 里任一行
+        # 互补：九条命令逐一钉进同一步（子集判断下少一条不红，删掉 CI 里任一行
         # 同样必须红），步必须无条件、cwd 正确、带同源超时。
+        # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
+        # 三条同形补钉（十二命令）。
         commands = ('python3 -B -m unittest -v frozen-manifest/test_negative_controls.py',
                     'python3 -B -m unittest -v parity-lock-release/test_negative_controls.py',
                     'python3 -B -m unittest -v '
@@ -1845,7 +1854,11 @@ class EnvironmentControls(unittest.TestCase):
                     'python3 -B -m unittest -v memory-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v edgeclaw-messages/test_negative.py',
                     'python3 -B -m unittest -v '
-                    'user-dialog-http-store-1555/test_dirty_tree_control_1555.py')
+                    'user-dialog-http-store-1555/test_dirty_tree_control_1555.py',
+                    'python3 -B -m unittest -v gateway-batch/test_negative_controls.py',
+                    'python3 -B -m unittest -v html-timing/test_negative_controls.py',
+                    'python3 -B -m unittest -v '
+                    'native-stimulus-plan/test_negative_controls.py')
         jobs = self.ci_jobs('#3178')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#3178')
         matching = [step for step in steps
@@ -2957,16 +2970,27 @@ class EnvironmentControls(unittest.TestCase):
         # CI；删掉任一条命令、加 if、加 continue-on-error、改错 cwd、删/膨胀
         # 步级超时都必须杀在对应的专属断言上（timeout 锚串带首条命令行，不与
         # #1666/#1570 步的同值 timeout 混淆——replace 取首个命中）。
+        # #3178 fix-r2（P2-a-4）：gateway-batch / html-timing / native-stimulus-plan
+        # 三条新命令同形各领一条删除负控——接进来的行同样删一行必须红。
         workflow = self.ci_workflow_fixture()
         name_line = '- name: 网关负控 p2 批孪生自测（#3178）\n'
         command = ('python3 -B -m unittest -v '
                    'frozen-manifest/test_negative_controls.py')
         timeout_anchor = ('timeout-minutes: 5\n        run: |\n          ' + command)
         timeout_message = '#3178 the p2-batch twin step must declare timeout-minutes: 5'
+        removals = (('p2batch-twin-removed', command),
+                    ('p2batch-gateway-batch-removed',
+                     'python3 -B -m unittest -v gateway-batch/test_negative_controls.py'),
+                    ('p2batch-html-timing-removed',
+                     'python3 -B -m unittest -v html-timing/test_negative_controls.py'),
+                    ('p2batch-native-stimulus-plan-removed',
+                     'python3 -B -m unittest -v '
+                     'native-stimulus-plan/test_negative_controls.py'))
         cases = [(name_, workflow.replace(old, new, 1), message)
                  for name_, old, new, message in (
-            ('p2batch-twin-removed', command + '\n', '',
-             '#3178 required CI job must run the p2-batch twin self-tests'),
+            *[(name_, old + '\n', '',
+               '#3178 required CI job must run the p2-batch twin self-tests')
+              for name_, old in removals],
             ('p2batch-twin-commented', command, '# ' + command,
              '#3178 required CI job must run the p2-batch twin self-tests'),
             ('p2batch-twin-skipped', name_line,

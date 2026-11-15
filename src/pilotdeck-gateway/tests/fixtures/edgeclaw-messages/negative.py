@@ -38,6 +38,7 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
@@ -187,6 +188,15 @@ def main(argv=None):
     out = Path(argv[1]).resolve()
     target = os.environ.get('CARGO_TARGET_DIR')
     assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+    # #3178 fix-r2 (DS sibling#1): an empty case table verified nothing, but
+    # the old tail ``1 if survived else 0`` read it as all-KILLED (rc=0, the
+    # vacuum green: one mutation unverified yet reported green). An empty
+    # table never started — refuse before the evidence directory or any log
+    # exists (exit 2, nothing on disk, re-runnable on the same path).
+    if not cases:
+        dead_stream_print('EMPTY CASE TABLE: negative.py has no mutation to '
+                          'verify; refusing to run', stream='stderr')
+        return 2
     baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -271,7 +281,13 @@ def main(argv=None):
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-    return 1 if survived else 0
+    # #3178 fix-r2 (DS sibling#1): the family tail — the old ``1 if survived
+    # else 0`` was vacuously green on an empty table (the front refusal above
+    # now catches it first; verdict_exit keeps the tail itself honest too).
+    return verdict_exit(
+        [{'status': 'KILLED', 'name': name} for name in killed]
+        + [{'status': 'SURVIVED', 'reason': reason}
+           for _name, reason in survived], key='status')
 
 
 if __name__ == '__main__':

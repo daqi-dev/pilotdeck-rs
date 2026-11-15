@@ -47,10 +47,6 @@ class ZeroRowVerdictControls(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='pdrs-native-zero-') as temp:
             out = Path(temp) / 'run'
 
-            def fake_output_directory(path):
-                Path(path).mkdir(parents=True, exist_ok=True)
-                return Path(path)
-
             class Guard:
                 def __enter__(self):
                     return {}
@@ -63,20 +59,37 @@ class ZeroRowVerdictControls(unittest.TestCase):
                     patch.object(runner, 'MUTATIONS', []), \
                     patch.object(runner, 'mutating_sources',
                                  lambda root, paths, **kwargs: Guard()), \
-                    patch.object(runner, 'new_output_directory',
-                                 fake_output_directory), \
                     patch.object(sys, 'argv',
                                  ['negative_controls.py', '--output', str(out)]):
                 code = runner.main()
-            published = sorted(path.name for path in out.iterdir()) \
+            # #3178 fix-r2 (DS concurrency#1): the real admission ran above
+            # (the old fake_output_directory twin shape kept the .claim O_EXCL
+            # path out of the twin), so the refusal's withdrawal is pinned on
+            # the real claim: nothing may remain, and a re-run of the same
+            # output path must be admitted again instead of refused on the
+            # leftover never-ran directory (#1060/#953).
+            leftover = sorted(path.name for path in out.iterdir()) \
                 if out.exists() else []
+            try:
+                runner.new_output_directory(out)
+                refused, reclaimed = None, (out / '.claim').is_file()
+            except SystemExit as error:
+                refused, reclaimed = str(error), False
         message = ('#3178 a zero-row run must exit 2 and publish no summary '
                    '(the old tail read 0 == 0 as green and an empty '
                    'summary.json read like a completed run)')
         self.assertEqual(code, 2, message)
-        self.assertEqual(published, [],
-                         message + ' (the empty run must leave the evidence '
-                         'directory empty)')
+        self.assertEqual(leftover, [],
+                         message + ' (the never-started run must withdraw its '
+                         'claim: the evidence directory must not exist or be '
+                         'empty; a leftover .claim refused the same path on '
+                         're-run)')
+        self.assertIsNone(refused,
+                           message + f' (a re-run of the same output path must '
+                           f'be admitted, not refused: {refused})')
+        self.assertTrue(reclaimed,
+                        message + ' (the re-admitted evidence directory must '
+                        'hold a fresh claim)')
 
 
 if __name__ == '__main__':

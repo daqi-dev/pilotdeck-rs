@@ -48,7 +48,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (dead_stream_print, mutating_sources,  # noqa: E402
                              new_output_directory, run_owned)
-from negative_selection import verdict_exit
+from negative_selection import verdict_exit, withdraw_claim
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -235,13 +235,18 @@ def main():
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
-        print('unknown or duplicate --only name', file=sys.stderr)
+        # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with
+        # rc=1 under a dead stderr (``2>&-``) and reads as "ran and was red";
+        # the shared guarded print keeps the refusal at rc=2 (#1087 fix-r8
+        # family shape).
+        dead_stream_print('unknown or duplicate --only name', stream='stderr')
         return 2
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     if args.check_anchors:
         return check_anchors(selected)
     if args.output is None:
-        print('--output is required unless --check-anchors is used', file=sys.stderr)
+        dead_stream_print('--output is required unless --check-anchors is used',
+                          stream='stderr')
         return 2
     if not os.environ.get('CARGO_TARGET_DIR'):
         # Never create or default a second build directory (#741 rule).
@@ -339,6 +344,14 @@ def main():
         # keeps the reason off stdout under a dead stderr (#1087 fix-r8).
         dead_stream_print('no mutations selected: the table is empty or the '
                           'selection matched no row', stream='stderr')
+        # #3178 fix-r2 (DS concurrency#1): the refusal still owned the
+        # claimed evidence directory — the ``.claim`` marker sat in it — so a
+        # host re-running the same output path was refused on the leftover
+        # never-ran directory long after this process exited (#1060/#953).
+        # Withdraw the claim the same way native-dispatch withdraws its
+        # enter-phase refusal (native-dispatch/negative_controls.py:209-213);
+        # an OSError must not mask the rc 2.
+        withdraw_claim(out)
         return 2
     publish_summary(out, results)
     counts = _counts(results)

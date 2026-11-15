@@ -200,6 +200,52 @@ class CoexistSummaryControls(unittest.TestCase):
                         message + ' (the guarded tree must end restored)')
 
 
+class CoexistEmptyTableControls(unittest.TestCase):
+    """#3178 fix-r2 (P2-a): an emptied mutation table is a refusal, not a
+    write-empty-summary-then-rc-1 finish.
+
+    The tail's ``verdict_exit`` already refuses to read an empty run as green
+    (rc=1), but the publish before it still wrote an empty summary.json — a
+    summary that exists reads like a completed run, and rc=1 reads "ran and
+    was red". The refusal must come before the evidence directory is
+    claimed: exit 2, nothing on disk, re-runnable on the same output path.
+    """
+
+    def test_an_empty_mutation_table_refuses_before_any_evidence(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-coexist-empty-') as temp:
+            out_arg = Path(temp) / 'run'
+            out = out_arg.resolve()
+
+            class Guard:
+                def __enter__(self):
+                    return {}
+
+                def __exit__(self, *exc):
+                    return False
+
+            def unreachable(*_args, **_kwargs):
+                raise AssertionError('#3178 the empty table must refuse before '
+                                     'any node run or source guard')
+
+            with patch.multiple(negative_controls, mutations=[],
+                                 mutating_sources=(
+                                     lambda root, paths, **kwargs: Guard()),
+                                 run_owned=unreachable), \
+                    patch.object(sys, 'argv',
+                                 ['negative_controls.py', str(out_arg)]):
+                code = negative_controls.main()
+            listing = sorted(path.name for path in out.iterdir()) \
+                if out.exists() else None
+        message = ('#3178 an empty mutation table must refuse before any '
+                   'evidence (the old tail wrote an empty summary.json and '
+                   'exited 1)')
+        self.assertEqual(code, 2, message)
+        self.assertIsNone(listing,
+                          message + ' (nothing may be created for a run that '
+                          'never started; the same output path must stay '
+                          're-runnable)')
+
+
 class RefusalProcessControls(unittest.TestCase):
     """#3094 item 1 (#3178): the never-started refusal under a dead stderr.
 

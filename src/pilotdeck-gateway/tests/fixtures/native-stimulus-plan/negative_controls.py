@@ -17,8 +17,9 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
+from negative_process import dead_stream_print, mutating_sources, run_owned, wait_for_slot, tree_lock
 from negative_process import target_environment
+from negative_selection import verdict_exit
 from negative_suite import invalidate_completed, publish_summary
 
 source = root / 'scripts/native-witness/stimulus_plan.py'
@@ -262,8 +263,18 @@ def main():
     parser.add_argument('--memory', action='store_true', help='read-only Python rehearsal, not guarded-source evidence')
     parser.add_argument('--case', choices=[row[0] for row in cases])
     args = parser.parse_args()
-    env = execution_environment()
     selected = [row for row in cases if args.case is None or row[0] == args.case]
+    # #3178 fix-r2 (DS sibling#2): an emptied case table verified nothing, but
+    # the old tail ``0 if len(results) == len(selected) and all(...)`` read
+    # ``0 == 0 and all([])`` as all-KILLED (rc=0, the vacuum green: no mutant
+    # verified, an empty summary.json published, and the evidence directory
+    # left occupied). Refuse before the environment, the directory or any
+    # log exists (exit 2, nothing on disk, re-runnable on the same path).
+    if not selected:
+        dead_stream_print('EMPTY CASE TABLE: negative_controls.py has no '
+                          'mutation to verify; refusing to run', stream='stderr')
+        return 2
+    env = execution_environment()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
     results = []
@@ -335,7 +346,11 @@ def main():
     # Shared publisher atomically renames only after the guard verifies restore.
     publish_summary(out, results)
     print(json.dumps(results, ensure_ascii=False, indent=2))
-    return 0 if len(results) == len(selected) and all(r['status'] == 'KILLED' for r in results) else 1
+    # #3178 fix-r2 (DS sibling#2): same family tail as edgeclaw-messages —
+    # verdict_exit is 0 only for a non-empty all-KILLED run, so an empty
+    # results list can never read as green here either (the front refusal
+    # catches it first; this keeps the tail itself honest too).
+    return verdict_exit(results, key='status')
 
 
 

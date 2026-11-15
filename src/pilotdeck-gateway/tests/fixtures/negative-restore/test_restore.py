@@ -727,6 +727,15 @@ def _collect_names(node, names):
     recursively instead; comprehension targets stay out (they are bound, not
     drawn from), while the iterated collection does join (it is where the
     paths come from).
+
+    #3178 fix-r2 (DS boundary#1, P0): "targets stay out" was a promise the
+    first cut did not keep — ``[x for x in compute_paths()]`` recursed into
+    ``node.elt`` and collected ``x`` anyway, so the bound loop variable
+    polluted the guarded set, the unresolvable window looked resolvable,
+    and the empty-window fail-closed never fired (a false PASS). The bound
+    targets are now collected first and subtracted from everything the
+    element and the iters draw on; a chained ``for y in x`` iter is also a
+    bound target and joins the subtraction.
     """
     if isinstance(node, ast.Name):
         names.add(node.id)
@@ -746,12 +755,27 @@ def _collect_names(node, names):
         if isinstance(node.func, ast.Attribute):
             _collect_names(node.func.value, names)
     elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
-        _collect_names(node.elt, names)
+        # The loop variables a comprehension binds are local to it — they
+        # are not names drawn from the enclosing scope. Collect what the
+        # element and the iters draw on, then drop the bound targets.
+        bound = set(_assigned_names([generator.target
+                                      for generator in node.generators]))
+        drawn = set()
+        _collect_names(node.elt, drawn)
         for generator in node.generators:
-            _collect_names(generator.iter, names)
+            _collect_names(generator.iter, drawn)
+        names |= drawn - bound
     elif isinstance(node, ast.DictComp):
+        # Same rule for the dict shapes: key and value draw (recursively),
+        # the bound targets stay out.
+        bound = set(_assigned_names([generator.target
+                                      for generator in node.generators]))
+        drawn = set()
+        _collect_names(node.key, drawn)
+        _collect_names(node.value, drawn)
         for generator in node.generators:
-            _collect_names(generator.iter, names)
+            _collect_names(generator.iter, drawn)
+        names |= drawn - bound
     elif isinstance(node, ast.BinOp):
         _collect_names(node.left, names)
         _collect_names(node.right, names)
@@ -972,11 +996,40 @@ class MigrationWindowSweepTests(unittest.TestCase):
                           f'#3001 the sweep must cover the migrated table {required}')
         self.assertNotIn('negative_suite.py', population,
                          '#3001 the M6 shared harness stays outside this sweep; its '
-                         'remaining call-time mode= sites belong to the M6 lane')
+                         'remaining call-time mode= sites belong to the M6 lane '
+                         '(registered in '
+                         'test_the_m6_shared_harness_mode_sites_stay_registered)')
         for rel, text in sorted(population.items()):
             with self.subTest(table=rel):
                 self.assertEqual(scan_migration(text, rel), [],
                                  '#3001 a migrated table left the atomic-write shape')
+
+    def test_the_m6_shared_harness_mode_sites_stay_registered(self):
+        """#3178 fix-r2 (MM sibling#4): the sweep's one blind spot, pinned.
+
+        ``negative_suite.py`` is the M6 lane's shared harness (#1099; the
+        standing constraint keeps this round from touching its body), so it
+        stays outside the sweep population by design — which left its four
+        ``mode=...stat().st_mode`` call-time sites as the only ones in the
+        tree that no scan ever sees (a rule that stays green while scanning
+        nothing, the review's "规则假绿"). They are the registered exception
+        instead: any drift — a fifth site, one removed, a line moved — must
+        red this registration rather than pass silently, and retiring them
+        is the M6 lane's deliberate act (update this pin then).
+        """
+        text = (FIXTURES / 'negative_suite.py').read_text(
+            encoding='utf-8', errors='surrogateescape')
+        findings = [violation for violation
+                    in scan_migration(text, 'negative_suite.py')
+                    if 'call-time mode=' in violation]
+        lines = sorted(int(violation.split(' line ')[1].split(':')[0])
+                       for violation in findings)
+        self.assertEqual(
+            lines, [401, 412, 807, 831],
+            '#3178 negative_suite.py (the M6 lane\'s shared harness, #1099) '
+            'must carry exactly the four registered call-time mode= sites '
+            '(lines 401/412/807/831): a fifth site must red here, not pass '
+            'unseen outside the sweep population')
 
     def _family(self, body):
         return SWEEP_FAMILY.format(body=body)
@@ -1063,6 +1116,36 @@ class MigrationWindowSweepTests(unittest.TestCase):
                         '#3178 an unresolvable guard window must be a '
                         'violation, not a silent skip')
 
+    def test_scan_flags_a_comprehension_target_name_pollution(self):
+        """#3178 fix-r2 (DS boundary#1, P0): the red side.
+
+        ``[x for x in compute_paths()]`` binds its own ``x`` — a loop
+        variable is not a name drawn from the enclosing scope. The first cut
+        of the recursive collector added it to the guarded set anyway, so the
+        unresolvable window looked resolvable, the fail-closed never fired,
+        and the truncating write below went unseen (the false PASS the
+        coordinator's probe demonstrated). The guard must resolve to no name
+        and be reported as unresolvable; and the subtraction must not blind
+        the scan to the collection actually iterated.
+        """
+        source = COMPUTED_GUARD_FAMILY.format(
+            guard='[x for x in compute_paths()]',
+            body="    src.write_text('mutated')")
+        violations = scan_migration(source, 'probe/table.py')
+        self.assertTrue(any('no recognizable guarded names' in v
+                            for v in violations),
+                        '#3178 a comprehension target name must not rescue an '
+                        'unresolvable guard (fail-closed, never a false PASS)')
+        resolvable = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values()]',
+            body="    paths['src'].write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(resolvable, 'probe/table.py')),
+            '#3178 dropping the comprehension target must not blind the scan '
+            'to the collection it iterates (paths.values() is still a '
+            'guarded-name draw, and the truncating write through it must red)')
+
     def test_scan_allows_evidence_writes_and_population_follows_the_marker(self):
         self.assertEqual(
             scan_migration(self._family("    (out / 'row.log').write_text('log')"),
@@ -1090,8 +1173,15 @@ class MigrationWindowSweepTests(unittest.TestCase):
             # marker rule. Each exclusion surface is now probed with a file
             # that *carries* the marker, so deleting the directory rule, the
             # test_ prefix rule, or the top-level rule re-admits its probe.
+            # #3178 fix-r2 (DS boundary#2): the prefix-rule probe lives in a
+            # subdirectory — at the temp root the top-level rule ('/' not in
+            # rel) fired first, so deleting the test_ prefix rule re-admitted
+            # nothing and the rule was never actually probed (the comment
+            # claimed a causality the probe could not deliver). In
+            # family/test_marked.py only the prefix rule excludes it;
+            # top_level.py owns the top-level rule alone.
             for rel in ('_shared/kit.py', 'negative-restore/own.py',
-                        'test_marked.py', 'top_level.py'):
+                        'family/test_marked.py', 'top_level.py'):
                 probe = root / rel
                 probe.parent.mkdir(parents=True, exist_ok=True)
                 probe.write_text(self._family("    src.write_text('mutated')"))

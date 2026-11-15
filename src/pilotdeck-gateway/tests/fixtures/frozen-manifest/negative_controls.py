@@ -11,7 +11,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
+from negative_process import (dead_stream_print, mutating_sources,
+                              run_owned, wait_for_slot, write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 mutations = [
@@ -208,11 +209,20 @@ def judge_row(row, original, out):
 
 def main():
     out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
     selected = sys.argv[2:]
     chosen = [item for item in mutations if not selected or item[0] in selected]
     if selected and set(selected) != {item[0] for item in chosen}:
         raise SystemExit('#1089 unknown mutation name')
+    # #3178 fix-r2 (P2-a, DS sibling#2 family): an emptied mutation table
+    # verified nothing, but the old tail still wrote an empty summary.json and
+    # exited 1 — a summary that exists reads like a completed run, and rc=1
+    # reads "ran and was red". Refuse before the evidence directory is
+    # claimed (exit 2, nothing on disk, re-runnable on the same path).
+    if not chosen:
+        dead_stream_print('EMPTY MUTATION TABLE: negative_controls.py has no '
+                          'mutation to verify; refusing to run', stream='stderr')
+        return 2
+    out.mkdir(parents=True, exist_ok=False)
     results = []
     # #2929 fix-r3: the gateway-parity rows share one lease window (same
     # guarded file pair); every other row keeps its own window exactly as
