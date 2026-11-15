@@ -1605,82 +1605,162 @@ fn steer_turn_fifo_unstrand_drop_leaves_no_path_and_no_writer() {
 /// rescue handle — the fifo_probe_r6 (2) semantics executed against the
 /// real guard. The parking has no causal rendezvous proof (any probe
 /// writer would be the writer this cell must not have), so like the
-/// probe the reader gets a 200ms head start after signaling that it is
-/// running, before the drop; a reader that still loses that race meets
-/// the unlinked path and fails fast with ENOENT, never a hang.
+/// probe the reader gets a head start after signaling that it is
+/// running, before the drop. fix-r10 (review DS boundary#1 + MM
+/// boundary#1, P1 both; DS concurrency#1 + MM concurrency#1, the same
+/// cell): that head start is a wall-clock criterion, not a causal one —
+/// the fix-r3 entry above retired a 500ms form of exactly this ("an
+/// OS-starved … thread flips it red with production code untouched"),
+/// and a starved reader here loses the race two ways: its open lands
+/// after the unlink (ENOENT — the reader dies and the main thread reads
+/// Disconnected) or its lookup beats the unlink while its registration
+/// misses the rescue handle (parked on the unlinked inode, "opened"
+/// never arrives). Both spell "not parked for the drop", so a lost race
+/// retries on a fresh FIFO instead of turning red: the head start is 1s
+/// (this file's bound scale, up from the 200ms the cell was born
+/// with), and after `START_RACE_ATTEMPTS` attempts a still-red cell is
+/// judged — a real defect repeats on every fresh FIFO, a lost race does
+/// not, so the attempt count stays small. A reader parked past the drop
+/// cannot be collected (no writer will ever pair it); like the guard's
+/// registered residual cells it stays parked for the process lifetime,
+/// bounded by the attempt count.
 #[test]
 fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer() {
     use std::io::Read as _;
 
+    const START_RACE_ATTEMPTS: u32 = 3;
     let scratch = crate::test_scratch::Scratch::new("1444-fifo-unstrand-rescue");
-    let fifo = scratch.path().join("parked");
-    negative_assert!(
-        std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .expect("#1444 mkfifo launch")
-            .success(),
-        "#1444 unstrand rescue fixture FIFO"
-    );
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        // Each attempt parks on its own fresh FIFO; the previous
+        // attempt's path was already unlinked by its own guard drop.
+        let fifo = scratch.path().join(format!("parked-{attempt}"));
+        negative_assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("#1444 mkfifo launch")
+                .success(),
+            "#1444 unstrand rescue fixture FIFO"
+        );
 
-    // The reader signals that it is running and parks inside its blocking
-    // open — no rendezvous writer is opened anywhere in this cell, so the
-    // guard's rescue open is the only writer that can ever pair it.
-    let (progress, progress_rx) = std::sync::mpsc::channel::<&'static str>();
-    let reader_path = fifo.clone();
-    let reader = std::thread::Builder::new()
-        .name("pdrs-1444-unstrand-rescue-reader".into())
-        .spawn(move || {
-            let _ = progress.send("starting");
-            let mut file = match std::fs::File::open(&reader_path) {
-                Ok(file) => file,
-                Err(error) => {
-                    panic!("#1444 the unstrand rescue reader's open failed: {error}");
+        // The reader signals that it is running and parks inside its blocking
+        // open — no rendezvous writer is opened anywhere in this cell, so the
+        // guard's rescue open is the only writer that can ever pair it.
+        let (progress, progress_rx) = std::sync::mpsc::channel::<&'static str>();
+        let reader_path = fifo.clone();
+        let reader = std::thread::Builder::new()
+            .name("pdrs-1444-unstrand-rescue-reader".into())
+            .spawn(move || {
+                let _ = progress.send("starting");
+                let mut file = match std::fs::File::open(&reader_path) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        panic!("#1444 the unstrand rescue reader's open failed: {error}");
+                    }
+                };
+                let _ = progress.send("opened");
+                let mut bytes = Vec::new();
+                let read = file.read_to_end(&mut bytes);
+                negative_assert!(
+                    matches!(read, Ok(0)) && bytes.is_empty(),
+                    "#1444 the unstrand rescue reader must drain EOF, not bytes"
+                );
+                let _ = progress.send("eof");
+            })
+            .expect("#1444 unstrand rescue reader thread");
+        negative_assert!(
+            matches!(
+                progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
+                Ok("starting")
+            ),
+            "#1444 the unstrand rescue reader must start within the bound"
+        );
+        // fix-r10: 1s, this file's bound scale, up from the 200ms head
+        // start the cell was born with — a causal parking proof is
+        // impossible here (any probing writer is a writer this cell
+        // must not have), so the lost-race spellings below retry
+        // instead of turning red.
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // The real guard, with the reader parked and no other writer: only
+        // the rescue open can pair the parked reader, and only its close at
+        // the end of the drop can produce the EOF; the unlink is asserted
+        // again here so the cell is self-contained.
+        drop(FifoUnstrand(&fifo));
+        match progress_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok("opened") => {
+                negative_assert!(
+                    !fifo.exists(),
+                    "#1444 the real unstrand drop unlinks the FIFO path"
+                );
+                negative_assert!(
+                    matches!(
+                        progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
+                        Ok("eof")
+                    ),
+                    "#1444 the parked reader reads EOF once the rescue handle closes"
+                );
+                reader.join().expect("#1444 unstrand rescue reader join");
+                if attempt > 1 {
+                    eprintln!(
+                        "#1444 unstrand rescue cell: parked on attempt {attempt} \
+                         of {START_RACE_ATTEMPTS} after lost start races"
+                    );
                 }
-            };
-            let _ = progress.send("opened");
-            let mut bytes = Vec::new();
-            let read = file.read_to_end(&mut bytes);
-            negative_assert!(
-                matches!(read, Ok(0)) && bytes.is_empty(),
-                "#1444 the unstrand rescue reader must drain EOF, not bytes"
-            );
-            let _ = progress.send("eof");
-        })
-        .expect("#1444 unstrand rescue reader thread");
-    negative_assert!(
-        matches!(
-            progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
-            Ok("starting")
-        ),
-        "#1444 the unstrand rescue reader must start within the bound"
-    );
-    std::thread::sleep(std::time::Duration::from_millis(200));
-
-    // The real guard, with the reader parked and no other writer: only
-    // the rescue open can pair the parked reader, and only its close at
-    // the end of the drop can produce the EOF; the unlink is asserted
-    // again here so the cell is self-contained.
-    drop(FifoUnstrand(&fifo));
-    negative_assert!(
-        matches!(
-            progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
-            Ok("opened")
-        ),
-        "#1444 the parked reader pairs only with the guard's rescue open"
-    );
-    negative_assert!(
-        !fifo.exists(),
-        "#1444 the real unstrand drop unlinks the FIFO path"
-    );
-    negative_assert!(
-        matches!(
-            progress_rx.recv_timeout(std::time::Duration::from_secs(5)),
-            Ok("eof")
-        ),
-        "#1444 the parked reader reads EOF once the rescue handle closes"
-    );
-    reader.join().expect("#1444 unstrand rescue reader join");
+                return;
+            }
+            // Any other signal here (a duplicate "starting", an early
+            // "eof") breaks the channel's own ordering — a fixture
+            // anomaly, not a lost race: red now, no retry.
+            Ok(other) => {
+                negative_assert!(
+                    false,
+                    "#1444 the unstrand rescue reader reported {other:?} while its open was still pending"
+                );
+            }
+            // "opened" never arrived: the reader either lost the start
+            // race and is parked past the drop on the unlinked inode
+            // (the guard's gap-reader cell), or the guard really left it
+            // parked — the two spell identically here, so the cell
+            // retries on a fresh FIFO and only judges after the last
+            // attempt: a real defect repeats on every fresh FIFO, a
+            // lost race does not. The parked reader of a lost attempt
+            // cannot be collected (no writer will ever pair it); it
+            // stays parked for the process lifetime, like the guard's
+            // registered residual cells, bounded by the attempts.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                negative_assert!(
+                    attempt < START_RACE_ATTEMPTS,
+                    "#1444 the parked reader never pairs with the guard's rescue \
+                     open across {START_RACE_ATTEMPTS} attempts (attempt {attempt}): \
+                     the reader lost every start race — parked past the drop — or \
+                     the guard leaves it parked"
+                );
+            }
+            // The reader died before its open completed: it lost the
+            // start race and met the unlinked path (ENOENT — the only
+            // open failure available once the guard's unlink
+            // succeeded). Join it to surface its panic text, then retry
+            // on a fresh FIFO; a reader still dying after the last
+            // attempt judges the guard.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let panic_text = match reader.join() {
+                    Ok(()) => "the reader exited without panicking".to_string(),
+                    Err(payload) => payload
+                        .downcast::<String>()
+                        .map_or_else(|_| "a panic without text".to_string(), |text| *text),
+                };
+                negative_assert!(
+                    attempt < START_RACE_ATTEMPTS,
+                    "#1444 the rescue reader lost the start race on all \
+                     {START_RACE_ATTEMPTS} attempts (attempt {attempt}); its open \
+                     failed after the drop: {panic_text}"
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -1724,10 +1804,10 @@ async fn steer_turn_profile_gate_does_not_block_the_serial_host_executor() {
     // branch below keep that path red (see the guard's doc for the
     // measured before/after forms). The cells the guard does not rescue
     // (its doc names all three) can still park a reader — there the
-    // outer 30s bound below only turns the verdict red (the panic text
-    // is printed); the runtime teardown still waits for the parked
-    // blocking task, so the binary hangs with only a trace — that cell
-    // is the ledger's residual 7.
+    // outer 30s bound below only guarantees the panic text is printed
+    // first; the verdict never lands, and the runtime teardown still
+    // waits for the parked blocking task, so the binary hangs with only
+    // a trace — that cell is the ledger's residual 7.
     use crate::runtime::turn::gateway::GatewayRequests;
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt;
