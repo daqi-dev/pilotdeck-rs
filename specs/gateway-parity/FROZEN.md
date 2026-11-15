@@ -178,11 +178,11 @@ c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84  ../../scripts/
 8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
 0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py
 b7373b5838370c43f5b35217f95ce688a0183b5494eb276a25d868a0c18517dd  ../../scripts/a5-19/six_cells.mts
-3a1bb6fedf04ff01273528c250d46765d98ef63cf1f569fba940de2acdf2f2e5  ../../scripts/gateway-parity/_guard.py
+6b6b1a019e47e2b1ebe84b1e42147257715c1bc5c44a5cfb5c00b23a87d02ae9  ../../scripts/gateway-parity/_guard.py
 9c0760f76aaa287f18e2fefa795230e920820b9a8ed7f98af4f71504a1a4319c  ../../scripts/gateway-parity/build_proxy.py
 d382791bfcebb9dcac2b2467d4295a199f707168c113c418b965478f6cf500d8  ../../scripts/gateway-parity/check_frozen.py
 f398e0ba7e30d83faa9fd3ac8f3a32bf757224b153768d628d8fba010cb19538  ../../scripts/gateway-parity/check_ruler.py
-4032505067d4ecf77e875b2511354ad1144bba02ddabf88c616143f266be1c17  ../../scripts/gateway-parity/common.py
+6850e37cecb82bf95a810628cc2a8cb5494dd722643ba9182ba5d63f37a43c0c  ../../scripts/gateway-parity/common.py
 5aa2f14fb2890f795f7638b6ccb4005f64cadc21d3ce3cff38797982b51e7e12  ../../scripts/gateway-parity/compare.py
 7549635a5f2131e610548c2d92a32f0afd9fcfddc21cd0a386b36e79e11dd5f4  ../../scripts/gateway-parity/controls/prerequisites.py
 aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/gateway-parity/controls/run_all.py
@@ -198,7 +198,7 @@ aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/
 0ea4fb1ff42bf4a72e6e69ad788bfdfd2f4771d57059817f12f58cd550fc7b49  ../../scripts/gateway-parity/run_round.py
 b0c974ad89b70dd34248c44aba3351afea16a11a8c70b9a227b9f36ecbdc16c7  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-2cd1148e829d7c25158ffe08ec55457b844bc328b1f34a2b98b09f1df4ac541f  ../../scripts/gateway-parity/test_safety.py
+cca88fa48141003638087a2cee0e579b69c7e551ffaaa66c5650088d05558628  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
