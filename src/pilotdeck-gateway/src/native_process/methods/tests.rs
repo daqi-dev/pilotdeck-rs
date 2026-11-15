@@ -1307,17 +1307,37 @@ async fn steer_turn_attachments_reuse_the_profile_capability_gate() {
 /// `Scratch` cleanup dropping the FIFO during the unwind, a sub-millisecond
 /// race ahead of the reader). Dropping the guard unstrands the FIFO in an
 /// order that leaves no parkable reader: the `O_RDWR` rescue open never
-/// blocks on a FIFO (it is its own writer), so a reader already parked in
-/// the read-side open pairs with it and reads EOF once it closes, and the
-/// unlink makes every reader that has not arrived yet fail fast with
-/// ENOENT instead of waiting for a writer that no longer exists.
+/// blocks on a FIFO (it is its own writer; fix-r6 adds `O_NONBLOCK` so a
+/// platform where an O_RDWR open would block cannot turn the guard itself
+/// into the hang it prevents, and an open failure is recorded rather than
+/// silent), so a reader already parked in the read-side open pairs with it
+/// and reads EOF once it closes, and the unlink makes every reader that
+/// has not arrived yet fail fast with ENOENT instead of waiting for a
+/// writer that no longer exists.
 struct FifoUnstrand<'a>(&'a std::path::Path);
 impl Drop for FifoUnstrand<'_> {
     fn drop(&mut self) {
+        // fix-r6 (review DS b2 concurrency #1): the rescue open must not
+        // become a hang point of its own. O_RDWR FIFO opens never block on
+        // this platform (fifo_probe (1)), but a platform where they do
+        // would park the unwinding releaser right here — the guard would
+        // then be the hang it exists to prevent, and the outer 30s bound
+        // only covers the join, not this drop. O_NONBLOCK pairs with the
+        // O_RDWR self-pairing without changing success/failure semantics,
+        // and an open failure is recorded instead of passing silently so a
+        // broken rescue leaves a trace in the captured test output.
+        use std::os::unix::fs::OpenOptionsExt as _;
         let rescue = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(libc::O_NONBLOCK)
             .open(self.0);
+        if let Err(error) = &rescue {
+            eprintln!(
+                "#1444 FifoUnstrand rescue open failed for {}: {error}",
+                self.0.display()
+            );
+        }
         let _ = std::fs::remove_file(self.0);
         drop(rescue);
     }
