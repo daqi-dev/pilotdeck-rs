@@ -7330,3 +7330,28 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | 8 | 队列 3163/3177/3074 出队 → 核邮箱 + 关账链（#1642 终核 / 卡 5/6 增补 PR / #3056 收口） | coord2/e7 | 等待器触发即收 |
 | 9 | macmini P1 槽空出：#3178 / #2959 竞争下一槽 | coord2/e7 | 槽位变化即派 |
 | 10 | 卷余 17 GiB 盯防（4 GiB/h 跌速未止，下轮复测；必要时再清） | coord2/e7 | 每轮 |
+### 交接段（15:0x–17:0x，coord2/e7 中轮段九）
+
+**做了什么**：
+1. **3185 聚合 check 红判读+整 run 重跑**：拉 Azure blob 原始日志定根因＝镜像守卫（#3078 MM P1 机制）——rust=20261111.370.1 与 negative-controls=20261111.127.1 落在不同 runner 镜像构建，`--failed` 局部重跑救不了。已整 run 重跑 43683206976（16:31 起，16:5x 仍 in_progress，等待器在挂）；绿即 `gh pr merge 3185` 入队。
+2. **2959 fix-r13 双面评审完成（两面互补）**：增量面（base=0a76cae41→e68de6179，重锚带入内容）——MM 四角色全 PASS（P2=6 全 main 侧）+ DS 三 PASS（simplify PARTIAL 作废）。全量面（base=origin/main，diff 6651 行）——DS2 四角色全 PASS：**P0=0 P1=1 P2=3**；P1=concurrency#1（017 残差 3 上界「早恰好一个网格点」只在期限<网格的钉格配比成立，生产配比 60s/30s 下偏差随首字节时刻线性增大、最大约一个 headersTimeout=两网格点，且字节静默）——账本类不适用修复轮放行，当轮修 fix-r14。
+3. **2959 fix-r14（P1 修轮）已推送**：新钉格测试 `a_late_first_byte_after_an_unread_body_closes_two_grid_points_early`（60s/30s 生产配比、+85s 首字节、+89.4 仍开、+90.66 EOF、Node +145→+150 两网格点）+ 017 残差 3 主文与机器判据清单改正 + 既有 fix-r1 测试 doc 注释同步修正。本机盘紧不起 cargo，借 m01 issue-2499 worker 树暖缓存（4.7 GiB）远端验证：fetch 头 → 干净 worktree /tmp/fixr14-2499 → 应用补丁（sha256=1222ec00…核过）→ `cargo test -p pilotdeck-gateway --lib -- channel::sms::` **264 过/3 ignored，目标测试与全部同族兄弟 ok，fmt 绿**；唯一红 `dual_stack_occupier…`（#1339 固定端口守卫超时）复跑仍红但同码 e68de6179 CI rust 全绿 → 坐实 m01 端口噪声非补丁问题；原始记录 `_tmp/20261115-2959-fixr14/m01/test.log`。提交 8d8b8cb35（gitleaks 绿）已推送，**DS+MM 增量评审（P1 修轮两家）已派**（base=e68de6179），新头 CI 等待器在挂。
+4. **#3217 P2-跟进（DS2 全量面三条补齐）**：条 13 simplify#1（A8.4-NATIVE-HTTP-002-R6 锚点漂移须 R7 更正件程序）、条 14 simplify#2（网格落地算术双车道逐字重复，抽 `headers_deadline_landing` 共享）、条 15 boundary#1（busy 解除态首字节重锚被跳过，需实测；若坐实疑升 P1 走仲裁）——评论 6891915230；连同条 1–12（增量面 main 侧），共 15 条，全部 c 档前置于 #2499/#2959 关单收口自查。
+5. **2959 前一头 CI**：e68de6179 上 rust（23m31s）/a51/scope/gateway-schema/retirement 绿；metadata-observer/negative-controls 在跑；pr-gate 红＝旧 body 手术未应用，预期。body 手术稿 /tmp/2959-body-new.md 已入 MM 增量块+残差指针改指 #3217，待 fix-r14 评审出块后补 DS2 全量块+fix-r14 段再 gh pr edit。
+6. **段八 state PR #3216 MERGED**（16:38:42，squash=7595f0275，邮箱干净）。human-comments 空。m01 两车道健康（2800 fix-r12 pid 11787，fixr12 目录 16:47 有写入；2513 fix-r16 pid 25855，16:28 写 mirror）。本机卷余 ~9 GiB（2960 继续缓）；仓内 _build+_tmp 48.8/200 GiB。
+
+**事故**：无新事故（fix-r14 远端首跑两次空转：rc=127 非交互 PATH 无 cargo、rc=101 workspace 根在 src/ 不在仓根——已用绝对路径+改 cwd 修正，均为一次性环境坑非产品问题；m01 dual_stack 探针测试环境性红已判读隔离）。
+
+**下一步**：①2959 DS+MM 评审出块 → 收敛则 body 终稿（MM 增量块 patch=b35dffb32+DS2 全量块 patch=af1af2ec8+fix-r14 增量块）→ gh pr edit → 新头 CI+pr-gate 绿 → 入队 → MERGED 后 #2499 关单链（#3095/#3213/#3217 十五条前置核）；②3185 rerun 终态 → 绿即入队 → MERGED 收账（#3204 五条处置核 + #3152 关单链）；③m01 车道：2800 fix-r12 / 2513 fix-r16 交付即收货链；④3178 fix-r5 等 m01 槽空；⑤2960 等本机盘 ≥20 GiB；⑥3159 等 2800 合入窗口。
+
+未结义务表（17:0x）：
+| # | 义务 | 责任 | 最迟复查 |
+|---|---|---|---|
+| 1 | 3185 rerun 43683206976 终态 → 绿即 `gh pr merge 3185` → MERGED 收账（邮箱核验 + #3204 五条处置核 + #3152 关单链） | coord2/e7 | 哨兵触发即收 |
+| 2 | 2959 fix-r14 链：DS+MM 评审收块→body 终稿→pr edit→新头 CI+gate 绿→入队→MERGED 后 #2499 关单链（#3095/#3213/#3217 十五条前置核） | coord2/e7 | 评审哨兵触发即收 |
+| 3 | m01 2800 fix-r12（pid 11787）交付 → PATCH-IDENTICAL/对账 → 提交推送 → 双谱系增量 → body → CI → 入队 | coord2/e7 | mtime>2400s 无写入才 STALE |
+| 4 | m01 2513 fix-r16（pid 25855）交付 → 收货链（冻结件 --write 协调者重钉单独提交）→ PR #2939 增量双谱系 → CI → 入队 | coord2/e7 | 同上 |
+| 5 | 3178 fix-r5 接续：m01 槽空即 `remote-worker macmini-01 3178 <轮次目录> glm --from-local` | coord2/e7 | 槽位变化即派 |
+| 6 | 2960 dispatch-resume fix-r8 | coord2/e7 | 本机盘 ≥20 GiB 即恢复 |
+| 7 | 3159 等 2800 合入窗口（重锚+双谱系全量重跑计划 /tmp/3159-hold-reason.md） | coord2/e7 | 2800 MERGED 即启动 |
+| 8 | #3217 十五条 P2：到 #2499/#2959 关单自查时逐条处置（b 档升级走仲裁）；m01 /tmp/fixr14-2499 测试树用毕回收 | coord2/e7 | 关单自查时 |
