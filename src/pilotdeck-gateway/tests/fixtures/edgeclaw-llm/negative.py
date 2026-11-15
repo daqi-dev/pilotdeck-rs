@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (dead_stream_print, mutating_sources,
                                run_owned, wait_for_slot)
+from negative_selection import refuse_empty_table
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/transport.rs'
@@ -149,6 +150,14 @@ def anchors(text):
             dead_stream_print(f'STALE ANCHOR {name}: {count} matches',
                               stream='stderr')
         raise SystemExit(2)
+
+# #3178 fix-r5 (DS sibling#2 + P2-a#5): the empty-table refusal must
+# precede both the --check-anchors green exit and the run tail below — an
+# emptied table used to validate zero anchors ("0 unique anchors; no
+# mutation", rc=0) or finish an empty run green, the vacuum-green ordering
+# fix-r4 closed for edgeclaw-llm-recall. One helper, one wording
+# (fix-r5 P2-a#5): the shared refuse_empty_table — rc=2, nothing on disk.
+refuse_empty_table(cases, 'case')
 
 anchors(source.read_text())
 if sys.argv[1:] == ['--check-anchors']:

@@ -118,16 +118,14 @@ with mutating_sources(root, list(dict.fromkeys(c[1] for c in chosen)), baseline=
                         # killed mid-write leaves an empty or half-written
                         # product source.
                         write_source_atomic(
-                            root, path, source.replace(old, new, 1).encode(),
-                            mode=path.stat().st_mode & 0o7777)
+                            root, path, source.replace(old, new, 1).encode())
                         result = run(name, test)
                         status, reason = classify(result, test, anchor)
                     finally:
                         # Same #1087 fix-r2 window: the in-loop restore is also
                         # one rename, never a truncating write_bytes.
                         write_source_atomic(
-                            root, path, originals[path],
-                            mode=path.stat().st_mode & 0o7777)
+                            root, path, originals[path])
                     restored = run(name+'-restored', test)
                     if restored.returncode != 0:
                         status, reason = 'INVALID', reason + '; restored run not green'

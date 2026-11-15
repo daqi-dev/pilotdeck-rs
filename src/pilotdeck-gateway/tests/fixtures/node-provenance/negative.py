@@ -226,8 +226,7 @@ def main():
                             # or half-written product source.
                             write_source_atomic(
                                 ROOT, ROOT / row['path'],
-                                original.replace(row['old'], row['new'], 1).encode(),
-                                mode=(ROOT / row['path']).stat().st_mode & 0o7777)
+                                original.replace(row['old'], row['new'], 1).encode())
                             status, reason = classify(row, run(row, env, output, 'negative'))
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
@@ -235,8 +234,7 @@ def main():
                     # Same #1087 fix-r2 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes.
                     write_source_atomic(
-                        ROOT, ROOT / row['path'], originals[Path(row['path'])],
-                        mode=(ROOT / row['path']).stat().st_mode & 0o7777)
+                        ROOT, ROOT / row['path'], originals[Path(row['path'])])
                 try:
                     restored = run(row, env, output, 'restored')
                     if not positive_ok(row, restored):

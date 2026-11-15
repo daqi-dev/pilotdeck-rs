@@ -308,6 +308,17 @@ all_cases = list(cases)
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
+# #3178 fix-r4 (DS sibling#3): the empty-table refusal must precede the
+# --check-anchors green exit — an emptied table used to validate zero
+# anchors ("0 anchors: ok", rc=0) with nothing verified at all, the same
+# vacuum-green ordering fix-r3 (F4) closed for native-stimulus-plan and
+# fix-r4 closed for the family's check_anchors. The marker machinery
+# (_refuse / run_token) binds later in the flow, so this early check is
+# the bare guarded refusal: rc=2, nothing on disk, re-runnable.
+if not cases:
+    dead_stream_print('EMPTY CASE TABLE: negative.py has no controls '
+                      'to verify; refusing to run', stream='stderr')
+    raise SystemExit(2)
 if sys.argv[1:] == ['--check-anchors']:
     # The preflight reads into `current`, not `originals` (#1087 fix-r3,
     # boundary #1): the guarded window below now sits under a cancellation
@@ -402,8 +413,6 @@ if unknown:
     _refuse(f'unknown controls: {sorted(unknown)}')
 if selected:
     cases = [case for case in cases if case[0] in selected]
-if not cases:
-    _refuse('no controls selected')
 
 target = os.environ.get('CARGO_TARGET_DIR')
 if not target:
@@ -543,8 +552,7 @@ try:
                     # ``mutating_sources``) — a truncating ``write_bytes`` killed
                     # mid-write leaves an empty or half-written product source.
                     write_source_atomic(root, path,
-                                         original.replace(before, after).encode(),
-                                         mode=path.stat().st_mode & 0o7777)
+                                         original.replace(before, after).encode())
                     try:
                         run = run_owned(
                             command + [test, '--', '--exact'],
@@ -554,8 +562,7 @@ try:
                     finally:
                         # Same #1087 fix-r2 window: the in-loop restore is also
                         # one rename, never a truncating write_bytes.
-                        write_source_atomic(root, path, originals[path],
-                                            mode=path.stat().st_mode & 0o7777)
+                        write_source_atomic(root, path, originals[path])
                 except subprocess.TimeoutExpired as error:
                     log = (error.stdout or '') + (error.stderr or '')
                     returncode = None
@@ -576,8 +583,7 @@ try:
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: the final restore is also one rename,
                 # never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
 except SystemExit as error:
     if error.code == 1:
         # The deliberate baseline failure: the guard already restored and

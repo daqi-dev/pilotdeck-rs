@@ -124,8 +124,7 @@ def main():
                             # or half-written product source.
                             write_source_atomic(
                                 ROOT, ROOT / MASKS,
-                                original.replace(row['old'], row['new'], 1).encode(),
-                                mode=(ROOT / MASKS).stat().st_mode & 0o7777)
+                                original.replace(row['old'], row['new'], 1).encode())
                             status, reason = classify(run(row['test'], env, output, row['name'] + '-negative'), row['test'], row['anchors'])
                 except Exception as error:
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
@@ -133,8 +132,7 @@ def main():
                     # Same #1087 fix-r2 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes.
                     write_source_atomic(
-                        ROOT, ROOT / MASKS, originals[Path(MASKS)],
-                        mode=(ROOT / MASKS).stat().st_mode & 0o7777)
+                        ROOT, ROOT / MASKS, originals[Path(MASKS)])
                 try:
                     if not passed(run(row['test'], env, output, row['name'] + '-restored'), row['test']):
                         status, reason = 'INVALID', (reason + '; ' if reason else '') + 'restored positive control did not pass'

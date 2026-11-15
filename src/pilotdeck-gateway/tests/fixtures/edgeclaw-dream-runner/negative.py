@@ -26,6 +26,7 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned, wait_for_slot,
                               write_source_atomic)
+from negative_selection import refuse_empty_table, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 runner = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/runner.rs'
@@ -261,6 +262,16 @@ def failure_is_bound(log, fragment, test):
 
 def main(argv=None):
     argv = list(sys.argv if argv is None else argv)
+    # #3178 fix-r3 (DS3 F6): an emptied mutation table verified nothing, but
+    # the old tail ``if survived or invalid: sys.exit(1)`` fell through both
+    # empty lists and exited 0 (the vacuum green: no mutant verified, the
+    # evidence directory left occupied). The ``--check-anchors`` green exit is
+    # the same shape on an empty table ("OK 0 anchors"), so the refusal comes
+    # first: exit 2, nothing on disk, re-runnable on the same path.
+    # #3178 fix-r4 (DS simplify#3): the refusal is the shared helper now —
+    # one wording and one position for the runner family (the hand-copied
+    # versions had drifted in all three).
+    refuse_empty_table(mutations, 'mutation')
     if '--check-anchors' in argv:
         sources = {path: path.read_text() for _name, path, _before, _after, _test in mutations}
         bad = [(name, path, sources[path].count(before))
@@ -361,8 +372,7 @@ def main(argv=None):
                 # ``mutating_sources``) — a truncating ``write_text`` killed
                 # mid-write leaves an empty or half-written product source.
                 write_source_atomic(root, path,
-                                     source.replace(before, after).encode(),
-                                     mode=path.stat().st_mode & 0o7777)
+                                     source.replace(before, after).encode())
                 slots, run, log = run_suite(test)
                 (out / f'{name}.{run_token}.log').write_text(slots.stdout + slots.stderr + log)
                 if 'could not compile' in log:
@@ -378,8 +388,7 @@ def main(argv=None):
             finally:
                 # Same #1087 fix-r2 window: the in-loop restore is also one
                 # rename, never a truncating write_bytes.
-                write_source_atomic(root, path, originals[path],
-                                     mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, originals[path])
             if killed and killed[-1] == name:
                 print(f'KILLED   {name}: {fragments[name]}', flush=True)
             elif survived and survived[-1][0] == name:
@@ -390,15 +399,21 @@ def main(argv=None):
         for path, data in originals.items():
             # Same #1087 fix-r2 window: the final restore is also one rename,
             # never a truncating write_bytes.
-            write_source_atomic(root, path, data,
-                                 mode=path.stat().st_mode & 0o7777)
+            write_source_atomic(root, path, data)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
 
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(f'{name} ({reason})' for name, reason in survived))
     print(f'INVALID  {len(invalid)}: ' + ', '.join(f'{name} ({reason})' for name, reason in invalid))
-    if survived or invalid:
-        sys.exit(1)
+    # #3178 fix-r3 (DS3 F6): the family tail — the old ``if survived or
+    # invalid: sys.exit(1)`` fell through an emptied table and exited 0 (the
+    # front refusal above now catches it first; verdict_exit keeps the tail
+    # itself honest too).
+    sys.exit(verdict_exit(
+        [{'status': 'KILLED', 'name': name} for name in killed]
+        + [{'status': 'SURVIVED', 'reason': reason} for _name, reason in survived]
+        + [{'status': 'INVALID', 'reason': reason} for _name, reason in invalid],
+        key='status'))
 
 
 if __name__ == '__main__':

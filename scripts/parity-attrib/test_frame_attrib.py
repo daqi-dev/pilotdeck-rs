@@ -7,7 +7,8 @@
 覆盖装置里**可纯合成复现**的部分：C2b 的插入形态与字段集、C5 的 norm 口径、C6 的
 requestEvidence 比较、C4 的 identity_ok、`rounds()` 的目录校验、`round_problem()` 轮次闸门、
 `judge()` 的 C0–C6 编排（注入 G03 桩，不跑冻结比较器）、`verdict_exit()` 退出码折叠、
-`case_mark()` 负控归类、`write_trace()` 原子写、`build_cases()` 的基线前置守卫、
+`case_mark()` 负控归类、`write_trace()` 原子写（含发布失败+清理双失败的失败面孪生
+与裸 remove / 删清理两个变异锚点，#3109 ①）、`build_cases()` 的基线前置守卫、
 `negctl()` 的端到端接线（0 / 3 / 4 / 8 / 9 五个结论码 + 64 用法错误，含 BaselineUnusable→rc=3 与
 轮次目录名不合规→rc=3）、清理兜底（atexit 删半成品证据目录）与断管道下 rc 不被改写，
 以及装置自身的 sha256 pin。`#2031` 残留批的六条各有判别断言：stderr 也套 `_PipeSafe`、
@@ -326,6 +327,138 @@ with tempfile.TemporaryDirectory() as tdir:
               open(dest, encoding='utf-8').read() == before, open(dest, encoding='utf-8').read())
         check('write_trace 序列化失败 → 不留临时文件', sorted(os.listdir(tdir)) == ['x.jsonl'],
               os.listdir(tdir))
+
+# ---- write_trace() 清理失败分支（#3109 ①，#3178）：失败路径清理错不得顶掉原发布错 ----
+# 上一段「序列化失败」在 mkstemp 之前就抛（payload join 处），except 分支零覆盖；
+# 这里把发布（os.replace）与失败路径清理（os.remove）同时打挂，断言浮出来的是
+# 发布自己的错、目标文件原样；再只挂发布，断言失败路径把半截 tmp 清走。
+with tempfile.TemporaryDirectory() as tdir:
+    dest = os.path.join(tdir, 'x.jsonl')
+    fa.write_trace(dest, [{'a': 1}])
+    before = open(dest, encoding='utf-8').read()
+    _orig_replace, _orig_remove = os.replace, os.remove
+
+    def _publish_boom(*args, **kwargs):
+        raise OSError('#twin publish boom')
+
+    def _cleanup_boom(*args, **kwargs):
+        raise OSError('#twin cleanup boom')
+
+    try:
+        os.replace = _publish_boom
+        os.remove = _cleanup_boom
+        try:
+            fa.write_trace(dest, [{'a': 1}, {'b': 2}])
+            check('write_trace 发布失败 → 抛异常（清理失败分支已进）', False)
+        except OSError as error:
+            check('write_trace 发布+清理双失败 → 浮出的是发布错（#3109 ①）',
+                  '#twin publish boom' in str(error)
+                  and '#twin cleanup boom' not in str(error), repr(error))
+    finally:
+        os.replace, os.remove = _orig_replace, _orig_remove
+    check('write_trace 发布失败 → 目标文件保持原样（不落半截证据）',
+          open(dest, encoding='utf-8').read() == before)
+    leftovers = sorted(name for name in os.listdir(tdir) if name != 'x.jsonl')
+    check('write_trace 双失败形态 → 半截 tmp 曾真实落盘（负控进到了发布步）',
+          bool(leftovers), os.listdir(tdir))
+    for name in leftovers:
+        os.remove(os.path.join(tdir, name))
+    try:
+        os.replace = _publish_boom
+        try:
+            fa.write_trace(dest, [{'a': 1}, {'b': 2}])
+            check('write_trace 只挂发布 → 也抛异常', False)
+        except OSError as error:
+            check('write_trace 只挂发布 → 抛的还是发布错', '#twin publish boom' in str(error),
+                  repr(error))
+    finally:
+        os.replace = _orig_replace
+    check('write_trace 发布失败 → 失败路径清理 tmp（不留半截文件）',
+          sorted(os.listdir(tdir)) == ['x.jsonl'], os.listdir(tdir))
+
+# ---- 变异锚点（#3109 ① 的牙齿）：write_trace 清理 suppress 锚必须唯一在场 ----
+# 裸化清理 remove（去掉 suppress）后，浮出来的必须变成清理错——红点恰在上一段
+# 「浮出的是发布错」的专属判定上；连清理一并删掉则红在「不留半截文件」上。装置
+# 级 sha256 pin 只证明文件被改过，不指认哪个判定失效；这里在进程内驱动变异副本，
+# 给出可指认的红点（同族见 retirement self_check 的 control_emit/control_negctl）。
+with open(os.path.join(HERE, 'frame_attrib.py'), encoding='utf-8') as fh:
+    device_source = fh.read()
+_cleanup_anchor = ('        from contextlib import suppress\n'
+                   '        with suppress(OSError):\n'
+                   '            if os.path.exists(tmp):\n'
+                   '                os.remove(tmp)\n')
+check('write_trace 清理 suppress 锚唯一在场（改锚必须显式更新本段）',
+      device_source.count(_cleanup_anchor) == 1,
+      f'count={device_source.count(_cleanup_anchor)}')
+_bare_remove_source = device_source.replace(
+    '        with suppress(OSError):\n'
+    '            if os.path.exists(tmp):\n'
+    '                os.remove(tmp)\n',
+    '        if os.path.exists(tmp):\n'
+    '            os.remove(tmp)\n')
+_no_cleanup_source = device_source.replace(
+    '        with suppress(OSError):\n'
+    '            if os.path.exists(tmp):\n'
+    '                os.remove(tmp)\n',
+    '        with suppress(OSError):\n'
+    '            pass\n')
+check('两个变异确实改到了源（锚点漂移时先红这里，再谈孪生）',
+      _bare_remove_source != device_source and _no_cleanup_source != device_source)
+def _exec_mutant(tag, mutated_source):
+    """进程内 exec 变异副本。装置在模块期从 ``__file__`` 向上找仓库根
+    （找不到即退 rc=64），所以变异源码必须以**真实装置路径**为 ``__file__``
+    exec（临时目录副本会死在 repo root 发现上）——同 edgeclaw-messages
+    REFUSAL_CHILD 驱动形态。
+    """
+    device_path = os.path.join(HERE, 'frame_attrib.py')
+    namespace = {'__name__': f'frame_attrib_{tag}', '__file__': device_path}
+    exec(compile(mutated_source, device_path, 'exec'), namespace)
+    return namespace
+
+
+with tempfile.TemporaryDirectory() as tdir:
+    # #3178 fix-r1（sibling#5 / boundary#6）：两个变异各用独立 drive 子目录——
+    # 共用一个 drive 时，bare_remove 段（发布+清理双挂）留下的半截 tmp 会让
+    # no_cleanup 段的「留了文件」判定被**前段残留**满足：即使删清理变异实际
+    # 没生效（清理照跑）也照旧绿，红点不可指认。独立子目录后该判定只可能由
+    # 本段自己的 tmp 满足；配对的负向证明是上方「失败路径清理 tmp」判定
+    # （未变异装置在同一形态下目录里只剩 x.jsonl）。
+    drive_bare = os.path.join(tdir, 'drive-bare-remove')
+    drive_no_cleanup = os.path.join(tdir, 'drive-no-cleanup')
+    os.makedirs(drive_bare)
+    os.makedirs(drive_no_cleanup)
+    # 裸 remove 变异：发布+清理双挂时，冒出来的是清理错（r15 之前的归因掩蔽形态）。
+    try:
+        os.replace = _publish_boom
+        os.remove = _cleanup_boom
+        try:
+            _exec_mutant('bare_remove', _bare_remove_source)['write_trace'](
+                os.path.join(drive_bare, 'x.jsonl'), [{'a': 1}, {'b': 2}])
+            check('裸 remove 变异 → 仍抛异常', False)
+        except OSError as error:
+            check('裸 remove 变异 → 会把清理错顶上去（孪生专属判定的红点形态）',
+                  '#twin cleanup boom' in str(error)
+                  and '#twin publish boom' not in str(error), repr(error))
+    finally:
+        os.replace, os.remove = _orig_replace, _orig_remove
+    # 删清理变异：只挂发布时错照旧抛，但半截 tmp 留在盘上（成功路径不受影响）。
+    try:
+        os.replace = _publish_boom
+        try:
+            _exec_mutant('no_cleanup', _no_cleanup_source)['write_trace'](
+                os.path.join(drive_no_cleanup, 'y.jsonl'), [{'a': 1}, {'b': 2}])
+            check('删清理变异 → 仍抛异常', False)
+        except OSError as error:
+            check('删清理变异 → 抛的还是发布错', '#twin publish boom' in str(error),
+                  repr(error))
+    finally:
+        os.replace = _orig_replace
+    leftovers = sorted(name for name in os.listdir(drive_no_cleanup)
+                       if not name.endswith('.jsonl'))
+    check('删清理变异 → 半截 tmp 留在盘上（「不留半截文件」判定的红点形态）',
+          len(leftovers) == 1 and leftovers[0].startswith('.trace-')
+          and leftovers[0].endswith('.tmp'),
+          os.listdir(drive_no_cleanup))
 
 # ---- run(): 空对拍必须硬失败（P0：旧版 0 pair 时打印「无第二种差异」并 rc=0）----
 with tempfile.TemporaryDirectory() as tdir:

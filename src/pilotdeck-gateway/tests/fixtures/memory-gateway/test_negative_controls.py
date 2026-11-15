@@ -18,7 +18,10 @@ Run with:
     python3 -B memory-gateway/test_negative_controls.py
 """
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 
@@ -118,6 +121,99 @@ class MemoryGatewayJudgeControls(unittest.TestCase):
         self.assertEqual(self.judge(log),
                          ("INVALID", "test failed outside the named assertion"),
                          "#1087 a sibling test's panic is not a kill")
+
+
+class RefusalProcessControls(unittest.TestCase):
+    """#3094 item 1 (#3178): the never-started refusal under a dead stderr.
+
+    The process-level twin the rc=2 class lacked at family level: the
+    CARGO_TARGET_DIR refusal runs before the window and before the evidence
+    directory is claimed, so a real subprocess with stderr closed at exec
+    time (``2>&-`` makes CPython set ``sys.stderr = None``) must keep exit 2
+    — the reason may not be silently re-routed to stdout while the host
+    watches stderr, and the interpreter must not record an "Exception
+    ignored" shutdown flush.
+    """
+
+    def test_missing_target_refusal_survives_a_dead_stderr(self):
+        runner = Path(__file__).with_name("negative_controls.py").resolve()
+        env = {name: value for name, value in os.environ.items()
+               if name != "CARGO_TARGET_DIR"}
+        result = subprocess.run(
+            ["/bin/sh", "-c",
+             f"exec {sys.executable} -I {runner} /nonexistent-out 2>&-"],
+            capture_output=True, timeout=120, env=env)
+        message = "#3094 the never-started refusal must keep exit 2 under 2>&-"
+        self.assertEqual(result.returncode, 2,
+                         message + f" (got rc={result.returncode}, "
+                         f"stderr={result.stderr!r})")
+        self.assertEqual(result.stdout, b"",
+                         message + " (a dead stderr must not re-route the "
+                         "refusal reason to stdout)")
+        self.assertNotIn(b"Exception ignored", result.stderr,
+                         message + " (the shutdown flush must not see the dead stderr)")
+
+
+class RosterMismatchStreamControls(unittest.TestCase):
+    """#3178 fix-r1 (boundary #4): the roster-mismatch reason is a mid-run
+    refusal print — a dead stderr must not re-route it to stdout.
+
+    The never-started refusals in this file already go through
+    ``dead_stream_print``; the mid-run roster mismatch (a shrunken run, the
+    #1456 guard) was the one surviving bare ``print(file=sys.stderr)``.
+    Under ``2>&-`` CPython sets ``sys.stderr = None`` and ``print(file=None)``
+    falls back to *stdout* — measured in the fix-r1 probe: the reason leaves
+    via the stream the host is not watching. The twin drives the delivered
+    ``main()`` in-process to a roster mismatch with ``sys.stderr = None`` and
+    asserts the reason never reaches stdout. No cargo, no product source
+    writes.
+    """
+
+    def test_mismatch_reason_is_not_rerouted_under_a_dead_stderr(self):
+        import contextlib
+        import io
+        import tempfile
+        from unittest.mock import patch
+        runner = load_runner()
+        with tempfile.TemporaryDirectory(prefix="pdrs-memory-roster-") as temp:
+            out = Path(temp) / "run"
+            out.mkdir()
+
+            class Guard:
+                def __enter__(self):
+                    return {}
+
+                def __exit__(self, *exc):
+                    return False
+
+            captured = io.StringIO()
+            with contextlib.redirect_stdout(captured), \
+                    patch.object(sys, "stderr", None), \
+                    patch.dict(os.environ,
+                               {"CARGO_TARGET_DIR": str(Path(temp) / "target")}), \
+                    patch.object(sys, "argv",
+                                 ["negative_controls.py", str(out)]), \
+                    patch.object(runner, "claim_dir", lambda path: Path(path)), \
+                    patch.object(runner, "mutating_sources",
+                                 lambda root, paths, **kwargs: Guard()), \
+                    patch.object(
+                        runner, "run_bound_test",
+                        # A failing baseline keeps the mutation loop from
+                        # touching any source: the only rows recorded are the
+                        # baseline diagnostics, and the verdict roster still
+                        # mismatches the (intact) EXPECTED_NAMES.
+                        lambda test: subprocess.CompletedProcess([], 1, "", "")), \
+                    patch.object(runner, "registered", lambda *args, **kwargs: None), \
+                    patch.object(runner, "mutations", []):
+                code = runner.main()
+            recorded = (out / "roster-mismatch.json").is_file()
+        message = ("#3178 the roster-mismatch reason must not be re-routed to "
+                  "stdout under a dead stderr (print(file=None) falls back to "
+                  "the other stream)")
+        self.assertEqual(code, 1, message)
+        self.assertTrue(recorded,
+                        message + " (the mismatch must still be recorded on disk)")
+        self.assertNotIn("roster mismatch", captured.getvalue(), message)
 
 
 if __name__ == "__main__":

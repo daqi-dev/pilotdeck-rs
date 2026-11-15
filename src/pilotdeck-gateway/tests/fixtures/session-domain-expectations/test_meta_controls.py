@@ -259,6 +259,14 @@ class DriftTests(unittest.TestCase):
                         '#1279 standalone-anchors: standalone must not print the JSON listing')
         self.assertTrue(errors.getvalue() == '',
                         '#1279 standalone-anchors: the ok path must not print usage or drift diagnostics')
+        # #3178 fix-r5 (P1-4 / mm-boundary#3): the derived-counts diagnostic
+        # is a stdout contract; fix-r4's dead-stdout hardening silently moved
+        # it to stderr and only this test's empty-stderr pin noticed. Keep the
+        # destination pinned so a future stream flip is red here, not silent.
+        self.assertTrue(any(line.startswith('derived counts: ') for line in lines),
+                        '#3178 standalone-anchors: the derived-counts diagnostic '
+                        'is a stdout contract (a silent stderr move broke this '
+                        'test in fix-r4)')
         with patch.object(sys, 'argv', ['negative_controls.py', '--check-anchors']), \
                 patch.object(gate, 'check_anchors', return_value=2), \
                 contextlib.redirect_stdout(io.StringIO()), \
@@ -379,8 +387,12 @@ def negative_checks():
         # "0 anchors: ok" / rc 0 behaviour, which the bound test must catch.
         ('empty-anchors-pass', 'check_anchors',
          "    if not selected:\n"
-         "        print('EMPTY ANCHOR SELECTION: nothing to validate; '\n"
-         "              'the anchor gate must not pass', file=sys.stderr)\n"
+         "        # #3178 fix-r2 (P2-a): a bare ``print(file=sys.stderr)`` crashes with\n"
+         "        # rc=1 under a dead stderr (``2>&-``) and reads as \"ran and was red\";\n"
+         "        # the shared guarded print keeps the refusal at rc=2 (#1087 fix-r8\n"
+         "        # family shape).\n"
+         "        dead_stream_print('EMPTY ANCHOR SELECTION: nothing to validate; '\n"
+         "                          'the anchor gate must not pass', stream='stderr')\n"
          "        return 2\n", '',
          'test_check_anchors_rejects_empty_selection',
          '#1364 empty-anchors: an empty selection must not return success'),

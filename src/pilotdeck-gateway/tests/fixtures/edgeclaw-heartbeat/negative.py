@@ -46,6 +46,9 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
+# #3178 fix-r5 (DS sibling#3): the family verdict — the dream family's
+# shared exit, migrated here with the tail below.
+from negative_selection import verdict_exit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from negative_shared import js_value, mutations as shared_mutations, storage, text
@@ -365,8 +368,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
                 # ``mutating_sources``) — a truncating ``write_text`` killed
                 # mid-write leaves an empty or half-written product source.
                 write_source_atomic(
-                    root, path, source.replace(before, after).encode(),
-                    mode=path.stat().st_mode & 0o7777)
+                    root, path, source.replace(before, after).encode())
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             run = cargo_test(test)
             log = run.stdout + run.stderr
@@ -377,8 +379,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: this restore is also one rename,
                 # never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
             # #1087 fix-r8 (S1-a): the shared guarded print — a dead stdout
             # must not turn this exit-2 refusal into a crash (rc=1) or a
             # shutdown-flush 120; the code is the contract.
@@ -390,8 +391,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: the in-loop restore is also one
                 # rename, never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
         if reason is None:
             killed.append(name)
             print(f'KILLED   {name}: {anchor}', flush=True)
@@ -399,8 +399,7 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
             survived.append((name, reason))
             print(f'SURVIVED {name}: {reason}', flush=True)
     for path, data in originals.items():
-        write_source_atomic(root, path, data,
-                            mode=path.stat().st_mode & 0o7777)
+        write_source_atomic(root, path, data)
         assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     # #831: the mutation loop restores after every case; run the suite once
     # more under the same tree lock so the green-after-restore half of the
@@ -416,5 +415,14 @@ with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as
         sys.exit(1)
 print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
 print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-if survived:
-    sys.exit(1)
+# #3178 fix-r5 (DS sibling#3 / MM sibling#2): the family tail — the dream
+# family migrated this handwritten ``if survived: sys.exit(1)`` to
+# negative_selection.verdict_exit (fix-r3); this copy still read a zero-row
+# run as all-KILLED (rc=0, the vacuum green pinned by fix-r5's
+# probe-s3-edgeclaw-heartbeat-before.log: an emptied cases table plus an
+# emptied shared extension made rows empty and the tail fell through
+# green). The summary lines stay; the verdict is the shared exit.
+sys.exit(verdict_exit(
+    [{'status': 'KILLED', 'name': name} for name in killed]
+    + [{'status': 'SURVIVED', 'reason': reason}
+       for _name, reason in survived], key='status'))

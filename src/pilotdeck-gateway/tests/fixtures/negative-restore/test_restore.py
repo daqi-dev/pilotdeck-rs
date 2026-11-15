@@ -9,12 +9,14 @@ requires the exact regression tests to fail at their dedicated assertions.
 The simulated source guard only owns TemporaryDirectory files; it is never a
 replacement for the HEAD guard when running product mutations.
 """
+import ast
 import contextlib
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -659,8 +661,796 @@ class SessionFactoryTests(unittest.TestCase):
                              f'#1037 an unset or empty baseline ({value!r}) must fall back to HEAD')
 
 
+# #3001 item 3 (#3178): the migrated-table sweep. The MODULES harness above
+# drives restore faults through three runners only; the other migrated family
+# tables had no revert-to-truncating-write red until this scan.
+# #3178 fix-r1 (boundary #7): the marker matches on a word boundary — a bare
+# substring would let a future `#1087 fix-r10` note satisfy the fix-r1 probe.
+MIGRATION_MARKER = re.compile(r'#1087 fix-r(?:1|2)\b')
+MIGRATION_EXCLUDED_DIRS = ('_shared/', '_negkit/', 'negative-restore/')
+
+
+def migration_files(root=FIXTURES):
+    """Yield (relative path, text) for every migrated family table.
+
+    The population is directory-derived the way ``_shared/test_compile_inputs.py``
+    derives its compile sweep: a family table is a fixtures subdirectory runner
+    carrying the #1087 fix-r1/fix-r2 atomic-write migration marker (#1903 rule).
+    Unit tests quote those markers in assertions, root-level modules are the M6
+    lane's shared machinery, and the ``_``-prefixed kit dirs are shared — none
+    of them are family tables. Marker-less runners are the #1908 unmigrated
+    backlog and deliberately stay out until they are migrated.
+    """
+    for path in sorted(root.rglob('*.py')):
+        rel = path.relative_to(root)
+        rel_posix = rel.as_posix()
+        if path.name.startswith('test_') or '/' not in rel_posix:
+            continue
+        if rel_posix.startswith(MIGRATION_EXCLUDED_DIRS):
+            continue
+        try:
+            text = path.read_text(encoding='utf-8', errors='surrogateescape')
+        except OSError:
+            continue
+        if MIGRATION_MARKER.search(text):
+            yield rel_posix, text
+
+
+def _receiver_root(node):
+    """The leftmost name of a receiver expression (``out`` in ``out / 'x.log'``,
+    ``paths`` in ``paths[key]``)."""
+    while True:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            node = node.left
+        elif isinstance(node, ast.Subscript):
+            node = node.value
+        else:
+            break
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _is_call_to(node, name):
+    return (isinstance(node, ast.Call)
+            and ((isinstance(node.func, ast.Name) and node.func.id == name)
+                 or (isinstance(node.func, ast.Attribute) and node.func.attr == name)))
+
+
+class _UnreadGuardShape(Exception):
+    """A guard expression node ``_collect_names`` has no branch for.
+
+    #3178 fix-r4 (DS boundary#2 + ds4 simplify#4 + MM sibling#7, the
+    structural close-out): the r1→r2→r3 rounds each added the one node
+    type the next review found missing (BinOp/Subscript, then Compare),
+    and a type with no branch still contributed nothing *silently* —
+    the guard stayed partially readable, the unread names went
+    unguarded, and a revert to truncating writes through them went
+    unseen. Guards are now collected in strict mode: meeting an
+    unrecognized node aborts the collection and the window is reported
+    as unreadable in full instead of half-resolved.
+    """
+
+
+def _collect_names(node, names, *, strict=False):
+    """Add every name an expression can draw from into ``names``.
+
+    #3178 fix-r1 (sibling #3 / boundary #1 / concurrency #1): the first cut
+    of the sweep only accepted ``Name`` and all-``Name`` literals, so every
+    computed guard — ``[paths[key] for key in paths]`` (ListComp),
+    ``list(dict.fromkeys(...))`` (Call), ``sorted({root / filename ...})``
+    (SetComp + BinOp) — resolved to the empty set and the whole window was
+    silently skipped by ``if not guarded: continue``. Names are collected
+    recursively instead; comprehension targets stay out (they are bound, not
+    drawn from), while the iterated collection does join (it is where the
+    paths come from).
+
+    #3178 fix-r2 (DS boundary#1, P0): "targets stay out" was a promise the
+    first cut did not keep — ``[x for x in compute_paths()]`` recursed into
+    ``node.elt`` and collected ``x`` anyway, so the bound loop variable
+    polluted the guarded set, the unresolvable window looked resolvable,
+    and the empty-window fail-closed never fired (a false PASS). The bound
+    targets are now collected first and subtracted from what the element
+    draws on; a chained ``for y in x`` iter is also a bound target and
+    joins the subtraction.
+
+    #3178 fix-r3 (DS3 boundary#1 + ds1 sibling#8): the subtraction is
+    confined to the element/condition pool — the iters are evaluated in
+    the *enclosing* scope, so ``[p for p in [p]]`` draws the outer ``p``
+    through the iter and the old blanket ``drawn - bound`` wrongly dropped
+    it (a same-name shadow hid the true guarded name and the window looked
+    resolvable without it: a false PASS on truncated writes). And the
+    ``ifs`` conditions are the third draw position of the same production:
+    names appearing only there (``if p in CANDIDATES``) used to miss the
+    guarded set entirely.
+
+    #3178 fix-r4 (DS boundary#2 + ds4 simplify#4 + MM sibling#7): the
+    round-by-round enumeration is over. ``BoolOp`` (``a or b``, ``p and
+    q``) and ``UnaryOp`` (``not flag``) join the recognized shapes — an
+    alias value or a comprehension filter built from them used to draw
+    nothing, so the names appearing only there went unguarded and a
+    truncating write through them went unseen (the three review shapes,
+    demonstrated unseen on the pre-fix collector by
+    _tmp/20261115-3178-fixr4/probe-alias-shapes.py). Every other
+    unrecognized node now aborts a *strict* collection — the guard mode —
+    instead of contributing nothing: a partially-read guard would leave
+    its unread names unguarded (``_UnreadGuardShape``). ``Constant`` is a
+    name-free leaf, not a blind spot, so literals inside guards keep
+    them readable. The alias fixpoint keeps the lenient walk: assignment
+    values in the real family tables are full of attribute receivers
+    and dict literals, and a shape missed there can only under-collect
+    (never invent a violation).
+    """
+    if isinstance(node, ast.Name):
+        names.add(node.id)
+    elif isinstance(node, ast.Constant):
+        # #3178 fix-r4: a literal leaf can never draw a guarded name, so
+        # meeting one is not an unread shape — guards hold constants
+        # inside compares and set literals and must keep resolving.
+        pass
+    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        for item in node.elts:
+            _collect_names(item, names, strict=strict)
+    elif isinstance(node, ast.Starred):
+        _collect_names(node.value, names, strict=strict)
+    elif isinstance(node, ast.Call):
+        for arg in node.args:
+            _collect_names(arg, names, strict=strict)
+        for kw in node.keywords:
+            _collect_names(kw.value, names, strict=strict)
+        # A method receiver carries names the plain argument walk cannot
+        # reach (``originals.items()``); a plain function name (``sorted``)
+        # is a builtin, not a path source, and stays out.
+        if isinstance(node.func, ast.Attribute):
+            _collect_names(node.func.value, names, strict=strict)
+    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        # The loop variables a comprehension binds are local to it — they
+        # are not names drawn from the enclosing scope. Collect what the
+        # element, the filter conditions and the iters draw on. The bound
+        # targets are subtracted from the element/condition pool only: the
+        # iters are evaluated in the enclosing scope, so a name that
+        # coincides with a bound target (``[p for p in [p]]``) is a real
+        # outer draw and must survive the subtraction (fix-r3, DS3
+        # boundary#1); the ``ifs`` conditions join the element pool because
+        # they draw outer names of their own (fix-r3, ds1 sibling#8).
+        bound = set(_assigned_names([generator.target
+                                      for generator in node.generators]))
+        drawn_elt = set()
+        _collect_names(node.elt, drawn_elt, strict=strict)
+        drawn_iters = set()
+        for generator in node.generators:
+            _collect_names(generator.iter, drawn_iters, strict=strict)
+            for condition in generator.ifs:
+                _collect_names(condition, drawn_elt, strict=strict)
+        names |= (drawn_elt - bound) | drawn_iters
+    elif isinstance(node, ast.DictComp):
+        # Same rule for the dict shapes: key and value (and the ``ifs``
+        # conditions) draw (recursively), the bound targets stay out of that
+        # pool, and the iters keep their names whole.
+        bound = set(_assigned_names([generator.target
+                                      for generator in node.generators]))
+        drawn_elt = set()
+        _collect_names(node.key, drawn_elt, strict=strict)
+        _collect_names(node.value, drawn_elt, strict=strict)
+        drawn_iters = set()
+        for generator in node.generators:
+            _collect_names(generator.iter, drawn_iters, strict=strict)
+            for condition in generator.ifs:
+                _collect_names(condition, drawn_elt, strict=strict)
+        names |= (drawn_elt - bound) | drawn_iters
+    elif isinstance(node, ast.BinOp):
+        _collect_names(node.left, names, strict=strict)
+        _collect_names(node.right, names, strict=strict)
+    elif isinstance(node, ast.BoolOp):
+        # #3178 fix-r4 (MM sibling#7): ``a or b`` / ``p and q`` used to
+        # draw nothing — an alias seeded from ``alias = src or out`` never
+        # propagated, and a comprehension filter ``if p and q`` lost both
+        # names (the truncating writes through them went unseen).
+        for value in node.values:
+            _collect_names(value, names, strict=strict)
+    elif isinstance(node, ast.UnaryOp):
+        # #3178 fix-r4 (MM sibling#7): ``not flag`` likewise — the operand
+        # draws, the operator does not.
+        _collect_names(node.operand, names, strict=strict)
+    elif isinstance(node, ast.Subscript):
+        _collect_names(node.value, names, strict=strict)
+        _collect_names(node.slice, names, strict=strict)
+    elif isinstance(node, ast.Compare):
+        # #3178 fix-r3 (ds1 sibling#8): the comprehension ``ifs`` are filter
+        # conditions, and the canonical shape is a Compare (``if p in
+        # CANDIDATES``) — without this branch the ifs collection the same
+        # round adds to the comprehension draw pools resolves nothing for it.
+        _collect_names(node.left, names, strict=strict)
+        for comparator in node.comparators:
+            _collect_names(comparator, names, strict=strict)
+    elif isinstance(node, ast.IfExp):
+        _collect_names(node.body, names, strict=strict)
+        _collect_names(node.test, names, strict=strict)
+        _collect_names(node.orelse, names, strict=strict)
+    elif isinstance(node, ast.JoinedStr):
+        for value in node.values:
+            _collect_names(value, names, strict=strict)
+    elif isinstance(node, ast.FormattedValue):
+        _collect_names(node.value, names, strict=strict)
+    elif strict:
+        # #3178 fix-r4: a guard expression node with no branch above.
+        # Contributing nothing silently is how the partial-guard false
+        # PASS shipped (control A2 of the fix-r4 probe); refuse instead.
+        raise _UnreadGuardShape(type(node).__name__)
+
+
+def _assigned_names(targets):
+    """The names an assignment binds (tuple unpacking included)."""
+    for target in targets:
+        for sub in ast.walk(target):
+            if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                yield sub.id
+
+
+def _with_target_names(item):
+    """The names a with-item binds (``originals`` in ``as originals``).
+
+    The snapshot mapping the guard yields is keyed by the guarded paths, so a
+    name drawn from it (``for path, data in originals.items()``) is a guarded
+    path under another spelling — it joins the alias seed (but never the
+    resolvability decision: an opaque guard expression stays a violation).
+    """
+    names = set()
+    if item.optional_vars is not None:
+        for sub in ast.walk(item.optional_vars):
+            if isinstance(sub, ast.Name):
+                names.add(sub.id)
+    return names
+
+
+def _guarded_names(node):
+    """The names a mutating_sources window's guard expressions draw from.
+
+    ``node`` is the ``With`` statement; every ``mutating_sources`` item's
+    guard expression is resolved recursively (#3178 fix-r1). The ``as``
+    target is deliberately *not* included: it only aliases paths the guard
+    already declared, so it cannot rescue an unresolvable guard.
+
+    #3178 fix-r4: the collection is strict — a guard expression holding a
+    node ``_collect_names`` has no branch for makes the whole window
+    unreadable (``None``) instead of partially readable: the unread names
+    would stay unguarded and a truncating write through them unseen.
+    """
+    names = set()
+    for item in node.items:
+        if not _is_call_to(item.context_expr, 'mutating_sources'):
+            continue
+        values = list(item.context_expr.args[1:2]) \
+            + [kw.value for kw in item.context_expr.keywords
+               if kw.arg in ('sources', 'paths')]
+        try:
+            for value in values:
+                _collect_names(value, names, strict=True)
+        except _UnreadGuardShape:
+            return None
+    return names
+
+
+def scan_migration(text, rel):
+    """Report every departure from the atomic-write migration in one table.
+
+    Inside a ``mutating_sources`` window a truncating ``write_text`` or
+    ``write_bytes`` may only ever target the evidence output — never a name
+    guarded by the window (or an alias of one: ``path = paths[key]``,
+    ``for path, data in originals.items()``), and never a
+    ``write_source_atomic`` target (the guarded product source). A window
+    whose guard set resolves to no names at all — or whose guard expression
+    holds a node the collector cannot read in full (#3178 fix-r4) — is
+    itself a violation: the scan refuses shapes it cannot read instead of
+    silently skipping them (#3178 fix-r1). No ``write_source_atomic`` call may stat its target at
+    call time for the ``mode=`` argument either: the helper already falls
+    back to 0o644 for a deleted target, while a call-time stat raises
+    FileNotFoundError and aborts the sequential restore loop, skipping every
+    later file. Snapshot-recorded modes (``mode=modes[path]``) stay allowed.
+    """
+    violations = []
+    tree = ast.parse(text)
+    atomic_targets = set()
+    atomic_roots = set()
+    for node in ast.walk(tree):
+        if not _is_call_to(node, 'write_source_atomic'):
+            continue
+        for arg in list(node.args[1:2]) + [kw.value for kw in node.keywords
+                                           if kw.arg == 'path']:
+            atomic_targets.add(ast.unparse(arg))
+            root = _receiver_root(arg)
+            if root is not None:
+                atomic_roots.add(root)
+        for kw in node.keywords:
+            if kw.arg == 'mode':
+                for sub in ast.walk(kw.value):
+                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) \
+                            and sub.func.attr == 'stat':
+                        violations.append(
+                            f'{rel}: line {kw.lineno}: write_source_atomic passes a '
+                            'call-time mode= stat (a deleted target would abort the '
+                            'restore loop; record the mode in the snapshot instead)')
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        if not any(_is_call_to(item.context_expr, 'mutating_sources')
+                   for item in node.items):
+            continue
+        guarded = _guarded_names(node)
+        if guarded is None:
+            # #3178 fix-r4 (DS boundary#2 + MM sibling#7): a guard
+            # expression holding a node the collector has no branch for
+            # used to contribute its names silently, so the window stayed
+            # half-readable — the unread names went unguarded and a
+            # truncating write through them went unseen (the partial-guard
+            # false PASS, probe control A2). Refuse the whole window
+            # instead of enumerating one more node type per round.
+            violations.append(
+                f'{rel}: line {node.lineno}: the mutating_sources window guards '
+                'on a shape the collector cannot read in full (a partially-read '
+                'guard would leave a revert to truncating writes unseen on the '
+                'unread names; rewrite the guard as a shape the scan resolves)')
+            continue
+        if not guarded:
+            # #3178 fix-r1 (boundary #1): an unresolvable guard set is a
+            # violation, never a silent skip — a computed shape the scan
+            # cannot read would keep the whole window invisible to a revert
+            # to truncating writes (the false PASS the first cut shipped).
+            violations.append(
+                f'{rel}: line {node.lineno}: the mutating_sources window declares '
+                'no recognizable guarded names (a guard the scan cannot resolve '
+                'must be rewritten as a resolvable shape, not skipped: a revert '
+                'to truncating writes would go unseen here)')
+            continue
+        # A guarded name may be reborn under a local alias — ``path =
+        # paths[key]``, ``for path, data in originals.items()`` — so writes on
+        # the alias are caught too (#3178 fix-r1, boundary #1's second blind
+        # spot: an exact-string ``receiver in atomic_targets`` match misses a
+        # restore loop that renamed its variable). The ``as`` target joins the
+        # seed because iterating the snapshot mapping yields the guarded
+        # paths. Propagate to a fixpoint.
+        aliases = set(guarded)
+        for item in node.items:
+            if _is_call_to(item.context_expr, 'mutating_sources'):
+                aliases |= _with_target_names(item)
+        changed = True
+        while changed:
+            changed = False
+            for sub in ast.walk(node):
+                targets, value = [], None
+                if isinstance(sub, ast.Assign):
+                    targets, value = sub.targets, sub.value
+                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                    if sub.value is not None:
+                        targets, value = [sub.target], sub.value
+                elif isinstance(sub, (ast.For, ast.AsyncFor)):
+                    targets, value = [sub.target], sub.iter
+                elif isinstance(sub, ast.comprehension):
+                    targets, value = [sub.target], sub.iter
+                if value is None:
+                    continue
+                drawn = set()
+                _collect_names(value, drawn)
+                if drawn & aliases:
+                    for name in _assigned_names(targets):
+                        if name not in aliases:
+                            aliases.add(name)
+                            changed = True
+        for sub in ast.walk(node):
+            if not (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr in ('write_text', 'write_bytes')):
+                continue
+            receiver = ast.unparse(sub.func.value)
+            root = _receiver_root(sub.func.value)
+            if root in aliases:
+                violations.append(
+                    f'{rel}: line {sub.lineno}: truncating {sub.func.attr} on the '
+                    'guarded source itself (a kill mid-write leaves an empty or '
+                    'half-written source; use write_source_atomic)')
+            elif receiver in atomic_targets or root in atomic_roots:
+                violations.append(
+                    f'{rel}: line {sub.lineno}: truncating {sub.func.attr} on a '
+                    'write_source_atomic target (the guarded source; use '
+                    'write_source_atomic)')
+    return violations
+
+
+SWEEP_FAMILY = '''\
+import sys
+from pathlib import Path
+from negative_process import mutating_sources, write_source_atomic
+
+out = Path(sys.argv[1]).resolve()
+root = Path(__file__).resolve().parents[5]
+src = root / 'src/thing.rs'
+
+# #1087 fix-r2: every guarded-source write in the window is one
+# atomic rename (#1903 rule, shared with ``mutating_sources``).
+with mutating_sources(root, [src]) as originals:
+    mutant = originals[src].replace(b'left', b'right', 1)
+    write_source_atomic(root, src, mutant)
+{body}'''
+
+# #3178 fix-r1 (sibling #3 / boundary #1): the computed-list guard shapes the
+# migrated tables actually use (heartbeat's ListComp, live-history's and
+# gateway-batch's Call) — the red side for the recursive name collection.
+COMPUTED_GUARD_FAMILY = '''\
+import sys
+from pathlib import Path
+from negative_process import mutating_sources, write_source_atomic
+
+root = Path(__file__).resolve().parents[5]
+paths = {{'src': root / 'src/thing.rs'}}
+
+# #1087 fix-r2: every guarded-source write in the window is one
+# atomic rename (#1903 rule, shared with ``mutating_sources``).
+with mutating_sources(root, {guard}) as originals:
+{body}'''
+
+
+class MigrationWindowSweepTests(unittest.TestCase):
+    """#3001 item 3: every migrated family table keeps the #1903 shape."""
+
+    def test_family_windows_never_truncate_guarded_sources(self):
+        population = dict(migration_files())
+        self.assertTrue(len(population) >= 20,
+                        '#3001 the migrated family must stay discoverable by its marker')
+        for required in ('fe-coexist/negative_controls.py',
+                         'live-history/negative.py',
+                         'edgeclaw-heartbeat/negative.py',
+                         'edgeclaw-heartbeat-indexer/negative.py',
+                         'gateway-batch/negative_controls.py',
+                         'ledger-diffs/negative_controls.py'):
+            self.assertIn(required, population,
+                          f'#3001 the sweep must cover the migrated table {required}')
+        self.assertNotIn('negative_suite.py', population,
+                         '#3001 the M6 shared harness stays outside this sweep; its '
+                         'remaining call-time mode= sites belong to the M6 lane '
+                         '(registered in '
+                         'test_the_m6_shared_harness_mode_sites_stay_registered)')
+        for rel, text in sorted(population.items()):
+            with self.subTest(table=rel):
+                self.assertEqual(scan_migration(text, rel), [],
+                                 '#3001 a migrated table left the atomic-write shape')
+
+    def test_the_m6_shared_harness_mode_sites_stay_registered(self):
+        """#3178 fix-r2 (MM sibling#4): the sweep's one blind spot, pinned.
+
+        ``negative_suite.py`` is the M6 lane's shared harness (#1099; the
+        standing constraint keeps this round from touching its body), so it
+        stays outside the sweep population by design — which left its four
+        ``mode=...stat().st_mode`` call-time sites as the only ones in the
+        tree that no scan ever sees (a rule that stays green while scanning
+        nothing, the review's "规则假绿"). They are the registered exception
+        instead: any drift — a fifth site, one removed, a line moved — must
+        red this registration rather than pass silently, and retiring them
+        is the M6 lane's deliberate act (update this pin then).
+        """
+        text = (FIXTURES / 'negative_suite.py').read_text(
+            encoding='utf-8', errors='surrogateescape')
+        findings = [violation for violation
+                    in scan_migration(text, 'negative_suite.py')
+                    if 'call-time mode=' in violation]
+        lines = sorted(int(violation.split(' line ')[1].split(':')[0])
+                       for violation in findings)
+        self.assertEqual(
+            lines, [401, 412, 807, 831],
+            '#3178 negative_suite.py (the M6 lane\'s shared harness, #1099) '
+            'must carry exactly the four registered call-time mode= sites '
+            '(lines 401/412/807/831): a fifth site must red here, not pass '
+            'unseen outside the sweep population')
+
+    def _family(self, body):
+        return SWEEP_FAMILY.format(body=body)
+
+    def test_scan_flags_a_reverted_guarded_write(self):
+        """The #3001 red side: a table reverted to write_text must go red."""
+        source = self._family("    src.write_text('mutated')")
+        self.assertTrue(any('truncating write_text on the guarded source' in v
+                            for v in scan_migration(source, 'probe/table.py')),
+                        '#3001 a guarded write reverted to write_text must red')
+
+    def test_scan_flags_a_write_targeting_an_atomic_target(self):
+        """The loop-variable shape (``for target, data in ...``) must red too.
+
+        #3178 fix-r1: with alias tracking the loop variable over ``[(src,
+        b'x')]`` is a guarded alias, so this shape now reds on the
+        guarded-source message; the plain atomic-target message is still
+        the one for an unaliased receiver, so both spellings count.
+        """
+        source = self._family(
+            "    for target, data in [(src, b'x')]:\n"
+            "        write_source_atomic(root, target, data)\n"
+            "        target.write_text('mutated')")
+        self.assertTrue(any('write_source_atomic target' in v
+                            or 'guarded source itself' in v
+                            for v in scan_migration(source, 'probe/table.py')),
+                        '#3001 a truncating write on a write_source_atomic target must red')
+
+    def test_scan_flags_call_time_mode_and_allows_snapshot_mode(self):
+        source = self._family('')
+        reverted = source.replace('write_source_atomic(root, src, mutant)',
+                                  'write_source_atomic(root, src, mutant,\n'
+                                  '                    mode=src.stat().st_mode & 0o7777)')
+        self.assertTrue(any('call-time mode=' in v
+                            for v in scan_migration(reverted, 'probe/table.py')),
+                        '#3001 a call-time mode= stat must red')
+        snapshotted = source.replace('write_source_atomic(root, src, mutant)',
+                                    'write_source_atomic(root, src, mutant, mode=modes[src])')
+        self.assertEqual(scan_migration(snapshotted, 'probe/table.py'), [],
+                         '#3001 a snapshot-recorded mode stays allowed')
+
+    def test_scan_flags_a_reverted_computed_guard_window(self):
+        """#3178 fix-r1 (sibling #3 / boundary #1 / concurrency #1): a
+        computed-list guard window reverted to a truncating write must red.
+
+        The first cut of ``_guarded_names`` only accepted ``Name`` and
+        all-``Name`` literals, so ``[paths[key] for key in paths]`` resolved
+        to the empty set and ``if not guarded: continue`` silently skipped
+        the window — the exact false PASS the review demonstrated by
+        reverting ``edgeclaw-heartbeat/negative.py`` (evidence in
+        _tmp/20261026-issue-3178/fix-r1/). Both spellings are pinned: the
+        bare ListComp and the ``list(dict.fromkeys(...))`` Call form the
+        live-history / gateway-batch tables use.
+        """
+        for guard in ('[paths[key] for key in paths]',
+                      'list(dict.fromkeys([paths[key] for key in paths]))'):
+            with self.subTest(guard=guard):
+                atomic = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard,
+                    body="    for path, data in originals.items():\n"
+                         "        write_source_atomic(root, path, data)")
+                self.assertEqual(scan_migration(atomic, 'probe/table.py'), [],
+                                 '#3178 a computed guard must resolve and stay '
+                                 'green in its atomic shape')
+                reverted = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard,
+                    body="    for path, data in originals.items():\n"
+                         "        path.write_bytes(data)")
+                self.assertTrue(
+                    any('guarded source itself' in v
+                        for v in scan_migration(reverted, 'probe/table.py')),
+                    '#3178 a computed-guard window reverted to a truncating '
+                    'write must red (the first cut skipped it silently)')
+
+    def test_scan_flags_an_unresolvable_guard_window(self):
+        """#3178 fix-r1 (boundary #1): a guard the scan cannot resolve is a
+        violation, never a silent skip — an opaque shape would keep the whole
+        window invisible to a revert to truncating writes."""
+        source = self._family("    src.write_text('mutated')").replace(
+            'mutating_sources(root, [src])',
+            'mutating_sources(root, compute_paths())')
+        self.assertTrue(any('no recognizable guarded names' in v
+                            for v in scan_migration(source, 'probe/table.py')),
+                        '#3178 an unresolvable guard window must be a '
+                        'violation, not a silent skip')
+
+    def test_scan_flags_a_comprehension_target_name_pollution(self):
+        """#3178 fix-r2 (DS boundary#1, P0): the red side.
+
+        ``[x for x in compute_paths()]`` binds its own ``x`` — a loop
+        variable is not a name drawn from the enclosing scope. The first cut
+        of the recursive collector added it to the guarded set anyway, so the
+        unresolvable window looked resolvable, the fail-closed never fired,
+        and the truncating write below went unseen (the false PASS the
+        coordinator's probe demonstrated). The guard must resolve to no name
+        and be reported as unresolvable; and the subtraction must not blind
+        the scan to the collection actually iterated.
+        """
+        source = COMPUTED_GUARD_FAMILY.format(
+            guard='[x for x in compute_paths()]',
+            body="    src.write_text('mutated')")
+        violations = scan_migration(source, 'probe/table.py')
+        self.assertTrue(any('no recognizable guarded names' in v
+                            for v in violations),
+                        '#3178 a comprehension target name must not rescue an '
+                        'unresolvable guard (fail-closed, never a false PASS)')
+        resolvable = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values()]',
+            body="    paths['src'].write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(resolvable, 'probe/table.py')),
+            '#3178 dropping the comprehension target must not blind the scan '
+            'to the collection it iterates (paths.values() is still a '
+            'guarded-name draw, and the truncating write through it must red)')
+
+    def test_scan_keeps_shadowed_iter_names_and_collects_ifs(self):
+        """#3178 fix-r3 (DS3 boundary#1 + ds1 sibling#8): the red side.
+
+        Two draw positions the fix-r2 blanket ``drawn - bound`` got wrong or
+        missed. The iters are evaluated in the *enclosing* scope, so
+        ``[p for p in [p]] + [q]`` draws the outer ``p`` through the iter;
+        subtracting the bound target from it dropped the true guarded name,
+        the window looked resolvable without it, and the truncated write on
+        ``p`` went unseen (a false PASS the pre-fix-r2 code — which never
+        collected the target at all — did flag). And the ``ifs`` conditions
+        draw names of their own: a name appearing only in the filter clause
+        (``if p in CANDIDATES``) used to miss the guarded set entirely. The
+        DictComp branch carries the same two probes.
+        """
+        for guard in ('[p for p in [p]] + [q]',
+                      '{p: p for p in [p] if p in [p]}'):
+            with self.subTest(shadow=guard):
+                source = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard, body="    p.write_text('mutated')")
+                self.assertTrue(
+                    any('truncating write_text on the guarded source' in v
+                        for v in scan_migration(source, 'probe/table.py')),
+                    '#3178 a name shadowed by the comprehension target must '
+                    'stay guarded through its iter draw (the enclosing-scope '
+                    'name the subtraction used to drop)')
+        for guard in ('[p for p in [q] if r in [q]]',
+                      '{k: v for k, v in [(q, q)] if r in paths}'):
+            with self.subTest(ifs=guard):
+                source = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard, body="    r.write_text('mutated')")
+                self.assertTrue(
+                    any('truncating write_text on the guarded source' in v
+                        for v in scan_migration(source, 'probe/table.py')),
+                    '#3178 a name drawn only by a comprehension ``ifs`` '
+                    'condition must stay guarded (the third draw position the '
+                    'collector used to skip entirely)')
+        # The positive side: an ifs-carrying guard still resolves, stays
+        # green in its atomic shape, and a truncating write through the
+        # iterated collection still reds (no false red from the fix).
+        atomic = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in [q] if q in paths]',
+            body="    for path, data in originals.items():\n"
+                 "        write_source_atomic(root, path, data)")
+        self.assertEqual(scan_migration(atomic, 'probe/table.py'), [],
+                         '#3178 an ifs-carrying computed guard must resolve '
+                         'and stay green in its atomic shape')
+        reverted = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values() if p in paths.values()]',
+            body="    paths['src'].write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(reverted, 'probe/table.py')),
+            '#3178 the iterated collection behind an ifs filter is still a '
+            'guarded-name draw, and the truncating write through it must red')
+
+    def test_scan_reads_boolop_and_unaryop_guards_and_aliases(self):
+        """#3178 fix-r4 (MM sibling#7 + DS boundary#2): the red side.
+
+        Three shapes the r1-r3 collector read as blank, each demonstrated
+        unseen pre-fix by _tmp/20261115-3178-fixr4/probe-alias-shapes.py:
+        an alias seeded from ``alias = src or out`` drew nothing, so the
+        truncating write through the alias went unseen (the false PASS
+        the review inferred); a comprehension filter ``if p and q`` drew
+        neither name; a filter ``if not flag and p in paths`` lost both
+        the negated flag and the compare side. The BoolOp/UnaryOp
+        branches close all three, and the same guards stay green in
+        their atomic shape (no false red from the fix).
+        """
+        # 1) alias = a or b: the alias must propagate to the write.
+        source = COMPUTED_GUARD_FAMILY.format(
+            guard='[src]',
+            body="    alias = src or out\n"
+                 "    alias.write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(source, 'probe/table.py')),
+            '#3178 a BoolOp alias value must propagate the guarded name to '
+            'the alias (the truncating write through it used to go unseen)')
+        # 2) [p for p in Y if p and q]: the filter names must stay guarded.
+        source = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values() if p and q]',
+            body="    q.write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(source, 'probe/table.py')),
+            '#3178 a name drawn only by a BoolOp comprehension filter must '
+            'stay guarded (the filter used to be read as blank)')
+        # 3) if not flag and p in X: UnaryOp+BoolOp+Compare together.
+        source = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values() if not flag and p in paths]',
+            body="    flag.write_text('mutated')")
+        self.assertTrue(
+            any('truncating write_text on the guarded source' in v
+                for v in scan_migration(source, 'probe/table.py')),
+            '#3178 a name drawn only by a not/and/in filter chain must stay '
+            'guarded (both the negated flag and the compare side used to '
+            'be read as blank)')
+        # The positive side: the same guards stay green in their atomic
+        # shape, and a benign BoolOp alias joins no violation either.
+        atomic = COMPUTED_GUARD_FAMILY.format(
+            guard='[p for p in paths.values() if not flag and p in paths]',
+            body="    for path, data in originals.items():\n"
+                 "        write_source_atomic(root, path, data)")
+        self.assertEqual(scan_migration(atomic, 'probe/table.py'), [],
+                         '#3178 a not/and/in filter guard must resolve and '
+                         'stay green in its atomic shape')
+        benign = COMPUTED_GUARD_FAMILY.format(
+            guard='[src]',
+            body="    alias = src or out\n"
+                 "    write_source_atomic(root, alias, b'x')")
+        self.assertEqual(scan_migration(benign, 'probe/table.py'), [],
+                         '#3178 a BoolOp alias value feeding the atomic '
+                         'restore helper is not a truncating write')
+
+    def test_scan_fail_closes_on_guard_shapes_it_cannot_read(self):
+        """#3178 fix-r4 (DS boundary#2 + ds4 simplify#4): the structural
+        close-out.
+
+        The collector used to answer every node it had no branch for with
+        silence, so each review round found one more missing type (r2
+        BinOp/Subscript, r3 Compare) and a partially-read guard kept the
+        window looking resolved while its unread names stayed unguarded
+        (probe control A2: ``[src, env.THING]`` with the write on
+        ``env`` went unseen). An unrecognized node inside a guard now
+        refuses the whole window instead of waiting for the next round
+        to enumerate it. ``Constant`` leaves are name-free, so literal
+        elements keep a guard readable — the reverse control.
+        """
+        for guard in ('[src, env.THING]', '{k: src}', 'src.attr'):
+            with self.subTest(guard=guard):
+                source = COMPUTED_GUARD_FAMILY.format(
+                    guard=guard, body="    src.write_text('mutated')")
+                self.assertTrue(
+                    any('cannot read in full' in v
+                        for v in scan_migration(source, 'probe/table.py')),
+                    '#3178 a guard expression holding a node the collector '
+                    'has no branch for must refuse the whole window (the '
+                    'partially-read guard false PASS), not half-resolve it')
+        # The reverse control: name-free literal leaves stay readable,
+        # resolve to the readable side, and stay green in atomic shape.
+        readable = COMPUTED_GUARD_FAMILY.format(
+            guard="[src, 'literal']",
+            body="    for path, data in originals.items():\n"
+                 "        write_source_atomic(root, path, data)")
+        self.assertEqual(scan_migration(readable, 'probe/table.py'), [],
+                         '#3178 a name-free literal leaf must not refuse '
+                         'the guard (constants can never draw a guarded '
+                         'name)')
+
+    def test_scan_allows_evidence_writes_and_population_follows_the_marker(self):
+        self.assertEqual(
+            scan_migration(self._family("    (out / 'row.log').write_text('log')"),
+                           'probe/table.py'),
+            [], '#3001 evidence output is never a guarded source')
+        with tempfile.TemporaryDirectory(prefix='pdrs-3001-sweep-') as temp:
+            root = Path(temp)
+            marked = root / 'marked' / 'negative.py'
+            marked.parent.mkdir()
+            marked.write_text(self._family("    src.write_text('mutated')"))
+            # The #1908 backlog shape: same violating write, no migration
+            # marker — it must stay outside the sweep until it is migrated.
+            # #3178 fix-r1 (boundary #7): the future-round spelling
+            # `#1087 fix-r10` must not satisfy the fix-r1/r2 marker either.
+            unmarked = ('backlog/negative_controls.py', 'future/negative_controls.py')
+            for rel in unmarked:
+                probe = root / rel
+                probe.parent.mkdir(parents=True, exist_ok=True)
+                probe.write_text(self._family("    src.write_text('mutated')")
+                                 .replace('#1087 fix-r2', '#1908 backlog'))
+            (root / 'future' / 'negative_controls.py').write_text(
+                self._family("    src.write_text('mutated')")
+                .replace('#1087 fix-r2', '#1087 fix-r10'))
+            # #3178 fix-r1 (boundary #5): the marker alone only drives the
+            # marker rule. Each exclusion surface is now probed with a file
+            # that *carries* the marker, so deleting the directory rule, the
+            # test_ prefix rule, or the top-level rule re-admits its probe.
+            # #3178 fix-r2 (DS boundary#2): the prefix-rule probe lives in a
+            # subdirectory — at the temp root the top-level rule ('/' not in
+            # rel) fired first, so deleting the test_ prefix rule re-admitted
+            # nothing and the rule was never actually probed (the comment
+            # claimed a causality the probe could not deliver). In
+            # family/test_marked.py only the prefix rule excludes it;
+            # top_level.py owns the top-level rule alone.
+            for rel in ('_shared/kit.py', 'negative-restore/own.py',
+                        'family/test_marked.py', 'top_level.py'):
+                probe = root / rel
+                probe.parent.mkdir(parents=True, exist_ok=True)
+                probe.write_text(self._family("    src.write_text('mutated')"))
+            self.assertEqual([rel for rel, _ in migration_files(root)],
+                             ['marked/negative.py'],
+                             '#3001 only marked family tables enter the sweep '
+                             '(the marked dir/prefix/top-level probes must stay '
+                             'excluded by their own rule, not by the marker)')
+
+
 TEST_CLASSES = (McpRestoreTests, MasksRestoreTests, NodeRestoreTests, RealGuardTests,
-                SharedInvalidationTests, SessionFactoryTests, SessionRunnerTests)
+                SharedInvalidationTests, SessionFactoryTests, SessionRunnerTests,
+                MigrationWindowSweepTests)
 
 
 def tests(test_class):

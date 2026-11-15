@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import classify_bound_run, named_test_killed
 from negative_selection import (baseline_passed, claim_dir, missing_target,
                                 refuse_unusable_target, registered)
-from negative_process import (mutating_sources, run_owned, wait_for_slot)  # noqa: E402
+from negative_process import (dead_stream_print, mutating_sources,  # noqa: E402
+                              run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / "src/pilotdeck-gateway/src"
@@ -303,15 +304,21 @@ ENV = os.environ.copy()
 
 
 def main():
+    # #3094 (#3178): every "never started" refusal below is the shared guarded
+    # print — a dead stderr must not re-route the reason to stdout while the
+    # host watches stderr, nor let the shutdown flush rewrite exit 2 (the
+    # fix-r8 S1-a family contract).
     if len(sys.argv) < 2:
-        print("usage: negative_controls.py <output-dir> [mutation ...]", file=sys.stderr)
+        dead_stream_print("usage: negative_controls.py <output-dir> [mutation ...]",
+                          stream='stderr')
         return 2
     # The family contract, not a local copy: absent/empty/blank targets and the
     # dot/root/src values are refused by the shared rule, and an already
     # existing directory is a "never started" (2) rather than a bare traceback
     # that reads as "it ran and did not come out green" (#1666 fix-r7/r9, #1734).
     if missing_target():
-        print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
+        dead_stream_print("CARGO_TARGET_DIR must be set by the caller",
+                          stream='stderr')
         return 2
     refuse_unusable_target()
     # Refusals happen before the evidence directory is claimed: a drifted
@@ -322,7 +329,7 @@ def main():
     # smaller scope, the same class of false green as an unknown name (#1734).
     repeated = sorted({n for n in requested if requested.count(n) > 1})
     if repeated:
-        print(f"repeated mutation names: {repeated}", file=sys.stderr)
+        dead_stream_print(f"repeated mutation names: {repeated}", stream='stderr')
         return 2
     selected = set(requested)
     data_names = {"memory-gateway-oracle-truncated"}
@@ -335,11 +342,12 @@ def main():
         if EXPECTED_NAMES[-1] != "memory-gateway-oracle-truncated":
             raise ValueError("static roster must end with the data mutation")
     except ValueError as error:
-        print(f"mutation roster drifted: {error}", file=sys.stderr)
+        dead_stream_print(f"mutation roster drifted: {error}", stream='stderr')
         return 2
     unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
-        print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
+        dead_stream_print(f"unknown mutation names: {sorted(unknown)}",
+                          stream='stderr')
         return 2
     out = claim_dir(sys.argv[1])
     rows = [row for row in mutations if not selected or row[0] in selected]
@@ -478,7 +486,12 @@ def main():
     recorded = [row["name"] for row in results]
     if recorded != expected:
         message = f"verdict roster mismatch: recorded={recorded} expected={expected}"
-        print(message, file=sys.stderr)
+        # #3178 fix-r1 (boundary #4): this mid-run refusal print is the one
+        # surviving bare ``print(file=sys.stderr)`` in the file — under
+        # ``2>&-`` CPython sets ``sys.stderr = None`` and ``print(file=None)``
+        # falls back to *stdout* (measured in the fix-r1 probe), re-routing
+        # the mismatch reason away from the stream the host watches.
+        dead_stream_print(message, stream='stderr')
         (out / "roster-mismatch.json").write_text(
             json.dumps(
                 {

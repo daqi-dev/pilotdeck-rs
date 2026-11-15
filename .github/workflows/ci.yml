@@ -160,6 +160,53 @@ jobs:
           # 钉三态退出契约两侧：中止侧（外部真持锁 / 恢复失败 / 取消）全 INVALID
           # + rc 2，守卫前拒绝侧 rc 1 无 summary；不需要 cargo。
           python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py
+      # #3178 fix-r1（评审 sibling#4）：#1087 p2 批交付的六组孪生（frozen-manifest
+      # #3110 基线自检 / parity-lock-release / session-domain-lock-release 的零行
+      # 孪生，fe-coexist / memory-gateway / edgeclaw-messages 的死流拒绝孪生）与
+      # fix-r1 增补的三组（session-domain-expectations / session-domain-native
+      # 的零行判决孪生、user-dialog-http-store-1555 的 controlless 判决孪生）
+      # 此前只有 docstring 里的「Run with」——ci.yml、pr-gate.yml、
+      # Rust 名册里一个都没有，删掉任一孪生文件全仓仍绿（test_metadata_io_driver
+      # 「加了 CI 命令却没登记，删掉 CI 全绿」点名的形态）。本步纯 Python 进程内 /
+      # 子进程桩驱动，不占 cargo 名额（真变异负控仍在 negative-controls job）。
+      # 真跑钉（Ran N 下限）与步预算同源钉在 test_metadata_io_driver.py。
+      # #3178 fix-r2（P2-a-4）再补三组同形缺口：gateway-batch / html-timing 两组
+      # 交付孪生与 fix-r2 新增的 native-stimulus-plan 零行判决孪生仍只有 docstring
+      # 的「Run with」，同样删掉全绿——接线进同一步（真跑钉/命令钉/变异负控同步）。
+      # #3178 fix-r4（四家撞条）：五组空表孪生（edgeclaw-real-provider /
+      # model-http-encoding / edgeclaw-dream / edgeclaw-dream-run /
+      # edgeclaw-dream-runner）此前同样只有 docstring「Run with」，接线进同一
+      # 步；十七模块实测合计约 2 s，预算不变。
+      # #3178 fix-r5（修复面 1 接线）：四组空表拒绝（mcp-gateway /
+      # skills-external / gateway-entry-guard / shared-runner-failclosed）
+      # 的死 stdout 断管孪生同样接线进同一步；二十一模块合计仍远低于预算。
+      - name: 网关负控 p2 批孪生自测（#3178）
+        working-directory: src/pilotdeck-gateway/tests/fixtures
+        shell: bash
+        # 挂起时占满 job 默认 360 分钟；二十一模块实测合计约 2 s，5 min 即卡死即红。
+        timeout-minutes: 5
+        run: |
+          python3 -B -m unittest -v frozen-manifest/test_negative_controls.py
+          python3 -B -m unittest -v parity-lock-release/test_negative_controls.py
+          python3 -B -m unittest -v session-domain-lock-release/test_negative_controls.py
+          python3 -B -m unittest -v session-domain-expectations/test_negative_controls.py
+          python3 -B -m unittest -v session-domain-native/test_negative_controls.py
+          python3 -B -m unittest -v fe-coexist/test_negative_controls.py
+          python3 -B -m unittest -v memory-gateway/test_negative_controls.py
+          python3 -B -m unittest -v edgeclaw-messages/test_negative.py
+          python3 -B -m unittest -v user-dialog-http-store-1555/test_dirty_tree_control_1555.py
+          python3 -B -m unittest -v gateway-batch/test_negative_controls.py
+          python3 -B -m unittest -v html-timing/test_negative_controls.py
+          python3 -B -m unittest -v native-stimulus-plan/test_negative_controls.py
+          python3 -B -m unittest -v edgeclaw-real-provider/test_negative.py
+          python3 -B -m unittest -v model-http-encoding/test_negative.py
+          python3 -B -m unittest -v edgeclaw-dream/test_negative.py
+          python3 -B -m unittest -v edgeclaw-dream-run/test_negative.py
+          python3 -B -m unittest -v edgeclaw-dream-runner/test_negative.py
+          python3 -B -m unittest -v mcp-gateway/test_negative_controls.py
+          python3 -B -m unittest -v skills-external/test_negative_controls.py
+          python3 -B -m unittest -v gateway-entry-guard/test_negative_controls.py
+          python3 -B -m unittest -v shared-runner-failclosed/test_negative_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。

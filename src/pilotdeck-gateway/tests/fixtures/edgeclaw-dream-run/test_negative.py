@@ -204,5 +204,79 @@ class RefusalControls(unittest.TestCase):
                         message + ' (a dead stdout must not turn it into rc=1)')
 
 
+class DreamRunEmptyTableControls(unittest.TestCase):
+    """#3178 fix-r3 (DS3 F6): an empty mutation table is a refusal, not a
+    vacuum green.
+
+    The runner's tail used to be ``if survived or invalid: sys.exit(1)``, so
+    an emptied table fell through both empty lists and exited 0 — read as
+    all-KILLED. The ``--check-anchors`` green exit had the same shape ("OK 0
+    anchors"). Both must refuse before the evidence directory exists: exit
+    2, no log, and the output path left untouched for a re-run. The process
+    layer is patched on the imported module (no cargo run happens here).
+    """
+
+    def setUp(self):
+        entry = str(Path(__file__).resolve().parent)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            self.addCleanup(sys.path.remove, entry)
+        import negative
+        self.runner = negative
+        self.tmp = tempfile.TemporaryDirectory(prefix='dream-run-empty-')
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name).resolve() / 'run'
+
+    def _unreachable(self):
+        def unreachable(*_args, **_kwargs):
+            raise AssertionError('#3178 the empty table must refuse before '
+                                 'any run, slot wait or source guard')
+        return unreachable
+
+    def test_an_empty_mutation_table_refuses_before_any_evidence(self):
+        import contextlib
+        import io
+
+        runner = self.runner
+        errors = io.StringIO()
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': self.tmp.name,
+                                     'NEGATIVE_ONLY': '', 'NEGATIVE_BASELINE': ''}), \
+             patch.object(runner, 'mutations', []), \
+             patch.object(runner, 'mutating_sources', self._unreachable()), \
+             patch.object(runner, 'run_owned', self._unreachable()), \
+             patch.object(runner, 'wait_for_slot', self._unreachable()), \
+             contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                runner.main([str(Path(__file__).with_name('negative.py')),
+                             str(self.out)])
+        message = ('#3178 an empty mutation table must refuse before any '
+                   'evidence (the old tail fell through both empty lists '
+                   'and exited 0)')
+        self.assertTrue(caught.exception.code == 2, message)
+        self.assertFalse(self.out.exists(),
+                         message + ' (nothing may be created for a run that '
+                         'never started; the same output path must stay '
+                         're-runnable)')
+        self.assertIn('EMPTY MUTATION TABLE', errors.getvalue(),
+                      message + ' (the refusal reason must reach stderr)')
+
+    def test_an_empty_mutation_table_fails_the_check_anchors_preflight(self):
+        import contextlib
+        import io
+
+        runner = self.runner
+        errors = io.StringIO()
+        with patch.object(runner, 'mutations', []), \
+             contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as caught:
+                runner.main(['--check-anchors'])
+        message = ('#3178 an empty mutation table must fail --check-anchors '
+                   '(the green exit used to print "OK 0 anchors" and '
+                   'certify a table with nothing in it)')
+        self.assertTrue(caught.exception.code == 2, message)
+        self.assertIn('EMPTY MUTATION TABLE', errors.getvalue(),
+                      message + ' (the refusal reason must reach stderr)')
+
+
 if __name__ == '__main__':
     unittest.main()

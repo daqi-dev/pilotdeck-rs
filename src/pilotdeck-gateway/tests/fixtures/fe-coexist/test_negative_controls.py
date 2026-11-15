@@ -13,6 +13,7 @@ Run with:
     python3 -B -m unittest -v fe-coexist/test_negative_controls.py
 """
 import json
+import subprocess
 import sys
 import tempfile
 import types
@@ -197,6 +198,82 @@ class CoexistSummaryControls(unittest.TestCase):
                         message + ' (the final payload must keep the row)')
         self.assertTrue(self.source.read_text() == 'x = 0\n',
                         message + ' (the guarded tree must end restored)')
+
+
+class CoexistEmptyTableControls(unittest.TestCase):
+    """#3178 fix-r2 (P2-a): an emptied mutation table is a refusal, not a
+    write-empty-summary-then-rc-1 finish.
+
+    The tail's ``verdict_exit`` already refuses to read an empty run as green
+    (rc=1), but the publish before it still wrote an empty summary.json — a
+    summary that exists reads like a completed run, and rc=1 reads "ran and
+    was red". The refusal must come before the evidence directory is
+    claimed: exit 2, nothing on disk, re-runnable on the same output path.
+    """
+
+    def test_an_empty_mutation_table_refuses_before_any_evidence(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-coexist-empty-') as temp:
+            out_arg = Path(temp) / 'run'
+            out = out_arg.resolve()
+
+            class Guard:
+                def __enter__(self):
+                    return {}
+
+                def __exit__(self, *exc):
+                    return False
+
+            def unreachable(*_args, **_kwargs):
+                raise AssertionError('#3178 the empty table must refuse before '
+                                     'any node run or source guard')
+
+            with patch.multiple(negative_controls, mutations=[],
+                                 mutating_sources=(
+                                     lambda root, paths, **kwargs: Guard()),
+                                 run_owned=unreachable), \
+                    patch.object(sys, 'argv',
+                                 ['negative_controls.py', str(out_arg)]):
+                code = negative_controls.main()
+            listing = sorted(path.name for path in out.iterdir()) \
+                if out.exists() else None
+        message = ('#3178 an empty mutation table must refuse before any '
+                   'evidence (the old tail wrote an empty summary.json and '
+                   'exited 1)')
+        self.assertEqual(code, 2, message)
+        self.assertIsNone(listing,
+                          message + ' (nothing may be created for a run that '
+                          'never started; the same output path must stay '
+                          're-runnable)')
+
+
+class RefusalProcessControls(unittest.TestCase):
+    """#3094 item 1 (#3178): the never-started refusal under a dead stderr.
+
+    The process-level twin the rc=2 class lacked at family level: the
+    unknown-name refusal runs before the window, so a real subprocess with
+    stderr closed at exec time (``2>&-`` makes CPython set ``sys.stderr =
+    None``) must keep exit 2 — the reason may not be silently re-routed to
+    stdout while the host watches stderr, and the interpreter must not
+    record an "Exception ignored" shutdown flush.
+    """
+
+    def test_unknown_name_refusal_survives_a_dead_stderr(self):
+        runner = Path(negative_controls.__file__).resolve()
+        with tempfile.TemporaryDirectory(prefix='pdrs-fe-refusal-') as temp:
+            out = Path(temp) / 'run'
+            result = subprocess.run(
+                ['/bin/sh', '-c',
+                 f'exec {sys.executable} -I {runner} {out} no-such-name 2>&-'],
+                capture_output=True, timeout=120)
+        message = '#3094 the never-started refusal must keep exit 2 under 2>&-'
+        self.assertEqual(result.returncode, 2,
+                         message + f' (got rc={result.returncode}, '
+                         f'stderr={result.stderr!r})')
+        self.assertEqual(result.stdout, b'',
+                         message + ' (a dead stderr must not re-route the '
+                         'refusal reason to stdout)')
+        self.assertNotIn(b'Exception ignored', result.stderr,
+                         message + ' (the shutdown flush must not see the dead stderr)')
 
 
 if __name__ == '__main__':

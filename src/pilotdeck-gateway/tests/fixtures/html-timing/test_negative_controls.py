@@ -265,9 +265,17 @@ class TimingRunnerControls(unittest.TestCase):
         self.assertTrue(len(restore_writes) == 1,
                         message + ' (the restore must go through one rename too)')
         mode = self.source.stat().st_mode & 0o7777
-        self.assertTrue(all(row[0] == self.source and row[2] == mode
+        # #3178 fix-r1 (sibling #1): the runner no longer snapshots the mode
+        # at the call site — ``None`` is the valid hand-off, the shared
+        # helper ``negative_process.write_source_atomic`` then inherits the
+        # on-disk mode (and falls back to 0o644 for a deleted target). A
+        # recorded mode, when one is passed, must still equal the source's.
+        self.assertTrue(all(row[0] == self.source
+                            and (row[2] is None or row[2] == mode)
                             for row in writes),
-                        message + ' (each write must keep the source path and mode)')
+                        message + ' (each write must keep the source path and '
+                                  'a valid mode: None inherits via the shared '
+                                  'helper)')
         self.assertTrue(self.source.read_text() == 'fn a() {}\n',
                         message + ' (the tree must end restored)')
 

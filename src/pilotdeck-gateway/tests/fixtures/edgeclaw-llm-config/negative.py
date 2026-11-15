@@ -38,7 +38,8 @@ from negative_process import (dead_stream_print, detach_dead_streams,
                               mutating_sources, new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
-                               refuse_unusable_target, select)
+                               refuse_unusable_target, select,
+                               verdict_exit)
 
 
 def classify(log, returncode, expected, test):
@@ -538,8 +539,7 @@ try:
                     # ``mutating_sources``) — a truncating ``write_bytes`` killed
                     # mid-write leaves an empty or half-written product source.
                     write_source_atomic(root, path,
-                                         original.replace(before, after).encode(),
-                                         mode=path.stat().st_mode & 0o7777)
+                                         original.replace(before, after).encode())
                     try:
                         run = run_owned(
                             command + [test, '--', '--exact'],
@@ -549,8 +549,7 @@ try:
                     finally:
                         # Same #1087 fix-r2 window: the in-loop restore is also
                         # one rename, never a truncating write_bytes.
-                        write_source_atomic(root, path, originals[path],
-                                            mode=path.stat().st_mode & 0o7777)
+                        write_source_atomic(root, path, originals[path])
                 except subprocess.TimeoutExpired as error:
                     log = (error.stdout or '') + (error.stderr or '')
                     returncode = None
@@ -572,8 +571,7 @@ try:
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: the final restore is also one rename,
                 # never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
                 if path.read_bytes() != data:
                     raise RuntimeError('restoration failed: ' + str(path))
 except SystemExit as error:
@@ -602,5 +600,16 @@ if survived:
     print('SURVIVED: ' + ', '.join(survived))
 if invalid:
     print('INVALID: ' + ', '.join(invalid))
-raise SystemExit(0 if baseline['outcome'] == 'PASS' and not survived and not invalid else 1)
+# #3178 fix-r5 (DS sibling#3 / MM sibling#2): the family tail — the dream
+# family migrated this handwritten ``not survived and not invalid`` to
+# negative_selection.verdict_exit (fix-r3); this copy still read a
+# zero-row results list as green (rc=0, the vacuum green shape). The
+# run path's own ``no controls selected`` refusal (rc=2) already guards
+# the emptied table on every reachable path — this module has no
+# --check-anchors preflight — so the tail migration is the family
+# unification, not a new reachable refusal (pinned by fix-r5's
+# probe-s3-edgeclaw-llm-config-before.log). The baseline gate stays;
+# the rows gate is the shared exit: non-empty and every row KILLED.
+raise SystemExit(0 if baseline['outcome'] == 'PASS'
+                 and verdict_exit(results, key='outcome') == 0 else 1)
 

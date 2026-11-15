@@ -785,8 +785,7 @@ def main():
                         # ``write_text`` killed mid-write leaves an empty or
                         # half-written product source.
                         write_source_atomic(
-                            ROOT, path, mutated.encode(),
-                            mode=path.stat().st_mode & 0o7777)
+                            ROOT, path, mutated.encode())
                         # Force Cargo to observe the write even on a filesystem
                         # with coarse mtimes; a cached binary would fake SURVIVED.
                         time.sleep(1.1)
@@ -799,8 +798,7 @@ def main():
                     # Same #1087 fix-r2 window: the in-loop restore is also
                     # one rename, never a truncating write_text.
                     write_source_atomic(
-                        ROOT, path, original.encode(),
-                        mode=path.stat().st_mode & 0o7777)
+                        ROOT, path, original.encode())
                     time.sleep(1.1)
                     if path.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {path}')

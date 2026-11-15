@@ -11,7 +11,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot)
+from negative_selection import refuse_empty_table, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'scripts/smoke/edgeclaw.py'
@@ -62,6 +63,17 @@ def check(original):
 
 
 def main():
+    # #3178 fix-r3 (DS3 F6): an emptied mutant table verified nothing, but
+    # the old tail ``0 if len(results) == len(mutants) and all(...)`` read
+    # ``0 == 0 and all([])`` as all-KILLED (rc=0, the vacuum green: no mutant
+    # verified, an empty summary.json published, the evidence directory left
+    # occupied). The ``--check`` green exit is the same shape on an empty
+    # table ("PASS: 0 mutants"), so the refusal comes first: exit 2, nothing
+    # on disk, re-runnable on the same path. #3178 fix-r4 (DS simplify#3):
+    # the refusal is the shared helper now — one wording and one position
+    # for the runner family (the hand-copied versions had drifted in all
+    # three).
+    refuse_empty_table(mutants, 'mutation')
     if sys.argv[1:] == ['--check']:
         check(source.read_text())
         print(f'#1120 anchors and Python compilation PASS: {len(mutants)} mutants')
@@ -134,7 +146,11 @@ def main():
     temporary.replace(output / 'summary.json')
     for row in results:
         print(f"{row['name']}: {row['status']} — {row['reason']}")
-    return 0 if len(results) == len(mutants) and all(r['status'] == 'KILLED' for r in results) else 1
+    # #3178 fix-r3 (DS3 F6): the family tail — the old ``0 if len(results)
+    # == len(mutants) and all(...)`` was vacuously green on an emptied table
+    # (the front refusal above now catches it first; verdict_exit keeps the
+    # tail itself honest too).
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':

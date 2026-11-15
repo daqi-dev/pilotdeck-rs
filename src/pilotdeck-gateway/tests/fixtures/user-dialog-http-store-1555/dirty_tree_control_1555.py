@@ -112,11 +112,25 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import _head_bytes, _kill_group, run_owned, tree_lock
+from negative_selection import verdict_exit
 
-root = Path(__file__).resolve().parents[5]
+# Staging-safe home: the harness execs a mutated copy from a shallow temp
+# directory, where `Path(__file__).parents[5]` does not exist (CI's /tmp is
+# two levels deep -> IndexError at import, macOS only passes because TMPDIR
+# happens to be deep). The harness passes the real fixture home through
+# PDRS_CONTROL_HOME; the in-file location stays the fallback. An empty value
+# counts as unset (Path('') is the cwd, not a home), and a shallow or wrong
+# home resolves to a root that holds neither the guarded source nor the
+# probe — #3178 fix-r5 (P2-a#3) validates both instead of failing far away
+# with a confusing trace: the control refuses before it starts.
+_here = Path(os.environ.get('PDRS_CONTROL_HOME')
+             or str(Path(__file__).resolve().parent))
+root = _here.parents[4] if len(_here.parents) > 4 else _here
 RELATIVE = 'src/pilotdeck-gateway/src/user_dialog/http_store.rs'
 source = root / RELATIVE
-probe = Path(__file__).resolve().parent / 'rss_probe_1555.py'
+probe = _here / 'rss_probe_1555.py'
+if not source.is_file() or not probe.is_file():
+    raise SystemExit('unusable control home: %s (source=%s)' % (_here, source))
 # Process-unique: two controls in the same worktree write the same file, and a
 # bare constant let one restore the other's marker (review, concurrency P2).
 MARKER = f'\n// #1555 fix-r2 dirty-tree control pid={os.getpid()}\n'.encode()
@@ -680,8 +694,13 @@ def main():
                   restore_mode_lost=mode_lost, restore_complaint=complaint)
     (out / 'summary.json').write_text(json.dumps(record, indent=2) + '\n')
     print(json.dumps(record), flush=True)
-    return (0 if restored and not mode_lost
-            and counts['KILLED'] == len(rows) else 1)
+    # #3178 fix-r1 (sibling #2): the old `counts['KILLED'] == len(rows)` was
+    # vacuously true on a zero-row finish; the restoration predicates are the
+    # runner's own, so they stay explicit and the verdict itself is the family
+    # contract (fixtures/README.md「零行永不返回 0」).
+    if not (restored and not mode_lost):
+        return 1
+    return verdict_exit(rows, key='status')
 
 
 if __name__ == '__main__':

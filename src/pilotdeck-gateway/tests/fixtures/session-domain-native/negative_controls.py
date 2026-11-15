@@ -46,7 +46,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (dead_stream_print, mutating_sources,  # noqa: E402
+                             new_output_directory, run_owned)
+from negative_selection import verdict_exit, withdraw_claim
 from negative_suite import invalidate_completed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -207,12 +209,37 @@ def mutant_ok(code, verdict, case):
 
 
 def check_anchors(selected):
+    # #3178 fix-r4 (DS sibling#1): an empty selection used to print
+    # "0 anchors: ok" and return 0 — zero anchors validated but the gate
+    # looked green (the vacuum-green shape session-domain-expectations
+    # closed for the family under #1364 P0-b). Fail closed and say why,
+    # so a deleted MUTATIONS table can never pass preflight.
+    if not selected:
+        # #3178 fix-r2 (P2-a) family shape, wording corrected by fix-r5
+        # (mm-boundary#4): under a dead stderr (``2>&-`` sets
+        # ``sys.stderr = None``) a bare ``print(file=sys.stderr)`` falls
+        # back to stdout (``file=None``) or is silently lost — never a
+        # crash, pinned by fix-r5's probe-dead-stdout-semantics.log; the
+        # shared guarded print keeps the refusal on one stream, rc=2.
+        dead_stream_print('EMPTY ANCHOR SELECTION: nothing to validate; '
+                          'the anchor gate must not pass', stream='stderr')
+        return 2
     for name, source, old, _new in selected:
         count = source.read_text().count(old)
         if count != 1:
-            print(f'STALE ANCHOR {name}: {count} matches in {source.relative_to(ROOT)}')
+            # #3178 fix-r3 (DS3 F5), wording corrected by fix-r5
+            # (mm-boundary#4): the shared guarded print keeps this refusal
+            # on stderr — under a dead stderr a bare ``print`` falls back
+            # to stdout or is silently lost, never a crash; rc=2 is the
+            # contract either way.
+            dead_stream_print(f'STALE ANCHOR {name}: {count} matches in '
+                             f'{source.relative_to(ROOT)}', stream='stderr')
             return 2
-    print(f'{len(selected)} anchors: ok')
+    # #3178 fix-r5 (P2-a): the green line joins the guarded-print family —
+    # under a dead stdout the ok line is silently lost, never a crash and
+    # never re-routed to stderr (pinned by fix-r5's
+    # probe-dead-stdout-semantics.log); rc=0 stays the contract.
+    dead_stream_print(f'{len(selected)} anchors: ok', stream='stdout')
     return 0
 
 
@@ -233,13 +260,20 @@ def main():
     args = parser.parse_args()
     known = {row[0] for row in MUTATIONS}
     if args.only and (set(args.only) - known or len(args.only) != len(set(args.only))):
-        print('unknown or duplicate --only name', file=sys.stderr)
+        # #3178 fix-r2 (P2-a), wording corrected by fix-r5 (mm-boundary#4):
+        # under a dead stderr (``2>&-`` sets ``sys.stderr = None``) a bare
+        # ``print(file=sys.stderr)`` falls back to stdout (``file=None``) or
+        # is silently lost — never a crash, pinned by fix-r5's
+        # probe-dead-stdout-semantics.log; the shared guarded print keeps
+        # the refusal on one stream, rc=2 (#1087 fix-r8 family shape).
+        dead_stream_print('unknown or duplicate --only name', stream='stderr')
         return 2
     selected = [row for row in MUTATIONS if not args.only or row[0] in args.only]
     if args.check_anchors:
         return check_anchors(selected)
     if args.output is None:
-        print('--output is required unless --check-anchors is used', file=sys.stderr)
+        dead_stream_print('--output is required unless --check-anchors is used',
+                          stream='stderr')
         return 2
     if not os.environ.get('CARGO_TARGET_DIR'):
         # Never create or default a second build directory (#741 rule).
@@ -329,10 +363,30 @@ def main():
         if not isinstance(error, Exception):
             raise
         return 2
+    if not results:
+        # #3178 fix-r1 (sibling #2 / boundary #2 + #3): a zero-row finish is a
+        # never-started run (rc=2) and must not publish a summary.json that
+        # reads like a completed run — a lost MUTATIONS table used to leave an
+        # all-green-looking empty summary behind. The shared guarded print
+        # keeps the reason off stdout under a dead stderr (#1087 fix-r8).
+        dead_stream_print('no mutations selected: the table is empty or the '
+                          'selection matched no row', stream='stderr')
+        # #3178 fix-r2 (DS concurrency#1): the refusal still owned the
+        # claimed evidence directory — the ``.claim`` marker sat in it — so a
+        # host re-running the same output path was refused on the leftover
+        # never-ran directory long after this process exited (#1060/#953).
+        # Withdraw the claim the same way native-dispatch withdraws its
+        # enter-phase refusal (native-dispatch/negative_controls.py:209-213);
+        # an OSError must not mask the rc 2.
+        withdraw_claim(out)
+        return 2
     publish_summary(out, results)
     counts = _counts(results)
     print(json.dumps(counts), flush=True)
-    return 0 if counts['KILLED'] == len(results) else 1
+    # #3178 fix-r1 (sibling #2): the old `0 if counts['KILLED'] ==
+    # len(results) else 1` was vacuously true on a zero-row run — the family
+    # contract (fixtures/README.md「零行永不返回 0」) is verdict_exit.
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':

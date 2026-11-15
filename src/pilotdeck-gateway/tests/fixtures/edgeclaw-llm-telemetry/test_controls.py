@@ -1,6 +1,8 @@
 # anchor-selfcheck: unsupported runner unit tests using synthetic cargo output and mocked source reads, no product mutation definitions
 """Runner checks use synthetic cargo output; never mutate product sources."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -363,6 +365,43 @@ class PublicationControls(unittest.TestCase):
                                    'string-exit 1 that reads like "ran and red")')
         self.assertTrue(not out.exists() or not list(out.iterdir()),
                         message + ' (a refusal must not publish a summary)')
+
+
+class EmptyTableControls(unittest.TestCase):
+    """#3178 fix-r5 (DS sibling#2): an emptied case table must refuse.
+
+    The delivered ``main()`` validates the anchors and then answers
+    ``--check-anchors`` with a green ``0 unique anchors; no mutation``
+    (rc=0) — the vacuum green r4 closed for edgeclaw-llm-recall. The
+    refusal now precedes both. The twin drives the loaded runner's own
+    ``main()`` with its case table emptied and the anchor validation made
+    unreachable; no cargo run, no slot wait and no product source write
+    happens here.
+    """
+
+    def test_an_emptied_case_table_refuses_the_check_anchors_green_exit(self):
+        def unreachable():
+            raise AssertionError('#3178 the refusal must precede the anchor '
+                                 'read')
+
+        output, errors = io.StringIO(), io.StringIO()
+        script = Path(__file__).with_name('negative.py')
+        with patch.object(runner, 'cases', []), \
+             patch.object(runner, 'anchors', unreachable), \
+             patch.object(sys, 'argv', [str(script), '--check-anchors']), \
+             contextlib.redirect_stdout(output), \
+             contextlib.redirect_stderr(errors):
+            with self.assertRaises(SystemExit) as stopped:
+                runner.main()
+        message = ('#3178 an emptied case table must refuse before the '
+                   '--check-anchors green exit (the old preflight validated '
+                   'zero anchors and exited 0)')
+        self.assertEqual(stopped.exception.code, 2,
+                         message + ' (the refusal must exit 2)')
+        self.assertIn('EMPTY CASE TABLE', errors.getvalue(),
+                      message + ' (the refusal reason must reach stderr)')
+        self.assertNotIn('unique anchors', output.getvalue(),
+                         message + ' (the green preflight line must never print)')
 
 
 if __name__ == '__main__':

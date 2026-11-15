@@ -293,7 +293,7 @@ class RunnerInvalidationControls(unittest.TestCase):
         """Run the real ``main`` with only the guard and the bound runs mocked."""
         out = Path(tempfile.mkdtemp(prefix='out-', dir=self.root))
         source = self.source
-        captured = {'mutating_calls': 0, 'paths': None}
+        captured = {'mutating_calls': 0, 'paths': None, 'out': out}
 
         class Guard:
             def __enter__(self):
@@ -410,24 +410,42 @@ class RunnerInvalidationControls(unittest.TestCase):
                       message + ': the reason must name the failed positive control')
 
     def test_empty_mutation_table_is_not_a_pass(self):
-        """fix-r2 P1: an emptied table is a zero denominator, never a pass.
+        """fix-r2 P1 / #3178 fix-r2 P2-a: an emptied table is a never-started run.
 
         The r2 boundary-P1/simplify-P2 shape: ``0 == 0`` made an empty row set
-        exit 0 while not a single mutant ran. This is the bound test of
-        runner-empty-summary-pass (the fully filtered selection is pinned
-        separately below — the selection gate refuses unknown names first).
+        exit 0 while not a single mutant ran. r2 moved that to a middle state
+        instead of removing it: the tail wrote the (empty) summary.json first
+        and only then exited 1 — a summary that exists reads like a completed
+        run, and rc=1 reads "ran and was red". The refusal must come before
+        the publish: exit 2, nothing on disk, while the guard still wraps the
+        (empty) run. This is the bound test of runner-empty-summary-pass (the
+        fully filtered selection is pinned separately below — the selection
+        gate refuses unknown names first).
         """
-        message = '#1064 fix-r2 an empty row set must exit nonzero, never pass'
+        message = ('#1064 fix-r2 an empty row set is a never-started run: '
+                   'exit 2, no summary published')
         code, summary, captured = self._drive(rows=[], tests={}, fragments={},
                                                selection=())
-        self.assertEqual(code, 1, message)
-        self.assertIsNotNone(summary, message + ': the empty summary must still be published')
-        self.assertEqual(summary['controls'], [],
-                         message + ': no row may be invented for an empty table')
-        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 0},
-                         message + ': the counts must stay at zero')
+        self.assertEqual(code, 2, message)
+        self.assertIsNone(summary, message + ': the refusal must come before the '
+                          'publish — nothing on disk for a run that never started')
         self.assertEqual(captured['mutating_calls'], 1,
                          message + ': the guard must still wrap the (empty) run')
+        # #3178 fix-r3 (DS1 concurrency#1 ≡ DS3 concurrency#1/boundary#2): the
+        # admission (new_output_directory) had already claimed the directory,
+        # and the rc-2 refusal used to leave the ``.claim`` behind — a host
+        # re-running the same output path was then refused on the leftover
+        # never-ran directory (#1060/#953). The refusal must withdraw the
+        # claim: the directory is gone, and the same path is re-admissible
+        # with a freshly created ``.claim``.
+        out = captured['out']
+        self.assertFalse(out.exists(),
+                         message + ': the refused run must withdraw its claim '
+                         '(the claimed directory must not survive the rc 2)')
+        reclaimed = self.runner.new_output_directory(out)
+        self.assertTrue(reclaimed.exists() and (reclaimed / '.claim').is_file(),
+                        message + ': the same output path must be re-admissible '
+                        'after the refusal, with a fresh ``.claim`` marker')
 
     def test_fully_filtered_selection_fails_closed(self):
         """fix-r2 P1: an unknown --selection must fail closed, never run empty.

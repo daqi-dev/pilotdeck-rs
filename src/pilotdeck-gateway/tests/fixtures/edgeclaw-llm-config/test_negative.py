@@ -26,7 +26,9 @@ Run with:
     python3 -B edgeclaw-llm-config/test_negative.py
 """
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -517,6 +519,65 @@ class PublicationControls(unittest.TestCase):
         self.assertTrue(any(path.name.startswith('stale-anchors.') and path.name.endswith('.log')
                             for path in out.iterdir()),
                         message + ' (the refusal report must still reach the disk)')
+
+
+class EmptyTableControls(unittest.TestCase):
+    """#3178 fix-r5 (DS sibling#3): an emptied case table stays a refusal.
+
+    This module has no ``--check-anchors`` preflight (USAGE: OUT_DIR |
+    ``--list`` | ``--self-test``), so the preflight vacuum the sibling
+    family closed does not exist here; the run path has refused a
+    zero-row selection since #1908 (rc=2, ``no controls selected``,
+    pinned by fix-r5's probe-s3-edgeclaw-llm-config-before.log). The
+    tail migration to ``negative_selection.verdict_exit`` is the family
+    unification — the backstop that keeps a future structural hole from
+    turning a zero-row results list green again. This twin pins the
+    reachable contract: the emptied table never reaches the guarded
+    window, never creates the evidence directory and stays exit 2.
+    """
+
+    def test_an_emptied_case_table_stays_a_refusal_on_the_run_path(self):
+        source = Path(__file__).with_name('negative.py')
+        text = source.read_text()
+        count = text.count('cases = [')
+        self.assertEqual(count, 1,
+                         f'{source}: anchor "cases = [" occurs {count} times')
+        text = text.replace('cases = [',
+                           'cases = []\n_twin_emptied_cases = [', 1)
+        with tempfile.TemporaryDirectory(prefix='llm-config-empty-') as tmp:
+            out = Path(tmp).resolve() / 'run'
+            errors = io.StringIO()
+            saved_argv = sys.argv
+            sys.argv = [str(source), str(out)]
+            try:
+                with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(Path(tmp) / 'target'),
+                                             'NEGATIVE_BASELINE': ''}), \
+                     contextlib.redirect_stderr(errors):
+                    try:
+                        exec(compile(text, str(source), 'exec'),
+                             {'__name__': 'llm_config_empty_table_twin',
+                              '__file__': str(source)})
+                    except BaseException as error:  # the refusal always exits
+                        code = error
+                    else:  # pragma: no cover - the refusal never falls through
+                        code = None
+            finally:
+                sys.argv = saved_argv
+            message = ('#3178 an emptied case table must stay a never-started '
+                       'refusal on the run path (the old rc=0 vacuum-green '
+                       'scenario is unreachable here: no --check-anchors mode '
+                       'and the zero-row selection already refused)')
+            self.assertIsInstance(code, SystemExit,
+                                  message + ' (the refusal must exit through SystemExit)')
+            self.assertTrue(code.code == 2,
+                            message + ' (the refusal must stay exit 2)')
+            self.assertIn('no controls selected', errors.getvalue(),
+                          message + ' (the refusal reason must reach stderr)')
+            self.assertTrue(not out.exists(),
+                            message + ' (the refusal precedes claim_dir; '
+                                       'nothing may be created for a run that '
+                                       'never started)')
+
 
 if __name__ == '__main__':
     unittest.main()

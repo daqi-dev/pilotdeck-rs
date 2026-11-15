@@ -39,7 +39,8 @@ from negative_process import (dead_stream_print, detach_dead_streams,
                               mutating_sources, new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
-                               refuse_unusable_target, select)
+                               refuse_empty_table, refuse_unusable_target,
+                               select, verdict_exit)
 
 root = Path(__file__).resolve().parents[5]
 retriever = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/retriever.rs'
@@ -246,6 +247,14 @@ if mode == '--list':
         raise SystemExit(f'--list takes no arguments: {arguments!r}\n{USAGE}')
     print('\n'.join(names))
     raise SystemExit(0)
+# #3178 fix-r5 (DS sibling#3): the empty-table refusal must precede the
+# --check-anchors green exit — an emptied table used to validate zero
+# anchors ("0 anchors: ok", rc=0, the vacuum green pinned by fix-r5's
+# probe-s3-edgeclaw-retriever-before.log), the ordering fix-r4 closed for
+# edgeclaw-llm-recall. Same position as recall's (after --list, before
+# --check-anchors): rc=2, nothing on disk. The run path below already
+# refused a zero-row selection; the shared helper now covers both ends.
+refuse_empty_table(all_cases, 'case')
 if sys.argv[1:] == ['--check-anchors']:
     # The preflight reads into `current`, not `originals` (#1087 fix-r3,
     # boundary #1): the guarded window below now sits under a cancellation
@@ -440,8 +449,7 @@ try:
                     # ``mutating_sources``) — a truncating ``write_bytes`` killed
                     # mid-write leaves an empty or half-written product source.
                     write_source_atomic(root, path,
-                                         original.replace(before, after).encode(),
-                                         mode=path.stat().st_mode & 0o7777)
+                                         original.replace(before, after).encode())
                     try:
                         run = run_owned(command, cwd=root, env=env, timeout=600)
                         log = run.stdout + run.stderr
@@ -449,8 +457,7 @@ try:
                     finally:
                         # Same #1087 fix-r2 window: the in-loop restore is also
                         # one rename, never a truncating write_bytes.
-                        write_source_atomic(root, path, originals[path],
-                                            mode=path.stat().st_mode & 0o7777)
+                        write_source_atomic(root, path, originals[path])
                 except subprocess.TimeoutExpired as error:
                     log = (error.stdout or '') + (error.stderr or '')
                     returncode = None
@@ -472,8 +479,7 @@ try:
             for path, data in originals.items():
                 # Same #1087 fix-r2 window: the final restore is also one rename,
                 # never a truncating write_bytes.
-                write_source_atomic(root, path, data,
-                                    mode=path.stat().st_mode & 0o7777)
+                write_source_atomic(root, path, data)
                 if path.read_bytes() != data:
                     raise RuntimeError('restoration failed: ' + str(path))
 except SystemExit as error:
@@ -502,4 +508,10 @@ if survived:
     print('SURVIVED: ' + ', '.join(survived))
 if invalid:
     print('INVALID: ' + ', '.join(invalid))
-raise SystemExit(0 if baseline['outcome'] == 'PASS' and not survived and not invalid else 1)
+# #3178 fix-r5 (DS sibling#3 / MM sibling#2): the family tail — the dream
+# family migrated this handwritten ``not survived and not invalid`` to
+# negative_selection.verdict_exit (fix-r3); this copy still read a zero-row
+# results list as green (rc=0, the vacuum green). The baseline gate stays;
+# the rows gate is the shared exit: non-empty and every row KILLED.
+raise SystemExit(0 if baseline['outcome'] == 'PASS'
+                 and verdict_exit(results, key='outcome') == 0 else 1)

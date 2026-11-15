@@ -38,6 +38,7 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
@@ -187,6 +188,15 @@ def main(argv=None):
     out = Path(argv[1]).resolve()
     target = os.environ.get('CARGO_TARGET_DIR')
     assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+    # #3178 fix-r2 (DS sibling#1): an empty case table verified nothing, but
+    # the old tail ``1 if survived else 0`` read it as all-KILLED (rc=0, the
+    # vacuum green: one mutation unverified yet reported green). An empty
+    # table never started — refuse before the evidence directory or any log
+    # exists (exit 2, nothing on disk, re-runnable on the same path).
+    if not cases:
+        dead_stream_print('EMPTY CASE TABLE: negative.py has no mutation to '
+                          'verify; refusing to run', stream='stderr')
+        return 2
     baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -244,8 +254,7 @@ def main(argv=None):
                 # a truncating ``write_text`` killed mid-write leaves an empty
                 # or half-written product source.
                 write_source_atomic(
-                    root, path, source.replace(before, after).encode(),
-                    mode=path.stat().st_mode & 0o7777)
+                    root, path, source.replace(before, after).encode())
                 try:
                     cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages', test, '--', '--exact']
@@ -258,8 +267,7 @@ def main(argv=None):
                     # Same #1087 fix-r2 window: the in-loop restore is also one
                     # rename, never a truncating write_bytes.
                     write_source_atomic(
-                        root, path, originals[path],
-                        mode=path.stat().st_mode & 0o7777)
+                        root, path, originals[path])
             except Exception as error:
                 reason = f'{type(error).__name__}: {error}'
             if reason is None:
@@ -269,12 +277,17 @@ def main(argv=None):
                 survived.append((name, reason))
                 print(f'SURVIVED {name}: {reason}', flush=True)
         for path, data in originals.items():
-            write_source_atomic(root, path, data,
-                                mode=path.stat().st_mode & 0o7777)
+            write_source_atomic(root, path, data)
             assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
     print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-    return 1 if survived else 0
+    # #3178 fix-r2 (DS sibling#1): the family tail — the old ``1 if survived
+    # else 0`` was vacuously green on an empty table (the front refusal above
+    # now catches it first; verdict_exit keeps the tail itself honest too).
+    return verdict_exit(
+        [{'status': 'KILLED', 'name': name} for name in killed]
+        + [{'status': 'SURVIVED', 'reason': reason}
+           for _name, reason in survived], key='status')
 
 
 if __name__ == '__main__':

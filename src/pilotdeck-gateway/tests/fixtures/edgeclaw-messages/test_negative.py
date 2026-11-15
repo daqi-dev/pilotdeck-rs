@@ -18,6 +18,7 @@ Run with:
     python3 -B edgeclaw-messages/test_negative.py
 """
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -179,6 +180,143 @@ class MessagesRefusalControls(unittest.TestCase):
         # (``stale-anchors.<token>.log``).
         self.assertTrue(any(path.name.startswith('stale-anchors.') and path.name.endswith('.log')
                             for path in self.out.iterdir()),
+                        message + ' (the refusal report must still reach the disk)')
+
+
+class MessagesEmptyTableControls(unittest.TestCase):
+    """#3178 fix-r2 (DS sibling #1): an empty case table is a refusal, not a
+    vacuum green.
+
+    The runner's tail used to be ``return 1 if survived else 0``, so an
+    emptied table (no mutation verified at all) finished with ``survived ==
+    []`` and exited 0 — read as all-KILLED. It must refuse before the
+    evidence directory exists: exit 2, no summary, no log, and the output
+    path left untouched for a re-run. The process layer is patched on the
+    imported module (no cargo run happens here).
+    """
+
+    def setUp(self):
+        entry = str(Path(__file__).resolve().parent)
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+            self.addCleanup(sys.path.remove, entry)
+        import negative
+        self.runner = negative
+        self.tmp = tempfile.TemporaryDirectory(prefix='messages-empty-')
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name).resolve() / 'run'
+
+    def test_an_empty_case_table_refuses_before_any_evidence(self):
+        class Guard:
+            def __enter__(self):
+                return {}
+
+            def __exit__(self, *exc):
+                return False
+
+        def unreachable(*_args, **_kwargs):
+            raise AssertionError('#3178 the empty table must refuse before '
+                                 'any run or slot wait')
+
+        runner = self.runner
+        with patch.dict(os.environ, {'CARGO_TARGET_DIR': self.tmp.name,
+                                     'NEGATIVE_ONLY': '', 'NEGATIVE_BASELINE': ''}), \
+             patch.object(runner, 'cases', []), \
+             patch.object(runner, 'mutating_sources',
+                          lambda root, paths, **kwargs: Guard()), \
+             patch.object(runner, 'run_owned', unreachable), \
+             patch.object(runner, 'wait_for_slot', unreachable):
+            # The refusal is a plain `return 2` out of main, so the twin
+            # asserts the returned contract code, not a SystemExit.
+            code = runner.main([str(Path(__file__).with_name('negative.py')),
+                                str(self.out)])
+        message = ('#3178 an empty case table must refuse before any evidence '
+                   '(the old tail read the empty run as all-KILLED, rc=0)')
+        self.assertEqual(code, 2, message)
+        self.assertFalse(self.out.exists(),
+                         message + ' (nothing may be created for a run that '
+                         'never started; the same output path must stay '
+                         're-runnable)')
+
+
+REFUSAL_CHILD = '''\
+import os
+import sys
+import types
+from pathlib import Path
+
+fixtures, runner, out = (Path(argument) for argument in sys.argv[1:4])
+sys.path.insert(0, str(fixtures))
+import negative_process
+
+
+class Guard:
+    def __init__(self, paths):
+        self.paths = paths
+
+    def __enter__(self):
+        return {path: b'fn unrelated() {}' for path in self.paths}
+
+    def __exit__(self, *exc):
+        return False
+
+
+fake = types.ModuleType('negative_process')
+fake.mutating_sources = lambda root, paths, **kwargs: Guard(paths)
+fake.write_source_atomic = lambda *args, **kwargs: None
+fake.run_owned = lambda *args, **kwargs: None
+fake.wait_for_slot = lambda *args, **kwargs: None
+# The guarded print, the detach and the token are the shipped ones — the
+# twin must exercise the real helpers, only the process layer is faked.
+fake.dead_stream_print = negative_process.dead_stream_print
+fake.detach_dead_streams = negative_process.detach_dead_streams
+fake.new_run_token = negative_process.new_run_token
+sys.modules['negative_process'] = fake
+sys.argv = [str(runner), str(out)]
+os.environ.setdefault('CARGO_TARGET_DIR', str(out.parent / 'target'))
+namespace = {'__name__': 'messages_refusal_child', '__file__': str(runner)}
+exec(compile(runner.read_text(), str(runner), 'exec'), namespace)
+raise SystemExit(namespace['main']())
+'''
+
+
+class MessagesRefusalProcessControls(unittest.TestCase):
+    """#3094 item 1 (#3178): a real process, a dead stdout, the exit-2 refusal.
+
+    The in-process twin above patches the stream objects inside this
+    interpreter; this one runs the delivered runner in a real child process
+    with stdout closed at exec time (``1>&-`` makes CPython set
+    ``sys.stdout = None``), so the interpreter-shutdown flush is the real
+    one. The faked window returns a snapshot whose bytes match no anchor, so
+    the runner refuses before any cargo run: the stale-anchor refusal must
+    keep exit 2, still write its report to the evidence directory, and
+    neither re-route the reason to stderr nor record an "Exception ignored"
+    flush.
+    """
+
+    def test_stale_anchor_refusal_survives_a_dead_stdout(self):
+        with tempfile.TemporaryDirectory(prefix='pdrs-msg-refusal-') as temp:
+            out = Path(temp) / 'run'
+            child = Path(temp) / 'child.py'
+            child.write_text(REFUSAL_CHILD)
+            result = subprocess.run(
+                ['/bin/sh', '-c',
+                 f'exec {sys.executable} -I {child} '
+                 f'{Path(__file__).resolve().parents[1]} '
+                 f'{Path(__file__).with_name("negative.py")} {out} 1>&-'],
+                capture_output=True, timeout=120)
+            report = [path.name for path in out.iterdir()
+                      if path.name.startswith('stale-anchors.')]
+        message = '#3094 the stale-anchor refusal must keep exit 2 under 1>&-'
+        self.assertEqual(result.returncode, 2,
+                         message + f' (got rc={result.returncode}, '
+                         f'stderr={result.stderr!r})')
+        self.assertNotIn(b'Exception ignored', result.stderr,
+                         message + ' (the shutdown flush must not see the dead stdout)')
+        self.assertNotIn(b'STALE ANCHORS', result.stderr,
+                         message + ' (a dead stdout must not re-route the '
+                         'refusal reason to stderr)')
+        self.assertTrue(len(report) == 1,
                         message + ' (the refusal report must still reach the disk)')
 
 

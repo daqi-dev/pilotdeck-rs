@@ -26,7 +26,9 @@ Run with:
     python3 -B edgeclaw-retriever/test_negative.py
 """
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -536,6 +538,61 @@ class PublicationControls(unittest.TestCase):
                               message + ' (the refusal must exit through SystemExit)')
         self.assertTrue(code.code == 2,
                         message + ' (a dead stdout must not turn it into rc=1)')
+
+
+class EmptyTableControls(unittest.TestCase):
+    """#3178 fix-r5 (DS sibling#3): an emptied case table must refuse.
+
+    Before fix-r5 the ``--check-anchors`` preflight on an emptied table
+    validated zero anchors and printed ``0 anchors: ok`` (rc=0) — the vacuum
+    green fix-r4 closed for edgeclaw-llm-recall. The refusal now precedes
+    the preflight (after ``--list``, the same position recall uses). The
+    twin executes the delivered script once with its table emptied by an
+    in-memory source edit; no cargo run, no slot wait and no product
+    source write happens here, and the read_text patch proves the refusal
+    fires before any anchor read.
+    """
+
+    def test_an_emptied_case_table_refuses_the_check_anchors_green_exit(self):
+        source = Path(__file__).with_name('negative.py')
+        text = source.read_text()
+        count = text.count('cases = [')
+        self.assertEqual(count, 1,
+                         f'{source}: anchor "cases = [" occurs {count} times')
+        text = text.replace('cases = [',
+                           'cases = []\n_twin_emptied_cases = [', 1)
+        output, errors = io.StringIO(), io.StringIO()
+        saved_argv = sys.argv
+        sys.argv = [str(source), '--check-anchors']
+        try:
+            with patch.object(Path, 'read_text', autospec=True,
+                              side_effect=AssertionError(
+                                  '#3178 the refusal must precede the anchor '
+                                  'read')), \
+                 contextlib.redirect_stdout(output), \
+                 contextlib.redirect_stderr(errors):
+                try:
+                    exec(compile(text, str(source), 'exec'),
+                         {'__name__': 'retriever_empty_table_twin',
+                          '__file__': str(source)})
+                except BaseException as error:  # the refusal always exits
+                    code = error
+                else:  # pragma: no cover - the refusal never falls through
+                    code = None
+        finally:
+            sys.argv = saved_argv
+        message = ('#3178 an emptied case table must refuse before the '
+                   '--check-anchors green exit (the old preflight validated '
+                   'zero anchors and exited 0; the run path already refused '
+                   'a zero-row selection, so the tail was the last hole)')
+        self.assertIsInstance(code, SystemExit,
+                              message + ' (the refusal must exit through SystemExit)')
+        self.assertTrue(code.code == 2,
+                        message + ' (the refusal must stay exit 2)')
+        self.assertIn('EMPTY CASE TABLE', errors.getvalue(),
+                      message + ' (the refusal reason must reach stderr)')
+        self.assertNotIn('anchors: ok', output.getvalue(),
+                         message + ' (the green preflight line must never print)')
 
 
 if __name__ == '__main__':

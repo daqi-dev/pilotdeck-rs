@@ -33,6 +33,9 @@ from negative_panic import named_test_killed
 from negative_process import (dead_stream_print, mutating_sources,
                               new_run_token, run_owned,
                               wait_for_slot, write_source_atomic)
+# #3178 fix-r5 (DS sibling#3): the family verdict — the dream family's
+# shared exit, migrated here with the tail below.
+from negative_selection import verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/helpers.rs'
@@ -207,8 +210,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
             # a truncating ``write_text`` killed mid-write leaves an empty
             # or half-written product source.
             write_source_atomic(
-                root, path, source.replace(before, after).encode(),
-                mode=path.stat().st_mode & 0o7777)
+                root, path, source.replace(before, after).encode())
             try:
                 cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                        '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_retrieval_helpers',
@@ -222,8 +224,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
                 # Same #1087 fix-r2 window: the in-loop restore is also one
                 # rename, never a truncating write_bytes.
                 write_source_atomic(
-                    root, path, originals[path],
-                    mode=path.stat().st_mode & 0o7777)
+                    root, path, originals[path])
         except Exception as error:
             reason = f'{type(error).__name__}: {error}'
         if reason is None:
@@ -233,8 +234,7 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
             survived.append((name, reason))
             print(f'SURVIVED {name}: {reason}', flush=True)
     for path, data in originals.items():
-        write_source_atomic(root, path, data,
-                            mode=path.stat().st_mode & 0o7777)
+        write_source_atomic(root, path, data)
         assert path.read_bytes() == data, 'restoration failed: ' + str(path)
     # The restored bytes must pass the same unmutated suite that gated the run.
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -245,5 +245,14 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
         sys.exit(1)
 print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
 print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
-if survived:
-    sys.exit(1)
+# #3178 fix-r5 (DS sibling#3 / MM sibling#2): the family tail — the dream
+# family migrated this handwritten ``if survived: sys.exit(1)`` to
+# negative_selection.verdict_exit (fix-r3); this copy still read a zero-row
+# run as all-KILLED (rc=0, the vacuum green pinned by fix-r5's
+# probe-s3-edgeclaw-retrieval-helpers-before.log: an emptied cases table
+# made the guarded window a no-op and the tail fell through green). The
+# summary lines stay; the verdict is the shared exit.
+sys.exit(verdict_exit(
+    [{'status': 'KILLED', 'name': name} for name in killed]
+    + [{'status': 'SURVIVED', 'reason': reason}
+       for _name, reason in survived], key='status'))

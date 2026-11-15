@@ -15,9 +15,11 @@ may cargo-build the workspace scanner on a cold host (#2552), so no usable
 caller target is required. Run all mutants to completion; any non-KILLED row is a nonzero exit (a
 stale anchor or a broken run is INVALID, never SURVIVED): an INVALID row exits 2
 (fix-r2 P1-1, the #1038/#1063 semantics — a broken run must not share SURVIVED's
-"the apparatus held" exit 1), an empty row set exits 1 (fix-r2 P1 — an emptied or
-fully filtered table is a zero denominator, never a pass; the selection gate
-asserts unknown names before anything starts), and only all-KILLED is 0.
+"the apparatus held" exit 1), an empty row set is a never-started run that exits 2
+before publishing anything (#3178 fix-r2 P2-a, sharpening fix-r2 P1 — an emptied or
+fully filtered table is a zero denominator, never a pass, and a summary that exists
+reads like a completed run; the selection gate asserts unknown names before anything
+starts), and only all-KILLED is 0.
 
 Kill criterion (the shared negative_panic standard, applied to unittest
 output): the *named* test must have failed at its own assertion — its FAIL
@@ -55,7 +57,9 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned
+from negative_process import (dead_stream_print, mutating_sources,
+                              new_output_directory, run_owned)
+from negative_selection import withdraw_claim
 from negative_suite import invalidate_completed
 
 root = Path(__file__).resolve().parents[5]
@@ -229,14 +233,26 @@ mutations = [
      "        return 2\n",
      "    if counts['INVALID']:\n"
      "        return 1\n"),
-    # fix-r2 P1: an empty row set (an emptied table) is judged a pass again —
-    # the zero-denominator shape the old ``0 == 0`` comparison returned 0 for.
+    # fix-r2 P1 / #3178 fix-r2 P2-a: an empty row set (an emptied table) is
+    # judged a pass again — the zero-denominator shape the old ``0 == 0``
+    # comparison returned 0 for. Deleting the whole refusal block also restores
+    # the write-empty-summary-then-pass middle state (rc=0 plus a summary that
+    # reads like a completed run), which the P2-a order change removed.
     ('runner-empty-summary-pass',
      RUNNER,
      "    if not summary:\n"
-     "        return 1\n"
-     "    return 0 if counts['KILLED'] == len(summary) else 1",
-     "    return 0 if counts['KILLED'] == len(summary) else 1"),
+     "        dead_stream_print('no mutations selected: the table is empty or the '\n"
+     "                          'selection matched no row', stream='stderr')\n"
+     "        # #3178 fix-r3 (DS1 concurrency#1 ≡ DS3 concurrency#1/boundary#2):\n"
+     "        # the refusal still owned the claimed evidence directory — the\n"
+     "        # ``.claim`` marker sat in it — so a host re-running the same output\n"
+     "        # path was refused on the leftover never-ran directory (#1060/#953;\n"
+     "        # the four sibling runners got the same withdraw in fix-r2, this one\n"
+     "        # was left behind). Withdraw the claim; an OSError must not mask the\n"
+     "        # rc 2.\n"
+     "        withdraw_claim(out)\n"
+     "        return 2\n",
+     ""),
     # fix-r2 P1: the selection gate no longer fails closed on an unknown name,
     # so a fully filtered selection silently runs an empty table.
     ('runner-selection-assert-removed',
@@ -289,7 +305,8 @@ failure_fragments = {
     'runner-publish-before-verify': '#1064 r1 P1-3 an interrupt during the void publish must not leave a readable KILLED summary',
     'runner-exit-normalization-removed': '#1064 r1 P1-3 a SystemExit from the guard must exit 2, never the raw code',
     'runner-invalid-exit-shared': "#1064 fix-r2 an INVALID row must exit 2, never share SURVIVED's 1",
-    'runner-empty-summary-pass': '#1064 fix-r2 an empty row set must exit nonzero, never pass',
+    'runner-empty-summary-pass': ('#1064 fix-r2 an empty row set is a never-started run: '
+                                  'exit 2, no summary published'),
     'runner-selection-assert-removed': '#1064 fix-r2 an unknown selection must fail closed, never run an empty table',
 }
 
@@ -526,7 +543,26 @@ def main():
             raise
         return 2
     # Reaching here means mutating_sources restored every guarded file and
-    # verified it against the baseline. Only now may a final summary exist.
+    # verified it against the baseline. Only now may a final summary exist —
+    # except for a run that never started. #3178 fix-r2 (P2-a): an empty row
+    # set used to reach this point and publish the (empty) summary.json first,
+    # only then exiting 1, so a summary that exists read like a completed run
+    # while rc=1 read "ran and was red". Refuse before the publish: exit 2,
+    # nothing on disk, re-runnable on the same output path. The shared guarded
+    # print keeps the refusal reason off stdout under a dead stderr
+    # (#1087 fix-r8 family shape).
+    if not summary:
+        dead_stream_print('no mutations selected: the table is empty or the '
+                          'selection matched no row', stream='stderr')
+        # #3178 fix-r3 (DS1 concurrency#1 ≡ DS3 concurrency#1/boundary#2):
+        # the refusal still owned the claimed evidence directory — the
+        # ``.claim`` marker sat in it — so a host re-running the same output
+        # path was refused on the leftover never-ran directory (#1060/#953;
+        # the four sibling runners got the same withdraw in fix-r2, this one
+        # was left behind). Withdraw the claim; an OSError must not mask the
+        # rc 2.
+        withdraw_claim(out)
+        return 2
     write_summary(out, summary)
     counts = _counts(summary)
     print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
@@ -535,10 +571,6 @@ def main():
     # SURVIVED's exit 1, which reads as "the apparatus held" (#1038/#1063).
     if counts['INVALID']:
         return 2
-    # fix-r2 P1: an empty row set is a zero denominator, never a pass — an
-    # emptied or fully filtered table fails closed like a missing summary.
-    if not summary:
-        return 1
     return 0 if counts['KILLED'] == len(summary) else 1
 
 
