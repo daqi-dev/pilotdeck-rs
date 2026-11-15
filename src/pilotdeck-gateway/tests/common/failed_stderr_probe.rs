@@ -15,15 +15,18 @@
 //! exists — a socketpair whose peer is dropped and probed with a
 //! write that must fail `BrokenPipe` — so EPIPE is a settled fact,
 //! not a race between the parent's `drop` and the child's first
-//! `eprintln!`. The integration-tree twin of that sink is
-//! `tests/console_panic_safety.rs`'s `Gateway::dead_stderr` (item 4).
+//! `eprintln!`. fix-r2 (review sibling#3) moved the sink itself to
+//! `tests/common/dead_stderr.rs`, one implementation for this tree
+//! and the integration tree's `Gateway::dead_stderr`
+//! (`tests/console_panic_safety.rs`, item 4) — the twin can no
+//! longer drift.
 //!
 //! Only unix: the socketpair sink is a unix-domain construct, and
 //! every host this crate tests on (CI's ubuntu runner, the dev
 //! macmini) is unix — `tests/common/write_stage.rs` sets the
 //! precedent for bare unix gating in this tree.
 
-use std::io::Write as _;
+use crate::dead_stderr::dead_stderr;
 use tokio::io::AsyncReadExt as _;
 
 /// The re-exec probe's token: `run:<token>` in `probe_env`, and the
@@ -39,30 +42,6 @@ pub(crate) fn probe_token(probe_env: &str) -> Option<String> {
     std::env::args()
         .any(|argument| argument == token)
         .then(|| token.to_owned())
-}
-
-/// The failing stderr sink itself (#3152 item 9): a socketpair whose
-/// peer is dropped up front, proven dead by a parent-side probe
-/// write that must fail `BrokenPipe`, then handed to the child as its
-/// stderr `Stdio` — every write the child makes fails with EPIPE
-/// before the child even exists. A read-only fd is not a failing sink
-/// for this purpose: `std::io::Stderr` redirects EBADF to a fresh
-/// `/dev/null` and reports success, so only EPIPE reaches a
-/// panicking `eprintln!`.
-pub(crate) fn dead_stderr(tag: &str) -> std::process::Stdio {
-    let (write_half, read_half) = std::os::unix::net::UnixStream::pair()
-        .unwrap_or_else(|error| panic!("{tag} create the dead stderr socketpair: {error:?}"));
-    drop(read_half);
-    let error = (&write_half).write(b"failed_stderr_probe").expect_err(
-        "#3152 the dead stderr sink accepted a write; the peer drop did not take effect",
-    );
-    assert_eq!(
-        error.kind(),
-        std::io::ErrorKind::BrokenPipe,
-        "{tag} the dead stderr sink's probe write failed with {error:?}"
-    );
-    let owned_fd: std::os::fd::OwnedFd = write_half.into();
-    std::process::Stdio::from(owned_fd)
 }
 
 /// The child's panic hook: marker file with the panic info, then exit
@@ -105,7 +84,8 @@ impl FailedStderrProbe {
     /// The parent half: spawn the re-exec'd child with the proven-dead
     /// stderr sink, drain its stdout concurrently with the wait, and
     /// hold every exit to its termination condition — 30 seconds on
-    /// the child, then kill + reap before the named failure.
+    /// the child and the same budget on the stdout drain, each ended
+    /// with kill/abort + reap before the named failure.
     pub(crate) async fn drive(&self) {
         let token = format!("{}{}", self.token_prefix, uuid::Uuid::new_v4().simple());
         let marker = std::env::temp_dir().join(format!("{token}.marker"));
@@ -137,7 +117,10 @@ impl FailedStderrProbe {
         // failing child prints a whole backtrace — would block the child
         // before it could exit.
         let stdout = child.stdout.take();
-        let console_task = tokio::spawn(async move {
+        // `mut` because the drain below takes `&mut console_task` (the
+        // timeout wrapper needs the handle to stay borrowable after the
+        // await so the Err arm can still abort it).
+        let mut console_task = tokio::spawn(async move {
             let mut out = Vec::new();
             if let Some(mut pipe) = stdout {
                 let _ = pipe.read_to_end(&mut out).await;
@@ -170,9 +153,34 @@ impl FailedStderrProbe {
                     unreachable!("negative_assert! panics");
                 }
             };
-        let console = console_task.await.unwrap_or_else(|error| {
-            panic!("{} the probe's stdout drain finishes: {error:?}", self.tag)
-        });
+        // fix-r2 (review concurrency#1): this await once had no termination
+        // condition — a descendant holding the pipe's write end leaves
+        // `read_to_end` without an EOF even after the child itself is
+        // reaped, and the bare await would hang the whole test binary. The
+        // same 30 s budget bounds it: on timeout the drain task is aborted
+        // and reaped, then the named failure reports it.
+        // The await is bound before the match: a `&mut console_task` in the
+        // match scrutinee would extend the borrow over the whole statement
+        // (E0596), leaving the timeout arm unable to abort the same task it
+        // is still borrowing.
+        let drain =
+            tokio::time::timeout(std::time::Duration::from_secs(30), &mut console_task).await;
+        let console = match drain {
+            Ok(joined) => joined.unwrap_or_else(|error| {
+                panic!("{} the probe's stdout drain finishes: {error:?}", self.tag)
+            }),
+            Err(_) => {
+                console_task.abort();
+                let _ = console_task.await;
+                crate::negative_assert!(
+                    false,
+                    "{} the probe's stdout drain did not reach EOF within 30s \
+                     (a descendant still holds the pipe)",
+                    self.tag
+                );
+                unreachable!("negative_assert! panics");
+            }
+        };
         crate::negative_assert!(
             status.success(),
             "{} {} (exit {status})\n{console}",

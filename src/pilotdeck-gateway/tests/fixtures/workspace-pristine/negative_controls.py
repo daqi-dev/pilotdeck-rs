@@ -686,9 +686,18 @@ def main():
         return result
 
     def build_helper(label):
+        # fix-r2 (review DS sibling#1): both examples embedding the shared
+        # lexer, not just `workspace_inputs` — the SCANNER mutations brand
+        # `scanner_sha256` into whichever example an ordinary same-tree
+        # cargo build compiled during the window, and the restore-compile
+        # below must rebuild both from the restored bytes (the same forced
+        # window-end rebuild `console-panic-safety/negative_controls.py`'s
+        # repair performs for the two examples it embeds).
         for index, command in enumerate((
-                ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs', '--no-run'],
-                ['cargo', 'build', '--offline', '-p', 'pilotdeck-gateway', '--example', 'workspace_inputs'])):
+                ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway',
+                 '--example', 'workspace_inputs', '--example', 'lex_fn_items', '--no-run'],
+                ['cargo', 'build', '--offline', '-p', 'pilotdeck-gateway',
+                 '--example', 'workspace_inputs', '--example', 'lex_fn_items'])):
             wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900).check_returncode()
             result = run_owned(command, cwd=ROOT / 'src', env=env, timeout=1800, idle_timeout=600)
             exclusive_write(out / (label + f'-{index}.log'), result.stdout + result.stderr)

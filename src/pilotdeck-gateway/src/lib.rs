@@ -103,6 +103,15 @@ mod test_console;
 #[cfg(test)]
 #[path = "../tests/common/failed_stderr_probe.rs"]
 mod failed_stderr_probe;
+// #3152 fix-r2 (review sibling#3): the proven-dead stderr sink, one
+// implementation for both trees — `failed_stderr_probe` here and the
+// integration tree's `Gateway::dead_stderr`
+// (`tests/console_panic_safety.rs` mounts the same file), so the
+// parent-side probe write and its `BrokenPipe` assertion cannot drift
+// between them.
+#[cfg(test)]
+#[path = "../tests/common/dead_stderr.rs"]
+mod dead_stderr;
 // fix-r3 review P2: `write_stage` hardcodes `/bin/sh` helpers and calls
 // `rustix::process`, so it is unix-only like `test_scratch` above.
 #[cfg(all(test, unix))]

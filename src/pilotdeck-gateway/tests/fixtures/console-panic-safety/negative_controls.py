@@ -5,10 +5,11 @@ Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes are verified by ``mutating_sources``
 (HEAD baseline — this file must be committed before it can run). Each mutant
 is recorded as KILLED / SURVIVED / INVALID and the script exits non-zero
-unless every selected mutant is KILLED. A failed shared-lexer repair is
-recorded as its own INVALID row in ``summary.json`` and fails the run through
-the same verdict (fix-r1, review boundary#1: a branded tree must not limp
-on as a pass).
+unless every selected mutant is KILLED. A failed shared-lexer repair — a
+nonzero build, or a raised slot-wait / build / log-write error (timeout, OS
+error) — is recorded as its own INVALID row in ``summary.json`` and fails
+the run through the same verdict (fix-r1 review boundary#1 + fix-r2 review
+sibling#2 ≡ boundary#1: a branded tree must not limp on as a pass).
 
 Bound guards (all in ``src/pilotdeck-gateway/tests/console_panic_safety.rs``):
 
@@ -44,6 +45,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -788,40 +790,63 @@ with mutating_sources(
             # nothing branded). A failed repair fails the run — a
             # branded tree must not limp on as a pass.
             if path == ROOT / SHARED_LEXER:
-                slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
-                                     timeout=CARGO_SLOTS_WAIT_SECONDS)
-                (out / f'{name}.repair.slots.log').write_text(slots.stdout + slots.stderr)
-                repair = run_owned(
-                    ['cargo', 'build', '--locked',
-                     '--manifest-path', 'src/Cargo.toml',
-                     '-p', 'pilotdeck-gateway',
-                     '--example', 'workspace_inputs',
-                     '--example', 'lex_fn_items'],
-                    cwd=ROOT, env=env, timeout=900)
-                (out / f'{name}.repair.log').write_text(repair.stdout + repair.stderr)
-                if repair.returncode != 0:
+                # fix-r2 (review sibling#2 ≡ boundary#1): the slot wait, the
+                # repair build and their log writes used to sit bare inside
+                # this ``finally`` — a raised ``TimeoutExpired`` (from either
+                # call: ``run_owned`` re-raises it after the kill, negative_
+                # process) or an ``OSError`` escaped the per-mutant ``except``
+                # above, skipped the ``summary.json`` write below and left
+                # the docstring's promised INVALID row unwritten, ending the
+                # round in a traceback with the collected verdict rows and the
+                # restore evidence lost. Every repair failure — raised or
+                # returned — now rides in as its own INVALID row.
+                try:
+                    slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
+                                         timeout=CARGO_SLOTS_WAIT_SECONDS)
+                    (out / f'{name}.repair.slots.log').write_text(slots.stdout + slots.stderr)
+                    repair = run_owned(
+                        ['cargo', 'build', '--locked',
+                         '--manifest-path', 'src/Cargo.toml',
+                         '-p', 'pilotdeck-gateway',
+                         '--example', 'workspace_inputs',
+                         '--example', 'lex_fn_items'],
+                        cwd=ROOT, env=env, timeout=900)
+                    (out / f'{name}.repair.log').write_text(repair.stdout + repair.stderr)
+                except (subprocess.SubprocessError, OSError) as error:
                     failures.append(f'{name}-repair')
-                    # fix-r1 (review boundary#1, P1): the verdict below
-                    # judges ``summary`` rows only, so a repair failure that
-                    # stayed out of it let an all-KILLED run exit 0 with a
-                    # branded tree — the false pass the comment above
-                    # already promised could not happen. The failure rides
-                    # in as its own non-KILLED row using the same field
-                    # vocabulary the exception path already writes, so
-                    # ``verdict_exit`` fails the run and the evidence lands
-                    # in ``summary.json``; the stderr line stays.
+                    # The same row shape the nonzero-return branch below
+                    # writes, with the exception's own reason vocabulary
+                    # (``TimeoutExpired`` is a ``SubprocessError``).
                     summary.append(dict(
                         name=f'{name}-repair', test=test, status='INVALID',
-                        returncode=repair.returncode,
-                        reason='repair build FAILED; the shared-lexer '
-                                'examples were not rebuilt from the '
-                                'restored bytes',
+                        reason=f'repair build failed: '
+                               f'{type(error).__name__}: {error}',
                         sourceSha256=before))
-                    print(f'{name}: repair build FAILED rc={repair.returncode}',
-                          flush=True)
+                    print(f'{name}: repair failed: '
+                          f'{type(error).__name__}: {error}', flush=True)
                 else:
-                    print(f'{name}: examples rebuilt from restored bytes',
-                          flush=True)
+                    if repair.returncode != 0:
+                        failures.append(f'{name}-repair')
+                        # fix-r1 (review boundary#1, P1): the verdict below
+                        # judges ``summary`` rows only, so a repair failure
+                        # that stayed out of it let an all-KILLED run exit 0
+                        # with a branded tree — the false pass the comment
+                        # above already promised could not happen. The
+                        # failure rides in as its own non-KILLED row so
+                        # ``verdict_exit`` fails the run and the evidence
+                        # lands in ``summary.json``; the stderr line stays.
+                        summary.append(dict(
+                            name=f'{name}-repair', test=test, status='INVALID',
+                            returncode=repair.returncode,
+                            reason='repair build FAILED; the shared-lexer '
+                                    'examples were not rebuilt from the '
+                                    'restored bytes',
+                            sourceSha256=before))
+                        print(f'{name}: repair build FAILED rc={repair.returncode}',
+                              flush=True)
+                    else:
+                        print(f'{name}: examples rebuilt from restored bytes',
+                              flush=True)
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
@@ -829,6 +854,24 @@ print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.item
 if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
 killed_rows = sum(1 for row in summary if row['status'] == 'KILLED')
-print(f'{killed_rows}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+# fix-r2 (review concurrency#1 ≡ boundary#2): numerator and denominator
+# must span the same domain. The repair INVALID rows ride in ``summary``
+# but not ``run_rows``, so the old ``{killed_rows}/{len(run_rows)}`` head
+# could print the byte-identical green line beside a failed exit; the
+# success wording now prints only when every verdict row is KILLED (on
+# the green path ``len(summary) == len(run_rows)``, so those bytes are
+# unchanged).
+if killed_rows == len(summary):
+    print(f'{killed_rows}/{len(summary)} killed; every source restored byte-for-byte', flush=True)
+else:
+    print(f'{killed_rows}/{len(summary)} killed; '
+          f'{len(summary) - killed_rows} verdict row(s) not killed', flush=True)
+# fix-r2 (review sibling#3, the turn-submit-panic-close class close,
+# #2498 fix-r3): ``failures`` must reach the exit code itself, not only
+# stderr. Every ``failures`` write today lands transitively in a
+# non-KILLED summary row, but a future apparatus failure that only
+# appends here would otherwise exit 0 with a false green.
+if failures:
+    sys.exit(1)
 # #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
 sys.exit(verdict_exit(summary, key='status'))
