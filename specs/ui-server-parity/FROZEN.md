@@ -67,11 +67,11 @@ da3c0bcaeb5c44b9c39bc2d188976f166b3a12da66d814f801ed4d936162aa51  ../../scripts/
 bece605c49006c2f13f5de1a5550dc82616c5f469a0d172b164a765f5457cbd6  ../../scripts/ui-server-parity/scenarios.json
 4a5d3bef9275226b9ff5b5456965e1aa2a2fc9d87a8da66f5245aaf0e718f36d  ../../scripts/ui-server-parity/snapshot.py
 38b6664ab4a8357dead99252ee3d000c36ba563d7c051442ad2dba3094ae8b65  ../../scripts/ui-server-parity/summarize_ruler.py
-e5168ece5f6e5245fe391b8dbdeaeadda1b34f91c0f6ec400bf46a77b298a46a  ../../scripts/ui-server-parity/test_calibrate.py
+4b8445b1aedb14fb9317733764fd43585b136a1d05cee5834e000a5fb0a011a1  ../../scripts/ui-server-parity/test_calibrate.py
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 357a9927e48225918c997db5c39fa9147aa524cc474af1cf04ea42780a23d8a2  ../../scripts/ui-server-parity/test_compare.py
 558f4cd3f737c2a0d46941558597ec5b80f414efb65c2be69f8780015d885285  ../../scripts/ui-server-parity/test_coverage.py
-5f439d4151a0a88e1561907bc7f0349524529cd2848f7c31db013f8684087bd2  ../../scripts/ui-server-parity/test_frozen.py
+b8f06d45bc9c114515490205035ac7a9815fdcdfd5d0a589d00f129f16865ae5  ../../scripts/ui-server-parity/test_frozen.py
 f99404d9f2c80b2b20c8b5f2c076f63e423f1f495e94123545031ee90bfb3efa  ../../scripts/ui-server-parity/test_multimodal.py
 8e2eae33c81aadb5c8731a09943e69ed835231196aa13e518df62e9f533247c5  ../../scripts/ui-server-parity/test_recording.py
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs
