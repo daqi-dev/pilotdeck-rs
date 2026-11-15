@@ -101,14 +101,21 @@ pub(crate) fn write_console_line(
 /// the library call sites (`http_proxy`, `upstream`, `native_ws`, the memory
 /// maintenance diagnostic) instead of keeping its own `eprintln!` copies.
 pub fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
-    // #3152 item 11: one `write_all`, never `writeln!` through the trait
-    // object. `writeln!` formats through `Write::write_fmt`, whose default
-    // adapter issues the message and the trailing `\n` as two separate
-    // `write` calls — on a raw fd each takes the sink's lock separately
-    // (std's `Stderr`/`Stdout` lock once per call, not per format), so a
-    // concurrent writer can interleave between the two halves and tear the
-    // line, a shape TS's single `console.error` write cannot produce. The
-    // buffer is assembled first and handed over in one call.
+    // #3152 item 11: one `write_all` call, never `writeln!` through the
+    // trait object. `writeln!` formats through `Write::write_fmt`, whose
+    // default adapter issues the message and the trailing `\n` as two
+    // separate `write` calls — on a raw fd each takes the sink's lock
+    // separately (std's `Stderr`/`Stdout` lock once per call, not per
+    // format), so a concurrent writer can interleave between the two
+    // halves and tear the line, a shape TS's single `console.error`
+    // write cannot produce. The buffer is assembled first and handed
+    // over in one call. fix-r2 (review concurrency#2) keeps the claim
+    // to what the code guarantees: one `write_all` is one *call*, not
+    // necessarily one write — on a partial write the loop issues
+    // further `write`s, each taking the lock again, so the guarantee
+    // removes `writeln!`'s systematic two-write tear and leaves only
+    // the short-write window (a slow-draining pipe), not line-halves
+    // that always tear.
     let mut line = String::with_capacity(message.len() + 1);
     line.push_str(message);
     line.push('\n');

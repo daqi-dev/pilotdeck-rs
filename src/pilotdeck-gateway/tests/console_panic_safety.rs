@@ -71,6 +71,12 @@
 #[allow(dead_code)]
 #[path = "common/source_inputs.rs"]
 mod source_inputs;
+// fix-r2 (review sibling#3): the same shared dead sink the lib tree
+// mounts (`src/lib.rs` mounts this file too) — one implementation of
+// the parent-side probe write and its `BrokenPipe` assertion.
+#[allow(dead_code)]
+#[path = "common/dead_stderr.rs"]
+mod dead_stderr;
 
 use source_inputs::SourceToken;
 use std::{
@@ -82,7 +88,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver},
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The guard must be able to fail (DS r1 boundary#1): an `eprintln!` site
@@ -2093,28 +2099,16 @@ impl Gateway {
     /// old shape (a piped stderr whose read end the parent dropped
     /// after the spawn) raced the child's first write against that
     /// drop, so the sink was only failing-if-lucky; the parent-side
-    /// probe write below proves the sink is already dead before the
-    /// child exists, and the child inherits the same fd. (A read-only
-    /// fd is not a failing sink for this purpose: `std::io::Stderr`
-    /// redirects EBADF to a fresh `/dev/null` and reports success —
-    /// only EPIPE reaches an `eprintln!` panic.)
+    /// probe write proves the sink is already dead before the child
+    /// exists, and the child inherits the same fd. (A read-only fd is
+    /// not a failing sink for this purpose: `std::io::Stderr` redirects
+    /// EBADF to a fresh `/dev/null` and reports success — only EPIPE
+    /// reaches an `eprintln!` panic.)
+    /// fix-r2 (review sibling#3): the mechanics are the shared module
+    /// both trees mount (`common/dead_stderr.rs`); this call is the
+    /// integration-tree entry into it, so the twins cannot drift.
     fn dead_stderr() -> Stdio {
-        let (write_half, read_half) = std::os::unix::net::UnixStream::pair()
-            .expect("#2558 create the dead stderr socketpair");
-        drop(read_half);
-        // The sink's own receipt, item 9's shape: the probe write must
-        // fail with EPIPE before the child ever exists, or the spawn
-        // would race the peer drop exactly like the old shape did.
-        let error = (&write_half).write(b"#2558 dead sink probe").expect_err(
-            "#2558 the dead stderr sink accepted a write; the peer drop did not take effect",
-        );
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::BrokenPipe,
-            "#2558 the dead stderr sink's probe write failed with {error:?}"
-        );
-        let owned_fd: std::os::fd::OwnedFd = write_half.into();
-        Stdio::from(owned_fd)
+        dead_stderr::dead_stderr("#2558 gateway")
     }
 
     fn line(&self) -> String {
@@ -2254,11 +2248,27 @@ fn startup_survives_a_failed_stderr_write() {
 /// receipt each time; the parent-side probe write inside
 /// [`Gateway::dead_stderr`] proves every sink dead before its child
 /// exists, so the pass rate measures the deterministic mechanism
-/// itself (the raw timing the #3152 RESULT records).
+/// itself (the raw timing the #3152 RESULT records). Statistical
+/// meaning (fix-r2, review concurrency#3 ≡ b2 boundary#2): deadness
+/// is proven deterministically per spawn by that parent-side probe
+/// write — the 200 rounds do not add statistical evidence of it, they
+/// pin that every spawn's receipt path survives the dead sink — so a
+/// smaller sample would not weaken the rule; the round keeps its
+/// size and instead carries the termination condition the rest of
+/// this file states on every wait: a 120 s overall budget, breached →
+/// named failure, so a slow or hanging host fails instead of sitting
+/// near the unbounded worst case (~28 s per spawn, ≈90 min) with only
+/// CI's outer timeout to end it.
 #[test]
 fn dead_stderr_sink_fails_on_every_spawn() {
     const SPAWNS: usize = 200;
+    let deadline = Instant::now() + Duration::from_secs(120);
     for _ in 0..SPAWNS {
+        assert!(
+            Instant::now() <= deadline,
+            "#2558 the {SPAWNS} dead-sink spawns exceeded the 120 s overall budget; \
+             a spawn is hanging (or the host is too slow for this round), not failing"
+        );
         let home = isolated_home();
         let gateway = Gateway::start(&home, Gateway::dead_stderr());
         let address = listening_address(&gateway.line());

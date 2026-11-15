@@ -3677,7 +3677,13 @@ mod write_stage_tests {
             &[b'a'; 4096],
         )
         .expect_err("a write past RLIMIT_FSIZE must fail");
-        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
+        // fix-r2 (review b2 boundary#1): back on the family's non-panicking
+        // receipt (#3152 item 8, the tool_budget / workspace_snapshot shape).
+        // This is a spawned child and the parent reads its receipt line — a
+        // panicking `println!` on a failed write would kill the very child
+        // the receipt reports on; the module's own cfg gate is visible to the
+        // declaration-mount closure, so item 14's rollback reason is gone.
+        crate::test_console::receipt_line(&format!("WRITE_ERROR={}", FileMemoryError::Io(error)));
     }
 
     #[test]
@@ -3715,7 +3721,9 @@ mod write_stage_tests {
             [b'a'; 4096],
         )
         .expect_err("a write past RLIMIT_FSIZE must fail");
-        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
+        // fix-r2 (review b2 boundary#1): the overwrite twin above — same
+        // spawned-child receipt, same non-panicking writer.
+        crate::test_console::receipt_line(&format!("WRITE_ERROR={}", FileMemoryError::Io(error)));
     }
 
     #[test]

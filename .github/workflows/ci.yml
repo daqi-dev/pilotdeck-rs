@@ -134,6 +134,10 @@ jobs:
         # fix-r3 harness 名册守卫 96 拒绝路径用例 Ran 16；
         # fix-r4 两轴闭合枚举拒跑 2 用例 + 名册守卫收窄回 cancel×head
         # 格后的宽度 2 用例 Ran 20。
+        # #3152 fix-r2（评审 boundary#3）：增第八模块（console-panic-safety，
+        # 实测 Ran 7、约 0.1 s），钉 shared-lexer repair 的三条判决路径
+        # （超时异常入行 / failures 进退出码 / 末行同域）——cargo 全程 stub，
+        # 不需要 cargo 名额。
         timeout-minutes: 5
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
@@ -160,6 +164,12 @@ jobs:
           # 钉三态退出契约两侧：中止侧（外部真持锁 / 恢复失败 / 取消）全 INVALID
           # + rc 2，守卫前拒绝侧 rc 1 无 summary；不需要 cargo。
           python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py
+          # #3152 fix-r2（评审 boundary#3）：console-panic-safety 负控的 repair
+          # 判决路径 driver——进程内 exec 真脚本，cargo 三件套（mutating_sources/
+          # write_source_atomic/run_owned/wait_for_slot）全 stub，不触真树；
+          # 钉「超时异常入 INVALID 行 + summary.json 恒写」「failures 进退出码」
+          # 「末行分子分母同域」三腿，含三个源码级变异负控；不需要 cargo。
+          python3 -B -m unittest -v console-panic-safety/test_negative_controls.py
       # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
       # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。

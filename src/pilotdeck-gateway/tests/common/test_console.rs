@@ -9,9 +9,12 @@
 //! stays a production concern, and test code does not reach into
 //! `native_process` for a receipt.
 //!
-//! One buffer, one `write_all`: a line and its newline leave in a
-//! single write, so two threads can never interleave between them
-//! (#3152 item 11's rule, same reasoning).
+//! One buffer, one `write_all` call: a line and its newline leave in a
+//! single call — one write unless the sink short-writes, when the
+//! `write_all` loop issues further writes (fix-r2, review
+//! concurrency#2, the same wording as `console_log_line`'s claim). The
+//! systematic `writeln!` two-write tear is what this removes (#3152
+//! item 11's rule, same reasoning).
 
 use std::io::Write;
 

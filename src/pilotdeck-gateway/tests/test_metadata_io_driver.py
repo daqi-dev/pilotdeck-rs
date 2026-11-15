@@ -1668,6 +1668,9 @@ class EnvironmentControls(unittest.TestCase):
         # cancel×plain 单控制普通中止 rc 2）Ran 16→20，下限同步抬到
         # 20——不抬则删掉任一新用例（枚举校验被删 / 守卫放宽回全网格
         # 两个方向）CI 仍绿。
+        # #3152 fix-r2（评审 boundary#3）：增第八模块
+        # console-panic-safety/test_negative_controls.py（本轮实测 Ran 7、
+        # 约 0.1 s——cargo 三件套全 stub），下限同步登记。
         # #2856 fix-r6（DS r5 sibling P2a）：名册守卫加反向扫描 + 误用拒跑
         # 次序钉两用例 Ran 27→29，下限同步抬——不抬则删掉这两条
         # 新尺子（反向扫描 / 次序钉被删，剩 27 仍 ≥20）CI 仍绿，正是
@@ -1684,6 +1687,7 @@ class EnvironmentControls(unittest.TestCase):
             ('test_negative_roster_guards', 29),
             ('issue-2495/test_negative_controls.py', 30),
             ('sdk-signals-close-order-pin/test_negative_controls.py', 20),
+            ('console-panic-safety/test_negative_controls.py', 7),
         )
         # r39（DS sibling#4 P2）：network-timing 的两条 EACCES 判杀用例按宿主
         # 能力条件跳过（`@unittest.skipUnless(EACCES_STAGEABLE, ...)`——root /
@@ -1703,7 +1707,7 @@ class EnvironmentControls(unittest.TestCase):
         }
         # r39（DS concurrency#2 P2）：超时失败不再包在 subTest 里——subTest 吞
         # 异常继续下一模块，七个各挂 300 s 会把钉烧到 35 分钟；首个挂起即整条
-        # 红。总耗时一并钉在步预算上：七个各自 299 s 的「都合规」组合同样
+        # 红。总耗时一并钉在步预算上：各自 299 s 的「都合规」组合同样
         # 超出它所钉的 CI 步预算（300 s），不许守钉比步长寿。
         started = time.monotonic()
         for module, minimum in minimums:
@@ -1712,8 +1716,8 @@ class EnvironmentControls(unittest.TestCase):
                 registered_conditional_skips.get(module, ()))
         self.assertLessEqual(
             time.monotonic() - started, self.optimize_guards_step_budget,
-            '#1666 the seven -O self-test modules together must fit the -O '
-            'step budget (%d s); seven near-miss modules must not outlive '
+            '#1666 the eight -O self-test modules together must fit the -O '
+            'step budget (%d s); eight near-miss modules must not outlive '
             'the CI step they pin' % self.optimize_guards_step_budget)
 
     def test_the_copy_manifest_self_test_collects_real_tests(self):
@@ -1771,13 +1775,17 @@ class EnvironmentControls(unittest.TestCase):
         # #1800 fix-r1（PR #2979 concurrency P1，四家 P2 同撞）：第七条命令
         # （sdk-signals-close-order-pin/test_negative_controls.py）同步钉入
         # commands——子集判断下多一条不红，不钉则删掉 CI 里这行仍全绿。
+        # #3152 fix-r2（评审 boundary#3）：第八条命令
+        # （console-panic-safety/test_negative_controls.py）同钉——不钉则删掉
+        # CI 里这行仍全绿（r41/fix-r1 连环修过的同一个洞）。
         commands = ('python3 -B -m unittest -v test_negative_optimize_guards',
                     'python3 -B -m unittest -v settings-gateway/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_run_guards',
                     'python3 -B -m unittest -v network-timing/test_negative_controls.py',
                     'python3 -B -m unittest -v test_negative_roster_guards',
                     'python3 -B -m unittest -v issue-2495/test_negative_controls.py',
-                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py')
+                    'python3 -B -m unittest -v sdk-signals-close-order-pin/test_negative_controls.py',
+                    'python3 -B -m unittest -v console-panic-safety/test_negative_controls.py')
         jobs = self.ci_jobs('#1666')
         steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1666')
         matching = [step for step in steps
