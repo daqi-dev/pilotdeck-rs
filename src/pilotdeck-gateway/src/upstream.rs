@@ -210,6 +210,8 @@ mod tests {
     /// the wrapper arms only after those bytes were delivered.
     ///
     /// [`FailReads`]: Self::FailReads
+    // fix-r4 review P2: the probe's dead sink is unix-only.
+    #[cfg(unix)]
     #[tokio::test]
     async fn connection_task_error_line_survives_a_failed_stderr() {
         if let Some(token) = crate::failed_stderr_probe::probe_token(UPGRADE_STDERR_PROBE_ENV) {
@@ -310,6 +312,8 @@ mod tests {
     /// (the task dropping the socket when it ends) is the receipt that the
     /// line already ran. Nothing here prints to stdout: the single-threaded
     /// receipt needs the whole test line intact.
+    // fix-r4 review P2: the probe's dead sink is unix-only.
+    #[cfg(unix)]
     async fn upgrade_stderr_probe_child(token: &str) {
         crate::failed_stderr_probe::install_panic_hook(UPGRADE_STDERR_MARKER_ENV, "#2558", token);
         let (socket, mut server) = tokio::io::duplex(4096);

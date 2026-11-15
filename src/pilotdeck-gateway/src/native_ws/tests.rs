@@ -2820,6 +2820,8 @@ const WS_STDERR_MARKER_ENV: &str = "PDRS_2434_WS_STDERR_MARKER";
 /// but an `accept()` error that is neither InvalidInput, PermissionDenied
 /// nor Unsupported has no portable trigger, so it is covered by the shared
 /// helper's own contract, not a second child.
+// fix-r4 review P2: the probe's dead sink is unix-only.
+#[cfg(unix)]
 #[tokio::test]
 async fn connection_error_lines_survive_a_failed_stderr() {
     if let Some(token) = crate::failed_stderr_probe::probe_token(WS_STDERR_PROBE_ENV) {
@@ -2843,6 +2845,8 @@ async fn connection_error_lines_survive_a_failed_stderr() {
 /// The child half of [`connection_error_lines_survive_a_failed_stderr`]:
 /// panic hook first (marker + exit 33), then a real listener and the invalid
 /// upgrade that makes `serve_socket` fail, then a clean drain.
+// fix-r4 review P2: the probe's dead sink is unix-only.
+#[cfg(unix)]
 async fn ws_stderr_probe_child(token: &str) {
     crate::failed_stderr_probe::install_panic_hook(WS_STDERR_MARKER_ENV, "#2434", token);
     let host = native_ws_fixture(Arc::new(Requests::default()));
