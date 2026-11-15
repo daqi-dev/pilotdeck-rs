@@ -20,6 +20,17 @@ updated: 2026-11-15 10:1x（中轮五：3152 收货链 90%——三件套全绿+
 - legacy-batches | coord | blocked | 红灯 3 老单：mirror-confluence 清偿后按 sweep 实况重判重写，重判前不派
 <!-- READY:END -->
 
+### 中轮段六（10:1x–11:5x，coord2/e7，接 10:1x 中轮段五；3152 收货链闭环+fix-r3 已派 / 2800 fix-r8 收货闭环 / 2989 收账关 #2259 / MM 恢复）
+
+**做了什么**：
+1. **MM 通道恢复确认**（零新请求）：11:1x 2513 fix-r14 MM concurrency 实跑正常出块（329.7s exit 0）即证据；旧排队清单轮次号已过时（r9/fix-r5 均被后续轮次取代），按现场核销不派。
+2. **3152 fix-r2 收货链闭环**：wp 负控重跑（10:57–11:40，带树内 CARGO_TARGET_DIR）**KILLED=101 SURVIVED=0 INVALID=54**——54 分流（`negctl-wp-triage.md`）：10 条真异常=`skills-tree-files/negative.py:41` `SystemExit(MagicMock)` mock 不兼容（**存量**：该文件与 test_controls.py 本分支 0 改动，main 同码同现，P2-跟进 **#3211**）；44 条=`invalidate_completed` 连坐改判（日志原始判定均 KILLED）。实质面 SURVIVED=0。**fix-r2 提交 5110fddc1 漏推已补**（gitleaks 过、ls-remote 断言）+ PR #3185 body 追加 fix-r2 收判。
+3. **3152 DS 增量收块与 fix-r3 派发**：全部 PASS P0=0 P1=0 **P2=6**，三分：a 档 2（绿灯行不核 failures 域 / WRITE_ERROR 族第五处裸 println!）+ b 档 1 按 P1（120s 整轮预算宿主慢假 FAIL，concurrency#1）→ **fix-r3 已派 m01（pid 36211，prewarm 在跑**；首派 `macmini-01.local` 被拒改名重派）；c 档 2（五姊妹脚本 failures→exit 同步 + 共享 lexer 清单单一出处）→ **#3212**。
+4. **2800 fix-r8 收货全链**：DONE 三件 sha256 校验 OK → 暂存 diff 与 final.patch 逐字节一致 → 提交 **630062b4f**（fmt 树内复跑干净、gitleaks 无漏）→ 推送 ls-remote 断言 → PR #2800 body 追加 fix-r8 结果块。r8 增量**双谱系（DS+MM，base 6d2852cd9）在跑**（修了 P1 须两家复核）。
+5. **2989 MERGED 收账**（11:35，mergedAt 03:35:57Z，邮箱 225912+ 形态已核）：**#2259 回复关单**（实现随 #2989 合入，残余 6 P2 在 #3184 有登记），前置于 A4 的 P1 义务清账。
+6. **杂项**：gh API 一过性 EOF 抖动（两单 PR 正文手术均重试至成功并回读核验）；人批评论巡检空；用户问 #1357 完成时间——答机器侧约 1 周（依赖 #1353/#1355/#1356/#1317/#132 OPEN + P2 批量处置 + 本体 1.5 人日），人签项不可控。
+**下一步**：①3152 fix-r3（m01 pid 36211）交付 → 收货 → 增量评审 → PR #3185 gate → 入队；②2800 r8 双谱系块到 → 判读（P0/P1 清）→ gate → 入队；③2513 fix-r15（cb8 pid 125078）/ 3178 fix-r4（m01 pid 51162）/ 2959 fix-r2（cb8）交付收货链；④队列与 CI 等待器收账（3180 / 3202 / 3185 gate 重跑 / 3208 CI）；⑤3152 本机 cargo 自决例外已了结（负控收块，无遗留本地 cargo 活）。
+
 ### 中轮段五（09:5x–10:1x，coord2/e7，接 09:3x 中轮段四；3152 收货链 90% + 3178 fix-r3 本地重派 + 2989 flake 重入队 + 2572 宿主负控收块）
 
 **做了什么**：
