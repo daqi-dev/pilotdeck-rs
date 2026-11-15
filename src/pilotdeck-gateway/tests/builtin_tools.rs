@@ -1,3 +1,10 @@
+// fix-r4 review P2 (DS sibling#1, same class as the dead_stderr mounts):
+// `common/oracle_replay.rs` unconditionally uses `std::os::unix::fs`
+// (`PermissionsExt`, `symlink`), and its glob-imported helpers spread
+// through this whole target — so the target carries the root unix gate
+// the tree's other unix-only test targets use (`bash_tool.rs`,
+// `background_output.rs`, `snapshot_unit.rs`, `scratch_publication.rs`).
+#![cfg(unix)]
 #[path = "common/oracle_replay.rs"]
 mod oracle_replay;
 use oracle_replay::*;
