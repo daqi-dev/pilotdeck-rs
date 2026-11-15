@@ -146,9 +146,10 @@ def _verify_loaded_apparatus():
     that; a round started inside a mutation window therefore holds the
     window's mutant. After acquiring the lease, refuse before any work
     unless the executing entry (code-object fingerprint, nested functions
-    included) and the three imported apparatus modules (the
-    ``_apparatus_source`` bytes that actually executed) match HEAD. Missing
-    provenance fails closed. A mutant that deletes this verification itself
+    included) and every apparatus module this process imported through
+    _bootstrap (the ``_apparatus_source`` bytes that actually executed)
+    match HEAD. Missing provenance fails closed. A mutant that deletes this
+    verification itself
     escapes self-verification — the same boundary scripts/parity/round.py's
     fix-r2 verification documents. The call-site deletion has two explicit
     nets (#2513 fix-r6, MM boundary#2): the unit test
@@ -179,9 +180,24 @@ def _verify_loaded_apparatus():
                                 dont_inherit=True, optimize=sys.flags.optimize)
     if _code_fingerprint(bootstrap_code) != _code_fingerprint(expected_bootstrap):
         raise ValueError('#2513 loaded apparatus differs from HEAD: scripts/cli-parity/_bootstrap.py')
-    for name, module in (('common', _common), ('compare', _compare_module),
-                         ('policy', _policy_module)):
-        source = getattr(module, '_apparatus_source', None)
+    # #2513 fix-r14 (DS r13 review, a-tier): the loop below was a hardcoded
+    # triple — a second inventory next to _bootstrap.APPARATUS_FILES. A
+    # module loaded for the judge but missing from the triple would run
+    # unverified once the two lists drifted. Derive the verified set from
+    # the process instead: every module _bootstrap.load executed sits in
+    # sys.modules carrying its _apparatus_source bytes, must be a registered
+    # apparatus module, and must match HEAD.
+    loaded = sorted(name for name, module in sys.modules.items()
+                    if isinstance(getattr(module, '_apparatus_source', None), bytes))
+    if not loaded:
+        raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')
+    unregistered = [name for name in loaded
+                    if name not in _bootstrap.APPARATUS_MODULES]
+    if unregistered:
+        raise ValueError('#2513 loaded apparatus modules missing from the '
+                         '_bootstrap manifest: ' + ', '.join(unregistered))
+    for name in loaded:
+        source = sys.modules[name]._apparatus_source
         if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):
             raise ValueError(f'#2513 loaded apparatus differs from HEAD: scripts/cli-parity/{name}.py')
 

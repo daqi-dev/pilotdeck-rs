@@ -35,7 +35,7 @@ _load = _bootstrap.load
 import ast
 import base64
 import hashlib
-from contextlib import contextmanager, nullcontext, redirect_stdout
+from contextlib import ExitStack, contextmanager, nullcontext, redirect_stdout
 import io
 from itertools import combinations
 import json
@@ -3473,17 +3473,26 @@ class ApparatusVerificationTests(unittest.TestCase):
     a mutation window holds the window's mutant unless it refuses after the
     lease. These cells drive ``run_round._verify_loaded_apparatus`` against a
     controlled HEAD — no git, no lease, so they stay hermetic on a dirty
-    tree: the pristine path accepts, and mutated or missing common.py
-    provenance refuses with the single-line #2513 message.
+    tree: the pristine path accepts, a mutated loaded module is refused
+    with the single-line #2513 message, and stripped provenance (no module
+    left carrying ``_apparatus_source`` bytes) fails closed through the
+    no-module refusal.
     """
 
     def heads(self, common_source):
+        # #2513 fix-r14: the verified set is derived from the process — every
+        # module _bootstrap.load executed — so the controlled HEAD must cover
+        # all of them; this test process loads common, compare, controls,
+        # host_negative_controls, policy, and the run_round entry itself.
         return {
             'scripts/cli-parity/run_round.py': (SCRIPT / 'run_round.py').read_bytes(),
             'scripts/cli-parity/_bootstrap.py': (SCRIPT / '_bootstrap.py').read_bytes(),
             'scripts/cli-parity/common.py': common_source,
             'scripts/cli-parity/compare.py': _run_round._compare_module._apparatus_source,
             'scripts/cli-parity/policy.py': _run_round._policy_module._apparatus_source,
+            'scripts/cli-parity/controls.py': sys.modules['controls']._apparatus_source,
+            'scripts/cli-parity/host_negative_controls.py':
+                sys.modules['host_negative_controls']._apparatus_source,
         }
 
     def test_pristine_apparatus_passes(self):
@@ -3506,17 +3515,28 @@ class ApparatusVerificationTests(unittest.TestCase):
                          'scripts/cli-parity/common.py')
 
     def test_missing_provenance_fails_closed(self):
+        # #2513 fix-r14: the verified set is derived from the provenance
+        # stamps themselves, so the missing-provenance refusal is the
+        # aggregate one — strip every stamp and the verification must refuse
+        # the round instead of silently verifying nothing.
         heads = self.heads(_common._apparatus_source)
+        stamped = sorted(name for name, module in sys.modules.items()
+                         if isinstance(getattr(module, '_apparatus_source', None), bytes))
+        self.assertIn('common', stamped,
+                      '#2513 the test process must load common through _bootstrap')
         with patch.object(_run_round, '_head_source',
                           side_effect=lambda relative: heads[relative]), \
-                patch.object(_common, '_apparatus_source', None), \
-                self.assertRaises(ValueError,
-                                  msg='#2513 missing common.py provenance '
-                                      'must fail closed') as caught:
-            _run_round._verify_loaded_apparatus()
+                ExitStack() as stack:
+            for name in stamped:
+                stack.enter_context(
+                    patch.object(sys.modules[name], '_apparatus_source', None))
+            with self.assertRaises(ValueError,
+                                   msg='#2513 missing provenance must fail '
+                                       'closed') as caught:
+                _run_round._verify_loaded_apparatus()
         self.assertEqual(str(caught.exception),
-                         '#2513 loaded apparatus differs from HEAD: '
-                         'scripts/cli-parity/common.py')
+                         '#2513 no apparatus module was loaded through '
+                         '_bootstrap.load')
 
     def test_mutated_compare_is_refused(self):
         heads = self.heads(_common._apparatus_source)

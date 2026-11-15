@@ -144,8 +144,13 @@ def size(paths, *, runner=None, events=None):
 
 
 def resource_root():
-    common = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse',
-                                     '--path-format=absolute', '--git-common-dir'], text=True).strip()
+    # #2513 fix-r14 (DS r13 review, b-tier): answer from this checkout only.
+    # The bare ``git -C`` read inherited the environment, so a steered GIT_DIR
+    # moved the disk-budget root onto a decoy repository (measured,
+    # red-resource-root-steer.py in this round's directory); the bootstrap's
+    # hardened _boot_git scrubs the environment and pins the executable.
+    common = _boot_git('rev-parse', '--path-format=absolute',
+                       '--git-common-dir').decode().strip()
     return Path(common).resolve().parent
 
 

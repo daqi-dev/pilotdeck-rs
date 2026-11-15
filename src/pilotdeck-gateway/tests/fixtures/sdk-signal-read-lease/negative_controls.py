@@ -937,20 +937,27 @@ def window_lock_check(out):
             with common.parity_lock(timeout=WINDOW_POISON_PROBE_SECONDS):
                 pass
         except TimeoutError as error:
-            previous = common.owner(common.LOCK)
-            if previous is not None and not common.alive(previous['pid']):
-                # The mutant poisoned the lane. Recover the lease before
-                # failing (dead pid + a stand-in we spawned and stopped —
-                # provably our leftover, not a live round's), so the lane
-                # is usable after the run; then fail with the marker. The
-                # takeover holds the tree guard while removing the lease:
-                # a parity_lock waiter does exists()/owner()/stat() under
-                # that same guard, so an unguarded rmtree lands between the
-                # waiter's checks and turns the intended marker failure into
-                # a FileNotFoundError crash (same guarded form as common.py's
-                # own takeover; #2513 fix-r13 concurrency#1).
-                with common.guard(common.LOCK):
-                    shutil.rmtree(common.LOCK)
+            # The mutant poisoned the lane. Recover the lease before failing
+            # (dead pid + a stand-in we spawned and stopped — provably our
+            # leftover, not a live round's), so the lane is usable after the
+            # run; then fail with the marker. The takeover holds the tree
+            # guard while removing the lease: a parity_lock waiter does
+            # exists()/owner()/stat() under that same guard, so an unguarded
+            # rmtree lands between the waiter's checks and turns the
+            # intended marker failure into a FileNotFoundError crash
+            # (#2513 fix-r13 concurrency#1). And the owner/alive judgment
+            # itself must be made under the guard with an exists() gate
+            # (#2513 fix-r14, DS r13 review a-tier): a judgment read before
+            # the guard goes stale while another recoverer takes the dead
+            # lease over and a fresh client re-creates it in between, and
+            # the rmtree would then destroy that live lease — the canonical
+            # common.py takeover re-judges inside the guard for exactly this
+            # reason.
+            with common.guard(common.LOCK):
+                if common.LOCK.exists():
+                    previous = common.owner(common.LOCK)
+                    if previous is not None and not common.alive(previous['pid']):
+                        shutil.rmtree(common.LOCK)
             raise AssertionError(
                 HOST_POISON_MARKER + '：停止共享持有者后租约不可再取（持有者被 '
                 'SIGKILL，留下 cleanupPending 的死 pid owner，车道被毒化）') from error

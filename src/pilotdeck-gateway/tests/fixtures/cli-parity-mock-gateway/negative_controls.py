@@ -358,31 +358,29 @@ mutations = [
      "            raise RuntimeError(\n"
      "                f'#1023-9: {target} released after the {timeout}s deadline; no bound run started')\n"
      "        yield"),
-    # #2513 fix-r4 (review sibling#2 + boundary#2): the post-lease apparatus
-    # verification must not skip any of its five surfaces — dropping one from
-    # the loop (or disarming one check) lets a mutated module run under the
-    # lease while the bound ApparatusVerificationTests row goes red.
+    # #2513 fix-r4 (review sibling#2 + boundary#2), re-anchored fix-r14: the
+    # post-lease apparatus verification derives its surfaces from the process
+    # (every module _bootstrap.load executed) — filtering one name out of the
+    # derived loop (or disarming one check) lets a mutated module run under
+    # the lease while the bound ApparatusVerificationTests row goes red.
     ('apparatus-common-unverified',
      run_round,
-     "    for name, module in (('common', _common), ('compare', _compare_module),\n"
-     "                         ('policy', _policy_module)):",
-     "    for name, module in (('compare', _compare_module),\n"
-     "                         ('policy', _policy_module)):"),
+     "    for name in loaded:\n",
+     "    for name in (n for n in loaded if n != 'common'):\n"),
     ('apparatus-compare-unverified',
      run_round,
-     "    for name, module in (('common', _common), ('compare', _compare_module),\n"
-     "                         ('policy', _policy_module)):",
-     "    for name, module in (('common', _common),\n"
-     "                         ('policy', _policy_module)):"),
+     "    for name in loaded:\n",
+     "    for name in (n for n in loaded if n != 'compare'):\n"),
     ('apparatus-policy-unverified',
      run_round,
-     "    for name, module in (('common', _common), ('compare', _compare_module),\n"
-     "                         ('policy', _policy_module)):",
-     "    for name, module in (('common', _common), ('compare', _compare_module)):"),
+     "    for name in loaded:\n",
+     "    for name in (n for n in loaded if n != 'policy'):\n"),
     ('apparatus-provenance-unchecked',
      run_round,
-     "        if not isinstance(source, bytes) or source != _head_source(f'scripts/cli-parity/{name}.py'):",
-     "        if False:"),
+     "    if not loaded:\n"
+     "        raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')",
+     "    if False:\n"
+     "        raise ValueError('#2513 no apparatus module was loaded through _bootstrap.load')"),
     ('apparatus-head-failure-swallowed',
      run_round,
      "    expected_entry = _head_source('scripts/cli-parity/run_round.py')",
@@ -576,8 +574,8 @@ failure_fragments = {
         ('#2513 a mutated policy.py must be refused after the lease',
          "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/policy.py"),
     'apparatus-provenance-unchecked':
-        ('#2513 missing common.py provenance must fail closed',
-         "#2513 loaded apparatus differs from HEAD: scripts/cli-parity/common.py"),
+        ('#2513 missing provenance must fail closed',
+         '#2513 no apparatus module was loaded through _bootstrap.load'),
     'apparatus-head-failure-swallowed':
         '#2513 a HEAD read failure must refuse the round, not compare against nothing',
     'apparatus-entry-fingerprint-unchecked':

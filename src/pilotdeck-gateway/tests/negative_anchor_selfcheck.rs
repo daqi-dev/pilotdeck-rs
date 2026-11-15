@@ -50,10 +50,21 @@ const NEGATIVE_PROCESS_CLASSES: &[&str] = &[
 /// With `verbosity=2` unittest prints one `test_x (__main__.Class.test_x)`
 /// line per executed method, so a class's absence from the report means its
 /// selector matched zero tests — the version-independent hole this closes.
+/// A `... skipped` or `... expected failure` line is not an execution
+/// (#2513 fix-r14, DS r13 review): unittest counts those as ran and the
+/// report still ends `OK`, so only a line in an executed status counts.
 fn selector_coverage(report: &str, classes: &[&str]) -> Result<(), String> {
     for class in classes {
-        if !report.contains(&format!("__main__.{class}.")) {
-            return Err(format!("selector {class} ran zero tests; the class is absent"));
+        let prefix = format!("__main__.{class}.");
+        let executed = report
+            .lines()
+            .filter(|line| line.contains(&prefix))
+            .any(|line| !line.contains("... skipped") && !line.contains("... expected failure"));
+        if !executed {
+            return Err(format!(
+                "selector {class} ran zero tests of its own (the class is absent, \
+                 or every line was skipped or expected failure)"
+            ));
         }
     }
     if report.contains("Ran 0 tests") || report.contains("NO TESTS RAN") {
@@ -179,14 +190,46 @@ fn zero_test_run_is_rejected() {
                  NO TESTS RAN\n";
     let error = selector_coverage(empty, &["HasTests"]).unwrap_err();
     assert!(error.contains("zero tests"), "{error}");
+    // The Ran-0 branch below the loop is only reachable with an empty
+    // selector list — every non-empty list fails earlier on its first absent
+    // class — so pin it directly (#2513 fix-r14 simplify#8, choice recorded
+    // in the round RESULT: keep the branch, add the direct call).
+    let error = selector_coverage(empty, &[]).unwrap_err();
+    assert!(error.contains("zero tests"), "{error}");
+}
+
+#[test]
+fn skipped_only_selector_is_rejected() {
+    // #2513 fix-r14 (DS r13 review): a selector whose every line is skipped
+    // or expected-failure has executed nothing of its own — unittest still
+    // reports `Ran N tests ... OK`, so those lines must not count as
+    // coverage.
+    let skipped = "test_one (__main__.Alpha.test_one) ... skipped 'reason'\n\
+                   test_two (__main__.Alpha.test_two) ... expected failure\n\
+                   ----------------------------------------------------------------------\n\
+                   Ran 2 tests in 0.001s (1 skipped, 1 expected failure)\n\
+                   \n\
+                   OK\n";
+    let error = selector_coverage(skipped, &["Alpha"]).unwrap_err();
+    assert!(error.contains("Alpha"), "{error}");
+    assert!(error.contains("skipped"), "{error}");
+    // A mixed report still covers the class that really executed.
+    let mixed = "test_one (__main__.Alpha.test_one) ... ok\n\
+                 test_two (__main__.Alpha.test_two) ... skipped 'reason'\n\
+                 ----------------------------------------------------------------------\n\
+                 Ran 2 tests in 0.001s (1 skipped)\n\
+                 \n\
+                 OK\n";
+    assert!(selector_coverage(mixed, &["Alpha"]).is_ok());
+    assert!(selector_coverage(mixed, &["Beta"]).is_err());
 }
 
 #[test]
 fn covered_selectors_pass() {
     let covered = "test_one (__main__.Alpha.test_one) ... ok\n\
-                   test_two (__main__.Beta.test_two) ... skipped 'reason'\n\
+                   test_two (__main__.Beta.test_two) ... ok\n\
                    ----------------------------------------------------------------------\n\
-                   Ran 2 tests in 0.001s (1 skipped)\n\
+                   Ran 2 tests in 0.001s\n\
                    \n\
                    OK\n";
     assert!(selector_coverage(covered, &["Alpha", "Beta"]).is_ok());
