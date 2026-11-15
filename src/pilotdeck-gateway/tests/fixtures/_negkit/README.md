@@ -33,7 +33,7 @@ reason 提取规则依据 `gateway-entry-guard/negative_controls.py` 的 `classi
 
 `hits` 若存在必须为非空字符串组成的列表，允许空列表；原顺序和重复次数都保留，缺失规范化为 JSON null，与 `[]` 不同。所有已识别行形态统一比较 hits；targets 不变而 hits 缩水、换序、增删、出现/缺失都会退出 1。`negative_suite.judge(any_cell=True)` 允许部分 target 命中，所以不要求 hits 等于全部 targets。
 
-状态只认精确的 `KILLED / SURVIVED / INVALID / PASS`，没有大小写折叠或别名推断。`COMPILED`、`SKIPPED(pending-reanchor)` 等返回 2。case、测试和显式断言必须是非空字符串；断言也可为非空字符串列表，按原形状和顺序比较。显式 `null`、空串、纯空白、空列表均拒绝，不能冒充缺失；`targets` 中不允许缺标记。多个 target 保留次序及配对关系。
+状态只认精确的 `KILLED / SURVIVED / INVALID / PASS / INVALID-SHAPE`（后者为 #1444 fix-r13 登记：判读层复跑仍不可判、按残差 8 放行未判灭的行——是登记状态词而非通过，等价判定只比两表同形），没有大小写折叠或别名推断。`COMPILED`、`SKIPPED(pending-reanchor)` 等返回 2。case、测试和显式断言必须是非空字符串；断言也可为非空字符串列表，按原形状和顺序比较。显式 `null`、空串、纯空白、空列表均拒绝，不能冒充缺失；`targets` 中不允许缺标记。多个 target 保留次序及配对关系。
 
 行内 `reason` 除上述绑定提取外忽略，`compiled`、`restoredPass` 是不参与比较的已观测元数据；除此以外的未知行字段返回 2，包括 `anchor/message` 等其他脚本的绑定别名，显式 assertion 同时存在也不能绕过。顶层 `counts` 等元数据不参与等价判定。重复 JSON 成员、非标准 JSON 数字、缺必填字段、无效 UTF-8、错误类型均拒绝。
 

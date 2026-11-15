@@ -12,7 +12,11 @@ import re
 import sys
 
 
-STATUSES = frozenset(('KILLED', 'SURVIVED', 'INVALID', 'PASS'))
+# INVALID-SHAPE (#1444 fix-r13): a row the fixture's rerun layer released
+# without a kill — both runs ended in the unjudgeable lost-race shape
+# (ledger residual 8). A registered status word, not a pass: the comparator
+# only checks table equivalence.
+STATUSES = frozenset(('KILLED', 'SURVIVED', 'INVALID', 'PASS', 'INVALID-SHAPE'))
 
 
 class InputError(ValueError):

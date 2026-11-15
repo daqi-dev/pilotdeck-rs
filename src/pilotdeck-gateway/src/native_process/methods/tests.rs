@@ -1627,9 +1627,11 @@ fn steer_turn_fifo_unstrand_drop_leaves_no_path_and_no_writer() {
 /// unlink succeeded; EMFILE/EACCES from the environment) — so it never
 /// judges a defect: after `INCONCLUSIVE_AFTER_DISCONNECTED`
 /// observations the cell exits **inconclusive** (green, named in the
-/// output, registered in the ledger) instead of red; the fix-r10 form
-/// judged this shape red after three and was itself a false-FAIL
-/// class. Every non-final observation and the inconclusive exit print
+/// output, registered in the ledger) instead of red — fix-r12 briefly
+/// redded that exit whenever a Timeout observation shared the cap, and
+/// fix-r13 removed it again (the fix-r12/fix-r13 paragraph below); the
+/// fix-r10 form judged this shape red after three and was itself a
+/// false-FAIL class. Every non-final observation and the inconclusive exit print
 /// through `console_log_line` — libtest captures and discards
 /// `eprintln!` on green runs, and a failing stderr write panics (the
 /// fix-r7 form this file already retired for the guard). A reader
@@ -1637,17 +1639,25 @@ fn steer_turn_fifo_unstrand_drop_leaves_no_path_and_no_writer() {
 /// it); like the guard's registered residual cells it stays parked for
 /// the process lifetime, bounded by the Timeout attempt count.
 ///
-/// fix-r12 (review MM boundary#1, P1; DS boundary#2; MM sibling#2): the
-/// inconclusive exit is itself shape-dependent — a mutant whose reader
-/// never pairs can reach it through pure lost races and would read as
-/// survived, so the green exit is machine-marked and fail-closed. The
-/// pure lost-race form (timeouts == 0) prints the
-/// `#1444 START-RACE-UNRESOLVED` anchor with both shape counts, and
-/// the negative fixture reruns such a run once before recording a
-/// verdict; any Timeout evidence on the record when the lost-race cap
-/// hits turns red instead — one or two Timeout observations followed
-/// by lost races is evidence in hand, and a green exit there is
-/// exactly the mutant survival the device exists to catch.
+/// fix-r12 (review MM boundary#1, P1; DS boundary#2; MM sibling#2), as
+/// corrected by fix-r13 (reviews DS concurrency#1/boundary#1 + MM
+/// concurrency#1/boundary#1, P1 all four): the inconclusive exit is
+/// itself shape-dependent — a mutant whose reader never pairs can reach
+/// it through lost races and would read as survived, so the green exit
+/// is machine-marked: it prints the `#1444 START-RACE-UNRESOLVED`
+/// anchor with both shape counts, and the negative fixture reruns such
+/// a run once before recording a verdict; only a rerun that is again
+/// unresolvable passes, recorded as INVALID-SHAPE and released on the
+/// exit-code wire as rc=3. fix-r12 had also turned the exit red
+/// outright whenever any Timeout observation shared the cap ("evidence
+/// in hand"); fix-r13 removed that fail-closed — the mixed shape is
+/// the signature of scheduler noise, not of a repeatable defect (a
+/// deterministic starvation probe drove the unmutated cell to
+/// 1×Timeout + 5×Disconnected and it went red: the false-FAIL face
+/// the fix-r3/fix-r10 entries retired), while a real defect reds
+/// through the Timeout arm's RED_AFTER_TIMEOUTS repetition or the
+/// fixture's rerun, so the branch never added a kill the anchor+rerun
+/// path cannot supply.
 #[test]
 fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer() {
     use std::io::Read as _;
@@ -1813,33 +1823,33 @@ fn steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writ
                 if disconnections < INCONCLUSIVE_AFTER_DISCONNECTED {
                     continue;
                 }
-                // fix-r12 (review MM boundary#1, P1): the lost-race cap may
-                // only exit green with a clean Timeout record — one or two
-                // Timeout observations filled up by lost races is defect
-                // evidence in hand (a real stranded reader parks again on
-                // the fresh FIFO the next attempt gives it), so the early
-                // exit fails closed instead of swallowing it.
-                if timeouts > 0 {
-                    negative_assert!(
-                        false,
-                        "#1444 the unstrand rescue cell hit the lost-race cap with \
-                         Timeout evidence on the record ({timeouts} Timeout-shaped, \
-                         {disconnections} Disconnected-shaped): a green inconclusive \
-                         exit would swallow it — fail closed"
-                    );
-                }
-                // fix-r12: the pure lost-race exit prints the anchor the
-                // negative fixture's judging layer looks for — a run that
-                // ends here is rerun once instead of being read as a
-                // survived mutant (the shape itself never judges one).
+                // fix-r12 (review MM boundary#1, P1) printed this exit red
+                // whenever any Timeout observation shared the cap; fix-r13
+                // (reviews DS concurrency#1/boundary#1 + MM
+                // concurrency#1/boundary#1, P1 all four) removed that
+                // fail-closed — the mixed shape is the signature of
+                // scheduler noise, not of a repeatable defect (a
+                // deterministic starvation probe drove the unmutated cell
+                // to 1×Timeout + 5×Disconnected and it went red: the
+                // false-FAIL face the fix-r3/fix-r10 entries retired),
+                // while a real defect reds through the Timeout arm's
+                // RED_AFTER_TIMEOUTS repetition above or the fixture's
+                // rerun, so the branch only ever added a false-FAIL face,
+                // never a kill the anchor+rerun path cannot supply. The
+                // cap exit prints the anchor the negative fixture's
+                // judging layer looks for, whatever mix of shapes filled
+                // it — a run that ends here is rerun once instead of
+                // being read as a survived mutant.
                 crate::native_process::channels::console_log_line(
                     &mut std::io::stderr(),
                     &format!(
                         "#1444 START-RACE-UNRESOLVED: the unstrand rescue cell exits \
                          INCONCLUSIVE for the rescue shape — {timeouts} Timeout-shaped \
-                         / {disconnections} Disconnected-shaped observations (the pure \
-                         lost-race spelling never judges a defect; registered in \
-                         A7.2-STEER-ATTACH-001-R2 fix-r11, anchor fix-r12)"
+                         / {disconnections} Disconnected-shaped observations (the \
+                         lost-race spellings never judge a defect here; Timeout \
+                         evidence reds only through the Timeout arm's repetitions — \
+                         registered in A7.2-STEER-ATTACH-001-R2 fix-r11, anchor \
+                         fix-r12, fix-r13)"
                     ),
                 );
                 return;

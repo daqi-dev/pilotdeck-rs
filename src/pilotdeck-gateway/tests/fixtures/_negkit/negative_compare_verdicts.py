@@ -102,6 +102,11 @@ VARIANTS = (
     ('require-all-hits', 'return hits',
      "return [target[0] for target in row.get('targets', [])]",
      'test_partial_hits_are_valid_evidence', '#1100 normalized table keeps actual hits'),
+    ('erase-invalid-shape',
+     "frozenset(('KILLED', 'SURVIVED', 'INVALID', 'PASS', 'INVALID-SHAPE'))",
+     "frozenset(('KILLED', 'SURVIVED', 'INVALID', 'PASS'))",
+     'test_invalid_shape_status_is_registered',
+     '#1444 INVALID-SHAPE rows must load, not read as unreadable'),
 )
 
 

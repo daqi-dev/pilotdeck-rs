@@ -40,14 +40,17 @@ A7.2-STEER-ATTACH-001-R2 machine criteria):
   - rescue-open-rerouted (fix-r11, review DS sibling #3): the guard's
     rescue open is rerouted to /dev/null — the parked reader never pairs,
     and the no-other-writer cell judges the guard red: the all-Timeout
-    interleaving reds at the third observation, and a mixed one (Timeout
-    evidence filled up by lost races) fails closed at the lost-race cap —
-    both anchors are kill alternatives (fix-r12, review MM boundary#1).
+    interleaving reds at the third observation; a lost-race interleaving
+    (pure or mixed — fix-r13 removed the fail-closed that redded Timeout
+    evidence at the cap, reviews DS concurrency#1/boundary#1 + MM
+    concurrency#1/boundary#1) exits green with the START-RACE-UNRESOLVED
+    anchor instead, and the judging layer below reruns such a row once,
+    so the kill lands on the rerun's third-timeout red.
   - rescue-handle-leaked (fix-r11, review DS sibling #3): the rescue
     handle is forgotten instead of closed — the parked reader pairs but
     never reads EOF, and the cell's EOF assertion turns red (the rescue
-    handle's close duty); the same fail-closed alternative covers a mixed
-    interleaving that never reaches a pairing (fix-r12).
+    handle's close duty); a lost-race interleaving that never reaches a
+    pairing goes through the same anchor+rerun path (fix-r13).
   - timeout-retry-erased (fix-r12, reviews MM concurrency#4 + MM
     simplify#3): the fix-r11 retry semantics — one Timeout observation
     must retry on a fresh FIFO before any red verdict — are erased, and
@@ -56,12 +59,21 @@ A7.2-STEER-ATTACH-001-R2 machine criteria):
     own anchor instead of a healthy run never exercising the arm.
 
 A run that ends in the cell's inconclusive exit prints the
-`#1444 START-RACE-UNRESOLVED` anchor (fix-r12, review MM boundary#1):
-that green exit is a pure lost-race shape, not a survived mutant, so a
-SURVIVED row whose negative log carries the anchor is rerun once — only
-a rerun that is again unresolvable passes, recorded as INVALID-SHAPE.
+`#1444 START-RACE-UNRESOLVED` anchor (fix-r12, review MM boundary#1;
+fix-r13, reviews DS concurrency#1/boundary#1 + MM
+concurrency#1/boundary#1): that green exit is a lost-race shape — pure
+or mixed; fix-r13 removed the fail-closed that redded Timeout evidence
+at the cap, because a single Timeout observation is scheduler noise the
+unmutated cell itself produces, while a real defect reds through the
+Timeout arm's repetitions — not a survived mutant, so a SURVIVED row
+whose negative log carries the anchor is rerun once — only a rerun that
+is again unresolvable passes, recorded as INVALID-SHAPE and released on
+the exit-code wire as rc=3, never as rc=0 (fix-r13, reviews DS
+boundary#3 + MM concurrency#2/simplify#1/boundary#2: "killed" and
+"released without a kill" must stay machine-separable).
 `negative_suite.py` itself stays untouched (M6 shared); the judging
-layer here reuses its published `publish_summary`/`counts` helpers.
+layer here reuses its `run_cases`/`publish_summary` and
+`pending_reanchor`'s `counts`.
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
 """
@@ -280,29 +292,28 @@ mutations = [
     # fix-r11 (review DS sibling #3): the retry criterion's guard-duty
     # binding — rerouting the rescue open to /dev/null leaves the parked
     # reader unpaired on every fresh FIFO, so the no-other-writer cell
-    # collects its Timeout observations and judges the guard red. fix-r12
-    # (review MM boundary#1): the pure lost-race interleaving reaches the
-    # inconclusive exit instead, so the fail-closed anchor (Timeout
-    # evidence on the record when the lost-race cap hits) is a kill
-    # alternative alongside the third-timeout red.
+    # collects its Timeout observations and judges the guard red at the
+    # third one. A lost-race interleaving (pure or mixed) instead exits
+    # green with the START-RACE-UNRESOLVED anchor, and the judging layer
+    # reruns that row once — the kill lands on the rerun (fix-r13
+    # removed fix-r12's fail-closed kill-alternative anchor, which
+    # redded the healthy cell's scheduler-noise shape).
     ('rescue-open-rerouted', TESTS,
      '            .open(self.0);',
      '            .open("/dev/null");',
      TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
-     ["#1444 the parked reader never pairs with the guard's rescue open",
-      "#1444 the unstrand rescue cell hit the lost-race cap with Timeout evidence on the record"]),
+     "#1444 the parked reader never pairs with the guard's rescue open"),
     # fix-r11 (review DS sibling #3): the rescue handle's close is the EOF
     # the parked reader drains — forgetting the handle instead of closing
     # it leaves the write side open, so the reader pairs but never sees
-    # EOF and the cell's EOF assertion turns red. fix-r12: the fail-closed
-    # alternative covers a mixed interleaving that never reaches a
-    # pairing (Timeout evidence filled up by lost races).
+    # EOF and the cell's EOF assertion turns red. A lost-race
+    # interleaving that never reaches a pairing goes through the same
+    # anchor+rerun path (fix-r13).
     ('rescue-handle-leaked', TESTS,
      '        drop(rescue);',
      '        std::mem::forget(rescue);',
      TEST + 'steer_turn_fifo_unstrand_rescue_releases_the_parked_reader_with_no_other_writer',
-     ['#1444 the parked reader reads EOF once the rescue handle closes',
-      "#1444 the unstrand rescue cell hit the lost-race cap with Timeout evidence on the record"]),
+     '#1444 the parked reader reads EOF once the rescue handle closes'),
     # fix-r12 (reviews MM concurrency#4 + MM simplify#3): the fix-r11
     # retry semantics only had the one-off mutation-retry-erased probe —
     # a future change that judges the first Timeout observation red (or
@@ -356,21 +367,27 @@ def main():
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     rc = run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)
-    if rc == 0:
-        return 0
     if rc != 1:
-        return rc  # 2: an unverified restore or cancellation — nothing here may soften it
+        # 0: every row KILLED; 2: an unverified restore or cancellation —
+        # nothing here may soften either (the rc==0 shortcut it replaces was
+        # redundant with this same line, fix-r13 DS simplify#2).
+        return rc
     return _resolve_unresolved_shapes(root, selected, out, env)
 
 
 # fix-r12 (review MM boundary#1, P1): the rescue cell's inconclusive exit
-# is a green exit, so a mutant whose reader reaches it through pure lost
-# races would read as SURVIVED — a shape-dependent kill, not a guard
-# hole. The cell prints the anchor below on that exit (tests.rs); a
-# SURVIVED row whose negative log carries it is rerun once, and only a
-# rerun that is again unresolvable passes (recorded as INVALID-SHAPE).
-# Everything else keeps the suite's own verdict — `negative_suite.py`
-# is M6-shared and stays untouched; only its published helpers are used.
+# is a green exit, so a mutant whose reader reaches it through lost races
+# would read as SURVIVED — a shape-dependent kill, not a guard hole. The
+# cell prints the anchor below on that exit (tests.rs); a SURVIVED row
+# whose negative log carries it is rerun once, and only a rerun that is
+# again unresolvable passes (recorded as INVALID-SHAPE). fix-r13 widened
+# the anchor to every lost-race mix (the fail-closed that redded Timeout
+# evidence at the cap is gone — see the module docstring) and split the
+# final exit code: 0 stays reserved for "every row KILLED", released
+# rows (residual 8) exit 3, so a consumer reading only the exit code can
+# no longer read "released without a kill" as green. Everything else
+# keeps the suite's own verdict — `negative_suite.py` is M6-shared and
+# stays untouched; only its published helpers are used.
 UNRESOLVED_ANCHOR = '#1444 START-RACE-UNRESOLVED'
 RERUN_STATES = ('KILLED', 'SURVIVED', 'INVALID', 'INVALID-SHAPE')
 
@@ -378,7 +395,10 @@ RERUN_STATES = ('KILLED', 'SURVIVED', 'INVALID', 'INVALID-SHAPE')
 def _load_controls(out):
     try:
         return json.loads((out / 'summary.json').read_text())['controls']
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError):
+        # TypeError: a non-dict document (or a non-list `controls`) is
+        # unreadable evidence like any other — fail closed, never a
+        # traceback (fix-r13, review MM boundary#4).
         return None
 
 
@@ -402,7 +422,16 @@ def _resolve_unresolved_shapes(root, selected, out, env):
             continue
         case = by_mutation[row['mutation']]
         rerun = out / f'{case.mutation}-shape-rerun'
-        rerun.mkdir(parents=False, exist_ok=False)
+        try:
+            rerun.mkdir(parents=False, exist_ok=False)
+        except FileExistsError:
+            # A leftover rerun directory cannot be reused (it would mix two
+            # runs' evidence) and must not crash the rc ladder with a
+            # traceback: the row keeps its SURVIVED verdict and the final
+            # check fails closed on it (fix-r13, review MM boundary#3).
+            print(f'{case.mutation}: shape-rerun directory already exists; '
+                  'leaving the row SURVIVED', flush=True)
+            continue
         rerun_rc = run_cases(root, [case], rerun, env, mutate, timeout=900,
                              script=__file__)
         if rerun_rc == 2:
@@ -424,12 +453,22 @@ def _resolve_unresolved_shapes(root, selected, out, env):
         changed = True
     if not changed:
         return 1
+    released = sum(row['status'] == 'INVALID-SHAPE' for row in rows)
     publish_summary(out, rows, states=RERUN_STATES)
     print('summary: ' + ', '.join(
         f'{state}={count}'
         for state, count in pending_reanchor.counts(rows, RERUN_STATES).items()),
         flush=True)
-    return int(any(row['status'] not in ('KILLED', 'INVALID-SHAPE') for row in rows))
+    if any(row['status'] not in ('KILLED', 'INVALID-SHAPE') for row in rows):
+        return 1
+    if released:
+        # fix-r13 (reviews DS boundary#3 + MM concurrency#2/simplify#1/
+        # boundary#2): rows released without a kill (residual 8) must not
+        # share rc=0 with "every row killed" on the exit-code wire.
+        print(f'released={released} row(s) passed without a kill '
+              '(residual 8); exit 3', flush=True)
+        return 3
+    return 0
 
 
 if __name__ == '__main__':

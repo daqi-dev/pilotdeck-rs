@@ -503,6 +503,17 @@ class CompareVerdictsTests(unittest.TestCase):
                 report = self.invalid(document, document, 'unknown status')
                 self.assertEqual([e['side'] for e in report['errors']], ['old', 'new'])
 
+    def test_invalid_shape_status_is_registered(self):
+        document = summary()
+        document['controls'][1]['status'] = 'INVALID-SHAPE'
+        result, report = self.invoke(document, document)
+        self.assertEqual(result.returncode, 0, '#1444 INVALID-SHAPE rows must load, not read as unreadable')
+        self.assertEqual(report['table'][1]['old'][0]['status'], 'INVALID-SHAPE',
+                         '#1444 INVALID-SHAPE must stay a first-class status word')
+        other = copy.deepcopy(document)
+        other['controls'][1]['status'] = 'KILLED'
+        self.different(document, other, 'status_changes')
+
     def test_missing_required_fields(self):
         for field in ('mutation', 'status', 'test'):
             with self.subTest(field=field):
