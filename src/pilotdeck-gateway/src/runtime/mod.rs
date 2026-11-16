@@ -5,7 +5,7 @@ pub mod always_on;
 pub mod async_hooks;
 pub mod background;
 pub mod background_snapshot;
-mod cleanup_task;
+pub(crate) mod cleanup_task;
 pub mod connection;
 pub mod context;
 pub mod cron;

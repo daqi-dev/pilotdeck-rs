@@ -689,6 +689,51 @@ async fn prepare_preserves_explicit_plan_mode_and_false_override() {
     }
 }
 
+/// #1444 fix-r3 (review DS sibling#1): the submit front door folds every
+/// non-array `attachments` to an empty table, while the TS submit lane's
+/// spread (InProcessGateway.ts:1480) only folds the nullish spellings —
+/// non-iterable values throw inside the pump and land in the
+/// `gateway_submit_failed` error-event bucket without reaching
+/// `session.submit` (probe `_tmp/20261026-issue-1444/fixr3-probe/output4.txt`:
+/// `1`/`0`/`false`/`{length:0}` fail; `null`/`""`/`"ab"` fold or iterate to
+/// per-char elements the composer skips — observably the plain turn, matching
+/// the fold). The divergence is registered as residual 6 (ledger
+/// A7.2-STEER-ATTACH-001-R2 fix-r3 section); this test pins the Rust fold
+/// for the review-named `attachments:1` cell and its siblings.
+#[tokio::test]
+async fn submit_front_door_folds_non_array_attachments_to_an_empty_table() {
+    let fake = Arc::new(Fake::default());
+    let host = make_host(&fake);
+    for (reading, attachments) in [
+        ("attachments:1", JsValue::Number(1.0)),
+        ("attachments:0", JsValue::Number(0.0)),
+        ("attachments:false", JsValue::Bool(false)),
+        ("attachments:\"\"", JsValue::from("")),
+        ("attachments:\"ab\"", JsValue::from("ab")),
+        (
+            "attachments:{length:0}",
+            object([("length", JsValue::Number(0.0))]),
+        ),
+        ("attachments:null", JsValue::Null),
+    ] {
+        let input = fake.input(&[("attachments", attachments)]);
+        host.prepare(&input, &run())
+            .await
+            .unwrap_or_else(|_| panic!("#1444 {reading} must stay Ok"));
+        host.finish_pump(&run()).await.unwrap();
+    }
+    assert_eq!(
+        fake.resolved.load(Ordering::SeqCst),
+        0,
+        "#1444 no lease is acquired without uploaded attachments"
+    );
+    assert_eq!(
+        *fake.attachments_seen.lock().unwrap(),
+        vec![Vec::<String>::new(); 7],
+        "#1444 every non-array attachments spelling folds to the empty table"
+    );
+}
+
 #[tokio::test]
 async fn prepare_preserves_ask_run_mode() {
     let oracle = crate::test_baseline::oracle(include_str!(

@@ -1105,6 +1105,9 @@ async fn start_assembly(
                 always_on: automation.always_on_manager(),
                 settings: settings.gateway,
                 session_overrides,
+                // #1444: steer_turn composes attachments through the same
+                // submit-lane services the GatewaySubmitHost below holds.
+                submit_services: services.clone(),
             });
             let submitter = Arc::new(TurnSubmitter {
                 owner,
@@ -1503,6 +1506,28 @@ async fn validate_profile_inner(
     env: &Env,
     management: bool,
 ) -> Result<(), ProxyError> {
+    // The gate below is one synchronous FS sweep (the MCP config load, the
+    // four plugin/skill `read_dir`s and the full project config load) with
+    // no await inside, so polling it inline pins the executor thread for
+    // the whole sweep — on the current-thread turn-gateway host
+    // (`ConnectionTurnGateway::start_with_clock_and_cleanup`) that stalls
+    // every other request. #1444 fix-r1 (review MM concurrency #2) runs the
+    // sweep on the blocking pool, the same treatment the composition in
+    // `Services::prepare_attachment_turn` already gets.
+    let project = options.project.clone();
+    let home = options.home.clone();
+    let env = env.clone();
+    tokio::task::spawn_blocking(move || validate_profile_gate(&project, &home, &env, management))
+        .await
+        .map_err(|error| ProxyError::from(error.to_string()))?
+}
+
+fn validate_profile_gate(
+    project: &std::path::Path,
+    home: &std::path::Path,
+    env: &Env,
+    management: bool,
+) -> Result<(), ProxyError> {
     struct Captured<'a>(&'a Env, &'a std::path::Path);
     impl crate::runtime::mcp::protocol::McpEnvironment for Captured<'_> {
         fn env(&self, name: &JsString) -> Option<JsString> {
@@ -1512,15 +1537,12 @@ async fn validate_profile_inner(
             self.1.to_string_lossy().into_owned().into()
         }
     }
-    let mcp = crate::runtime::mcp::protocol::load_mcp_server_config(
-        &options.project,
-        &options.home,
-        &Captured(env, &options.home),
-    )?;
+    let mcp =
+        crate::runtime::mcp::protocol::load_mcp_server_config(project, home, &Captured(env, home))?;
     if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {
         return Err("Native isolated profile does not yet support configured MCP servers.".into());
     }
-    for base in [&options.home, &options.project.join(".pilotdeck")] {
+    for base in [home, &project.join(".pilotdeck")] {
         for name in ["plugins", "skills"] {
             if management && name == "skills" {
                 continue;
@@ -1538,12 +1560,12 @@ async fn validate_profile_inner(
     }
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
-        options.project.clone(),
+        project.to_path_buf(),
         env.clone(),
-        Some(options.home.clone()),
+        Some(home.to_path_buf()),
         None,
     )
-    .load(&options.project)?;
+    .load(project)?;
     // The fixed config loader drops unknown top-level fields from config,
     // so inspecting config.hooks alone silently misses the supplied YAML.
     // Plugin hooks are refused above; SDK hooks are refused by workspace_id.

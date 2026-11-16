@@ -229,6 +229,10 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
     );
     let requests = {
         let replacement_owner = owner.clone();
+        // #1444: the real submit-lane services so a steer carrying
+        // attachments composes through prepare_attachment_turn.
+        let submit_services =
+            requests::Requests::stub_submit_services(&options, &project, &env, &owner);
         requests::Requests {
             options,
             env,
@@ -266,6 +270,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            submit_services,
         }
     };
     (scratch, requests)
