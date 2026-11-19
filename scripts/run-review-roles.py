@@ -173,7 +173,12 @@ RUNNER_BASE_URL = {"zai": LLM_CENTER_BASE_URL, "anthropic": LLM_CENTER_BASE_URL,
 
 def runner_env(runner: str, key: str) -> dict[str, str]:
     """子进程的全部模型相关环境（白名单之外的父环境一概不带；minimax 直连官方接口，不经 llm-center）。"""
-    return {"ANTHROPIC_API_KEY": key, "ANTHROPIC_BASE_URL": RUNNER_BASE_URL[runner]}
+    return {"ANTHROPIC_API_KEY": key, "ANTHROPIC_BASE_URL": RUNNER_BASE_URL[runner],
+            # 关闭 Claude Code 对 api.anthropic.com 的非必要流量（遥测/错误上报/自更新/版本检查）。
+            # 临时 CLAUDE_CONFIG_DIR 里没有 settings.json，且网络客户端初始化早于其 env 注入，
+            # 故必须放在进程环境里（20261119 实测：否则每个子进程都会去打官方端点并反复重试）。
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1", "DISABLE_AUTOUPDATER": "1"}
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
 
 # —— 通道并发闸（P4 池）——
